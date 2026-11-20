@@ -1,11 +1,4 @@
-"""Hermetic canaries for the two surviving CP-3 bar-frame helpers.
-
-PR-1's quotation capture (recorder, seeding/benchmark/sample drivers, parser
-comparison, CLI) was deleted 2026-11-13 once its measurement was finished, and
-its tests went with it. What is left in ``tools/tos_cp3/minute_probe.py`` is
-``frame`` and ``seed_capacity``, which the **live daily path** imports — so
-they keep a test.
-"""
+"""Hermetic canaries for the two surviving CP-3 bar-frame helpers."""
 
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -37,12 +30,7 @@ def test_seed_capacity_excludes_first_session_and_off_window():
 
 
 def test_frame_sorts_by_timestamp_and_keeps_the_column_order():
-    """``frame`` is the shape every CP-3 caller builds; order is load-bearing.
-
-    Concrete failing input: the live producer appends a late-arriving bar after
-    a later one (``stitch_seed`` shifts a seed day onto the session's), and a
-    frame that kept insertion order would hand the producer a backwards series.
-    """
+    """``frame`` is the shape every CP-3 caller builds; order is load-bearing."""
     late = datetime(2026, 10, 12, 9, 2)
     early = datetime(2026, 10, 12, 9, 0)
     df = p.frame(

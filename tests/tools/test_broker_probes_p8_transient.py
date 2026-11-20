@@ -1,42 +1,4 @@
-"""P-8 separates a transport failure from a broker rejection.
-
-The defect, measured. On 2026-09-28 a five-trial P-8 series ran under a host
-cron on a detached ``origin/main`` worktree. Trial 1 measured
-(``P-8-20260928T000506Z``). Trial 2 placed its order, got its amend accepted
-(``rt_cd=0``, ODNO 558 -> 560), polled the coexistence surface at least once,
-and then died:
-
-    "errors": ["ConnectionError: ('Connection aborted.',
-     RemoteDisconnected('Remote end closed connection without response'))"]
-
-``P-8-20260928T000658Z`` carries no ``coexistence_ms``, no
-``replace_issues_new_odno`` and no ``poll_granularity_ms``: the exception left
-``probe_p8`` entirely, ``run.py`` salvaged the partial run and returned 5. The
-cleanup cancel issued seconds later succeeded, so the transport was already
-back. The runner then wrote
-
-    VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 중단(재시도 금지)
-
-and trials 3, 4 and 5 never ran. Nothing had been rejected. The same campaign
-had classified a ``ReadTimeout`` the other way nine days earlier ("§3 중단
-규칙(rate-limit)과 다른 종류라 1회 재시도"), and the README records the
-contradiction (2026-09-11 campaign README, 09-28 and 09-30 blocks).
-
-So this file pins, in both directions:
-
-* a transport failure on the order-status GET buys ONE retry a whole poll
-  interval later, and the trial carries on if that answers;
-* two consecutive ones stop the TRIAL with a reason that says "transport", not
-  "rejected", and leave no ``coexistence_ms`` to be mistaken for one;
-* ``EGW00215``, the LEDGER-side throttle, behaves the same way;
-* HTTP 429 and ``EGW00201`` do NOT — they are our own call rate, and "stop, no
-  retry" is an account-protection rule that stays exactly as it was;
-* an order-mutating call is never retried, however it fails;
-* ``_cleanup`` still runs, and is still recorded, on every one of those paths.
-
-No socket is opened: ``probes_order.http_json`` is replaced by a scripted
-recorder that replays the 모의 futures behaviour the campaign artifacts show.
-"""
+"""P-8 separates a transport failure from a broker rejection."""
 
 from __future__ import annotations
 
@@ -53,9 +15,6 @@ from typing import Any
 import pytest
 import requests
 
-#: Captured before ``no_sleeping`` replaces ``time.sleep`` process-wide. The
-#: late-window test needs the deadline to really pass, and the deadline is
-#: read from the real monotonic clock.
 _REAL_SLEEP = time.sleep
 
 from tests.support.probe_auth import install_stub_auth
@@ -70,18 +29,14 @@ from tools.broker_probes.probes_order import (
 )
 
 _ACCOUNT = "1234567890"
-_SYMBOL = "A05610"  # the 2026-09-28 mini near-month contract
+_SYMBOL = "A05610"
 _LAST_PRICE = "1113.60"
 
-#: Verbatim from ``P-8-20260928T000658Z.json:errors[0]``. The repr carries no
-#: URL, which is why the runner could not tell what had failed either.
 _CONNECTION_ABORTED = (
     "('Connection aborted.', RemoteDisconnected('Remote end closed connection "
     "without response'))"
 )
 
-#: 원장에서 허용 가능한 초당 거래건수를 초과하였습니다 — HTTP 500 + rt_cd=1,
-#: as ``P-CA-20260930T015946Z.json`` poll #14 recorded it.
 _LEDGER_THROTTLE = {
     "rt_cd": "1",
     "msg_cd": "EGW00215",
@@ -101,8 +56,7 @@ def futures_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def no_sleeping(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Real seconds buy these tests nothing. Both modules' clocks, because the
-    pacer lives in ``common`` now."""
+    """Real seconds buy these tests nothing. Both modules' clocks, because the"""
     monkeypatch.setattr(probes_order.time, "sleep", lambda _s: None)
     monkeypatch.setattr(common.time, "sleep", lambda _s: None)
 
@@ -131,15 +85,10 @@ def _args(**overrides: object) -> argparse.Namespace:
         "price_offset_pct": 10.0,
         "samples": 1,
         "margin_pct": 50.0,
-        # 250 ms with pacing off, so the effective poll interval — and so the
-        # retry's wait — is a number no other default could produce.
         "poll_ms": 250.0,
         "gap_ms": 0.0,
         "inter_trial_s": 0.0,
         "settle_seconds": 0.0,
-        # Generous: the scripted broker, not the clock, decides when the loop
-        # ends, so a retry cannot be refused for running out of window unless
-        # a test asks for that.
         "visibility_timeout_s": 300.0,
         "balance_timeout_s": 2.0,
         "late_window_s": 0.05,
@@ -157,36 +106,7 @@ def _args(**overrides: object) -> argparse.Namespace:
 
 
 class _Wire:
-    """A 모의 futures broker whose open-order surface follows a script.
-
-    ``poll_script`` is consumed one entry per ``inquire-ccnl`` call made BEFORE
-    the first cleanup cancel; ``cleanup_script`` one per call after it. Running
-    off the end of either repeats its last entry, so a test only writes the
-    prefix it cares about.
-
-    Tokens:
-
-    ``both``       both ODNOs live — the coexistence shape.
-    ``new_only``   only the amended order is live (the campaign's normal shape).
-    ``live``       every order the broker actually holds — what a real book
-                   walk returns, and the cleanup default.
-    ``timeout``    ``requests.exceptions.ReadTimeout``.
-    ``conn``       ``requests.exceptions.ConnectionError`` carrying a URL with
-                   the account number in the query string, exactly as
-                   ``requests`` renders one.
-    ``chunked``    ``requests.exceptions.ChunkedEncodingError`` — the body-read
-                   half of the transport set.
-    ``throttle``   HTTP 500 + ``EGW00215``, the LEDGER throttle.
-    ``no_rows``    ``rt_cd='7'`` + ``KIOK0560`` — this broker's empty-set
-                   notation, a REJECTION shape and not a rate limit.
-    ``sick``       a rejection with some OTHER code, i.e. a surface that is
-                   not answering for a reason of its own.
-    ``rt_cd_zero`` a healthy page whose ``rt_cd`` is the JSON NUMBER ``0``.
-                   ``str(x or "")`` turns that into ``""`` — the falsy-zero
-                   trap ``call_evidence`` documents.
-    ``http429``    HTTP 429, no body.
-    ``egw00201``   HTTP 200 + ``EGW00201``, our own call rate in the body.
-    """
+    """A 모의 futures broker whose open-order surface follows a script."""
 
     def __init__(
         self,
@@ -207,33 +127,18 @@ class _Wire:
         refuse_cancels: bool = False,
     ) -> None:
         self.poll_script = list(poll_script or ["new_only"])
-        # "live", not "new_only": the cleanup walk reads the BOOK, and the
-        # whole point of the F1 case is a row the probe never named. A
-        # scripted subset there would hide exactly what the walk exists to
-        # find. In the ordinary flow the two are the same set.
         self.cleanup_script = list(cleanup_script or ["live"])
         self.submit_raises = submit_raises
         self.amend_raises = amend_raises
         self.submit_rejects = submit_rejects
         self.amend_rejects = amend_rejects
         self.amend_without_odno = amend_without_odno
-        #: The hazard F1 names: the broker ACCEPTED the order and is resting
-        #: it, and only the answer was lost. Without this the fake would make
-        #: a lost POST look harmless, which is the assumption under review.
         self.accept_before_raising = accept_before_raising
-        #: 1-based inquire index -> real seconds to burn first, for the
-        #: late-window case. Real, because the fixture patches time.sleep out
-        #: and the deadline is read from the real monotonic clock.
         self.delay_before = dict(delay_before or {})
-        #: Rows the book shows that this probe never placed — another probe's
-        #: resting order, or the operator's. Each entry overrides fields on
-        #: the default row shape. They are live and they are not ours.
         self.foreign_rows = [dict(r) for r in (foreign_rows or [])]
         self.submit_rate_limited = submit_rate_limited
         self.amend_rate_limited = amend_rate_limited
         self.amend_ledger_throttled = amend_ledger_throttled
-        #: Every cancel is refused while the order stays live — the
-        #: REJECTED_AND_STILL_LIVE shape that makes _cleanup call run.error.
         self.refuse_cancels = refuse_cancels
         self.calls: list[dict[str, Any]] = []
         self.inquiries: list[str] = []
@@ -241,35 +146,15 @@ class _Wire:
         self._numbers = itertools.count(558)
         self._original = ""
         self._new = ""
-        #: What the broker would actually show as resting. The scripted tokens
-        #: choose WHICH of the two the poll is asked about; this decides
-        #: whether either is really there, so a cancel and a listing cannot
-        #: disagree the way a hand-maintained pair of sets would.
         self._live: set[str] = set()
 
-    # -- helpers --------------------------------------------------------
     def _next_odno(self) -> str:
         return str(next(self._numbers)).rjust(10, "0")
 
     def _rows(self, odnos: list[str], *, honour_live: bool) -> list[dict[str, str]]:
-        """``odnos`` rendered as open-order rows, space-padded as observed.
-
-        ``honour_live`` is the difference between the two phases. The POLL is
-        scripted: "both" means the surface shows both legs, which is the whole
-        point of the token, and the script says when that stops. CLEANUP is
-        not scripted — its listing has to agree with what the cancels have
-        actually done, or the walk would report a cancelled order as resting.
-        """
+        """``odnos`` rendered as open-order rows, space-padded as observed."""
         return [
             {
-                # Space-padded to TEN, which is what the campaign artifacts
-                # measure on this surface — the same width the accept
-                # response zero-pads to (P-8-20260928T000506Z:
-                # odno_wire_format, submit "0000000512" len 10, query
-                # "       512" len 10). The width matters here: the cancel of
-                # an unaccounted row is reconstructed by re-padding the row,
-                # so a fake that padded to 11 would "prove" a reconstruction
-                # the broker never accepted.
                 "odno": odno.lstrip("0").rjust(10),
                 "pdno": _SYMBOL,
                 "ord_qty": "1",
@@ -284,7 +169,6 @@ class _Wire:
         script = self.cleanup_script if self.cleanup_phase else self.poll_script
         return script.pop(0) if len(script) > 1 else script[0]
 
-    # -- transport ------------------------------------------------------
     def __call__(
         self,
         _session: Any,
@@ -307,14 +191,8 @@ class _Wire:
         if url.endswith("trading/order"):
             if self.submit_raises is not None:
                 if self.accept_before_raising:
-                    # Accepted, resting, and the answer never came back.
                     self._original = self._next_odno()
                     self._live.add(self._original)
-                # Everything after this is the probe's ``finally``: there is
-                # no poll loop left to serve. The phase normally flips on the
-                # first cancel, and after a lost SUBMIT there are no ODNOs to
-                # cancel, so without this the book walk would be answered
-                # from the poll script.
                 self.cleanup_phase = True
                 raise self.submit_raises
             if self.submit_rate_limited:
@@ -361,9 +239,6 @@ class _Wire:
             rows = self._rows([self._new], honour_live=self.cleanup_phase)
             return 200, {"rt_cd": 0, "output1": rows}, 1.0, "{}"
         if token == "sick":
-            # A rejection that is NOT the empty-set code: the surface is
-            # answering for some other reason, which is what makes a longer
-            # walk down it a bad idea.
             payload = {
                 "rt_cd": "1",
                 "msg_cd": "APBK0919",
@@ -371,9 +246,6 @@ class _Wire:
             }
             return 200, payload, 1.0, str(payload)
         if token == "no_rows":
-            # This broker's empty-set notation on the sibling balance surface:
-            # a REJECTION shape, not rt_cd=0 with an empty list
-            # (P-BAL-20260731T114344Z).
             payload = {
                 "rt_cd": "7",
                 "msg_cd": "KIOK0560",
@@ -438,8 +310,6 @@ class _Wire:
                     1.0,
                     "{}",
                 )
-            # The amend consumes the original's quantity and rests under a
-            # new number — all five 2026-07-31 trials and both 09-28 trials.
             self._live.discard(self._original)
             self._new = self._next_odno()
             self._live.add(self._new)
@@ -454,7 +324,6 @@ class _Wire:
                 1.0,
                 "{}",
             )
-        # A cancel. Everything from here on is cleanup.
         self.cleanup_phase = True
         if self.refuse_cancels:
             return 200, {"rt_cd": "1", "msg1": "취소 불가"}, 1.0, "{}"
@@ -491,21 +360,12 @@ def _retry_records(run: Any, phase: str | None = None) -> list[dict[str, Any]]:
     return [r for r in records if r["phase"] == phase]
 
 
-# ---------------------------------------------------------------------------
-# One transport failure is survivable
-# ---------------------------------------------------------------------------
-
-
 def test_one_transport_failure_mid_poll_is_retried_and_the_trial_completes(
     monkeypatch: pytest.MonkeyPatch,
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The 2026-09-28 trial-2 shape, with the fix: poll, drop, poll again.
-
-    Before this change the ``ConnectionError`` left ``probe_p8`` and ``run.py``
-    wrote an artifact with one error string and no measurement.
-    """
+    """The 2026-09-28 trial-2 shape, with the fix: poll, drop, poll again."""
     _install(monkeypatch, _Wire(poll_script=["both", "conn", "both", "new_only"]))
 
     run = probe_p8(_args())
@@ -524,9 +384,7 @@ def test_one_transport_failure_mid_poll_is_retried_and_the_trial_completes(
 def test_the_retry_waits_one_whole_effective_poll_interval(
     monkeypatch: pytest.MonkeyPatch, futures_env: None, defers: list[float]
 ) -> None:
-    """``wait()`` alone owes only the remainder of a gap the failed attempt
-    already armed before it went out — on a 15 s read timeout inside a 250 ms
-    interval, nothing at all. ``defer`` re-measures the interval from now."""
+    """``wait()`` alone owes only the remainder of a gap the failed attempt"""
     _install(monkeypatch, _Wire(poll_script=["both", "timeout", "both", "new_only"]))
 
     run = probe_p8(_args(poll_ms=250.0, pace_s=0.0))
@@ -538,9 +396,7 @@ def test_the_retry_waits_one_whole_effective_poll_interval(
 def test_the_retry_waits_the_pacing_floor_when_it_is_wider(
     monkeypatch: pytest.MonkeyPatch, futures_env: None, defers: list[float]
 ) -> None:
-    """The pacer will not release two calls closer than ``--pace-s``, so a
-    narrower ``--poll-ms`` is not the interval the retry has to wait out. Same
-    number the artifact reports as ``poll_granularity_ms``."""
+    """The pacer will not release two calls closer than ``--pace-s``, so a"""
     _install(monkeypatch, _Wire(poll_script=["both", "timeout", "both", "new_only"]))
 
     run = probe_p8(_args(poll_ms=100.0, pace_s=1.1))
@@ -552,9 +408,7 @@ def test_the_retry_waits_the_pacing_floor_when_it_is_wider(
 def test_a_ledger_throttle_is_transient_too(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """``EGW00215`` is the LEDGER's throttle, not ours. ``is_rate_limited``
-    never sees it, so before this change it fell through to the poll's
-    "rows is not a list" arm and silently read as "nothing is live"."""
+    """``EGW00215`` is the LEDGER's throttle, not ours. ``is_rate_limited``"""
     _install(monkeypatch, _Wire(poll_script=["both", "throttle", "both", "new_only"]))
 
     run = probe_p8(_args())
@@ -567,8 +421,7 @@ def test_a_ledger_throttle_is_transient_too(
 def test_the_transient_set_is_the_three_shapes_the_transport_can_fail_in(
     monkeypatch: pytest.MonkeyPatch, futures_env: None, token: str
 ) -> None:
-    """A read timeout, a cut connection and a truncated body are all "no
-    intact answer arrived", and none of them is our call rate."""
+    """A read timeout, a cut connection and a truncated body are all "no"""
     _install(monkeypatch, _Wire(poll_script=["both", token, "both", "new_only"]))
 
     run = probe_p8(_args())
@@ -577,22 +430,12 @@ def test_the_transient_set_is_the_three_shapes_the_transport_can_fail_in(
     assert run.measurements["retries"]["transport"] == 1
 
 
-# ---------------------------------------------------------------------------
-# Two in a row stop the TRIAL — and say "transport", not "rejected"
-# ---------------------------------------------------------------------------
-
-
 def test_two_consecutive_transport_failures_stop_the_trial_as_transport(
     monkeypatch: pytest.MonkeyPatch,
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The stop exists; what changed is that it NAMES itself.
-
-    The 09-28 runner could only see an exit code and an error count, and wrote
-    "오류 1건(브로커 거부 포함)" over a stop in which the broker refused
-    nothing.
-    """
+    """The stop exists; what changed is that it NAMES itself."""
     _install(monkeypatch, _Wire(poll_script=["both", "conn", "conn", "new_only"]))
 
     run = probe_p8(_args())
@@ -601,7 +444,6 @@ def test_two_consecutive_transport_failures_stop_the_trial_as_transport(
     out = capsys.readouterr().out
     assert _anchored(out, _P8_STOP_PREFIX) == ["transient:transport"]
     assert _anchored(out, _P8_COEXISTENCE_PREFIX) == ["not_measured"]
-    # Both transients recorded; only the first bought a retry.
     assert [r["retried"] for r in _retry_records(run, "coexistence_poll")] == [
         True,
         False,
@@ -612,13 +454,7 @@ def test_two_consecutive_transport_failures_stop_the_trial_as_transport(
 def test_a_stopped_poll_reports_no_coexistence_and_says_why(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """An unobserved interval is not a zero one.
-
-    ``coexistence_ms`` is quoted as an UPPER bound on how long both legs
-    survived, and a loop cut short saw an unknown part of it. Reporting the
-    truncated value would read LOW — toward "the replace was atomic", which is
-    the fail-open direction for ``B_protective_request_complete``.
-    """
+    """An unobserved interval is not a zero one."""
     _install(monkeypatch, _Wire(poll_script=["both", "conn", "conn", "new_only"]))
 
     run = probe_p8(_args())
@@ -628,10 +464,8 @@ def test_a_stopped_poll_reports_no_coexistence_and_says_why(
     skipped = [s for s in run.skips if s["what"] == "measurements.coexistence_ms"]
     assert skipped and "ABORTED" in skipped[0]["reason"]
     assert "stop_reason=transient:transport" in skipped[0]["reason"]
-    # This one DID stop short, and says so — the other half of the pair.
     assert "did NOT elapse" in skipped[0]["reason"]
     assert any("NOT a broker rejection" in e for e in run.errors)
-    # The partial sighting is kept as an observation, not promoted.
     assert any(o.get("coexistence_seen_before_stop") for o in run.observations)
 
 
@@ -640,14 +474,7 @@ def test_a_doubled_ledger_throttle_stops_the_trial_as_transient(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Same shape as the rate-limit case, and the same manufactured value.
-
-    Measured on ``origin/main``: two ``EGW00215`` answers produced
-    ``coexistence_ms: 0.29``, ``errors: []``, ``provenance_class: MEASURED``.
-    The throttled body carries no ``output1``, the loop read that as "the
-    original leg is gone", and the interval it then reported was the single
-    poll that had actually answered.
-    """
+    """Same shape as the rate-limit case, and the same manufactured value."""
     _install(
         monkeypatch, _Wire(poll_script=["both", "throttle", "throttle", "new_only"])
     )
@@ -664,10 +491,7 @@ def test_a_doubled_ledger_throttle_stops_the_trial_as_transient(
 def test_the_facts_the_amend_response_established_survive_a_transport_stop(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """``P-8-20260928T000658Z`` lost ``replace_issues_new_odno`` to a failure
-    that happened AFTER the broker had answered it: the amend was accepted and
-    558 had already become 560. Those two come from the amend response, so
-    they are recorded before the poll can stop."""
+    """``P-8-20260928T000658Z`` lost ``replace_issues_new_odno`` to a failure"""
     _install(monkeypatch, _Wire(poll_script=["both", "conn", "conn", "new_only"]))
 
     run = probe_p8(_args())
@@ -679,9 +503,7 @@ def test_the_facts_the_amend_response_established_survive_a_transport_stop(
 def test_the_transport_excerpt_never_carries_the_request_query_string(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """``requests`` renders the failed URL in full and that URL carries CANO.
-    ``redact()`` keys on field NAMES and cannot reach inside a raw string, and
-    these artifacts are committed under ``docs/broker-profiles/evidence/``."""
+    """``requests`` renders the failed URL in full and that URL carries CANO."""
     _install(monkeypatch, _Wire(poll_script=["both", "conn", "conn", "new_only"]))
 
     run = probe_p8(_args())
@@ -693,11 +515,6 @@ def test_the_transport_excerpt_never_carries_the_request_query_string(
     assert "<redacted>" in blobs
 
 
-# ---------------------------------------------------------------------------
-# Our own call rate is NOT transient — regression pins
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("token", ["http429", "egw00201"])
 def test_a_rate_limit_still_stops_at_once_with_no_retry(
     monkeypatch: pytest.MonkeyPatch,
@@ -705,21 +522,7 @@ def test_a_rate_limit_still_stops_at_once_with_no_retry(
     capsys: pytest.CaptureFixture[str],
     token: str,
 ) -> None:
-    """Pins the rule the 2026-09-17 incident bought, byte for byte.
-
-    HTTP 429 and ``EGW00201`` mean WE called too fast, and the harness protects
-    the account by stopping. The policy widening in this PR must not reach
-    them: there is exactly one call for the failing poll, no retry record, and
-    the series-level token is ``rate_limited``, which the runner stops on.
-
-    The absent ``coexistence_ms`` is not a pin but a fix, and the worse half
-    of this defect. Before the change the poll loop never looked at ``rt_cd``
-    at all: a refusal carries no ``output1``, so it read as "no legs are
-    live", which is the loop's own signal that coexistence has ENDED. Measured
-    on ``origin/main``, a 429 on poll 2 produced ``coexistence_ms: 0.17`` with
-    ``errors: []`` and ``provenance_class: MEASURED`` — a number nobody
-    observed, in the direction that says the replace was atomic.
-    """
+    """Pins the rule the 2026-09-17 incident bought, byte for byte."""
     wire = _install(monkeypatch, _Wire(poll_script=["both", token, "both", "new_only"]))
 
     run = probe_p8(_args())
@@ -730,26 +533,17 @@ def test_a_rate_limit_still_stops_at_once_with_no_retry(
     assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 0}
     assert "coexistence_ms" not in run.measurements
     assert "mode_determination" not in run.measurements
-    # The failing poll was issued ONCE. (The listings after it belong to
-    # cleanup, which starts at the first cancel.)
     assert wire.inquiries[:2] == ["both", token]
 
 
 def test_a_rate_limit_body_that_also_carries_the_ledger_code_still_stops(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """Precedence, not coincidence: one answer can carry both signals, and the
-    account-protection rule has to win. The two paths disagreed about this
-    once already (#825 independent review F4)."""
+    """Precedence, not coincidence: one answer can carry both signals, and the"""
     assert (
         common.classify_answer(429, {"msg_cd": "EGW00215"}, "Too Many Requests")
         == common.STATUS_RATE_LIMITED
     )
-
-
-# ---------------------------------------------------------------------------
-# Order-mutating calls are classified, never retried
-# ---------------------------------------------------------------------------
 
 
 def test_a_lost_submit_stops_the_series_and_reports_what_it_orphaned(
@@ -757,14 +551,7 @@ def test_a_lost_submit_stops_the_series_and_reports_what_it_orphaned(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A ``ReadTimeout`` on the submit says only that no ANSWER came back. The
-    broker may have accepted the order and be resting it under an ODNO this
-    probe never saw — so ``odnos`` is empty, ``_cleanup`` cancels nothing, and
-    without this the runner would start trial N+1 on top of it.
-
-    The DEFAULT is record-and-stop, not cancel: see
-    :func:`test_an_unaccounted_order_is_not_cancelled_without_the_opt_in`.
-    """
+    """A ``ReadTimeout`` on the submit says only that no ANSWER came back. The"""
     wire = _install(
         monkeypatch,
         _Wire(
@@ -782,7 +569,6 @@ def test_a_lost_submit_stops_the_series_and_reports_what_it_orphaned(
     assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == [
         "order_state_unknown"
     ]
-    # Not resent: a second submit is the duplicate-order hazard P-2 measures.
     assert len([c for c in wire.calls if c["url"].endswith("trading/order")]) == 1
     assert [r["phase"] for r in _retry_records(run)] == ["submit"]
     assert _retry_records(run)[0]["not_retried_because"] == "single_shot_call"
@@ -797,12 +583,7 @@ def test_a_lost_submit_stops_the_series_and_reports_what_it_orphaned(
 def test_an_unaccounted_order_is_not_cancelled_without_the_opt_in(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """Review F5. The 모의 account is shared by the whole campaign, so a row
-    this trial cannot account for may be another probe's. The first version
-    cancelled it on its own authority.
-
-    Default: record it, say so, stop the series, touch nothing.
-    """
+    """Review F5. The 모의 account is shared by the whole campaign, so a row"""
     wire = _install(
         monkeypatch,
         _Wire(
@@ -816,9 +597,7 @@ def test_an_unaccounted_order_is_not_cancelled_without_the_opt_in(
     found = run.measurements["unaccounted_live_orders"]
     assert found["status"] == "FOUND_NOT_CANCELLED"
     assert "cleanup_dispositions" not in found
-    # It says what it WOULD have sent, so the operator can do it by hand.
     assert found["cancel_odno_would_send"] == {"558": "0000000558"}
-    # And the order is still there.
     assert wire._live == {"0000000558"}
     assert not [c for c in wire.calls if c["body"].get("RVSE_CNCL_DVSN_CD") == "02"]
 
@@ -826,9 +605,7 @@ def test_an_unaccounted_order_is_not_cancelled_without_the_opt_in(
 def test_the_opt_in_cancels_a_row_that_matches_this_trial(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """With ``--cancel-unaccounted`` the matching row IS cancelled, through
-    ``_cancel_one`` so it gets the same verified disposition as any other
-    cleanup cancel."""
+    """With ``--cancel-unaccounted`` the matching row IS cancelled, through"""
     wire = _install(
         monkeypatch,
         _Wire(
@@ -860,13 +637,7 @@ def test_a_row_that_is_not_this_trials_order_is_never_cancelled(
     row: dict[str, str],
     why: str,
 ) -> None:
-    """Review F5, the part no flag may override. P-5, P-11, P-EXT or an
-    operator MTS order resting on the same contract is not this trial's
-    order, and cancelling it destroys another measurement and attributes the
-    loss to "the order the timed-out call left behind".
-
-    Run WITH the opt-in, to pin that the flag does not reach these.
-    """
+    """Review F5, the part no flag may override. P-5, P-11, P-EXT or an"""
     wire = _install(
         monkeypatch,
         _Wire(
@@ -882,7 +653,6 @@ def test_a_row_that_is_not_this_trials_order_is_never_cancelled(
     assert foreign["status"] == "FOREIGN_LIVE_ROWS_PRESENT"
     assert foreign["canonical_keys"] == [row["odno"]], why
     assert any("FOREIGN LIVE ROW" in e for e in run.errors)
-    # Nothing was cancelled, flag or no flag.
     assert not [c for c in wire.calls if c["body"].get("RVSE_CNCL_DVSN_CD") == "02"]
     assert run.measurements["unaccounted_live_orders"]["status"] == "NONE_FOUND"
 
@@ -890,12 +660,7 @@ def test_a_row_that_is_not_this_trials_order_is_never_cancelled(
 def test_the_match_records_which_criteria_it_could_actually_apply(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """The order PRICE and the 매도매수구분 are not in the field set the
-    runtime reads off this surface, and no artifact here records a name for
-    either. So the matcher checks them when the row carries one and SAYS so
-    when it does not — a guess would make the match silently never succeed,
-    and a guard that matches nothing protects nothing.
-    """
+    """The order PRICE and the 매도매수구분 are not in the field set the"""
     _install(
         monkeypatch,
         _Wire(
@@ -917,10 +682,7 @@ def test_the_match_records_which_criteria_it_could_actually_apply(
 def test_a_lost_amend_does_not_count_the_known_original_as_orphaned(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """The amend consumed the original and rests under a number the probe
-    never saw. ``_cleanup`` handles the original (it is known); the walk must
-    find only the NEW leg, or the operator is sent after a row that already
-    has a disposition of its own."""
+    """The amend consumed the original and rests under a number the probe"""
     _install(
         monkeypatch,
         _Wire(
@@ -944,8 +706,7 @@ def test_a_lost_amend_does_not_count_the_known_original_as_orphaned(
 def test_a_lost_submit_that_orphaned_nothing_says_so(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """ "The walk ran and the book was clean" is what lets the operator stop
-    looking, so it has to be written down."""
+    '"The walk ran and the book was clean" is what lets the operator stop'
     _install(
         monkeypatch,
         _Wire(
@@ -964,9 +725,7 @@ def test_a_lost_submit_that_orphaned_nothing_says_so(
 def test_a_book_walk_that_cannot_answer_cancels_nothing_and_says_to_look(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """Fail-closed, the same polarity cleanup uses: a walk that established
-    nothing must not be read as "nothing is resting", and it must certainly
-    not license cancelling rows it never saw."""
+    """Fail-closed, the same polarity cleanup uses: a walk that established"""
     wire = _install(
         monkeypatch,
         _Wire(
@@ -990,9 +749,7 @@ def test_a_rate_limited_submit_is_not_narrated_as_a_broker_rejection(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Review F2. HTTP 429 made ``placed`` None, which read as ``rejected`` —
-    and the runner's verdict for that says "every remaining trial would be
-    refused the same way", naming a cause that had not happened."""
+    """Review F2. HTTP 429 made ``placed`` None, which read as ``rejected`` —"""
     _install(monkeypatch, _Wire(submit_rate_limited=True))
 
     run = probe_p8(_args())
@@ -1010,10 +767,7 @@ def test_a_rate_limited_amend_stops_the_series_instead_of_polling_on(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The worse half of F2: on the amend a rate limit was INVISIBLE —
-    ``replace_futures`` dropped the status, ``amend_accepted`` went False, the
-    trial polled on and the series placed the next order, bypassing the "our
-    call rate ⇒ stop, never retry" rule on the one POST where it matters."""
+    """The worse half of F2: on the amend a rate limit was INVISIBLE —"""
     wire = _install(monkeypatch, _Wire(amend_rate_limited=True))
 
     run = probe_p8(_args())
@@ -1021,19 +775,14 @@ def test_a_rate_limited_amend_stops_the_series_instead_of_polling_on(
     assert run.measurements["stop_reason"] == "rate_limited"
     assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == ["rate_limited"]
     assert any("RATE LIMITED on the amend" in e for e in run.errors)
-    # It stopped before polling.
     assert "coexistence_polls_used" not in run.measurements
-    # ...and the order it did place was cleaned up.
     assert wire._live == set()
 
 
 def test_a_ledger_throttled_amend_walks_the_book_before_stopping(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """``EGW00215`` is an answer, so strictly the amend was not accepted — but
-    "strictly" is doing too much work on the one surface where being wrong
-    leaves a live order, so it takes the order-state-unknown path and pays for
-    one book walk."""
+    """``EGW00215`` is an answer, so strictly the amend was not accepted — but"""
     _install(monkeypatch, _Wire(amend_ledger_throttled=True))
 
     run = probe_p8(_args())
@@ -1048,10 +797,7 @@ def test_a_cleanup_error_stops_the_trial_counting_toward_n5(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Review F1. The poll loop ends with a sample, then ``_cleanup`` in the
-    same ``finally`` fails to cancel and calls ``run.error`` — which makes the
-    artifact NOT_MEASURED. The printed token came from the local flag, so the
-    runner counted toward N>=5 a trial whose own artifact disagrees."""
+    """Review F1. The poll loop ends with a sample, then ``_cleanup`` in the"""
     _install(
         monkeypatch,
         _Wire(
@@ -1077,9 +823,7 @@ def test_the_quote_phase_still_continues_because_nothing_is_resting(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The split F1 draws is "is an order's state unknown", not "is it a
-    POST". The quote fails before anything is placed, so the next trial starts
-    from a clean account and the series may continue."""
+    """The split F1 draws is "is an order's state unknown", not "is it a"""
     wire = _install(monkeypatch, _Wire())
     monkeypatch.setattr(
         probes_order.MockTradingClient,
@@ -1105,8 +849,7 @@ def test_the_quote_phase_still_continues_because_nothing_is_resting(
 def test_each_unretried_phase_gives_its_own_reason(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """Three phases, three reasons, no shared sentence that is false for one
-    of them."""
+    """Three phases, three reasons, no shared sentence that is false for one"""
     assert set(probes_order._P8_NO_RETRY_REASON) == {"quote", "submit", "amend"}
     _install(
         monkeypatch,
@@ -1122,19 +865,7 @@ def test_each_unretried_phase_gives_its_own_reason(
 def test_a_query_rejection_mid_poll_does_not_end_the_coexistence_interval(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """The other half of the manufactured-value defect, and the half
-    ``classify_answer`` does not catch.
-
-    A rejection carries no ``output1``, and the loop reads rows — so before
-    this change ``rt_cd='7'`` + ``KIOK0560`` read as "no legs are live", which
-    is the loop's own signal that coexistence has ENDED. It is not a rate
-    limit, so the 429/``EGW00215`` arms never see it.
-
-    It is recorded and SKIPPED rather than stopped on: whether this surface
-    switches to a rejection shape once the book is empty has never been
-    measured here, and stopping on it would abort a normal end-of-coexistence
-    on an unmeasured hunch.
-    """
+    """The other half of the manufactured-value defect, and the half"""
     _install(
         monkeypatch,
         _Wire(poll_script=["both", "no_rows", "both", "new_only"]),
@@ -1145,8 +876,6 @@ def test_a_query_rejection_mid_poll_does_not_end_the_coexistence_interval(
     assert run.measurements["stop_reason"] == "none"
     assert run.measurements["coexistence_polls_not_answered"] == 1
     assert run.measurements["coexistence_polls_answered"] == 3
-    # The interval survived the hole: the mark was set on poll 1, untouched on
-    # poll 2, set again on poll 3, and only poll 4 ended it.
     assert run.measurements["coexistence_ms"] > 0.0
     recorded = [o for o in run.observations if "coexistence_poll_not_answered" in o]
     assert len(recorded) == 1
@@ -1158,9 +887,7 @@ def test_a_poll_series_that_only_gets_sick_answers_stops_the_series(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Nothing came back ``rt_cd=0`` for the whole window, and not because the
-    book was empty. Before the change that was ``coexistence_ms: 0.0`` with
-    ``errors: []`` — "the replace was atomic", observed by nothing."""
+    """Nothing came back ``rt_cd=0`` for the whole window, and not because the"""
     _install(monkeypatch, _Wire(poll_script=["sick"]))
 
     run = probe_p8(_args(visibility_timeout_s=0.3))
@@ -1186,14 +913,7 @@ def test_an_empty_book_for_the_whole_window_does_not_stop_the_series(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Review F4. This broker answers an EMPTY RESULT SET with a rejection
-    shape, and an empty book is the ordinary end of a P-8 trial — both legs
-    gone to a fill, or to a resting price too close to the touch. Stopping
-    the series on it would cancel trials 2..5 over one filled order, the same
-    over-stopping this PR exists to remove.
-
-    It measures nothing (``answered == 0``), and it does not stop.
-    """
+    """Review F4. This broker answers an EMPTY RESULT SET with a rejection"""
     _install(monkeypatch, _Wire(poll_script=["no_rows"]))
 
     run = probe_p8(_args(visibility_timeout_s=0.1))
@@ -1209,9 +929,7 @@ def test_an_empty_book_for_the_whole_window_does_not_stop_the_series(
 def test_one_sick_answer_among_empty_ones_still_stops(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """The quieter treatment is for a window that was ONLY the empty-set
-    code. One answer the broker gave for another reason is enough to make a
-    longer walk down the surface a bad idea."""
+    """The quieter treatment is for a window that was ONLY the empty-set"""
     _install(monkeypatch, _Wire(poll_script=["no_rows", "sick"]))
 
     run = probe_p8(_args(visibility_timeout_s=0.3))
@@ -1226,12 +944,7 @@ def test_one_sick_answer_among_empty_ones_still_stops(
 def test_the_unanswered_evidence_is_bounded_by_distinct_codes_not_by_polls(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """With ``--pace-s 0`` this loop runs tens of thousands of times a second
-    — measured at 12,265 polls in a 0.3 s window — and one observation per
-    poll would put a list that size into a committed artifact.
-
-    One verbatim record per distinct ``msg_cd``; the counts are kept in full.
-    """
+    """With ``--pace-s 0`` this loop runs tens of thousands of times a second"""
     _install(monkeypatch, _Wire(poll_script=["sick"]))
 
     run = probe_p8(_args(visibility_timeout_s=0.3))
@@ -1239,13 +952,12 @@ def test_the_unanswered_evidence_is_bounded_by_distinct_codes_not_by_polls(
     recorded = [o for o in run.observations if "coexistence_poll_not_answered" in o]
     assert len(recorded) == 1
     polls = run.measurements["coexistence_polls_not_answered"]
-    assert polls > 100, polls  # the loop really did spin
+    assert polls > 100, polls
     assert run.measurements["coexistence_not_answered_codes"]["APBK0919"] == polls
 
 
 def test_a_stop_narration_exists_for_every_stop_the_poll_can_report() -> None:
-    """A lookup with a missing key is a KeyError inside the ``finally``'s
-    sibling path. Pin the three prefixes the loop can actually return."""
+    """A lookup with a missing key is a KeyError inside the ``finally``'s"""
     assert set(probes_order._P8_STOP_NARRATION) == {
         probes_order._P8_STOP_TRANSIENT,
         probes_order._P8_STOP_RATE_LIMITED,
@@ -1258,9 +970,7 @@ def test_a_transport_failure_on_the_quote_is_its_own_phase(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Nothing is resting yet, so this is a different fact from a failed
-    submit. A reader told "submit" would go looking for an order that was
-    never placed."""
+    """Nothing is resting yet, so this is a different fact from a failed"""
     wire = _install(monkeypatch, _Wire())
     monkeypatch.setattr(
         probes_order.MockTradingClient,
@@ -1277,12 +987,8 @@ def test_a_transport_failure_on_the_quote_is_its_own_phase(
     assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == [
         "transient:transport"
     ]
-    # No order was placed, so there is nothing to clean up and no disposition.
     assert [c for c in wire.calls if c["url"].endswith("trading/order")] == []
     assert "cleanup_dispositions" not in run.measurements
-    # And the reason given is the QUOTE's reason. Saying "an order-mutating
-    # call is never retried" about a GET is the same false-sentence shape as
-    # the stop narration.
     errors = " ".join(run.errors)
     assert "price lookup" in errors
     assert "duplicate-order hazard" not in errors
@@ -1293,8 +999,7 @@ def test_a_rejected_submit_is_still_a_rejection(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The one stop the "재시도 금지" rule was written for: 2026-09-11 and
-    2026-09-16 both died here, and every remaining trial would have too."""
+    """The one stop the "재시도 금지" rule was written for: 2026-09-11 and"""
     _install(monkeypatch, _Wire(submit_rejects=True))
 
     run = probe_p8(_args())
@@ -1309,8 +1014,7 @@ def test_a_dry_run_names_itself_rather_than_looking_like_a_clean_trial(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The runner always passes ``--confirm``; a ``dry_run`` token reaching it
-    means the invocation and the runner disagree, and it stops."""
+    """The runner always passes ``--confirm``; a ``dry_run`` token reaching it"""
     _install(monkeypatch, _Wire())
 
     probe_p8(_args(confirm=False))
@@ -1318,18 +1022,10 @@ def test_a_dry_run_names_itself_rather_than_looking_like_a_clean_trial(
     assert _anchored(capsys.readouterr().out, _P8_STOP_PREFIX) == ["dry_run"]
 
 
-# ---------------------------------------------------------------------------
-# Cleanup keeps its guarantees
-# ---------------------------------------------------------------------------
-
-
 def test_cleanup_still_runs_and_is_still_recorded_after_a_transport_stop(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """The ``finally`` is the reason the 09-28 trial left no order on the book
-    despite dying mid-poll, and it has to stay that way. #732: the cleanup
-    disposition is also what distinguishes a superseded original from one that
-    is still resting."""
+    """The ``finally`` is the reason the 09-28 trial left no order on the book"""
     _install(monkeypatch, _Wire(poll_script=["both", "conn", "conn", "new_only"]))
 
     run = probe_p8(_args())
@@ -1343,9 +1039,7 @@ def test_cleanup_still_runs_and_is_still_recorded_after_a_transport_stop(
 def test_cleanup_still_runs_after_a_transport_failure_on_the_amend(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """The submit succeeded, so an order IS resting; the amend never answered.
-    The ``finally`` must cancel it rather than hand the operator an
-    unaccounted-for order."""
+    """The submit succeeded, so an order IS resting; the amend never answered."""
     _install(
         monkeypatch,
         _Wire(amend_raises=requests.exceptions.ReadTimeout("read timeout=15.0")),
@@ -1361,9 +1055,7 @@ def test_cleanup_still_runs_after_a_transport_failure_on_the_amend(
 def test_the_cleanup_liveness_walk_survives_one_transport_failure(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """A walk that cannot answer counts the order as LIVE and raises an error
-    telling the operator to cancel by hand — the opposite polarity to
-    ``coexistence_ms``. One dropped connection should not cost that."""
+    """A walk that cannot answer counts the order as LIVE and raises an error"""
     _install(
         monkeypatch,
         _Wire(
@@ -1384,8 +1076,7 @@ def test_the_cleanup_liveness_walk_survives_one_transport_failure(
 def test_two_transport_failures_in_the_cleanup_walk_count_the_order_as_live(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """Fail-closed in the other direction: not knowing is not "not live", and
-    the operator hears about it."""
+    """Fail-closed in the other direction: not knowing is not "not live", and"""
     _install(
         monkeypatch,
         _Wire(poll_script=["both", "new_only"], cleanup_script=["conn"]),
@@ -1403,34 +1094,19 @@ def test_two_transport_failures_in_the_cleanup_walk_count_the_order_as_live(
     assert any("CLEANUP FAILED" in e for e in run.errors)
 
 
-# ---------------------------------------------------------------------------
-# The window bounds the retry
-# ---------------------------------------------------------------------------
-
-
 def test_a_window_that_never_opened_measures_nothing(
     monkeypatch: pytest.MonkeyPatch,
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Review F2: zero polls is zero observations, whatever the stop says.
-
-    With ``--visibility-timeout-s 0`` the loop never runs. ``answered`` and
-    ``unanswered`` are both 0, so the ``query_unanswered`` guard does not
-    fire and the run came out ``stop=none``, ``measured=True``,
-    ``coexistence_ms: 0.0`` — a MEASURED artifact asserting an atomic replace
-    off a window that never opened, which the runner then counted toward
-    N>=5. The gate is ``answered > 0``, not "did something stop me".
-    """
+    """Review F2: zero polls is zero observations, whatever the stop says."""
     _install(monkeypatch, _Wire(poll_script=["conn", "both", "new_only"]))
 
     run = probe_p8(_args(visibility_timeout_s=0.0))
 
     assert _retry_records(run, "coexistence_poll") == []
     assert run.measurements["retries"] == {"transport": 0, "ledger_throttle": 0}
-    # The loop never entered, so this is the natural end, not a stop...
     assert run.measurements["stop_reason"] == "none"
-    # ...and it measured nothing.
     assert "coexistence_ms" not in run.measurements
     assert "mode_determination" not in run.measurements
     assert _anchored(capsys.readouterr().out, _P8_COEXISTENCE_PREFIX) == [
@@ -1445,14 +1121,7 @@ def test_a_rejected_amend_measures_no_coexistence(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Review F3: no replace happened, so there is no interval.
-
-    A rejected amend issues no new ODNO, so ``both`` can never be true and
-    ``coexist_last`` stays None — which used to be written out as
-    ``coexistence_ms: 0.0`` and counted by the runner as an agreeing "atomic"
-    sample. ``replace_rejected`` is still measured; it is the INTERVAL that
-    was not.
-    """
+    """Review F3: no replace happened, so there is no interval."""
     _install(monkeypatch, _Wire(amend_rejects=True))
 
     run = probe_p8(_args(visibility_timeout_s=0.1))
@@ -1472,8 +1141,7 @@ def test_a_rejected_amend_measures_no_coexistence(
 def test_an_accepted_amend_with_no_new_odno_measures_no_coexistence(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """``rt_cd=0`` with no ``output.ODNO``: the second leg the measurement
-    compares against never existed, so neither did the interval."""
+    """``rt_cd=0`` with no ``output.ODNO``: the second leg the measurement"""
     _install(monkeypatch, _Wire(amend_without_odno=True))
 
     run = probe_p8(_args(visibility_timeout_s=0.1))
@@ -1490,17 +1158,7 @@ def test_a_lone_transient_after_the_deadline_is_the_natural_end(
     futures_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Review F3. Window 0.05 s, poll 1 answers with both legs live, poll 2
-    burns 0.12 s and then fails. The transient surfaces AFTER the deadline, so
-    ``can_retry`` refuses the retry — and the loop would have ended on the
-    next iteration anyway.
-
-    That is the window ENDING, not a link that failed twice. Reporting it as
-    ``transient:transport`` voided a window spent in full, threw away a sample
-    the pre-PR code would have kept, and charged the trial to the runner's
-    link-health budget — which is exactly what ``REFUSED_WINDOW_CLOSED`` says
-    must not be added together.
-    """
+    """Review F3. Window 0.05 s, poll 1 answers with both legs live, poll 2"""
     _install(
         monkeypatch,
         _Wire(poll_script=["both", "conn", "new_only"], delay_before={2: 0.12}),
@@ -1509,25 +1167,19 @@ def test_a_lone_transient_after_the_deadline_is_the_natural_end(
     run = probe_p8(_args(visibility_timeout_s=0.05, poll_ms=1.0))
 
     assert run.measurements["stop_reason"] == "none"
-    # The sample survives: both legs were live and the window ran out, which
-    # is the same shape as any other window-elapsed end.
     assert run.measurements["coexistence_ms"] > 0.0
     assert "mode_determination" in run.measurements
     assert _anchored(capsys.readouterr().out, _P8_COEXISTENCE_PREFIX) == ["measured"]
-    # The transient is still recorded, and still says why it bought no retry.
     records = _retry_records(run, "coexistence_poll")
     assert [r["retried"] for r in records] == [False]
     assert records[0]["not_retried_because"] == "window_already_closed"
-    # ...and it is NOT a stop, so nothing claims the window was cut short.
     assert [s for s in run.skips if s["what"] == "measurements.coexistence_ms"] == []
 
 
 def test_a_second_consecutive_transient_names_that_reason_instead(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """The other refusal. Both used to carry only ``retried: false``, and a
-    reader counting unhealthy links cannot add them together: one means the
-    broker failed twice, the other means it failed once, late."""
+    """The other refusal. Both used to carry only ``retried: false``, and a"""
     _install(monkeypatch, _Wire(poll_script=["both", "conn", "conn", "new_only"]))
 
     run = probe_p8(_args())
@@ -1543,9 +1195,7 @@ def test_a_second_consecutive_transient_names_that_reason_instead(
 def test_a_rate_limited_stop_records_the_envelope_it_points_at(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """Review F5: the narration told the reader to see ``retry_evidence``,
-    which ``retry_once`` writes only for TRANSIENTS — so the one stop with no
-    record was the one pointing at it."""
+    """Review F5: the narration told the reader to see ``retry_evidence``,"""
     _install(monkeypatch, _Wire(poll_script=["both", "egw00201", "new_only"]))
 
     run = probe_p8(_args())
@@ -1561,9 +1211,7 @@ def test_a_rate_limited_stop_records_the_envelope_it_points_at(
 def test_a_rate_limited_cleanup_walk_keeps_the_envelope_too(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """Same regression on the other surface: an HTTP-200 ``EGW00201`` body
-    used to land in the ``rt_cd!=0`` branch with its fields recorded, and now
-    lands in the classified branch, which kept only ``status_kind``."""
+    """Same regression on the other surface: an HTTP-200 ``EGW00201`` body"""
     _install(
         monkeypatch,
         _Wire(poll_script=["both", "new_only"], cleanup_script=["egw00201"]),
@@ -1585,10 +1233,7 @@ def test_a_rate_limited_cleanup_walk_keeps_the_envelope_too(
 def test_a_numeric_zero_rt_cd_is_a_healthy_answer(
     monkeypatch: pytest.MonkeyPatch, futures_env: None
 ) -> None:
-    """Review F6: ``str(x or "")`` turns the JSON NUMBER ``0`` into ``""``,
-    so a successful page read as a refusal — and a whole window of them would
-    have stopped the series as ``query_unanswered``. ``call_evidence`` in this
-    same PR documents the trap; the poll loop had re-introduced it."""
+    """Review F6: ``str(x or "")`` turns the JSON NUMBER ``0`` into ``""``,"""
     _install(monkeypatch, _Wire(poll_script=["both", "rt_cd_zero", "new_only"]))
 
     run = probe_p8(_args())
@@ -1599,24 +1244,16 @@ def test_a_numeric_zero_rt_cd_is_a_healthy_answer(
     assert "coexistence_ms" in run.measurements
 
 
-# ---------------------------------------------------------------------------
-# The runner template
-# ---------------------------------------------------------------------------
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNNERS_DIR = _REPO_ROOT / "tools" / "broker_probes" / "runners"
 _RUNNER = _RUNNERS_DIR / "run_p8.sh"
 _RUNNER_COMMON = _RUNNERS_DIR / "_common.sh"
 
-#: Sourcing the credential file would print this. A guard that fires "before
-#: any credential sourcing" is only worth the words if its absence is
-#: observable.
 _CREDENTIAL_SENTINEL = "CREDENTIAL_FILE_WAS_SOURCED"
 
 
 def test_runner_template_is_tracked_and_executable() -> None:
-    """The 2026-09-28 runner was neither, and it is gone: the only record of
-    what it decided is one wrong sentence in the campaign README."""
+    """The 2026-09-28 runner was neither, and it is gone: the only record of"""
     assert _RUNNER.is_file(), _RUNNER
     assert os.access(_RUNNER, os.X_OK), f"{_RUNNER} is not executable"
 
@@ -1629,18 +1266,7 @@ def test_runner_template_parses() -> None:
 
 
 def test_runner_template_passes_shellcheck() -> None:
-    """On CI a missing shellcheck is a FAILURE, not a skip — and each file is
-    checked ON ITS OWN.
-
-    Two lessons, both paid for. The P-CA template's lint gate skipped on every
-    developer host and its first real run was the CI job that failed the
-    branch (plan §7.10). Then this gate passed locally on three files handed
-    to shellcheck TOGETHER and failed on CI, which checked one: with several
-    inputs shellcheck resolved a variable written in a runner and read in
-    ``_common.sh``, and with one input it reported SC2034. A gate whose
-    verdict depends on how many files you hand it is not a gate, so each file
-    is checked alone AND the set is checked together.
-    """
+    """On CI a missing shellcheck is a FAILURE, not a skip — and each file is"""
     shellcheck = shutil.which("shellcheck")
     if shellcheck is None:
         if os.environ.get("CI"):
@@ -1661,9 +1287,7 @@ def test_runner_template_passes_shellcheck() -> None:
 
 
 def test_runner_template_carries_no_instance_defaults() -> None:
-    """Every ``P8_*`` instance value is read WITHOUT a ``:-`` default. A
-    default is how one trial's symbol, window or fingerprint silently becomes
-    the next trial's."""
+    """Every ``P8_*`` instance value is read WITHOUT a ``:-`` default. A"""
     text = _RUNNER.read_text(encoding="utf-8")
     pairs = set(re.findall(r"\$\{(P8_[A-Z_]+):-([^}]*)\}", text))
     assert {name for name, default in pairs if default not in ("", "0")} == set(), pairs
@@ -1676,8 +1300,7 @@ def test_runner_template_carries_no_instance_defaults() -> None:
 
 
 def test_runner_template_never_removes_itself() -> None:
-    """The 2026-09-30 P-CA runner self-deleted after its first run, so attempts
-    3 and 4 went out through a hand-made copy."""
+    """The 2026-09-30 P-CA runner self-deleted after its first run, so attempts"""
     text = _RUNNER.read_text(encoding="utf-8")
     destructive = re.search(
         r"(?<![\w-])(rm|unlink|mv|shred|truncate)(?![\w-])|:\s*>[^>]", text
@@ -1697,26 +1320,18 @@ def test_the_runner_expects_the_policy_version_the_probe_reports() -> None:
 
 
 def test_every_token_the_runner_branches_on_is_in_the_readme() -> None:
-    """Review F7. The README is the documented recipe, and a token an
-    operator meets in a log but cannot find in the contract table leaves them
-    without the one post-condition the runner's own warning line says must be
-    read before P-8 runs again."""
+    """Review F7. The README is the documented recipe, and a token an"""
     runner = _RUNNER.read_text(encoding="utf-8")
     readme = (_RUNNERS_DIR / "README.md").read_text(encoding="utf-8")
-    # The case arms of the STOP classifier, as the runner actually spells them.
     arms = set(re.findall(r"^  ([a-z_]+(?::\*)?)\)$", runner, re.M))
     assert "none" in arms and len(arms) >= 5, arms
 
-    # The CONTRACT block, not just the prose table below it. That is where
-    # the omission was: the table had the two new tokens and the
-    # `P8_STOP=<...>` fence an operator reads first did not.
     fence = re.search(r"P8_STOP=<(.+?)>", readme, re.S)
     assert fence, "the README no longer states the P8_STOP contract"
     documented = {t.strip() for t in fence.group(1).replace("\n", " ").split("|")}
 
     for arm in arms:
         if arm.endswith(":*"):
-            # A wildcard arm is documented by its concrete tokens.
             prefix = arm.removesuffix("*")
             assert any(d.startswith(prefix) for d in documented), (arm, documented)
             continue
@@ -1726,12 +1341,7 @@ def test_every_token_the_runner_branches_on_is_in_the_readme() -> None:
 
 
 def test_the_liveness_walk_hands_back_rows_not_just_numbers() -> None:
-    """Review F8. ``_cancel_one`` annotated this ``set[str] | None`` after it
-    became a mapping, and the cleanup path that reads it runs inside
-    ``probe_p8``'s ``finally`` — the worst place for a TypeError. The
-    annotation is checked by mypy; the CONTRACT it describes is checked here,
-    because a future caller doing set arithmetic on it is what the stale
-    annotation invited."""
+    """Review F8. ``_cancel_one`` annotated this ``set[str] | None`` after it"""
     import inspect
 
     sig = inspect.signature(probes_order._live_odno_keys)
@@ -1741,16 +1351,14 @@ def test_the_liveness_walk_hands_back_rows_not_just_numbers() -> None:
 
 
 def test_the_runner_reads_the_prefixes_the_probe_prints() -> None:
-    """The contract is two anchored lines. If the probe renames one, this
-    breaks here rather than in a cron slot at 09:05 KST."""
+    """The contract is two anchored lines. If the probe renames one, this"""
     text = _RUNNER.read_text(encoding="utf-8")
     assert f"s/^{_P8_STOP_PREFIX}//p" in text
     assert f"s/^{_P8_COEXISTENCE_PREFIX}//p" in text
 
 
 def _runner_repo(tmp_path: Path, *, detached: bool, dirty: bool) -> Path:
-    """A throwaway git checkout holding a copy of the template, so the guards
-    run against a real ``git`` rather than a stub."""
+    """A throwaway git checkout holding a copy of the template, so the guards"""
     repo = tmp_path / "repo"
     (repo / "tools" / "broker_probes" / "runners").mkdir(parents=True)
     shutil.copy2(_RUNNER, repo / "tools/broker_probes/runners/run_p8.sh")
@@ -1832,10 +1440,7 @@ def _run_runner(repo: Path, tmp_path: Path, **extra: str) -> Any:
 
 
 def test_runner_aborts_on_a_checkout_that_is_not_detached(tmp_path: Path) -> None:
-    """#793: a shared checkout lets a parallel lane move the branch under a
-    running probe, and ``repo_commit`` is then stamped with a non-main commit.
-    The 2026-09-28 run got this right and the artifact says so; the guard is
-    here so the next one cannot get it wrong."""
+    """#793: a shared checkout lets a parallel lane move the branch under a"""
     result = _run_runner(_runner_repo(tmp_path, detached=False, dirty=False), tmp_path)
 
     assert result.returncode != 0
@@ -1875,8 +1480,7 @@ def test_runner_aborts_when_head_is_not_an_ancestor_of_origin_main(
 
 
 def test_runner_accepts_a_clean_detached_ancestor_checkout(tmp_path: Path) -> None:
-    """The guards must PASS on the shape the README prescribes, or they are
-    just a way of never running."""
+    """The guards must PASS on the shape the README prescribes, or they are"""
     repo = _runner_repo(tmp_path, detached=True, dirty=False)
     _publish_origin_main(repo)
 
@@ -1891,13 +1495,10 @@ def test_runner_accepts_a_clean_detached_ancestor_checkout(tmp_path: Path) -> No
 def test_runner_refuses_a_trial_count_that_is_not_a_positive_integer(
     tmp_path: Path, bad: str
 ) -> None:
-    """``[ "$trial" -le "$P8_TRIALS" ]`` on a non-number is a shell diagnostic
-    mid-series, not a reason."""
+    """``[ "$trial" -le "$P8_TRIALS" ]`` on a non-number is a shell diagnostic"""
     repo = _runner_repo(tmp_path, detached=True, dirty=False)
     _publish_origin_main(repo)
 
-    # P8_PYTHON only so require_env gets past it: the shape check below runs
-    # before the interpreter is ever used.
     result = _run_runner(repo, tmp_path, P8_TRIALS=bad, P8_PYTHON="/bin/true")
 
     assert result.returncode != 0
@@ -1905,23 +1506,8 @@ def test_runner_refuses_a_trial_count_that_is_not_a_positive_integer(
     assert _CREDENTIAL_SENTINEL not in result.stdout + result.stderr
 
 
-# ---------------------------------------------------------------------------
-# The runner's STOP rule, end to end
-# ---------------------------------------------------------------------------
-
-
 def _fake_python(tmp_path: Path, *, script: list[str], dump: Path) -> Path:
-    """A stand-in interpreter answering the three calls the runner makes.
-
-    It lives OUTSIDE the checkout, like the real one: a freshly added detached
-    worktree has no ``.venv``, and installing one into it is forbidden, so the
-    runner takes ``P8_PYTHON`` and proves separately that the code it loads is
-    this checkout's.
-
-    ``script`` has one entry per probe invocation, ``"<rc>|<stdout lines, ~
-    separated>"``; the last entry repeats. Each invocation also drops an
-    artifact in ``FAKE_RESULTS_DIR``, so the copy path is exercised.
-    """
+    """A stand-in interpreter answering the three calls the runner makes."""
     script_file = tmp_path / "probe-script.txt"
     script_file.write_text("\n".join(script) + "\n", encoding="utf-8")
     counter = tmp_path / "probe-count.txt"
@@ -1985,10 +1571,7 @@ def _run_series(
     with_crontab: bool = False,
     **extra: str,
 ) -> tuple[Any, list[list[str]], Path]:
-    """Drive the whole template against a fake python.
-
-    Returns ``(result, one argv list per probe invocation, evidence dir)``.
-    """
+    """Drive the whole template against a fake python."""
     repo = _runner_repo(tmp_path, detached=True, dirty=False)
     _publish_origin_main(repo)
     dump = tmp_path / "probe-argv.txt"
@@ -1998,8 +1581,6 @@ def _run_series(
 
     import hashlib
 
-    # AFTER _base_env, which writes a sentinel-only credential file at the
-    # same path: this one has to win.
     env = _base_env(tmp_path, repo)
     env_file = tmp_path / "creds.env"
     env_file.write_text(
@@ -2061,14 +1642,7 @@ def _verdict(stdout: str) -> str:
 def test_a_transport_stop_does_not_cancel_the_rest_of_the_series(
     tmp_path: Path,
 ) -> None:
-    """THE regression. 2026-09-28: trial 2 died on a ConnectionError mid-poll
-    and the runner wrote
-
-        VERDICT: STOP: P-8 2/5 오류 1건(브로커 거부 포함) — 1/5 성공 후 중단
-
-    Trials 3, 4 and 5 never ran, and ``replace_semantics.mode`` still has no
-    N>=5. Nothing had been rejected.
-    """
+    """THE regression. 2026-09-28: trial 2 died on a ConnectionError mid-poll"""
     result, invocations, evidence = _run_series(
         tmp_path, script=[_OK, _TRANSPORT, _OK, _OK, _OK]
     )
@@ -2087,8 +1661,7 @@ def test_a_transport_stop_does_not_cancel_the_rest_of_the_series(
 def test_the_verdict_never_adds_a_transport_stop_to_a_rejection(
     tmp_path: Path,
 ) -> None:
-    """The counts are separate fields on one line, so "오류 1건(브로커 거부
-    포함)" cannot be written: there is no field that holds both."""
+    """The counts are separate fields on one line, so "오류 1건(브로커 거부"""
     result, _invocations, _evidence = _run_series(
         tmp_path, script=[_TRANSPORT, _OK, _OK, _OK, _OK]
     )
@@ -2112,8 +1685,7 @@ def test_a_ledger_throttle_stop_also_leaves_the_series_running(
 
 
 def test_a_broker_rejection_still_stops_the_series_at_once(tmp_path: Path) -> None:
-    """2026-09-11 and 2026-09-16: the account could not place the order at
-    all, and every remaining trial would have been refused identically."""
+    """2026-09-11 and 2026-09-16: the account could not place the order at"""
     result, invocations, _evidence = _run_series(
         tmp_path, script=[_OK, _REJECTED, _OK, _OK, _OK]
     )
@@ -2127,8 +1699,7 @@ def test_a_broker_rejection_still_stops_the_series_at_once(tmp_path: Path) -> No
 
 
 def test_a_rate_limit_stop_still_ends_the_series(tmp_path: Path) -> None:
-    """Our own call rate. "Stop, never retry" is an account-protection rule
-    and this PR does not widen it."""
+    """Our own call rate. "Stop, never retry" is an account-protection rule"""
     result, invocations, _evidence = _run_series(
         tmp_path, script=[_OK, _RATE_LIMITED, _OK, _OK, _OK]
     )
@@ -2141,9 +1712,7 @@ def test_a_rate_limit_stop_still_ends_the_series(tmp_path: Path) -> None:
 def test_the_cancel_opt_in_reaches_the_probe_only_when_asked(
     tmp_path: Path,
 ) -> None:
-    """Review F5. The flag authorises cancelling a live row the probe never
-    saw placed, on an account the whole campaign shares, so it must be the
-    operator's decision and not a default."""
+    """Review F5. The flag authorises cancelling a live row the probe never"""
     off = tmp_path / "off"
     off.mkdir()
     _result, invocations, _e = _run_series(off, script=[_OK], P8_TRIALS="1")
@@ -2158,10 +1727,7 @@ def test_the_cancel_opt_in_reaches_the_probe_only_when_asked(
 
 
 def test_an_order_state_unknown_stop_ends_the_series(tmp_path: Path) -> None:
-    """Review F1 at the series level. A submit or amend that never answered
-    may be resting under an ODNO nobody saw; the one thing this runner must
-    not do is place another order on top of it. Counted in its own field — it
-    is not a broker rejection and not a transport stop."""
+    """Review F1 at the series level. A submit or amend that never answered"""
     result, invocations, _evidence = _run_series(
         tmp_path, script=[_OK, _ORDER_UNKNOWN, _OK, _OK, _OK]
     )
@@ -2176,9 +1742,7 @@ def test_an_order_state_unknown_stop_ends_the_series(tmp_path: Path) -> None:
 
 
 def test_a_transport_stop_is_still_the_one_that_continues(tmp_path: Path) -> None:
-    """The split must not have swallowed the thing this PR is for: a POLL
-    transport stop still leaves the series running, which is the 2026-09-28
-    regression."""
+    """The split must not have swallowed the thing this PR is for: a POLL"""
     result, invocations, _evidence = _run_series(
         tmp_path, script=[_OK, _TRANSPORT, _OK, _OK, _OK]
     )
@@ -2194,10 +1758,7 @@ def test_a_transport_stop_is_still_the_one_that_continues(tmp_path: Path) -> Non
 def test_runner_refuses_an_inter_trial_gap_that_is_not_a_number(
     tmp_path: Path, bad: str
 ) -> None:
-    """Review F7. This value reaches ``sleep``, and ``set -u`` without
-    ``set -e`` means a failed sleep is a warning on stderr and then trial N+1
-    fires back to back against the same account — the pacing hazard the gap
-    exists for. Every other shell-consumed numeric is already validated."""
+    """Review F7. This value reaches ``sleep``, and ``set -u`` without"""
     repo = _runner_repo(tmp_path, detached=True, dirty=False)
     _publish_origin_main(repo)
 
@@ -2210,22 +1771,18 @@ def test_runner_refuses_an_inter_trial_gap_that_is_not_a_number(
 
 @pytest.mark.parametrize("good", ["0", "1", "1.5", "0.25"])
 def test_runner_accepts_a_plain_inter_trial_gap(tmp_path: Path, good: str) -> None:
-    """The guard must pass the values the README prescribes, or it is just a
-    way of never running."""
+    """The guard must pass the values the README prescribes, or it is just a"""
     repo = _runner_repo(tmp_path, detached=True, dirty=False)
     _publish_origin_main(repo)
 
     result = _run_runner(repo, tmp_path, P8_INTER_TRIAL_S=good)
 
-    # Past the numeric gate, stopped at the next one.
     assert "ABORT: required env P8_PYTHON is unset" in result.stdout
     assert "P8_INTER_TRIAL_S must be" not in result.stdout
 
 
 def test_an_unanswered_poll_series_ends_the_series(tmp_path: Path) -> None:
-    """A surface that answered nothing for a whole window is not one to keep
-    ordering against, and it is counted in its own field — not as a broker
-    rejection and not as a transport stop."""
+    """A surface that answered nothing for a whole window is not one to keep"""
     result, invocations, _evidence = _run_series(
         tmp_path, script=[_OK, _UNANSWERED, _OK, _OK, _OK]
     )
@@ -2239,8 +1796,7 @@ def test_an_unanswered_poll_series_ends_the_series(tmp_path: Path) -> None:
 
 
 def test_transport_stops_are_budgeted_rather_than_unlimited(tmp_path: Path) -> None:
-    """A link that keeps dropping is a reason to come back later. The budget
-    is an env value with no default, so an operator decides it per slot."""
+    """A link that keeps dropping is a reason to come back later. The budget"""
     result, invocations, _evidence = _run_series(
         tmp_path,
         script=[_TRANSPORT, _TRANSPORT, _TRANSPORT, _OK, _OK],
@@ -2265,9 +1821,7 @@ def test_a_zero_budget_stops_on_the_first_transport_stop(tmp_path: Path) -> None
 
 
 def test_a_probe_that_exits_non_zero_stops_the_series(tmp_path: Path) -> None:
-    """A clean token from a process that then DIED is not a clean answer: the
-    probe can print its verdict and still fail writing the artifact, and an
-    order may be unaccounted for. Same rule run_p_ca.sh applies to HELD=."""
+    """A clean token from a process that then DIED is not a clean answer: the"""
     result, invocations, _evidence = _run_series(
         tmp_path, script=["5|P8_STOP=none~P8_COEXISTENCE=measured", _OK]
     )
@@ -2279,9 +1833,7 @@ def test_a_probe_that_exits_non_zero_stops_the_series(tmp_path: Path) -> None:
 
 
 def test_a_missing_verdict_line_stops_the_series(tmp_path: Path) -> None:
-    """Silence is not a state. That is what a probe which crashed before its
-    ``finally`` looks like from out here, and it is the shape the 09-28 runner
-    had to guess at."""
+    """Silence is not a state. That is what a probe which crashed before its"""
     result, invocations, _evidence = _run_series(
         tmp_path, script=["0|(no anchored line at all)", _OK]
     )
@@ -2293,8 +1845,7 @@ def test_a_missing_verdict_line_stops_the_series(tmp_path: Path) -> None:
 def test_a_completed_trial_that_measured_nothing_is_counted_as_neither(
     tmp_path: Path,
 ) -> None:
-    """``none`` plus ``not_measured`` is neither a stop nor a sample. Counting
-    it as a sample is how an N>=5 gate gets satisfied by four trials."""
+    """``none`` plus ``not_measured`` is neither a stop nor a sample. Counting"""
     result, invocations, _evidence = _run_series(
         tmp_path,
         script=["0|P8_STOP=none~P8_COEXISTENCE=not_measured", _OK, _OK, _OK, _OK],
@@ -2306,8 +1857,7 @@ def test_a_completed_trial_that_measured_nothing_is_counted_as_neither(
 
 
 def test_the_series_reports_whether_n_is_met(tmp_path: Path) -> None:
-    """``mode_determination`` needs N>=5 AGREEING trials, and the runner is
-    the only place that knows how many this slot produced."""
+    """``mode_determination`` needs N>=5 AGREEING trials, and the runner is"""
     met_dir = tmp_path / "met"
     met_dir.mkdir()
     met, _i, _e = _run_series(met_dir, script=[_OK])
@@ -2336,9 +1886,7 @@ def test_the_probe_argv_carries_the_instance_values_as_single_words(
 
 
 def test_a_copy_that_fails_warns_instead_of_vanishing(tmp_path: Path) -> None:
-    """#831 F10, in P-8's shape: a copy that silently did nothing left the
-    evidence only in the gitignored results directory, with no line saying so
-    — and the next trial was told this one was already secured."""
+    """#831 F10, in P-8's shape: a copy that silently did nothing left the"""
     evidence = tmp_path / "locked"
     evidence.mkdir()
     evidence.chmod(0o500)
@@ -2352,7 +1900,6 @@ def test_a_copy_that_fails_warns_instead_of_vanishing(tmp_path: Path) -> None:
     finally:
         evidence.chmod(0o700)
 
-    # The series is NOT stopped by a copy failure — the measurement happened.
     assert len(invocations) == 2
     warns = [ln for ln in result.stdout.splitlines() if "could NOT copy" in ln]
     assert len(warns) == 2, result.stdout
@@ -2363,8 +1910,7 @@ def test_a_copy_that_fails_warns_instead_of_vanishing(tmp_path: Path) -> None:
 def test_runner_aborts_when_the_probe_reports_a_different_policy_version(
     tmp_path: Path,
 ) -> None:
-    """A mismatch means the runner was copied out of a different tree — the
-    2026-09-30 mistake — and an older probe prints no anchored line at all."""
+    """A mismatch means the runner was copied out of a different tree — the"""
     result, invocations, _evidence = _run_series(
         tmp_path, script=[_OK], policy="p-8-transient-policy/0"
     )
@@ -2386,8 +1932,7 @@ def test_runner_accepts_the_policy_version_the_probe_reports(tmp_path: Path) -> 
 def test_the_crontab_entry_is_retired_only_after_a_trial_has_run(
     tmp_path: Path,
 ) -> None:
-    """#825 round-3 review F1, in P-8's shape: retiring the schedule on a run
-    that never started a trial silently cancels the measurement."""
+    """#825 round-3 review F1, in P-8's shape: retiring the schedule on a run"""
     ran = tmp_path / "ran"
     ran.mkdir()
     seen = ran / "crontab-calls.txt"
@@ -2398,9 +1943,6 @@ def test_the_crontab_entry_is_retired_only_after_a_trial_has_run(
     assert "crontab entry matching 'run_p8_20261005' removed" in result.stdout
     assert seen.exists()
 
-    # Now an early ABORT — a key fingerprint that is not this credential
-    # set's, the 2026-09-23 INVALID_CHECK_ACNO shape. The schedule must
-    # survive it, so the next slot can retry.
     other = tmp_path / "second"
     other.mkdir()
     seen2 = other / "crontab-calls.txt"

@@ -1,19 +1,4 @@
-"""REAL-token probes — READ-ONLY BY CONSTRUCTION (N-16, N-18).
-
-These are the only probes in the package that touch the real
-(``openapi.koreainvestment.com``) host. They therefore carry a stricter guard
-than the mock probes:
-
-* Every request goes through :func:`~tools.broker_probes.common.assert_read_only_call`,
-  a three-way allowlist over (HTTP method, TR id, URL path). GET only.
-* :data:`ALLOWLIST` is the complete set of calls this module may ever make. It
-  contains no ``/trading/`` write path and no order TR. Adding one would require
-  editing this constant, which is a reviewable change.
-* There is no POST helper in this module. ``_get`` is the only transport.
-
-Operator approval is required before running either probe: they consume a real
-production credential. Neither places, amends nor cancels an order.
-"""
+"""REAL-token probes — READ-ONLY BY CONSTRUCTION (N-16, N-18)."""
 
 from __future__ import annotations
 
@@ -44,29 +29,14 @@ KST = ZoneInfo("Asia/Seoul")
 
 _PROGRAM_TRADE_PATH = "/uapi/domestic-stock/v1/quotations/comp-program-trade-daily"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
-#: Night futures balance path. The DAY-session sibling is ``inquire-balance``;
-#: the NIGHT TR ``CTFN6118R`` is served from a distinct ``inquire-ngt-balance``
-#: endpoint. Confirmed by the N-17 spec collation, item #16
-#: (``docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:60``): "선물 야간
-#: ``CTFN6118R``(실전 전용) ``/uapi/domestic-futureoption/v1/trading/inquire-ngt-balance``
-#: [국내선물-010]". The earlier wiring here pointed at the day path — a defect
-#: this constant corrects.
 _NIGHT_BALANCE_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-ngt-balance"
 _INDEX_CHART_PATH = "/uapi/overseas-price/v1/quotations/inquire-time-indexchartprice"
 
-# --- FHKST03030200 parameter values -----------------------------------------
-# Names come from collation #16-adjacent item #14 (:58); the VALUES below are the
-# official example wrapper's own Example block for ``inquire_time_indexchartprice``
-# (해외지수분봉조회 [v1_해외주식-031]). Nothing here is invented: market div code
-# "N" = 해외지수 (X = 환율, KX = 원화환율), hour class "0" = 정규장 (1 = 시간외),
-# past-data flag is a Y/N enumeration. ``SPX`` is the spec's own worked example
-# symbol and is therefore the only VERIFIED notation on this TR.
 _INDEX_MARKET_DIV_CODE = "N"
 _INDEX_HOUR_CLS_CODE = "0"
 _INDEX_PW_DATA_INCU_YN = "Y"
 _INDEX_CONTROL_SYMBOL = "SPX"
 
-#: Complete read-only allowlist. Any call not matching an entry is refused.
 ALLOWLIST: tuple[ReadOnlyCall, ...] = (
     ReadOnlyCall(
         "FHPPG04600001",
@@ -154,31 +124,8 @@ def _setup(
     return run, KISAuthManager(cfg, use_singleton=False), requests.Session()
 
 
-# ---------------------------------------------------------------------------
-# N-16 — night futures balance schema
-# ---------------------------------------------------------------------------
-
-
 def probe_n16(args: argparse.Namespace) -> ProbeRun:
-    """N-16 ``CTFN6118R`` night futures balance — one call, schema capture only.
-
-    Measures: the response schema (key lists of ``output1``/``output2``,
-    ``rt_cd``/``msg_cd``/``msg1``). No numeric bound.
-
-    Why REAL: mock serves no futures balance at all
-    (``shared/kis/client.py:1030-1032``), and the night TR family exists only in
-    the real namespace (``shared/execution/tr_ids.py:40-50`` has ``night_real``
-    with no ``night_mock`` counterpart — quirk Q-MIC-1).
-
-    Why it matters: ``config/kis/tr_ids.yaml`` carries zero balance TRs, so the
-    audit item in ``docs/runbooks/futures-legal-review.md`` cannot be satisfied
-    (plan §2:64-65). Editing ``tr_ids.yaml`` is a SEPARATE commit — this probe
-    only establishes the schema.
-
-    Session gating: the night session is 18:00-05:00 KST
-    (``config/market_schedule.yaml:29-33``). Outside it, the probe refuses to run
-    rather than record a possibly-empty response as the schema.
-    """
+    """N-16 ``CTFN6118R`` night futures balance — one call, schema capture only."""
     spec = get("N-16")
     run, auth, session = _setup(spec, args, asset="futures")
     if auth is None:
@@ -201,15 +148,6 @@ def probe_n16(args: argparse.Namespace) -> ProbeRun:
         session.close()
         return run
     try:
-        # Param set is the OFFICIAL one for this TR ([국내선물-010]
-        # examples_llm/domestic_futureoption/inquire_ngt_balance/inquire_ngt_balance.py),
-        # NOT the day-sibling's: the first real-credential run
-        # (N-16-20260729T132547Z) returned rt_cd=7 APMP0001 "증거금구분코드은(는)
-        # 필수입력 항목입니다" against the previous day-path mirror (SORT_SQN),
-        # which is itself an N-16 finding — the night TR requires MGNA_DVSN and
-        # EXCC_STAT_CD and does not document SORT_SQN. The two code values below
-        # are the official docstring's own example pair ("01:개시", "1:정산"),
-        # not invented.
         params = {
             "CANO": creds.cano,
             "ACNT_PRDT_CD": creds.acnt_prdt_cd,
@@ -266,22 +204,10 @@ def probe_n16(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-# ---------------------------------------------------------------------------
-# N-18 — real-token read-only trio
-# ---------------------------------------------------------------------------
-
-
 def _index_chart_leg(
     session: Any, auth: Any, run: ProbeRun, leg: str, symbol: str
 ) -> dict[str, Any]:
-    """One ``FHKST03030200`` call for N-18b. A failure IS the observation.
-
-    Never raises for a broker- or transport-level failure: the whole point of
-    the SOX legs is that the notation is UNVERIFIED, so a rejection code is the
-    finding, not an accident. A :class:`SafetyViolation` still propagates — that
-    would mean the allowlist refused the call, which is a harness defect and
-    must not be swallowed.
-    """
+    """One ``FHKST03030200`` call for N-18b. A failure IS the observation."""
     params = {
         "FID_COND_MRKT_DIV_CODE": _INDEX_MARKET_DIV_CODE,
         "FID_INPUT_ISCD": symbol,
@@ -319,34 +245,7 @@ def _index_chart_leg(
 
 
 def probe_n18(args: argparse.Namespace) -> ProbeRun:
-    """N-18 — the three residual REAL-token read-only calls. NO ORDERS.
-
-    Sub-probes:
-      * **N-18a** ``FHPPG04600001`` per-call row cap — how many daily
-        program-trade rows one call returns (drives backfill chunk sizing).
-        Method: request a range wide enough to exceed any plausible cap with
-        ``tr_cont`` unset, then count rows; the count IS the cap only if a
-        continuation flag came back, otherwise it is merely "fewer rows than the
-        cap existed in the range".
-      * **N-18b** ``FHKST03030200`` overseas-index minute chart — SOX symbol
-        notation. N-17 resolved the TR: collation item #14
-        (``docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:58``) confirms
-        해외지수분봉조회 [v1_해외주식-031] at
-        ``/uapi/overseas-price/v1/quotations/inquire-time-indexchartprice`` and
-        **refutes** the roadmap:395 candidate ``HHDFC55020100`` (absent from the
-        spec index). Method: one control leg with the spec's own worked-example
-        symbol ``SPX`` to prove the TR answers under this credential, then one
-        leg per SOX candidate spelling. The candidate spellings are UNVERIFIED —
-        the response codes are the finding either way, so no leg may raise.
-      * **N-18c** ``FHMIF10000000`` night-code response — does the day-session
-        current-price TR serve an 8-char night KOSPI200 code? An error or stale
-        day data is itself the finding (it confirms night quotes are WS-only).
-
-    Prior art: ``scripts/analysis/phase0_kis_probes.py`` runs the same three
-    calls. It is left untouched; it prints to stdout and produces no JSON
-    evidence artifact, which is why this harness re-implements them under the
-    read-only guard with a persisted artifact.
-    """
+    """N-18 — the three residual REAL-token read-only calls. NO ORDERS."""
     spec = get("N-18")
     run, auth, session = _setup(spec, args, asset="futures")
     if auth is None:
@@ -360,7 +259,6 @@ def probe_n18(args: argparse.Namespace) -> ProbeRun:
         )
         return run
     try:
-        # --- N-18a: program-trade daily row cap -------------------------
         end = date.today() - timedelta(days=1)
         start = end - timedelta(days=args.program_range_days)
         params = {
@@ -400,10 +298,6 @@ def probe_n18(args: argparse.Namespace) -> ProbeRun:
         )
         time.sleep(args.inter_call_s)
 
-        # --- N-18b: overseas-index TR + SOX symbol notation --------------
-        # TR id / path / parameter names: collation #14
-        # (docs/plans/2026-07-29-tos-p02-n17-spec-collation.md:58). Parameter
-        # VALUES: the spec's own worked example (see the _INDEX_* constants).
         run.measure("n18b_tr_id", "FHKST03030200")
         run.measure("n18b_path", _INDEX_CHART_PATH)
         run.measure(
@@ -463,7 +357,6 @@ def probe_n18(args: argparse.Namespace) -> ProbeRun:
             "(config/macro_sources.yaml:16), which needs no KIS call.",
         )
 
-        # --- N-18c: night-code current price ----------------------------
         for label, code in (("day", args.day_symbol), ("night", args.night_symbol)):
             if not code:
                 run.skip(f"N-18c {label} leg", "no symbol supplied")

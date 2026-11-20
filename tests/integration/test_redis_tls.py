@@ -1,34 +1,11 @@
-"""Integration tests for Redis TLS support.
-
-These tests validate that Redis connections work correctly in both TLS and non-TLS modes,
-ensuring backward compatibility while supporting encrypted connections.
-
-Run with: pytest tests/integration/test_redis_tls.py -v
-
-To skip these tests when Redis is unavailable:
-    pytest -m "not integration"
-"""
+"""Integration tests for Redis TLS support."""
 
 import os
 
 import pytest
 
-# This module used to carry its OWN copy of `live_infra_enabled`, reading the
-# same variable with the truthy set {"1", "true", "yes"} -- no "on" (#847).
-#
-# The concrete failing input is KIS_RUN_LIVE_INFRA_TESTS=on: tests/conftest.py
-# and tests/support/live_infra.py accept it, so the hermetic session is dropped
-# and real credentials load, while this module's own copy returned False and
-# skipped every TLS test here. Credentials loaded, nothing gained -- exactly the
-# failure tests/support/live_infra.py's docstring was written about, re-created
-# one directory over. Importing the shared helper is what keeps the two
-# readings of one variable from disagreeing again.
 from tests.support.live_infra import live_infra_enabled
 
-# Skip all tests in this module if Redis is not available.
-# serial: connects to a real Redis with short socket timeouts; under the
-# parallel pass, Redis contention from other xdist workers times the connection
-# out (run in the serial pass instead — see pyproject `serial` marker).
 pytestmark = [pytest.mark.integration, pytest.mark.serial]
 
 
@@ -53,7 +30,6 @@ def redis_available():
 @pytest.fixture
 def clean_env(monkeypatch):
     """Clean environment for TLS testing."""
-    # Remove TLS-related env vars to start fresh
     env_vars = [
         "REDIS_TLS_ENABLED",
         "REDIS_TLS_CERT_REQS",
@@ -72,21 +48,14 @@ def redis_url():
     return os.getenv("REDIS_URL", "redis://localhost:6379/1")
 
 
-# =============================================================================
-# SecretsManager Tests
-# =============================================================================
-
-
 def test_redis_url_non_tls_by_default(clean_env, monkeypatch):
     """Test that redis_url() returns redis:// scheme by default (TLS disabled)."""
     from shared.config.secrets import SecretsManager
 
-    # Clear cache to ensure fresh read
     SecretsManager.clear_cache()
 
     url = SecretsManager.redis_url()
 
-    # Should use redis:// scheme (not rediss://)
     assert url.startswith("redis://"), f"Expected redis:// scheme, got {url}"
     assert not url.startswith("rediss://"), "Should not use rediss:// by default"
 
@@ -100,7 +69,6 @@ def test_redis_url_tls_enabled(clean_env, monkeypatch):
 
     url = SecretsManager.redis_url()
 
-    # Should use rediss:// scheme
     assert url.startswith("rediss://"), f"Expected rediss:// scheme, got {url}"
 
 
@@ -185,11 +153,6 @@ def test_redis_url_domain_specific(clean_env, monkeypatch):
     assert system_url.endswith("/0"), "System should use DB 0"
 
 
-# =============================================================================
-# RedisClient Tests (shared/streaming/client.py)
-# =============================================================================
-
-
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 def test_redis_client_non_tls_connection(clean_env, monkeypatch):
     """Test RedisClient connects without TLS by default."""
@@ -200,16 +163,13 @@ def test_redis_client_non_tls_connection(clean_env, monkeypatch):
     monkeypatch.setenv("REDIS_PORT", os.getenv("REDIS_PORT", "6379"))
     monkeypatch.setenv("REDIS_DB", "1")
 
-    # Reset instance to force reconnection
     RedisClient.reset()
 
     try:
         client = RedisClient.get_client()
 
-        # Should connect successfully
         assert client.ping(), "Should connect to Redis without TLS"
 
-        # Verify connection parameters
         conn_kwargs = client.connection_pool.connection_kwargs
         assert conn_kwargs.get("ssl", False) is False, "SSL should not be enabled"
 
@@ -225,23 +185,17 @@ def test_redis_client_tls_settings_applied(clean_env, monkeypatch):
     from shared.streaming.client import RedisClient
 
     monkeypatch.setenv("REDIS_TLS_ENABLED", "true")
-    monkeypatch.setenv(
-        "REDIS_TLS_CERT_REQS", "none"
-    )  # Use "none" for testing without certs
+    monkeypatch.setenv("REDIS_TLS_CERT_REQS", "none")
     monkeypatch.setenv("REDIS_HOST", os.getenv("REDIS_HOST", "localhost"))
     monkeypatch.setenv("REDIS_PORT", os.getenv("REDIS_PORT", "6379"))
     monkeypatch.setenv("REDIS_DB", "1")
 
-    # Reset instance to force reconnection
     RedisClient.reset()
 
     try:
-        # This will fail if Redis doesn't support TLS, which is expected
-        # We're testing that the TLS settings are applied, not that connection succeeds
         try:
             client = RedisClient.get_client()
 
-            # If we get here, verify TLS settings were applied
             conn_kwargs = client.connection_pool.connection_kwargs
             assert conn_kwargs.get("ssl") is True, "SSL should be enabled"
             assert (
@@ -249,10 +203,7 @@ def test_redis_client_tls_settings_applied(clean_env, monkeypatch):
             ), "Should use CERT_NONE"
 
         except Exception as e:
-            # Connection may fail if Redis doesn't support TLS
-            # That's OK - we verified the configuration was attempted
             error_str = str(e).lower()
-            # These are expected errors when Redis doesn't support TLS
             if any(
                 kw in error_str
                 for kw in ("ssl", "certificate", "connection", "timeout", "timed out")
@@ -274,7 +225,7 @@ def test_redis_client_cert_reqs_mapping(clean_env, monkeypatch):
         ("none", ssl.CERT_NONE),
         ("optional", ssl.CERT_OPTIONAL),
         ("required", ssl.CERT_REQUIRED),
-        ("invalid", ssl.CERT_REQUIRED),  # Default to REQUIRED for invalid values
+        ("invalid", ssl.CERT_REQUIRED),
     ]
 
     for cert_reqs_str, expected_const in test_cases:
@@ -287,7 +238,6 @@ def test_redis_client_cert_reqs_mapping(clean_env, monkeypatch):
         RedisClient.reset()
 
         try:
-            # Try to create client and check configuration
             try:
                 client = RedisClient.get_client()
                 conn_kwargs = client.connection_pool.connection_kwargs
@@ -298,7 +248,6 @@ def test_redis_client_cert_reqs_mapping(clean_env, monkeypatch):
                 ), f"CERT_REQS={cert_reqs_str} should map to {expected_const}"
 
             except Exception as e:
-                # Connection may fail, that's OK - we're testing configuration
                 error_str = str(e).lower()
                 if any(
                     kw in error_str
@@ -310,17 +259,11 @@ def test_redis_client_cert_reqs_mapping(clean_env, monkeypatch):
                         "timed out",
                     )
                 ):
-                    # Expected when Redis doesn't support TLS
                     pass
                 else:
                     raise
         finally:
             RedisClient.close()
-
-
-# =============================================================================
-# Backward Compatibility Tests
-# =============================================================================
 
 
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
@@ -329,7 +272,6 @@ def test_backward_compatibility_no_env_vars(clean_env, monkeypatch):
     from shared.config.secrets import SecretsManager
     from shared.streaming.client import RedisClient
 
-    # Don't set any TLS env vars
     monkeypatch.setenv("REDIS_HOST", os.getenv("REDIS_HOST", "localhost"))
     monkeypatch.setenv("REDIS_PORT", os.getenv("REDIS_PORT", "6379"))
     monkeypatch.setenv("REDIS_DB", "1")
@@ -338,21 +280,14 @@ def test_backward_compatibility_no_env_vars(clean_env, monkeypatch):
     RedisClient.reset()
 
     try:
-        # SecretsManager should return non-TLS URL
         url = SecretsManager.redis_url()
         assert url.startswith("redis://"), "Should default to non-TLS"
 
-        # RedisClient should connect successfully
         client = RedisClient.get_client()
         assert client.ping(), "Should connect without TLS by default"
 
     finally:
         RedisClient.close()
-
-
-# =============================================================================
-# End-to-End Validation
-# =============================================================================
 
 
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
@@ -364,7 +299,6 @@ async def test_e2e_all_redis_clients_respect_tls_disabled(
     from shared.config.secrets import SecretsManager
     from shared.streaming.client import RedisClient
 
-    # Explicitly disable TLS
     monkeypatch.setenv("REDIS_TLS_ENABLED", "false")
     monkeypatch.setenv("REDIS_HOST", os.getenv("REDIS_HOST", "localhost"))
     monkeypatch.setenv("REDIS_PORT", os.getenv("REDIS_PORT", "6379"))
@@ -374,11 +308,9 @@ async def test_e2e_all_redis_clients_respect_tls_disabled(
     RedisClient.reset()
 
     try:
-        # 1. SecretsManager should return non-TLS URL
         url = SecretsManager.redis_url()
         assert url.startswith("redis://"), "URL should use redis:// scheme"
 
-        # 2. RedisClient should connect
         client = RedisClient.get_client()
         assert client.ping(), "RedisClient should connect"
         client.set("test-key", "test-value")
@@ -394,7 +326,6 @@ async def test_e2e_tls_configuration_consistency(clean_env, monkeypatch, redis_u
     """End-to-end test: TLS configuration is consistent across all components."""
     from shared.config.secrets import SecretsManager
 
-    # Enable TLS
     monkeypatch.setenv("REDIS_TLS_ENABLED", "true")
     monkeypatch.setenv("REDIS_TLS_CERT_REQS", "none")
     monkeypatch.setenv("REDIS_HOST", os.getenv("REDIS_HOST", "localhost"))
@@ -402,17 +333,13 @@ async def test_e2e_tls_configuration_consistency(clean_env, monkeypatch, redis_u
 
     SecretsManager.clear_cache()
 
-    # 1. SecretsManager should return TLS URL
     url = SecretsManager.redis_url()
     assert url.startswith("rediss://"), "URL should use rediss:// scheme"
 
-    # 2. All domains should get TLS URLs
     stock_url = SecretsManager.redis_url("stock")
     futures_url = SecretsManager.redis_url("futures")
 
     assert stock_url.startswith("rediss://"), "Stock URL should use TLS"
     assert futures_url.startswith("rediss://"), "Futures URL should use TLS"
 
-    # 3. Components should attempt TLS connection (may fail if Redis doesn't support it)
-    # That's OK - we're verifying configuration consistency, not connection success
     pass

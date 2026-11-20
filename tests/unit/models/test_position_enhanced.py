@@ -22,10 +22,8 @@ def test_position_state_transitions():
 
     assert pos.state == PositionState.SURVIVAL
 
-    # Simulate price increase to trigger breakeven
-    pos.update_price(59200.0)  # +2.07%
+    pos.update_price(59200.0)
 
-    # State should transition
     assert pos.profit_rate > 0.02
 
 
@@ -68,7 +66,7 @@ def test_position_highest_price_tracking():
 
     pos.update_price(59000.0)
     pos.update_price(60000.0)
-    pos.update_price(59500.0)  # Drops but highest should stay
+    pos.update_price(59500.0)
 
     assert pos.highest_price == 60000.0
 
@@ -88,7 +86,7 @@ def test_position_short_profit_calculation():
         strategy="test",
     )
 
-    pos.update_price(57000.0)  # Price dropped = profit for short
+    pos.update_price(57000.0)
 
     assert pos.current_price == 57000.0
     assert pos.profit_rate == pytest.approx(0.01724, rel=0.01)

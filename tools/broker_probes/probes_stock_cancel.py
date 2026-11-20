@@ -1,61 +1,4 @@
-"""P-SC — 주식 MOCK 취소 행 모양과 늦은 체결 관측 (#948 순서 1, #980).
-
-What is unmeasured, and why it blocks
--------------------------------------
-#939 (PR-3b) left the stock cancel path fail-closed: the fill observer records
-``FILL_OBSERVER_CANCEL_UNSUPPORTED`` once and leaves the reservation standing,
-because nobody knows what a cancel LOOKS LIKE on the query surface. The broker
-profile says so in as many words — ``capabilities.replace_semantics._kis
-.replace_probe_2026_07_31.orgn_odno_wire_form.reading``:
-
-    ⚠ 정정으로 생성된 행에서 이 필드가 실제로 원주문 ODNO 를 담는지는
-    **확인하지 않았다** (P-8 은 조회 행을 아티팩트에 남기지 않았다) — 추정 금지.
-
-Until that is measured, #948 step 2 (the observer's cancel classification and
-the reconciler's non-execution MATCHED condition) and #980 (a cancelled
-remainder after a partial entry fill) cannot be built without guessing. This
-probe measures it and nothing else: it writes no capability value and proposes
-no bound.
-
-What it establishes
--------------------
-Per trial, from the 주식일별주문체결조회 rows (``VTTC0081R``) read verbatim
-before the cancel and repeatedly after it:
-
-* **cancel_shape** — one of :data:`_SHAPE_ORIGINAL_FLAGGED`,
-  :data:`_SHAPE_SEPARATE_ROW`, :data:`_SHAPE_BOTH`, :data:`_SHAPE_NONE` or
-  :data:`_SHAPE_UNDETERMINED`. The last two are distinct: "the surface answered
-  and showed neither" is an observation, "the surface did not answer" is not.
-* **orgn_odno_wire_form** on a row the cancel produced, if any — the field the
-  profile says is unverified.
-* **late_fill_after_cancel_ack** — whether 총체결수량 grew after the cancel was
-  acknowledged, over :attr:`Observation.cancel_window_s`. A window that shows
-  none records that it saw none, never that none can happen.
-
-What it does NOT establish
---------------------------
-One 모의투자 account, one symbol, one session. Mock is not 실전
-(§6.2 / ADR-002-004 §13.14), and an absence inside a 60 s window is not proof
-of non-existence (VP-002:756, the same rule ``B_broker_query_consistency``
-already carries).
-
-Safety model
-------------
-Mock-only in CODE, not in a runner: every call goes through
-``MockTradingClient``, whose single transport asserts
-:func:`~tools.broker_probes.common.assert_mock_host` and whose trading calls
-assert :func:`~tools.broker_probes.common.assert_mock_trading_tr`. On top of
-that this module refuses before the first socket when the environment names a
-REAL market (:func:`assert_mock_only_env`), when the account is not flat
-(:func:`assert_flat_start`), when the clock is outside the configured KRX
-window or the day is not a trading day (:func:`assert_session_window`), and
-when the order-call budget is spent (:class:`OrderBudget`). The cleanup runs on
-every exit path and records its own outcome.
-
-Every limit — pacing, order budget, quantity cap, window, observation length —
-comes from :data:`DEFAULT_CONFIG_PATH` with **no defaults**; a missing key is a
-refusal.
-"""
+"""P-SC — 주식 MOCK 취소 행 모양과 늦은 체결 관측 (#948 순서 1, #980)."""
 
 from __future__ import annotations
 
@@ -103,27 +46,14 @@ from tools.broker_probes.registry import get
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: Where the limits live. See the file's own header for why they are YAML.
 DEFAULT_CONFIG_PATH = (
     _REPO_ROOT / "config" / "broker_probes" / "stock_cancel_probe.yaml"
 )
 
-#: Handshake with the tracked runner template ``runners/run_p_sc.sh``, read the
-#: same way ``probes_order.POLICY_VERSION`` is: the runner imports this module
-#: and compares, so a runner copied out of another tree aborts with a reason
-#: instead of mis-reading an older probe's output.
-#:
-#: ``/1`` is the first contract: P-SC prints the anchored :data:`_STOP_PREFIX`,
-#: :data:`_SHAPE_PREFIX` and :data:`_FLAT_PREFIX` lines on every path it can
-#: leave by, and classifies a lost order POST as
-#: :data:`_STOP_ORDER_STATE_UNKNOWN` rather than letting the exception escape.
 POLICY_VERSION = "p-sc-cancel-shape/1"
 
-#: The config schema this module reads. A file declaring anything else is
-#: refused rather than partially understood.
 SCHEMA_VERSION = 1
 
-# --- anchored output lines the runner parses --------------------------------
 _STOP_PREFIX = "PSC_STOP="
 _SHAPE_PREFIX = "PSC_CANCEL_SHAPE="
 _FLAT_PREFIX = "PSC_FLAT_AT_END="
@@ -134,38 +64,16 @@ _STOP_REJECTED = "rejected"
 _STOP_RATE_LIMITED = "rate_limited"
 _STOP_ORDER_STATE_UNKNOWN = "order_state_unknown"
 _STOP_QUERY_UNANSWERED = "query_unanswered"
-#: The cancel was ACCEPTED and the order was never seen to stop working. The
-#: shape measurement may still be complete — this says only that the account
-#: is not in a state another order may be added to.
 _STOP_CANCEL_NOT_CONFIRMED = "cancel_not_confirmed"
-#: The cancel could not even be BUILT — the accept response carried no
-#: ``KRX_FWDG_ORD_ORGNO``, which ``order_rvsecncl`` declares [필수]. An order is
-#: resting that this probe cannot cancel.
 _STOP_CANCEL_NOT_SENDABLE = "cancel_not_sendable"
-#: A :class:`~tools.broker_probes.common.ProbeError` or a lost GET after the
-#: first accepted order. Recorded ON the artifact instead of replacing it.
 _STOP_PROBE_ERROR = "probe_error"
 
-# --- the thing being measured ----------------------------------------------
-#: The cancel appeared as a flag on the ORIGINAL row (``cncl_yn='Y'``), and no
-#: separate row pointed at it through ``orgn_odno``.
 _SHAPE_ORIGINAL_FLAGGED = "ORIGINAL_ROW_FLAGGED"
-#: A SEPARATE row appeared whose ``orgn_odno`` canonicalises to the original
-#: order's number, and the original row itself was not flagged.
 _SHAPE_SEPARATE_ROW = "SEPARATE_ROW_WITH_ORGN_ODNO"
-#: Both of the above.
 _SHAPE_BOTH = "BOTH"
-#: The surface ANSWERED (``rt_cd=0``) throughout and showed neither.
 _SHAPE_NONE = "NEITHER_OBSERVED"
-#: The surface never answered, or answered only before the cancel. Not the same
-#: as :data:`_SHAPE_NONE`, and the difference is the whole point: #948 cannot be
-#: built on "we did not see it" read as "it does not happen".
 _SHAPE_UNDETERMINED = "UNDETERMINED"
 
-#: How a flat-account or open-order read ended. The two unhealthy ones are the
-#: shared constants, not re-spellings: ``classify_answer`` returns those exact
-#: strings, and a second spelling here is a second place to get the precedence
-#: wrong (the #825 F4 defect).
 _READ_OK = "OK"
 _READ_REFUSED = "REFUSED"
 _READ_RATE_LIMITED = STATUS_RATE_LIMITED
@@ -173,18 +81,13 @@ _READ_TRANSIENT = STATUS_TRANSIENT
 _READ_CAPPED = "PAGE_CAP"
 _READ_TRUNCATED = "PAGE_ROW_CAP"
 
-#: Read statuses a caller may draw a conclusion FROM. Anything else means the
-#: surface did not answer, and absence on it establishes nothing.
 _READ_ANSWERED = (_READ_OK, _READ_TRUNCATED)
 
-#: How the trial-B partial-fill attempt turned out. "Not producible on mock" is
-#: a finding, so each way of not producing one is named rather than collapsed.
 _PARTIAL_OBSERVED = "PARTIAL_FILL_OBSERVED"
 _PARTIAL_FILLED_FULLY = "NOT_PRODUCIBLE__FILLED_FULLY"
 _PARTIAL_NO_FILL = "NOT_PRODUCIBLE__NO_FILL"
 _PARTIAL_UNDETERMINED = "NOT_PRODUCIBLE__FILL_UNDETERMINED"
 
-#: How the cleanup ended. Mirrors ``probes_order``'s cleanup vocabulary.
 _CLEAN_FLAT = "FLAT"
 _CLEAN_NOTHING_TO_DO = "ALREADY_FLAT_NOTHING_TO_DO"
 _CLEAN_STILL_LIVE = "ORDER_STILL_LIVE"
@@ -192,20 +95,9 @@ _CLEAN_STILL_HELD = "SHARES_STILL_HELD"
 _CLEAN_UNKNOWN = "UNDETERMINED"
 _CLEAN_BUDGET_SPENT = "REFUSED_ORDER_BUDGET_SPENT"
 
-#: Env vars that name a REAL market. Values read by the runtime at
-#: ``services/market_ingest/main.py:782`` and ``services/screener.py:931``
-#: (``KIS_STOCK_MARKET``) and ``.env.example:332`` (``KIS_REAL_TRADING``). The
-#: paper stack really does run ``KIS_STOCK_MARKET=real`` for stock quotes, so a
-#: probe that inherited the paper ``.env`` instead of ``.env.mock`` would be
-#: holding a REAL app key — which is what this refuses.
 _REAL_MARKET_ENV = ("KIS_STOCK_MARKET", "KIS_FUTURES_MARKET")
 _REAL_TRADING_ENV = "KIS_REAL_TRADING"
 _TRUTHY = {"1", "true", "yes", "on"}
-
-
-# ---------------------------------------------------------------------------
-# Config — every limit, no defaults
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -253,14 +145,7 @@ class TrialLimits:
 
 
 def _repo_relative(path: Path) -> str:
-    """``path`` relative to the repo root when it is inside it, else as given.
-
-    Relative when possible so an artifact is comparable across checkouts (the
-    repo lives at a different absolute path in every detached worktree), and
-    absolute otherwise rather than raising: ``--config`` and a calendar path
-    may legitimately point outside the tree, and an artifact must not fail to
-    be WRITTEN because of how a path was spelled.
-    """
+    """``path`` relative to the repo root when it is inside it, else as given."""
     try:
         return str(path.relative_to(_REPO_ROOT))
     except ValueError:
@@ -283,26 +168,14 @@ class Config:
 
     @property
     def flatten_reserve(self) -> int:
-        """Order calls the capped sell-back can need, worst case.
-
-        Worst case is "every trial filled in full": the quantity to flatten is
-        then the sum of the trial quantities, and the sell-back is split into
-        orders of at most ``limits.max_quantity`` each. Derived rather than
-        configured, so it cannot drift from the two values it depends on.
-        """
+        """Order calls the capped sell-back can need, worst case."""
         total = self.trial_a.quantity + (
             self.trial_b.quantity if self.trial_b.enabled else 0
         )
         return math.ceil(total / self.limits.max_quantity)
 
     def describe(self) -> dict[str, Any]:
-        """The effective limits, for the artifact.
-
-        Recorded in full rather than by path: an artifact read a year from now
-        has to say what the run was ALLOWED to do, and the file may have moved
-        on. ``config_path`` is relative to the repo root so it is comparable
-        across checkouts.
-        """
+        """The effective limits, for the artifact."""
         return {
             "config_path": _repo_relative(self.path),
             "schema_version": SCHEMA_VERSION,
@@ -343,12 +216,7 @@ class Config:
 
 
 def _require(block: Any, key: str, where: str) -> Any:
-    """One key of a config mapping, or a refusal naming the path.
-
-    There is no ``default``: this config carries limits, and a limit that
-    silently falls back is the shape the runner templates refuse by design
-    ("a template ships no instance defaults", ``runners/_common.sh``).
-    """
+    """One key of a config mapping, or a refusal naming the path."""
     if not isinstance(block, dict):
         raise ProbeError(
             f"{where} must be a mapping in the P-SC config, got {type(block).__name__}"
@@ -390,14 +258,7 @@ def _req_hhmm(block: Any, key: str, where: str) -> clock_time:
 
 
 def load_config(path: Path | str | None = None) -> Config:
-    """Read and validate the P-SC limits.
-
-    Raises:
-        ProbeError: the file is missing or unreadable, declares another
-            ``schema_version``, omits any key, or carries a value this module
-            refuses — a window that does not advance, a pace below its own
-            declared floor, a trial quantity above the cap.
-    """
+    """Read and validate the P-SC limits."""
     target = Path(path) if path else DEFAULT_CONFIG_PATH
     target = target.expanduser()
     if not target.is_absolute():
@@ -516,11 +377,6 @@ def load_config(path: Path | str | None = None) -> Config:
         trial_a=trial_a,
         trial_b=trial_b,
     )
-    # The budget has to fit what the run is CERTAIN to need: one submit and one
-    # cancel per enabled trial, plus the reserved flatten calls. A smaller cap
-    # is not a tighter safety limit, it is a run that cannot finish — and the
-    # way it fails is by leaving a resting order or a holding behind, which is
-    # the opposite of what the cap is for.
     floor = cfg.flatten_reserve + 2 * cfg.enabled_trials
     if limits.max_order_calls < floor:
         raise ProbeError(
@@ -534,38 +390,13 @@ def load_config(path: Path | str | None = None) -> Config:
     return cfg
 
 
-# ---------------------------------------------------------------------------
-# Gates that run before the first socket
-# ---------------------------------------------------------------------------
-
-
 def _now() -> datetime:
-    """The run clock, KST. A function so tests can replace it.
-
-    There is deliberately no CLI override: a flag that moved this clock would
-    be a documented way past :func:`assert_session_window`.
-    """
+    """The run clock, KST. A function so tests can replace it."""
     return datetime.now(KST)
 
 
 def assert_mock_only_env() -> dict[str, Any]:
-    """Refuse when the environment names a REAL market or arms real trading.
-
-    The host and TR seals (``assert_mock_host`` / ``assert_mock_trading_tr``)
-    already make a REAL *endpoint* unreachable through this harness. They do
-    not look at the CREDENTIAL: a REAL app key pointed at the mock host is a
-    real credential on the wire, and this repo's paper stack genuinely exports
-    ``KIS_STOCK_MARKET=real`` for stock quotes (memory ``stock-needs-real-kis-
-    key``), so sourcing the paper ``.env`` instead of ``.env.mock`` is a live
-    mistake rather than a hypothetical one.
-
-    Returns:
-        What was seen, for the artifact — names and values only, never a key.
-
-    Raises:
-        SafetyViolation: any ``*_MARKET`` var is set to something other than
-            ``mock``, or ``KIS_REAL_TRADING`` is truthy.
-    """
+    """Refuse when the environment names a REAL market or arms real trading."""
     seen: dict[str, str] = {}
     for name in _REAL_MARKET_ENV:
         raw = os.getenv(name, "").strip()
@@ -593,14 +424,7 @@ def assert_mock_only_env() -> dict[str, Any]:
 
 
 def _holidays(cfg: Config) -> frozenset[date]:
-    """The closed days the configured calendar declares.
-
-    Read through ``tools/tos_cp3/session_day`` rather than parsed here: that
-    module is the legacy side's single reader of this key, and it refuses a
-    ``datetime`` entry that would never compare equal to the date asked about
-    (review-1003 MEDIUM). A second parser would be a second chance to get that
-    wrong.
-    """
+    """The closed days the configured calendar declares."""
     from tools.tos_cp3 import session_day as sd
 
     data = yaml.safe_load(cfg.session.calendar_path.read_text(encoding="utf-8"))
@@ -613,16 +437,7 @@ def _holidays(cfg: Config) -> frozenset[date]:
 
 
 def assert_session_window(cfg: Config, now: datetime) -> dict[str, Any]:
-    """Refuse outside the configured KRX window, and on a non-trading day.
-
-    Returns:
-        The gate's record, for the artifact.
-
-    Raises:
-        ProbeError: ``now`` is outside the years the holiday set declares it
-            covers, falls on a weekend or a declared holiday, or sits outside
-            ``session.window``.
-    """
+    """Refuse outside the configured KRX window, and on a non-trading day."""
     from tools.tos_cp3 import session_day as sd
 
     kst = now.astimezone(KST)
@@ -657,21 +472,7 @@ def assert_session_window(cfg: Config, now: datetime) -> dict[str, Any]:
 
 
 class OrderBudget:
-    """A hard cap on order-emitting POSTs for one run.
-
-    Not a courtesy counter: :meth:`spend` raises
-    :class:`~tools.broker_probes.common.SafetyViolation`, which ``run.py``
-    neither catches nor writes an artifact for. The budget exists because every
-    other limit here bounds ONE call (a price, a quantity, an interval) and
-    none of them bounds how many times a loop may send one.
-
-    Part of the cap is RESERVED for the flatten. The cleanup retries a cancel
-    up to ``limits.cleanup.cancel_attempts`` times, and each retry is an order
-    call: a broker that accepts every cancel and changes nothing will spend the
-    whole budget on cancels and leave nothing for the sell-back, ending the run
-    holding shares it bought. That is the worst outcome this probe can produce,
-    so the flatten's calls come out of a pool nothing else may touch.
-    """
+    """A hard cap on order-emitting POSTs for one run."""
 
     def __init__(self, limit: int, *, reserved_for_flatten: int = 0) -> None:
         self.limit = int(limit)
@@ -689,23 +490,13 @@ class OrderBudget:
         return self.reserved - len(self.reserve_spent)
 
     def can_spend(self, *, from_reserve: bool = False) -> bool:
-        """Whether :meth:`spend` would succeed, without spending anything.
-
-        Callers that must RECORD a refusal rather than raise one (the cleanup,
-        which may not raise out of the caller's ``finally``) ask this first.
-        """
+        """Whether :meth:`spend` would succeed, without spending anything."""
         if from_reserve and self.reserve_remaining > 0:
             return True
         return self.remaining > 0
 
     def spend(self, what: str, *, from_reserve: bool = False) -> None:
-        """Charge one order call, or refuse.
-
-        ``from_reserve`` PREFERS the reserve and falls back to the general
-        pool; an ordinary spend can never reach the reserve. One-directional on
-        purpose — a flatten should use its own pool first and may use what is
-        left over, while nothing else may eat the flatten's.
-        """
+        """Charge one order call, or refuse."""
         if from_reserve and self.reserve_remaining > 0:
             self.reserve_spent.append(what)
             return
@@ -733,59 +524,27 @@ class OrderBudget:
         }
 
 
-# ---------------------------------------------------------------------------
-# Reading the two account surfaces
-# ---------------------------------------------------------------------------
-
-
 _VerboseGet = Callable[..., tuple[int, dict[str, Any], str, float]]
 
 
 def _classified(
     call: _VerboseGet, /, *args: Any, **kwargs: Any
 ) -> tuple[str | None, int, dict[str, Any], str]:
-    """Run one verbose GET and fold transport failures into the shared classification.
-
-    ``kind`` is ``None`` when an intact answer arrived and the caller must read
-    ``rt_cd``; otherwise it is the status the no-retry policy reads
-    (:func:`~tools.broker_probes.common.classify_answer`) — which is why the
-    ``call`` has to be a *verbose* client method: ``is_rate_limited`` needs the
-    HTTP status and the raw body, and a parsed dict alone hides a 429.
-
-    The callable is passed with its keyword arguments rather than wrapped in a
-    lambda so a page-walk loop cannot close over a cursor variable it is about
-    to reassign.
-    """
+    """Run one verbose GET and fold transport failures into the shared classification."""
     try:
         status, parsed, text, _ms = call(*args, **kwargs)
     except transport_transient_types() as exc:
-        # No answer, so no body and no HTTP status: 0 is the "no call completed"
-        # marker. The excerpt carries the exception class only — requests
-        # renders the failed URL in full, and that URL carries CANO.
         return _READ_TRANSIENT, 0, {}, transport_excerpt(exc)
     return classify_answer(status, parsed, text), status, parsed, text
 
 
 def _unhealthy_status(kind: str) -> str:
-    """Map a ``classify_answer`` kind onto this module's read vocabulary.
-
-    ``startswith`` on :data:`~tools.broker_probes.common.STATUS_TRANSIENT`
-    rather than an equality test, because the transient kinds are prefixed
-    (``TRANSIENT:ledger_throttle``) and a reader that enumerated them would
-    silently misclassify a kind added later.
-    """
+    """Map a ``classify_answer`` kind onto this module's read vocabulary."""
     return _READ_TRANSIENT if kind.startswith(STATUS_TRANSIENT) else _READ_RATE_LIMITED
 
 
 def read_holding(client: MockTradingClient, symbol: str, cfg: Config) -> dict[str, Any]:
-    """Walk the balance until ``symbol``'s row is found or the broker ends the set.
-
-    The walk, rather than one page, for the reason ``probes_ca._read_balance``
-    walks: a single page cannot tell "not held" from "held on page 2", and the
-    2026-09-30 P-CA attempt logged ``held qty=0`` for a query that had in fact
-    errored. A capped or refused walk returns a status that is NOT ``OK`` and
-    never a quantity, so a caller cannot read it as "flat".
-    """
+    """Walk the balance until ``symbol``'s row is found or the broker ends the set."""
     fk = nk = ""
     record: dict[str, Any] = {
         "surface": "주식잔고조회 VTTC8434R (/uapi/domestic-stock/v1/trading/inquire-balance)",
@@ -826,8 +585,6 @@ def read_holding(client: MockTradingClient, symbol: str, cfg: Config) -> dict[st
         next_fk = str(parsed.get("ctx_area_fk100") or "").strip()
         next_nk = str(parsed.get("ctx_area_nk100") or "").strip()
         if not next_fk and not next_nk:
-            # Broker end-of-set and the symbol was on no page walked: genuinely
-            # absent, not truncated.
             return record | {"status": _READ_OK, "qty": 0}
         fk, nk = next_fk, next_nk
     return record | {
@@ -842,13 +599,7 @@ def read_holding(client: MockTradingClient, symbol: str, cfg: Config) -> dict[st
 
 
 def _row_is_live(row: dict[str, Any]) -> bool:
-    """A row that still has quantity working on the book.
-
-    ``rmn_qty > 0`` AND not flagged cancelled. Both halves are needed and
-    neither is sufficient: #948's whole question is whether a cancel shows up
-    as the flag or as a separate row, so a reader that trusted only one of them
-    would be assuming the answer.
-    """
+    """A row that still has quantity working on the book."""
     remaining = _ccld_int(row, "rmn_qty")
     cancelled = str(row.get("cncl_yn", "")).strip().upper() == "Y"
     return remaining is not None and remaining > 0 and not cancelled
@@ -857,21 +608,7 @@ def _row_is_live(row: dict[str, Any]) -> bool:
 def read_order_rows(
     client: MockTradingClient, symbol: str, cfg: Config, *, walk: bool
 ) -> dict[str, Any]:
-    """One (or every) page of 주식일별주문체결조회 for ``symbol``, rows verbatim.
-
-    Args:
-        walk: Walk the continuation keys. ``True`` for the flat-start check,
-            where "no order is open" has to be established or refused. ``False``
-            for the observation snapshots, which read ONE page in 역순 (newest
-            first) — a seconds-old order is on it, and spending a paced call per
-            extra page would stretch every snapshot past its poll interval.
-
-    Returns:
-        ``status``, the verbatim ``rows``, the derived ``live_rows``, and
-        ``rows_returned`` per page. A single-page read whose row count reaches
-        ``flat_check.ccld_page_row_cap`` is :data:`_READ_TRUNCATED`: the page
-        was full, so absence on it establishes nothing.
-    """
+    """One (or every) page of 주식일별주문체결조회 for ``symbol``, rows verbatim."""
     fk = nk = ""
     rows: list[dict[str, Any]] = []
     page_counts: list[int] = []
@@ -953,16 +690,7 @@ def read_order_rows(
 def assert_flat_start(
     client: MockTradingClient, symbol: str, cfg: Config
 ) -> dict[str, Any]:
-    """Refuse unless the account provably holds none of ``symbol`` and has no open order.
-
-    "Provably" is the operative word, and it is why a capped walk, a refusal, a
-    throttle and a truncated page are all refusals here rather than passes. A
-    probe that assumed flat because a read failed would cancel an order it did
-    not place, or sell shares the operator was holding.
-
-    Raises:
-        ProbeError: either surface says not-flat, or could not say.
-    """
+    """Refuse unless the account provably holds none of ``symbol`` and has no open order."""
     holding = read_holding(client, symbol, cfg)
     orders = read_order_rows(client, symbol, cfg, walk=True)
     record: dict[str, Any] = {"holding": holding, "orders": orders}
@@ -995,18 +723,8 @@ def assert_flat_start(
     return record
 
 
-# ---------------------------------------------------------------------------
-# The measurement itself
-# ---------------------------------------------------------------------------
-
-
 def _row_view(row: dict[str, Any]) -> dict[str, Any]:
-    """One query row, verbatim, plus the two identifier encodings.
-
-    Verbatim because #948 asks for the row shape and a filtered copy would
-    answer a question nobody asked. The two ``*_encoding`` entries are derived,
-    not substituted: the raw ``odno``/``orgn_odno`` strings stay in ``raw``.
-    """
+    """One query row, verbatim, plus the two identifier encodings."""
     return {
         "raw": dict(row),
         "odno_encoding": _odno_encoding(str(row.get("odno", ""))),
@@ -1024,14 +742,7 @@ def _snapshot(
     original_key: str,
     t0_monotonic: float,
 ) -> dict[str, Any]:
-    """One read of the order surface, classified against the original ODNO.
-
-    ``original_row`` is the row whose own ``odno`` IS the submitted order;
-    ``derived_rows`` are rows whose ``orgn_odno`` points at it. Both sides go
-    through :func:`~tools.broker_probes.probes_order.odno_key`, because the
-    accept response and the query row disagree on padding and a raw compare
-    evaluates ``'762' == '0000000762'`` — the defect that censored P-5.
-    """
+    """One read of the order surface, classified against the original ODNO."""
     read = read_order_rows(client, symbol, cfg, walk=False)
     rows = read.get("rows") or []
     original: dict[str, Any] | None = None
@@ -1042,8 +753,6 @@ def _snapshot(
             own = odno_key(row.get("odno"))
             parent = odno_key(row.get("orgn_odno"))
         except ProbeError as exc:
-            # A row this harness cannot read as an order number IS the
-            # observation worth keeping; it must not destroy the snapshot.
             unreadable.append(_row_view(row) | {"odno_key_error": str(exc)})
             continue
         if own == original_key:
@@ -1077,18 +786,8 @@ def _snapshot(
 def classify_cancel_shape(
     snapshots: list[dict[str, Any]], original_key: str
 ) -> dict[str, Any]:
-    """What shape the cancel took, across every post-cancel snapshot.
-
-    The verdict is taken over the WHOLE window rather than from the last
-    snapshot: the flag and the derived row need not appear at the same instant,
-    and #948's consumer (the fill observer's cancel classification) has to know
-    that both can be seen, not which was visible last.
-    """
+    """What shape the cancel took, across every post-cancel snapshot."""
     answered = [s for s in snapshots if s.get("read_status") in _READ_ANSWERED]
-    # A page that came back FULL may have dropped the rows this verdict is
-    # about, so "neither was seen" cannot be concluded from truncated pages
-    # alone. Positive observations still count from them — a row that IS there
-    # is there — which is why only the negative arm requires an untruncated read.
     untruncated = [s for s in answered if s.get("read_status") == _READ_OK]
     flagged = [
         s
@@ -1147,25 +846,7 @@ def classify_cancel_shape(
 def classify_cancel_confirmed(
     snapshots: list[dict[str, Any]], original_key: str
 ) -> dict[str, Any]:
-    """Did the original order stop working? Separate from the cancel SHAPE.
-
-    Two different questions, deliberately not one value:
-
-    * :func:`classify_cancel_shape` answers "how does a cancel look on this
-      surface" — the measurement, and ``NEITHER_OBSERVED`` is a legitimate
-      answer to it.
-    * this answers "is it safe to put another order on this account" — and for
-      that, ``NEITHER_OBSERVED`` with a remainder still working is NOT safe,
-      while ``NEITHER_OBSERVED`` with ``rmn_qty=0`` is.
-
-    Collapsing them would either throw away the finding (treat NEITHER as a
-    failure) or add an order on top of a live one (treat it as a success).
-
-    Confirmed on the first answered snapshot whose original row shows
-    ``cncl_yn='Y'`` or ``rmn_qty == 0``. Not confirmed when no snapshot
-    answered, the original row never appeared, or a remainder kept working —
-    all three fail closed.
-    """
+    """Did the original order stop working? Separate from the cancel SHAPE."""
     answered = [s for s in snapshots if s.get("read_status") in _READ_ANSWERED]
     rows_seen = 0
     for snapshot in answered:
@@ -1212,13 +893,7 @@ def classify_late_fill(
     snapshots: list[dict[str, Any]],
     cancel_ack_rt_cd: str,
 ) -> dict[str, Any]:
-    """Whether 총체결수량 grew AFTER the cancel was acknowledged.
-
-    The uncertainty is stated rather than smoothed: the pre-cancel reading is
-    one paced call old by the time the cancel goes out, so a growth seen
-    afterwards may have happened in that gap. Both the gap and the first
-    post-ack snapshot's reading are recorded so a reader can see which.
-    """
+    """Whether 총체결수량 grew AFTER the cancel was acknowledged."""
     series = [
         {
             "t_offset_ms": s["t_offset_ms"],
@@ -1266,11 +941,6 @@ def classify_late_fill(
     }
 
 
-# ---------------------------------------------------------------------------
-# Order-emitting steps
-# ---------------------------------------------------------------------------
-
-
 def _submit(
     client: MockTradingClient,
     run: ProbeRun,
@@ -1282,22 +952,7 @@ def _submit(
     max_quantity: int,
     from_reserve: bool = False,
 ) -> tuple[Placed | None, str, dict[str, Any]]:
-    """One order POST. Returns ``(placed, stop_reason, record)``.
-
-    ``stop_reason`` is :data:`_STOP_NONE` only when the broker accepted. A lost
-    POST is :data:`_STOP_ORDER_STATE_UNKNOWN` and never retried: the order may
-    be resting right now under an ODNO this probe never saw, and a resend is
-    the duplicate-order hazard.
-
-    ``max_quantity`` is enforced HERE, on the body about to go out, as well as
-    in the config loader. The loader can only check the two trial quantities,
-    which are written down; the sell-back quantity is derived at run time from
-    what actually filled, and that is the one number nobody wrote down.
-
-    Raises:
-        SafetyViolation: the body's ``ORD_QTY`` exceeds ``max_quantity``, or the
-            order-call budget is spent.
-    """
+    """One order POST. Returns ``(placed, stop_reason, record)``."""
     try:
         quantity = int(body["ORD_QTY"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -1364,20 +1019,7 @@ def _cancel(
     remaining_qty: int,
     label: str,
 ) -> tuple[str, dict[str, Any], float]:
-    """One cancel POST. Returns ``(stop_reason, record, ack_monotonic)``.
-
-    ``ack_monotonic`` is the pacer release instant of the cancel — the only
-    honest t0 for the observation window, because a timestamp taken before the
-    pacing gate would charge the pacing sleep to the broker.
-
-    It never raises for a cancel it cannot BUILD. ``build_stock_cancel_body``
-    refuses an empty ``ORGN_ODNO``/``KRX_FWDG_ORD_ORGNO`` or a zero quantity,
-    and this is also the cleanup's cancel: an exception here would abandon the
-    holding read and the sell-back that come after it, on exactly the input
-    (an accept response with no 거래소코드) where an order is resting that
-    nothing can cancel. The refusal is returned as
-    :data:`_STOP_CANCEL_NOT_SENDABLE` and recorded.
-    """
+    """One cancel POST. Returns ``(stop_reason, record, ack_monotonic)``."""
     record: dict[str, Any] = {"label": label, "remaining_qty_sent": remaining_qty}
     try:
         body_preview = client.stock_cancel_body(
@@ -1386,7 +1028,6 @@ def _cancel(
             remaining_qty=remaining_qty,
         )
     except ProbeError as exc:
-        # Nothing was sent, so nothing is charged to the budget.
         record |= {
             "outcome": _STOP_CANCEL_NOT_SENDABLE,
             "not_sendable_because": str(exc),
@@ -1448,12 +1089,7 @@ def _observe_window(
     original_key: str,
     t0: float,
 ) -> list[dict[str, Any]]:
-    """Snapshot the order surface at t+0 and then until the window closes.
-
-    The effective interval is ``max(observation.poll_interval_s, limits.pace_s)``
-    — the pacer is the floor, and a requested interval below it would be
-    reported as something the probe did not do.
-    """
+    """Snapshot the order surface at t+0 and then until the window closes."""
     interval = max(cfg.observation.poll_interval_s, cfg.limits.pace_s)
     snapshots = [
         _snapshot(
@@ -1487,22 +1123,13 @@ def _observe_window(
     return snapshots
 
 
-#: 매수 in ``sll_buy_dvsn_cd``. Same code the open-order matcher in
-#: ``probes_order`` uses (``_SIDE_BUY``), re-declared rather than imported so
-#: this module's one use site is readable beside the field it reads.
 _SIDE_BUY = "02"
 
 
 def _own_filled_qty(
     client: MockTradingClient, symbol: str, cfg: Config, keys: set[str]
 ) -> dict[str, Any]:
-    """How much THIS run's own BUY orders are recorded as having filled.
-
-    The cap on the sell-back. ``readable`` is false when the surface did not
-    answer, and the caller then sells nothing: an unreadable inquiry must not
-    license a market sell, because the quantity it would license is the
-    account's whole holding.
-    """
+    """How much THIS run's own BUY orders are recorded as having filled."""
     read = read_order_rows(client, symbol, cfg, walk=False)
     if read.get("status") not in _READ_ANSWERED:
         return {
@@ -1544,22 +1171,7 @@ def _cleanup(
     symbol: str,
     placed: list[Placed],
 ) -> dict[str, Any]:
-    """Cancel this run's own resting orders, sell back what they filled, verify flat.
-
-    Runs on EVERY exit path, including a failed one, and records its own
-    outcome rather than raising: an exception here would replace the finding
-    the run exists to produce with a cleanup traceback, and the operator still
-    needs to know what the account looks like.
-
-    **It only ever undoes this run's own orders.** Both halves are bounded by
-    ``placed``: a cancel is sent only for a live row whose ODNO this run
-    submitted, and the sell-back quantity is capped at what THOSE orders are
-    recorded as having filled. Flattening "whatever the account holds" would be
-    correct only while the flat-start proof held, and the one path where it
-    does NOT hold is the path where that proof FAILED — which is exactly when
-    the cleanup runs over somebody else's shares. A probe must not sell a
-    holding it did not buy.
-    """
+    """Cancel this run's own resting orders, sell back what they filled, verify flat."""
     record: dict[str, Any] = {"cancels": [], "sell_back": None}
     if client is None:
         return record | {
@@ -1578,11 +1190,6 @@ def _cleanup(
         }
     keys = {p.key for p in placed}
     by_key = {p.key: p for p in placed}
-    # FOUR phases, each in its own try. One `try` around all of them was the
-    # r1 M2 defect: a cancel that could not even be built (no 거래소코드 in the
-    # accept response) threw, and the holding read and the sell-back — the two
-    # phases that decide whether the account ends flat — never ran. Each phase
-    # records its own outcome and the next one runs regardless.
     try:
         for attempt in range(cfg.limits.cleanup.cancel_attempts):
             read = read_order_rows(client, symbol, cfg, walk=False)
@@ -1625,8 +1232,6 @@ def _cleanup(
                     {"attempt": attempt, "odno_key": key, "outcome": outcome}
                 )
                 if outcome == _STOP_CANCEL_NOT_SENDABLE:
-                    # Retrying cannot help: the accept response is what is
-                    # missing, and it will be missing next time too.
                     record["cancel_not_sendable"] = (
                         "this run's own order cannot be cancelled through this "
                         "harness at all — see trial_*.krx_fwdg_ord_orgno_absent. "
@@ -1650,7 +1255,6 @@ def _cleanup(
         held = holding.get("qty")
         sell_qty = 0
         if holding.get("status") == _READ_OK and isinstance(held, int) and held > 0:
-            # The cap, not the holding: never sell more than this run bought.
             sell_qty = min(held, own_filled["qty"] if own_filled["readable"] else 0)
         if sell_qty > 0:
             record["sell_back"] = _flatten(
@@ -1667,8 +1271,6 @@ def _cleanup(
         elif holding.get("status") != _READ_OK:
             record["status"] = _CLEAN_UNKNOWN
         elif held:
-            # Shares are held and none of them are this run's. Nothing is sold,
-            # and the run says so rather than reporting a flat account.
             record["status"] = _CLEAN_STILL_HELD
             record["not_this_runs_holding"] = (
                 f"{held} share(s) held and own_filled_qty={own_filled} — the "
@@ -1694,10 +1296,6 @@ def _cleanup(
         record["orders_final_status"] = orders.get("status")
         record["orders_final_live"] = own_live + other_live
         record["orders_final_live_own"] = own_live
-        # Counted separately, not ignored. A row the CANCEL produced is not in
-        # `keys` either — and since what such a row looks like is precisely what
-        # this probe is measuring, any live row on this symbol at the end is
-        # reported fail-closed and left for a human rather than cancelled.
         record["orders_final_live_other"] = other_live
         if record["orders_final_live"]:
             record["status"] = _CLEAN_STILL_LIVE
@@ -1721,21 +1319,7 @@ def _flatten(
     symbol: str,
     qty: int,
 ) -> dict[str, Any]:
-    """Sell ``qty`` back in orders of at most ``limits.max_quantity`` each.
-
-    Split rather than refused: a quantity above the cap is a real possibility
-    (two trials can both fill), and the two ways of not splitting are both bad
-    — one over-size order violates the cap the config states, and a refusal
-    ends the run holding shares this probe bought.
-
-    시장가, so the flatten does not itself leave a resting order. P-11 measured
-    that a 모의 marketable LIMIT does not fill while a 시장가 order fills at once
-    (``P-11-20260730T002715Z`` vs ``P-11-20260731T015709Z``), so a limit
-    sell-back would end the run with BOTH the shares and an open order.
-
-    The calls come from the flatten RESERVE first (see :class:`OrderBudget`),
-    so cleanup cancel retries cannot starve them.
-    """
+    """Sell ``qty`` back in orders of at most ``limits.max_quantity`` each."""
     chunks: list[dict[str, Any]] = []
     remaining = qty
     while remaining > 0:
@@ -1756,8 +1340,6 @@ def _flatten(
         )
         chunks.append({"qty": chunk, "outcome": outcome, "submit": submit_record})
         if outcome != _STOP_NONE:
-            # A refused or lost sell is not retried for the same reason a lost
-            # submit is not: it may have been accepted.
             break
         remaining -= chunk
     bad = [c for c in chunks if c["outcome"] != _STOP_NONE]
@@ -1771,27 +1353,10 @@ def _flatten(
     }
 
 
-# ---------------------------------------------------------------------------
-# Trials
-# ---------------------------------------------------------------------------
-
-
 def _buy_price(
     client: MockTradingClient, symbol: str, offset_pct: float, *, marketable: bool
 ) -> tuple[TickPrice, float, Tick]:
-    """A tick-valid BUY limit ``offset_pct`` away from the touch, from a quote.
-
-    The price is DERIVED, never configured: one quote GET carries both the last
-    price and the broker's own 호가단위 (``aspr_unit``), and
-    :func:`~tools.broker_probes.probes_order.snap_to_tick` moves it away from
-    the touch — further below for a resting order (so the snap can only widen
-    the gap that keeps it unfilled) and further across for a marketable one (so
-    it is not snapped back out of the market).
-
-    Raises:
-        ProbeError: the computed price is not positive, or no 호가단위 could be
-            established for the symbol.
-    """
+    """A tick-valid BUY limit ``offset_pct`` away from the touch, from a quote."""
     last, tick = client.stock_quote(symbol)
     sign = 1.0 if marketable else -1.0
     raw = last * (1.0 + sign * offset_pct / 100.0)
@@ -1843,10 +1408,6 @@ def _trial(
     record["krx_fwdg_ord_orgno"] = placed.krx_fwdg_ord_orgno
 
     if not placed.krx_fwdg_ord_orgno:
-        # The accept response omitted 거래소코드, which order_rvsecncl declares
-        # [필수] and refuses as empty — so no cancel can be built for this
-        # order at all. A finding about the ACCEPT response, recorded next to
-        # that response rather than surfacing later as a cancel-time error.
         record["krx_fwdg_ord_orgno_absent"] = (
             "the accept response carried no KRX_FWDG_ORD_ORGNO (거래소코드), which "
             "order_rvsecncl ([v1_국내주식-003]) declares [필수] and refuses as "
@@ -1869,9 +1430,6 @@ def _trial(
     filled_before = pre.get("original_tot_ccld_qty")
     remaining = pre.get("original_rmn_qty")
     if pre.get("read_status") not in _READ_ANSWERED:
-        # Nothing read, so the cancel has no observed remainder. Send the full
-        # quantity: QTY_ALL_ORD_YN="Y" cancels the remainder regardless, and the
-        # order quantity is the largest it could be.
         remaining = trial.quantity
     elif pre.get("original_row") is None:
         remaining = trial.quantity
@@ -1893,12 +1451,6 @@ def _trial(
     )
     record["cancel"] = cancel_record
     if stop != _STOP_NONE:
-        # EVERY non-accepted cancel stops here, the broker's REJECTION included.
-        # A rejection is a measurement — it says the broker would not cancel
-        # this order — but it is also a statement that the order is STILL
-        # WORKING, and the observation window that follows would then be timing
-        # a cancel that never happened while the next trial queued an order on
-        # top of a live one. The rejection is recorded; the run goes to cleanup.
         return stop, record | {"stopped_at": "cancel"}
 
     snapshots = _observe_window(
@@ -1915,9 +1467,6 @@ def _trial(
     if record["cancel_shape"]["snapshots_answered"] == 0:
         return _STOP_QUERY_UNANSWERED, record | {"stopped_at": "observation"}
     if not record["cancel_confirmed"]["confirmed"]:
-        # The shape measurement above stands — this is the separate question of
-        # whether the account may carry another order (see
-        # :func:`classify_cancel_confirmed`).
         return _STOP_CANCEL_NOT_CONFIRMED, record | {"stopped_at": "confirmation"}
     return _STOP_NONE, record
 
@@ -1949,11 +1498,6 @@ def _classify_partial(
     }
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-
 def _print_lines(stop: str, shape: str, flat: str) -> None:
     """The three anchored lines the runner template reads. Exactly one of each."""
     print(f"{_STOP_PREFIX}{stop}")
@@ -1971,12 +1515,7 @@ def _flat_token(cleanup: dict[str, Any]) -> str:
 
 
 def _why_skip_b(cfg: Config, selector: str, stop: str) -> str | None:
-    """Why trial B must not run, or ``None`` when it may. One reader, three reasons.
-
-    Order matters only for the message: a disabled trial is the operator's
-    decision and a stopped trial A is the broker's, and both have to be stated
-    rather than left as an absent record.
-    """
+    """Why trial B must not run, or ``None`` when it may. One reader, three reasons."""
     if not cfg.trial_b.enabled:
         return "trials.b.enabled is false in the P-SC config"
     if selector not in ("both", "b"):
@@ -2014,19 +1553,7 @@ def _dry_run(run: ProbeRun, args: argparse.Namespace, cfg: Config) -> None:
 
 
 def probe_psc(args: argparse.Namespace) -> ProbeRun:
-    """P-SC — 주식 MOCK 취소 행 모양 + 늦은 체결 관측 (#948 순서 1).
-
-    Order of operations is load-bearing and in this order for a reason:
-
-    1. config (so every later limit exists), 2. the REAL-environment refusal
-    (before credentials are resolved), 3. the session/day gate (before the
-    first socket), 4. ``_setup`` (credentials, token cache, the paced client),
-    5. the flat-start proof (GET only), 6. trial A, 7. trial B, 8. cleanup in a
-    ``finally``.
-
-    Steps 2, 3 and 5 are refusals rather than warnings, and 8 runs even when an
-    earlier step raised.
-    """
+    """P-SC — 주식 MOCK 취소 행 모양 + 늦은 체결 관측 (#948 순서 1)."""
     spec = get("P-SC")
     if args.asset != "stock":
         raise ProbeError(
@@ -2039,8 +1566,6 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
 
     cfg = load_config(getattr(args, "config", None))
     env_record = assert_mock_only_env()
-    # The client's pacer reads args.pace_s, so the YAML value becomes the
-    # effective floor AND is recorded in the artifact's args.
     args.pace_s = cfg.limits.pace_s
     session_record = assert_session_window(cfg, _now()) if args.confirm else None
 
@@ -2055,12 +1580,6 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
             "dry-run: the window and trading-day refusal gate the LIVE run only, "
             "and a dry run must stay runnable at any hour",
         )
-    # The flatten's calls are reserved BEFORE the trials start, not found
-    # afterwards: the cleanup's cancel retries are order calls too, and a
-    # broker that accepts every cancel and changes nothing would spend the
-    # whole cap on them and leave the sell-back unfunded — ending the run
-    # holding shares this probe bought. ``load_config`` has already refused a
-    # cap too small to hold both the reserve and the trials.
     budget = OrderBudget(
         cfg.limits.max_order_calls, reserved_for_flatten=cfg.flatten_reserve
     )
@@ -2076,17 +1595,12 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
     stop = _STOP_NONE
     shapes: list[str] = []
     cleanup: dict[str, Any] = {}
-    # "No intact answer, and our call rate is not why", plus every refusal this
-    # harness raises as a ProbeError. Built here rather than written into the
-    # ``except`` clause so the two sources stay one tuple.
     abortable: tuple[type[BaseException], ...] = (
         ProbeError,
         *transport_transient_types(),
     )
     try:
         run.measure("flat_start", assert_flat_start(client, args.symbol, cfg))
-        # Trial A first and unconditionally unless --trial narrowed it away: it
-        # is the one that answers #948, and B spends a fill on top of it.
         if args.trial in ("both", "a"):
             stop, record_a = _trial(
                 client,
@@ -2124,22 +1638,8 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
         else:
             run.skip("trial B", skip_b)
     except SafetyViolation:
-        # Re-raised deliberately: ``run.py`` writes NO artifact for a refused
-        # call, and that stays true. A SafetyViolation means the probe tried
-        # something the safety model forbids, and the two that can fire here —
-        # the quantity cap and the order-call budget — are both unreachable
-        # from the trial path by construction (config validation caps the trial
-        # quantities, and the reserve floor guarantees the trials' calls). The
-        # cleanup in the ``finally`` below still runs.
         raise
     except abortable as exc:
-        # A ProbeError or a lost GET. Before the first accepted order this is a
-        # precondition and must stay ``run.py`` rc 4 with no artifact — that is
-        # what every refusal path here depends on. AFTER one, the same
-        # exception would delete a measurement that is already complete: trial
-        # B failing to establish a 호가단위 would take trial A's whole cancel
-        # observation with it. So it is recorded ON the run and the run is
-        # returned normally, which writes the artifact.
         if not placed:
             raise
         stop = _STOP_PROBE_ERROR

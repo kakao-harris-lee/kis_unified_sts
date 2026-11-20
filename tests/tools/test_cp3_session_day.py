@@ -1,11 +1,4 @@
-"""#924 — the legacy-side reader of dated session overrides (tools/tos_cp3/session_day.py).
-
-One reader for the producer, the band launch, the runner's first-row bound and the cron
-wrapper's stop time. The tmp_path fixtures' override date (2026-12-03) is FICTITIOUS —
-tests only; the SHIPPED entry is 2026-11-19 (2027학년도 수능) and is asserted against the
-deployed files below. The runtime's own loader of the same key is pinned in
-``tos/runtime/tests/calendar/test_session_overrides.py``.
-"""
+"""#924 — the legacy-side reader of dated session overrides (tools/tos_cp3/session_day.py)."""
 
 from __future__ import annotations
 
@@ -88,20 +81,12 @@ def test_override_day_window_and_regular_fallback(tmp_path: Path) -> None:
     assert session.stop_at(REGULAR, after_close_min=5) == "15:50"
 
 
-#: The shipped exam-day entry (#924): 2026-11-19, 2027학년도 수능 — and the regular
-#: weekday before it, the control. Both are Nov 2026 weekdays the calendar does not
-#: close.
 SHIPPED_EXAM_DAY = date(2026, 11, 19)
 SHIPPED_REGULAR_DAY = date(2026, 11, 18)
 
 
 def test_the_shipped_calendar_carries_the_exam_day_override() -> None:
-    """The shipped futures producer reads 2026-11-19 (#924) out of its tree's calendar.
-
-    Replaces the earlier "no dated overrides" assertion: the entry is shipped now, so
-    the guard is that the ONE declared date is that one and the stop time follows that
-    day's close (16:45 + 5), while the day before stays regular (15:45 + 5).
-    """
+    """The shipped futures producer reads 2026-11-19 (#924) out of its tree's calendar."""
     session = session_day.load_producer_session(
         _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml", repo_root=_REPO_ROOT
     )
@@ -128,8 +113,7 @@ def test_the_shipped_calendar_carries_the_exam_day_override() -> None:
 
 
 def test_the_shipped_stock_calendar_carries_the_exam_day_override() -> None:
-    """Same entry, read through the STOCK producer config: all three stock phases move,
-    so the session-end cursor and the stop time come from 16:30, not 15:30 (#924)."""
+    """Same entry, read through the STOCK producer config: all three stock phases move,"""
     session = session_day.load_producer_session(
         _REPO_ROOT / "config/tos_probes/cp3-live-producer-stock-005930.yaml",
         repo_root=_REPO_ROOT,
@@ -183,7 +167,7 @@ def test_producer_calendar_window_by_day(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "overrides",
     [
-        {DAY.isoformat(): {"reason": "x"}},  # no sessions mapping
+        {DAY.isoformat(): {"reason": "x"}},
         {DAY.isoformat(): {"reason": "x", "sessions": {"krx-index-futures": []}}},
         {
             DAY.isoformat(): {
@@ -195,7 +179,7 @@ def test_producer_calendar_window_by_day(tmp_path: Path) -> None:
                 },
             }
         },
-        {"2026-12-25": {"reason": "x", "sessions": {}}},  # also a holiday
+        {"2026-12-25": {"reason": "x", "sessions": {}}},
     ],
 )
 def test_producer_calendar_refuses_a_malformed_override_at_load(
@@ -243,14 +227,7 @@ def test_cli_prints_one_value(tmp_path: Path) -> None:
 
 
 def _raw_calendar(tmp_path: Path, overrides_yaml: str) -> Path:
-    """The shipped calendar with its own ``session_overrides`` block swapped for
-    *overrides_yaml* (raw text, so a malformed shape survives to the loader).
-
-    The shipped block is a real dated entry now (2026-11-19, #924), so it is cut out by
-    line between ``session_overrides:`` and ``futures_expiry:`` rather than matched as
-    the literal ``session_overrides: {}``: that literal stopped matching when the entry
-    shipped, and every case here would silently have become a TWO-entry file.
-    """
+    """The shipped calendar with its own ``session_overrides`` block swapped for"""
     lines = _SHIPPED.read_text(encoding="utf-8").splitlines(keepends=True)
     start = next(
         i for i, line in enumerate(lines) if line.startswith("session_overrides:")
@@ -274,8 +251,7 @@ _WIN = '[{phase: CONTINUOUS, start: "%s", end: "%s", crosses_midnight: false}]'
 def test_a_repeated_override_date_is_refused_by_both_tools_loaders(
     tmp_path: Path, second_key: str
 ) -> None:
-    """Review #963 MEDIUM, the exact input: a quoted and an unquoted (or a repeated)
-    key for one date. The runtime refuses it too (test_session_overrides.py)."""
+    """Review #963 MEDIUM, the exact input: a quoted and an unquoted (or a repeated)"""
     calendar = _raw_calendar(
         tmp_path,
         "session_overrides:\n"
@@ -336,26 +312,15 @@ def test_tools_refuses_what_the_runtime_refuses(
         load_runtime_calendar(calendar, covered_years=[2026])
 
 
-# --- holidays (review-1003 MEDIUM) -------------------------------------------------
-
-
 def test_a_datetime_holiday_entry_is_refused_by_both_readers(tmp_path: Path) -> None:
-    """review-1003 MEDIUM, the exact input: an unquoted ``2026-01-01 00:00:00``.
-
-    YAML loads that as a ``datetime``, which **is** a ``date`` subclass — so an
-    ``isinstance(entry, date)`` pass keeps it, and ``date(2026, 1, 1) not in
-    holidays`` is then True because a ``date`` never equals a ``datetime``. The
-    declared closed day silently becomes a trading day in BOTH readers: the
-    producer would walk a seed day the exchange was shut on, and the streak would
-    expect a session that cannot exist. It is refused instead, naming the entry.
-    """
+    """review-1003 MEDIUM, the exact input: an unquoted ``2026-01-01 00:00:00``."""
     calendar = _raw_calendar(tmp_path, "session_overrides: {}\n")
     text = calendar.read_text(encoding="utf-8").replace(
         '  - "2026-01-01"', "  - 2026-01-01 00:00:00"
     )
     calendar.write_text(text, encoding="utf-8")
     loaded = yaml.safe_load(text)["holidays"][0]
-    assert isinstance(loaded, datetime)  # the input this test is about
+    assert isinstance(loaded, datetime)
 
     with pytest.raises(session_day.SessionDayError, match="2026-01-01 00:00:00"):
         session_day.holidays_of({"holidays": [loaded]})
@@ -364,7 +329,6 @@ def test_a_datetime_holiday_entry_is_refused_by_both_readers(tmp_path: Path) -> 
 
 
 def test_a_plain_date_holiday_entry_is_still_accepted() -> None:
-    # YAML's own unquoted date form (`- 2026-01-01`) loads as a `date` and stays.
     holidays = session_day.holidays_of({"holidays": [date(2026, 1, 1), "2026-03-01"]})
     assert holidays == frozenset({date(2026, 1, 1), date(2026, 3, 1)})
     assert session_day.is_trading_day(date(2026, 1, 1), holidays) is False

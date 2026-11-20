@@ -1,33 +1,4 @@
-"""Unit tests for order-probe call pacing (``tools/broker_probes/probes_order.py``).
-
-Pacing exists because of a lost measurement, not a hypothesis. P-13 bracketed the
-mock account's query class at clean 1.0 rps / throttled 2.0 rps, and P-5 then went
-out at two calls back to back (``_resting_price`` quote, immediately followed by
-``submit_futures``) and lost trial 0 to ``초당 거래건수를 초과하였습니다`` —
-artifact ``P-5-20260729T235001Z.json``, ``n=0``, ``NOT_MEASURED``.
-
-A rate limiter in a *measurement* harness has two ways to be wrong, and both are
-silent, so both are tested here rather than left to review:
-
-1. **Too little pacing** — the throttle comes back and the trial produces nothing.
-   Covered by the interval tests plus the end-to-end check that every call type
-   funnels through the paced choke point.
-2. **Pacing charged to the broker** — the sleep lands inside the measured window
-   and inflates the sample. On a 1.1 s pace that is roughly +1100 ms on a
-   ``hard_maximum`` bound, which flows straight into an over-wide approved value.
-   ``test_submit_latency_window_excludes_the_pacing_sleep`` is the guard, and it
-   asserts the wrong number explicitly so the regression cannot pass quietly.
-
-The third failure mode is documentary: an artifact that reports a poll granularity
-finer than what actually happened understates the additive error runbook §8.3 folds
-into the bound. That is fail-open in the approval direction, so the recorded value
-is asserted too.
-
-No test here opens a socket. ``probes_order.http_json`` is replaced by a recorder
-and the ``time`` module by a deterministic fake — in ``probes_order`` AND in
-``common``, where the pacer itself lives — so the assertions are on exact instants
-rather than on wall-clock tolerances.
-"""
+"""Unit tests for order-probe call pacing (``tools/broker_probes/probes_order.py``)."""
 
 from __future__ import annotations
 
@@ -50,23 +21,11 @@ from tools.broker_probes.probes_order import (
 
 _ACCOUNT = "1234567890"
 _START = 1000.0
-#: Simulated broker round-trip, so a released instant and a returned instant are
-#: never the same number and an off-by-one-call error cannot pass.
 _RTT_S = 0.05
 
 
 class _FakeTime:
-    """Deterministic stand-in for the ``time`` module the probe harness sees.
-
-    Both modules do ``import time``, so replacing the module-global name
-    isolates the fake to them: pytest's own timing is untouched. ``common`` is
-    patched as well as ``probes_order`` because the pacer itself lives there —
-    ``_CallPacer`` is ``common.Pacer`` plus a docstring, one implementation
-    shared with P-CA's — so ``wait``/``defer`` read ``common``'s clock. Leaving
-    it unpatched did not fail loudly: the pacer simply used the REAL clock
-    beside a fake one, and the latency assertions came out as nine-digit
-    negative numbers.
-    """
+    """Deterministic stand-in for the ``time`` module the probe harness sees."""
 
     def __init__(self, start: float = _START) -> None:
         self._now = start
@@ -145,11 +104,7 @@ def _client(
 
 
 def _tick_price(price: float) -> probes_order.TickPrice:
-    """A resting price snapped the way the probes snap one (tick from the YAML SoT).
-
-    These tests assert call intervals, not prices, but the body builders now take a
-    snapped price — building it through the production helper keeps that shared.
-    """
+    """A resting price snapped the way the probes snap one (tick from the YAML SoT)."""
     return probes_order.snap_to_tick(
         price,
         probes_order._futures_tick("101S6000"),
@@ -161,12 +116,7 @@ def _tick_price(price: float) -> probes_order.TickPrice:
 def _install_recorder(
     monkeypatch: pytest.MonkeyPatch, fake: _FakeTime, *, visible_odnos: set[str]
 ) -> list[dict[str, Any]]:
-    """Replace the transport with a recorder; return the live call log.
-
-    Each entry records the instant the request was *released* to the wire, which
-    is what the interval assertions compare. ``visible_odnos`` is mutated by the
-    caller to control when an inquire starts reporting an order.
-    """
+    """Replace the transport with a recorder; return the live call log."""
     calls: list[dict[str, Any]] = []
 
     def _recorder(
@@ -186,15 +136,9 @@ def _install_recorder(
         elif "trading/order-rvsecncl" in url:
             payload = {"rt_cd": "0", "output": {"ODNO": "0000000782"}}
         elif "trading/order" in url:
-            # Zero-padded, like the real accept response. A synthetic label such as
-            # "ODNO0002" is not an order number in any encoding the broker uses,
-            # and odno_key() refuses it rather than guess.
             odno = f"{len(calls):010d}"
             payload = {"rt_cd": "0", "output": {"ODNO": odno}}
         elif "trading/inquire-ccnl" in url:
-            # Rows come back SPACE-padded with leading zeros dropped — the
-            # asymmetry observed live in P-5-20260731T002112Z. Echoing the accept
-            # format here would hide exactly the defect odno_key() exists for.
             payload = {
                 "rt_cd": "0",
                 "output1": [
@@ -210,11 +154,6 @@ def _install_recorder(
     return calls
 
 
-# ---------------------------------------------------------------------------
-# _CallPacer — interval arithmetic
-# ---------------------------------------------------------------------------
-
-
 def test_first_call_is_not_delayed(faketime: _FakeTime) -> None:
     """An empty pacer has no previous call to be too close to."""
     released = _CallPacer(1.1).wait()
@@ -227,7 +166,7 @@ def test_second_call_sleeps_only_the_remaining_time(faketime: _FakeTime) -> None
     """The interval is measured from the previous call, not added to it."""
     pacer = _CallPacer(1.1)
     pacer.wait()
-    faketime.advance(0.4)  # the first request took 400 ms
+    faketime.advance(0.4)
 
     released = pacer.wait()
 
@@ -257,7 +196,6 @@ def test_successive_releases_are_never_closer_than_the_interval(
         faketime.advance(0.05)
 
     gaps = [b - a for a, b in zip(released[:-1], released[1:], strict=True)]
-    # The fake clock is exact arithmetic; the epsilon only absorbs float error.
     assert all(gap >= 1.1 - 1e-9 for gap in gaps), gaps
 
 
@@ -277,11 +215,6 @@ def test_negative_interval_is_clamped_not_reversed(faketime: _FakeTime) -> None:
 
     assert pacer.interval_s == 0.0
     assert faketime.sleeps == []
-
-
-# ---------------------------------------------------------------------------
-# the choke point — every call type is paced
-# ---------------------------------------------------------------------------
 
 
 def test_quote_then_submit_is_paced(
@@ -345,21 +278,10 @@ def test_last_send_instant_before_any_request_is_refused(
         _client(mock_creds).last_send_instant()
 
 
-# ---------------------------------------------------------------------------
-# measurement integrity — the pacing sleep is outside the latency window
-# ---------------------------------------------------------------------------
-
-
 def test_submit_latency_window_excludes_the_pacing_sleep(
     monkeypatch: pytest.MonkeyPatch, faketime: _FakeTime, mock_creds: ProbeCredentials
 ) -> None:
-    """``sent_at_monotonic`` is the released instant, not a pre-gate timestamp.
-
-    Timeline with a 1.1 s pace: the quote is released at T and returns at T+0.05;
-    the submit is then held until T+1.1 and released there. A stamp taken before
-    ``submit_futures`` called the transport would read T+0.05 and charge the
-    1.05 s pacing sleep to the broker.
-    """
+    """``sent_at_monotonic`` is the released instant, not a pre-gate timestamp."""
     calls = _install_recorder(monkeypatch, faketime, visible_odnos=set())
     client = _client(mock_creds)
 
@@ -372,12 +294,10 @@ def test_submit_latency_window_excludes_the_pacing_sleep(
     assert placed is not None
     submit_released_at = calls[1]["released_at"]
     assert placed.sent_at_monotonic == pytest.approx(submit_released_at)
-    # The sleep is real and sits entirely before the stamp.
     assert faketime.sleeps == [pytest.approx(DEFAULT_PACE_S - _RTT_S)]
     assert placed.sent_at_monotonic - quote_returned_at == pytest.approx(
         DEFAULT_PACE_S - _RTT_S
     )
-    # And the number a pre-gate stamp would have produced is NOT what we recorded.
     assert placed.sent_at_monotonic != pytest.approx(quote_returned_at)
 
 
@@ -386,23 +306,11 @@ def test_p5_reports_the_effective_poll_granularity_and_an_uninflated_latency(
     faketime: _FakeTime,
     futures_env: None,
 ) -> None:
-    """End-to-end P-5 against a stub transport: one trial, one convergent poll.
-
-    Two assertions carry the requirement:
-
-    * ``poll_granularity_ms`` is 1100, not the requested 200 — the pacer floors
-      polling, and runbook §8.3 adds this value to the approved bound.
-    * the sample is one effective poll interval plus a round trip (1150 ms). The
-      pre-fix stamp would have reported 2200 ms, so the pacing sleep is provably
-      outside the measured window.
-    """
+    """End-to-end P-5 against a stub transport: one trial, one convergent poll."""
     visible: set[str] = set()
     _install_recorder(monkeypatch, faketime, visible_odnos=visible)
     install_stub_auth(monkeypatch)
 
-    # The submit is call #2, so the recorder zero-pads it to 0000000002. Make it
-    # visible so the first poll converges and the sample is a single poll interval.
-    # The recorder serves it back space-padded, which the probe must canonicalize.
     visible.add("0000000002")
 
     run = probes_order.probe_p5(_args(confirm=True, samples=1))
@@ -416,22 +324,16 @@ def test_p5_reports_the_effective_poll_granularity_and_an_uninflated_latency(
     latency_ms = trials[0]["latency_ms"]
     expected_ms = (DEFAULT_PACE_S + _RTT_S) * 1000.0
     assert latency_ms == pytest.approx(expected_ms, abs=1.0)
-    # What a stamp taken before the pacing gate would have reported.
     assert latency_ms != pytest.approx(expected_ms + DEFAULT_PACE_S * 1000.0, abs=1.0)
-
-
-# ---------------------------------------------------------------------------
-# effective interval helper
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("poll_ms", "pace_s", "expected"),
     [
-        (200.0, 1.1, 1100.0),  # the shipped defaults — pacing binds
-        (2000.0, 1.1, 2000.0),  # a coarse poll binds instead
-        (1100.0, 1.1, 1100.0),  # equal: either answer is the same number
-        (200.0, 0.0, 200.0),  # pacing disabled — the request stands
+        (200.0, 1.1, 1100.0),
+        (2000.0, 1.1, 2000.0),
+        (1100.0, 1.1, 1100.0),
+        (200.0, 0.0, 200.0),
     ],
 )
 def test_effective_interval_is_the_wider_of_request_and_pacing(
@@ -481,11 +383,6 @@ def test_p2_records_the_gap_that_reached_the_wire(
 
     gaps = [obs["gap_ms"] for obs in run.observations if "gap_ms" in obs]
     assert gaps == [pytest.approx(1100.0)]
-
-
-# ---------------------------------------------------------------------------
-# CLI wiring
-# ---------------------------------------------------------------------------
 
 
 def test_pace_s_is_registered_with_the_measured_default() -> None:

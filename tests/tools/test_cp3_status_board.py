@@ -1,8 +1,4 @@
-"""`sts tos status` — TOS 한 장 상태판, 녹화 픽스처로만(실 상태 디렉터리 읽지 않음).
-
-픽스처: ``tests/tools/fixtures/cp3_status_board`` (README 참조). 매 테스트가 ``tmp_path`` 에 상태
-루트를 펼치고 SQL 덤프로 sqlite 저장소를 다시 만든다. 프로세스 생존은 가짜 ``/proc`` 로 준다.
-"""
+"""`sts tos status` — TOS 한 장 상태판, 녹화 픽스처로만(실 상태 디렉터리 읽지 않음)."""
 
 from __future__ import annotations
 
@@ -140,12 +136,9 @@ def _issues(board: dict, level: str | None = None) -> list[str]:
     ]
 
 
-# --- config -----------------------------------------------------------------
-
-
 def test_committed_config_loads_with_the_operator_threshold():
     cfg = sb.load_config()
-    assert cfg.stale_refusal_ratio_max == 0.005  # #931 운영자 지시
+    assert cfg.stale_refusal_ratio_max == 0.005
     assert cfg.latency_percentiles == (50, 90)
     assert cfg.tenant_sessions_subdir == "cp3-sessions"
     assert (cfg.paper_runtime_cmdline_needle, cfg.paper_driver_cmdline_needle) == (
@@ -175,7 +168,6 @@ def test_config_missing_key_is_refused(tmp_path: Path):
 )
 @pytest.mark.parametrize("value", ['""', "'  '", "null"])
 def test_config_blank_cmdline_needle_is_refused(tmp_path: Path, key: str, value: str):
-    # 빈 needle 은 아무 프로세스나 «살아 있음» 으로 본다 — 로드에서 거부한다(#941).
     committed = sb.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
     lines = [
         f"{key}: {value}" if line.startswith(f"{key}:") else line
@@ -185,9 +177,6 @@ def test_config_blank_cmdline_needle_is_refused(tmp_path: Path, key: str, value:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="빈 값은 허용하지 않는다"):
         sb.load_config(path)
-
-
-# --- pure helpers -------------------------------------------------------------
 
 
 def test_percentile_is_nearest_rank():
@@ -209,12 +198,9 @@ def test_pid_alive_requires_the_needle_in_cmdline(tmp_path: Path):
     (tmp_path / "7").mkdir()
     (tmp_path / "7" / "cmdline").write_bytes(b"python\x00/a/session-x")
     assert sb.pid_alive(7, "/a/session-x", proc_root=tmp_path)
-    assert not sb.pid_alive(7, "/a/session-y", proc_root=tmp_path)  # pid 재사용
+    assert not sb.pid_alive(7, "/a/session-y", proc_root=tmp_path)
     assert not sb.pid_alive(8, "/a/session-x", proc_root=tmp_path)
     assert not sb.pid_alive(None, "x", proc_root=tmp_path)
-
-
-# --- runner log ------------------------------------------------------------------
 
 
 def test_runner_log_of_a_clean_full_day(state: Path):
@@ -247,11 +233,8 @@ def test_runner_log_abort_and_band_off(state: Path):
     short = sb.parse_runner_log(
         (state / "cp3-sessions/short-20261023/session.log").read_text()
     )
-    assert short.band_declared is False  # SHORT 트리는 band 를 끈다
+    assert short.band_declared is False
     assert short.end_at is None and short.run_pid is not None
-
-
-# --- the board ----------------------------------------------------------------------
 
 
 def test_ended_day_reads_the_scoped_store(cfg: sb.BoardConfig):
@@ -259,12 +242,10 @@ def test_ended_day_reads_the_scoped_store(cfg: sb.BoardConfig):
     s = _session(board, "long-20261022")
     assert s["status"] == "ENDED"
     st = s["store"]
-    # 잎에는 10-15·10-22·10-23 이 누적돼 있다 — 10-22 만 센다.
     assert st["ticks"] == 6
     assert st["outcomes"] == {"NO_ACTION": 1, "NO_OUTCOME": 2, "PROPOSAL": 3}
     assert st["withheld_by_reason"] == {"DECISION_WITHHELD/TIME_NOT_ADMITTED": 2}
     assert st["flow_halts"] == {"STAGE_DENIED": 3}
-    # 08:45 봉은 pre-boot(부팅 스냅샷) — post-boot stale 은 15:12 한 건뿐
     assert st["post_boot_consumed_ids"] == 5
     assert st["m5_present_value_refused_as_unknown"] == 1
     assert st["stale_withheld_post_boot"] == 1
@@ -298,20 +279,17 @@ def test_running_day_with_live_processes(
     long, short = _session(board, "long-20261023"), _session(board, "short-20261023")
     assert long["status"] == short["status"] == "RUNNING"
     assert long["run_alive"] and long["producer_alive"]
-    # band: LONG 은 행이 있고, SHORT 는 band 를 끈 트리라 경고하지 않는다
     assert [b["outcome"] for b in long["store"]["band_observed"]] == ["OBSERVED"]
     assert long["store"]["band_observed"][0]["trading_date"] == "20261023"
     assert short["store"]["band_observed"] == []
     issues = _issues(board)
     assert not any("VENUE_BAND_OBSERVED" in i for i in issues)
-    # 진행 중 stale 초과는 확인으로만
     assert all(i["level"] == sb.WARN for i in board["issues"])
     assert any("진행 중 — 판정은 종료 뒤" in i for i in issues)
     paper = board["paper"]
     assert paper["session"] == "2026-10-23-084506-LONG"
     assert paper["runtime_alive"] and paper["driver_alive"] and paper["report"] is None
     assert paper["issues"] == []
-    # 10 일 이력에 네 세션이 다 있다
     assert [(h["day"], h["label"]) for h in board["history"]] == [
         ("20261015", "long"),
         ("20261022", "long"),
@@ -476,10 +454,7 @@ def test_text_rendering_carries_every_section(
         "■ 막힌 것 / 확인할 것",
     ):
         assert needle in text, needle
-    assert "0000000000" not in text  # 계좌 좌표는 출력하지 않는다
-
-
-# --- the sts command ---------------------------------------------------------------
+    assert "0000000000" not in text
 
 
 def test_sts_tos_status_exit_code_and_json(state: Path):
@@ -498,9 +473,6 @@ def test_sts_tos_status_exit_code_and_json(state: Path):
     doc = json.loads(as_json.output)
     assert doc["date"] == "2026-10-15"
     assert doc["tenant_sessions"][0]["name"] == "long-20261015"
-
-
-# --- review-935 regressions ------------------------------------------------------
 
 
 def _append_band_refused(state: Path, reason: str) -> int:
@@ -546,7 +518,6 @@ def test_b1_band_refused_later_in_the_session_blocks(
         in _issues(board, sb.BLOCK)
     )
     assert "VENUE_BAND_OBSERVED REFUSED reason=journal_empty" in sb.render_text(board)
-    # 같은 잎의 지난 부팅 구간(10-22)에는 붙지 않는다
     assert _session(_board(cfg, D1022), "long-20261022")["store"]["band_observed"] == []
 
 
@@ -554,7 +525,6 @@ def test_b1_band_row_missing_from_the_boot_segment_warns(
     tmp_path: Path, state: Path, cfg: sb.BoardConfig
 ):
     conn = sqlite3.connect(state / LEAVES["long-A05611"] / "evidence.sqlite3")
-    # 녹화 저장소는 런타임의 append-only 트리거를 그대로 갖고 있다 — tmp 사본에서만 걷어 낸다
     for (name,) in conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'trigger'"
     ).fetchall():
@@ -634,11 +604,6 @@ def test_n5_history_days_one_is_only_the_day(cfg: sb.BoardConfig):
     assert [h["day"] for h in two["history"]] == ["20261022", "20261023", "20261023"]
 
 
-# --- MARKETFEED_PASS_OVERRUN (#949) ---------------------------------------------
-#
-# 픽스처 long 잎의 부팅 행: seq 0(10-15) · 51085(10-22) · 113576(10-23). short 잎: seq 0(10-23).
-# 이 행은 날짜도 벽시계도 싣지 않으므로 세션 날짜의 경계는 곧 부팅 구간의 경계다.
-
 SCHEDULER_SRC = (
     Path(__file__).resolve().parents[2]
     / "tos/runtime/src/tos_runtime/marketfeed/scheduler.py"
@@ -679,7 +644,6 @@ def _append_overrun(state: Path, leaf: str, seq: int, pass_ms: int, tick_ms: int
 
 
 def test_overrun_kind_mirrors_the_runtime_constant():
-    # tools/ 는 tos_runtime 를 import 할 수 없다(방화벽) — 소스 줄로 거울을 대조한다.
     assert (
         f'_MARKETFEED_PASS_OVERRUN_KIND = "{sb.PASS_OVERRUN_KIND}"'
         in SCHEDULER_SRC.read_text(encoding="utf-8")
@@ -719,7 +683,6 @@ def test_overrun_rows_are_counted_per_tree(state: Path, cfg: sb.BoardConfig):
         f"short-20261023: {sb.PASS_OVERRUN_KIND} 1행 — 최악 pass 700ms > 창 500ms"
         " (tick 90ms + post-pass 610ms, seq 17000)",
     ]
-    # 진단 행이다 — 막힘이 아니다.
     assert not [i for i in _issues(board, sb.BLOCK) if sb.PASS_OVERRUN_KIND in i]
     text = sb.render_text(board)
     assert f"    {sb.PASS_OVERRUN_KIND} 2행 · 최악 pass 910ms > 창 500ms" in text
@@ -730,14 +693,12 @@ def test_overrun_rows_are_counted_per_tree(state: Path, cfg: sb.BoardConfig):
 def test_overrun_rows_of_another_day_are_excluded_at_the_boot_boundary(
     state: Path, cfg: sb.BoardConfig
 ):
-    # 10-22 부팅 구간의 마지막 seq 와 10-23 부팅 바로 다음 seq — 경계 양쪽 한 행씩.
     _append_overrun(state, "long-A05611", 113575, 600)
     _append_overrun(state, "long-A05611", 113577, 800)
     on_1022 = _session(_board(cfg, D1022), "long-20261022")["store"]["pass_overrun"]
     on_1023 = _session(_board(cfg, D1023), "long-20261023")["store"]["pass_overrun"]
     assert (on_1022["rows"], on_1022["worst"]["seq"]) == (1, 113575)
     assert (on_1023["rows"], on_1023["worst"]["seq"]) == (1, 113577)
-    # 다른 잎(short)에는 번지지 않는다.
     assert _session(_board(cfg, D1023), "short-20261023")["store"]["pass_overrun"] == {
         "rows": 0,
         "worst": None,
@@ -745,7 +706,6 @@ def test_overrun_rows_of_another_day_are_excluded_at_the_boot_boundary(
 
 
 def test_paper_overrun_is_scoped_to_its_session(state: Path, cfg: sb.BoardConfig):
-    # 10-22: report.json(baseline 479138, data_dir) · 10-23: 진행 중, bootproof 만(baseline 540128).
     boot = {"x": 1}
     _insert(
         state / PAPER_LEAF / "evidence.sqlite3",
@@ -754,13 +714,13 @@ def test_paper_overrun_is_scoped_to_its_session(state: Path, cfg: sb.BoardConfig
                 479100,
                 sb.PASS_OVERRUN_KIND,
                 _overrun_payload(999, 10),
-            ),  # 10-22 baseline 이전
+            ),
             (479140, sb.BOOT_KIND, boot),
             (479150, sb.PASS_OVERRUN_KIND, _overrun_payload(620, 10)),
             (479160, sb.PASS_OVERRUN_KIND, _overrun_payload(880, 10)),
             (540130, sb.BOOT_KIND, boot),
             (540200, sb.PASS_OVERRUN_KIND, _overrun_payload(530, 10)),
-            (600000, sb.BOOT_KIND, boot),  # 다음 날 부팅
+            (600000, sb.BOOT_KIND, boot),
             (600100, sb.PASS_OVERRUN_KIND, _overrun_payload(990, 10)),
         ],
     )
@@ -779,7 +739,7 @@ def test_paper_without_a_leaf_is_unknown_not_zero(state: Path, cfg: sb.BoardConf
     shutil.rmtree(state / PAPER_LEAF)
     board = _board(cfg, D1023)
     po = board["paper"]["pass_overrun"]
-    assert "error" in po  # 잎(paper-data/A05611)이 없다 — 0 행으로 말하지 않는다
+    assert "error" in po
     assert f"    {sb.PASS_OVERRUN_KIND}: 읽지 못함" in sb.render_text(board)
     assert any(
         i.startswith(f"paper: {sb.PASS_OVERRUN_KIND}·권한 행을 읽지 못했다")
@@ -794,9 +754,6 @@ def test_paper_empty_leaf_is_zero(cfg: sb.BoardConfig):
 def test_paper_without_a_boot_proof_is_not_given_the_next_sessions_rows(
     state: Path, cfg: sb.BoardConfig
 ):
-    # #951 리뷰 LOW-1 의 입력: 10-22 런타임이 자기 TIME_SERVICE_STARTUP 을 쓰지 못했고(boot proof
-    # MISSING), 10-23 세션이 같은 잎에서 부팅했다. 고치기 전에는 «기준 뒤 두 번째 부팅»(600000)
-    # 이 상한이 되어 10-23 의 행(540200)이 10-22 에 붙었다.
     proof = state / "paper-sessions" / "2026-10-22-084508-LONG" / "bootproof.txt"
     lines = proof.read_text(encoding="utf-8").splitlines()
     lines[0] = "boot proof: MISSING · genesis=False · rev 0cc899617f5b · A05611"
@@ -821,7 +778,6 @@ def test_paper_without_a_boot_proof_is_not_given_the_next_sessions_rows(
 def test_tenant_overrun_without_a_boot_segment_is_unseen_not_zero(
     state: Path, cfg: sb.BoardConfig
 ):
-    # short 잎의 유일한 부팅 행(seq 0)을 없애면 이 세션의 부팅 구간을 정할 수 없다.
     conn = sqlite3.connect(state / LEAVES["short-A05611"] / "evidence.sqlite3")
     conn.execute("DROP TRIGGER entries_no_delete")
     conn.execute("DELETE FROM entries WHERE kind = ?", (sb.BOOT_KIND,))
@@ -837,8 +793,6 @@ def test_tenant_overrun_without_a_boot_segment_is_unseen_not_zero(
     history = {(h["day"], h["label"]): h["overrun"] for h in board["history"]}
     assert history[("20261023", "short")] is None
 
-
-# --- 권한 행: AUTHORITY_WITNESS_LOST (#957) · APPROVAL_STANDING_* (#955) -----------
 
 HEARTBEAT_SRC = (
     Path(__file__).resolve().parents[2]
@@ -880,7 +834,6 @@ def _append_rows(state: Path, leaf: str, rows: list[tuple[int, tuple[str, dict]]
 
 
 def test_authority_kinds_mirror_the_runtime_constants():
-    # tools/ 는 tos_runtime 를 import 할 수 없다(방화벽) — 소스 줄로 거울을 대조한다.
     heartbeat = HEARTBEAT_SRC.read_text(encoding="utf-8")
     assert (
         f'AUTHORITY_WITNESS_LOST_KIND = "{sb.AUTHORITY_WITNESS_LOST_KIND}"' in heartbeat
@@ -926,7 +879,7 @@ def test_authority_rows_are_counted_per_tree_and_mid_session_loss_blocks(
     short = _session(board, "short-20261023")["store"]["authority"]
     assert long_ == {
         "witness_lost": 1,
-        "witness_lost_mid_session": 1,  # 120016 > 첫 틱 113595
+        "witness_lost_mid_session": 1,
         "witness_lost_mid_session_seqs": [120016],
         "witness_lost_before_first_tick": 0,
         "witness_lost_before_first_tick_seqs": [],
@@ -999,12 +952,12 @@ def test_paper_authority_is_scoped_to_its_session(state: Path, cfg: sb.BoardConf
     _insert(
         state / PAPER_LEAF / "evidence.sqlite3",
         [
-            (479100, kind_lost, p_lost),  # 10-22 baseline 이전
+            (479100, kind_lost, p_lost),
             (479140, sb.BOOT_KIND, boot),
             (479150, kind_lost, p_lost),
             (540130, sb.BOOT_KIND, boot),
             (540140, *_standing("not_covered", reason="unbounded")),
-            (600000, sb.BOOT_KIND, boot),  # 다음 날 부팅
+            (600000, sb.BOOT_KIND, boot),
             (600100, kind_lost, p_lost),
         ],
     )
@@ -1030,10 +983,6 @@ def test_paper_authority_without_a_boot_proof_is_unseen(
     assert "    권한 행: 잎·기준 seq 를 몰라 보지 못함" in sb.render_text(board)
 
 
-# --- 증인 상실: 장 전(설계상) vs 장중 — 위치로 가른다(#962 리뷰 MEDIUM) ----------
-# long 10-23: 부팅 seq 113576, 첫 틱 evidence seq 113595.
-
-
 def test_a_pre_open_loss_before_the_first_tick_does_not_block(
     state: Path, cfg: sb.BoardConfig
 ):
@@ -1041,7 +990,6 @@ def test_a_pre_open_loss_before_the_first_tick_does_not_block(
     board = _board(cfg, D1023)
     auth = _session(board, "long-20261023")["store"]["authority"]
     assert (auth["witness_lost"], auth["witness_lost_mid_session"]) == (1, 0)
-    # 장 전 설계상 상실은 본문 수로만 보인다 — 막힘도 확인 줄도 없다.
     assert not [i for i in _issues(board) if sb.AUTHORITY_WITNESS_LOST_KIND in i]
     assert f"    {sb.AUTHORITY_WITNESS_LOST_KIND} 1행 (장중 0)" in sb.render_text(board)
     history = {(h["day"], h["label"]): h for h in board["history"]}
@@ -1052,7 +1000,6 @@ def test_a_pre_open_loss_before_the_first_tick_does_not_block(
 
 
 def test_stock_mock_loss_at_1030_after_ticks_is_mid_session():
-    # stock-r1-20261026 모양: 09:01 봉의 첫 틱 seq 1000, 10:30 상실 seq 50000(틱 뒤), 송신 없음.
     auth = sb.authority_summary(
         [(50000, sb.AUTHORITY_WITNESS_LOST_KIND, {})],
         first_tick_seq=1000,
@@ -1086,8 +1033,6 @@ def test_a_loss_after_a_send_sealed_blocks_even_before_the_first_tick(
 
 
 def test_a_loss_before_any_tick_warns_but_does_not_block(state: Path):
-    # (d) #962 r2 LOW: paper 10-23, 부팅 뒤 상실, 아직 틱(EVENT_HANDLING_STARTED) 없음,
-    # 송신 봉인 없음 → 확인(막힘 아님, exit 1 아님).
     _insert(
         state / PAPER_LEAF / "evidence.sqlite3",
         [(540130, sb.BOOT_KIND, {"x": 1}), (540140, *_lost())],
@@ -1191,16 +1136,11 @@ def test_history_label_column_fits_a_two_digit_stock_run():
     lines = [
         ln for ln in sb.render_text(board).splitlines() if ln.startswith("  20261026")
     ]
-    # 라벨 뒤 상태 칸이 두 줄에서 같은 열에서 시작한다.
     assert lines[0].index("ENDED") == lines[1].index("ENDED")
 
 
 def test_history_label_column_fits_a_per_symbol_stock_label():
-    """종목별 주식 tenant(운영자 지시 2026-11-19)의 라벨은 고정 10칸을 넘는다.
-
-    `stock-000660-r10` 은 16자다. 폭이 10 으로 고정돼 있으면 그 줄의 상태·rc·틱 칸이
-    모두 오른쪽으로 밀려 짧은 라벨 줄과 열이 어긋나고, 표를 눈으로 읽을 수 없게 된다.
-    """
+    """종목별 주식 tenant(운영자 지시 2026-11-19)의 라벨은 고정 10칸을 넘는다."""
     base = {
         "day": "20261124",
         "status": "ENDED",
@@ -1235,8 +1175,6 @@ def test_history_label_column_fits_a_per_symbol_stock_label():
     columns = {ln.index("ENDED") for ln in lines}
     assert len(columns) == 1, lines
 
-    # 머리글의 세션 칸도 같이 늘어난다 — 머리글은 데이터 줄과 글자 단위로 맞춰진 적이
-    # 없고(한글 칸 폭) 여기서 맞추지도 않는다. 보는 것은 «같이 움직인다» 뿐이다.
     def header_of(labels: tuple[str, ...]) -> str:
         rendered = sb.render_text(
             board | {"history": [base | {"label": label} for label in labels]}
@@ -1249,7 +1187,6 @@ def test_history_label_column_fits_a_per_symbol_stock_label():
 
 
 def test_a_mid_session_loss_turns_the_exit_code_to_1(tmp_path: Path, state: Path):
-    # 픽스처 10-22 는 stale 비율로 이미 막힘이다 — 그 판정만 풀어 상실 하나의 효과를 본다.
     config = tmp_path / "board.yaml"
     config.write_text(
         sb.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8").replace(
@@ -1262,26 +1199,15 @@ def test_a_mid_session_loss_turns_the_exit_code_to_1(tmp_path: Path, state: Path
         return sb.run(config_path=config, state_dir=str(state), date="2026-10-22")[1]
 
     assert rc() == 0
-    _append_rows(state, "long-A05611", [(60000, _lost())])  # 10-22 첫 틱 51104 뒤
+    _append_rows(state, "long-A05611", [(60000, _lost())])
     assert rc() == 1
 
 
-# --- 4단계(독립 승인) UNKNOWN 정지 — 선물 결정 전용(운영자 판정 2026-11-05) ---------
-
-#: 10-15 세션의 첫 제안 블록(evidence seq 46, 09:04 봉) 과 그 다음 결정(936) 사이의
-#: 빈 seq — 여기 넣은 흐름 정지 행은 그 제안의 것으로 읽힌다. 같은 날에는 녹화된
-#: ``VENUE_ADMISSIBILITY_DECISION`` UNKNOWN 두 건(940 · 1688)과 ``STAGE_DENIED``
-#: 한 건(49475)이 이미 있어, 한 줄에서 세 경우를 모두 본다.
 STEP4_HALT_SEQ = 500
 
 
 def _append_step4_unknown(state: Path, seq: int = STEP4_HALT_SEQ) -> None:
-    """런타임 ``engine.sequencer._halt`` 가 4단계에서 쓰는 행 모양 그대로.
-
-    ``step`` · ``halt_reason`` · ``detail`` 은 실 잎
-    (``~/.local/state/tos/cp3-setup-d-long-data/A05611/evidence.sqlite3``, 2026-11-05
-    읽기 전용 확인: 이 모양 67행)에서 그대로 옮겼다.
-    """
+    """런타임 ``engine.sequencer._halt`` 가 4단계에서 쓰는 행 모양 그대로."""
     _append_rows(
         state,
         "long-A05611",
@@ -1310,12 +1236,7 @@ def _append_step4_unknown(state: Path, seq: int = STEP4_HALT_SEQ) -> None:
 
 
 def _set_market(state: Path, name: str, market: str) -> None:
-    """러너 step 5b 의 market 줄을 세션 로그에 넣는다.
-
-    픽스처(10-15~10-23)는 그 줄이 생기기 전 녹화다. 줄 모양은 실 로그 그대로다 —
-    ``cp3-sessions/long-20261104/session.log`` 5번째 줄
-    ``market=futures (tree and producer agree) · transport=synthetic``.
-    """
+    """러너 step 5b 의 market 줄을 세션 로그에 넣는다."""
     path = state / "cp3-sessions" / name / "session.log"
     lines = path.read_text(encoding="utf-8").splitlines()
     ts = lines[0][:19]
@@ -1334,7 +1255,6 @@ def test_the_market_line_of_a_tenant_session_is_read(state: Path):
         (state / "cp3-sessions/long-20261015/session.log").read_text(encoding="utf-8")
     )
     assert runner.market == "futures"
-    # 줄 머리를 고정하므로 `market=` 토큰을 싣는 다른 줄은 이 값을 덮지 않는다.
     mid_line_only = sb.parse_runner_log(
         "2026-10-15 15:50:03 === END session-dir=/x instrument=A05611 market=stock"
     )
@@ -1344,28 +1264,19 @@ def test_the_market_line_of_a_tenant_session_is_read(state: Path):
 def test_futures_tree_step4_unknown_is_labelled_expected(
     state: Path, cfg: sb.BoardConfig
 ):
-    """선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙이고, 다른 단계는 그대로 둔다.
-
-    상주 session 승인은 설계상 MOCK 주식 전용이라(``tos_runtime.authority.standing``)
-    선물 진입 제안은 4단계에서 멈춘다. 운영자 판정 2026-11-05: 선물 트리는 결정
-    전용이고 이 정지가 예상 종착이다(LONG 실측 11 부팅 67 건 · 11-04 40 건, 4단계
-    admit 은 한 번도 없다). 같은 날의 ``VENUE_ADMISSIBILITY_DECISION`` UNKNOWN 두
-    건은 4단계가 아니므로 기존 이름 아래 그대로 남는다.
-    """
+    """선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙이고, 다른 단계는 그대로 둔다."""
     _append_step4_unknown(state)
     _set_market(state, "long-20261015", "futures")
     board = _board(cfg, D1015)
     s = _session(board, "long-20261015")
     assert s["market"] == "futures"
     st = s["store"]
-    # 기존 필드는 그대로 전체 분포를 싣고, 새 필드가 그 부분집합을 센다.
     assert st["flow_halts"] == {"STAGE_DENIED": 1, "STAGE_UNKNOWN": 3}
     assert st["flow_halts_independent_approval_unknown"] == 1
     assert (
         "흐름 정지: STAGE_DENIED 1 · STAGE_UNKNOWN 2"
         f" · {sb.STEP4_UNKNOWN_EXPECTED_LABEL} 1" in sb.render_text(board)
     )
-    # 예상 종착이므로 소견(막힘·확인)은 새로 올리지 않는다.
     assert not any(sb.STEP4_UNKNOWN_EXPECTED_LABEL in i for i in _issues(board))
 
 
@@ -1378,7 +1289,6 @@ def test_stock_tree_step4_unknown_is_not_labelled_expected(
     board = _board(cfg, D1015)
     s = _session(board, "long-20261015")
     assert s["market"] == "stock"
-    # 기계용 필드는 시장과 무관하게 같은 수를 싣는다(이름을 붙이는 쪽만 가른다).
     assert s["store"]["flow_halts_independent_approval_unknown"] == 1
     text = sb.render_text(board)
     assert "흐름 정지: STAGE_DENIED 1 · STAGE_UNKNOWN 3" in text
@@ -1410,10 +1320,6 @@ def test_without_a_step4_halt_a_futures_line_is_unchanged(
     assert sb.STEP4_UNKNOWN_EXPECTED_LABEL not in text
 
 
-# --- 깨끗한 거래일 누적 (2026-11-11 완화 §2 문장 1) --------------------------------
-
-#: 2026-10-12(월) 앞의 두 주. 10-09(한글날·금) · 10-05(대체휴일·월) 가 휴장이고 그 양쪽에
-#: 주말이 붙어, 「비거래일은 세지도 깨지도 않는다」를 실제 KRX 캘린더로 시험한다.
 D1012 = dt.date(2026, 10, 12)
 STREAK_CLEAN_DAYS = (
     dt.date(2026, 10, 12),
@@ -1432,12 +1338,7 @@ def _mk_session(
     run_rc: int | None = 0,
     booted: bool = False,
 ) -> Path:
-    """세션 디렉터리 하나 — 누적 판정이 읽는 것만 담는다(러너 로그의 END 줄).
-
-    저장소는 담지 않는다. 깨끗함의 조건에 저장소는 없고, 담으면 이 테스트가 판정이 아니라
-    sqlite 모양을 시험하게 된다. ``booted=True`` 에 ``run_rc=None`` 은 11-10 호스트
-    크래시의 모양이다 — 부팅했고 END 줄이 없으니 지난 날짜에서는 ``LOST`` 다.
-    """
+    """세션 디렉터리 하나 — 누적 판정이 읽는 것만 담는다(러너 로그의 END 줄)."""
     path = state / "cp3-sessions" / f"{label}-{day:%Y%m%d}"
     path.mkdir(parents=True)
     lines = [f"{day} 08:38:01 checkout ok: … repo_commit=deadbeef"]
@@ -1474,14 +1375,13 @@ def _streak(board: dict, label: str) -> dict:
 def test_committed_clean_day_config_is_the_relaxed_target():
     """2026-11-11 완화: 목표 5 · 창 40 · LONG 만 센다(SHORT 는 운영자가 켠 추가 트리)."""
     scfg = sb.load_config().clean_streak
-    assert scfg.target_days == 5  # «깨끗한 거래일 누적 5일»
-    assert scfg.window_days == 40  # «최근 40일 창»
+    assert scfg.target_days == 5
+    assert scfg.window_days == 40
     assert scfg.clean_run_rcs == frozenset({0})
     assert [t.label for t in scfg.trees] == ["long"]
     for tree in scfg.trees:
         assert tree.calendar_yaml.exists(), tree.calendar_yaml
         holidays = sb.load_tree_calendar(tree.calendar_yaml).holidays
-        # 창이 지나는 휴장일. 거래일이 아니므로 세지도 깨지도 않는다.
         for closed in (dt.date(2026, 12, 25), dt.date(2026, 12, 31)):
             assert closed in holidays
             assert sd.is_trading_day(closed, holidays) is False
@@ -1526,29 +1426,19 @@ def test_streak_config_bad_shapes_are_refused(
 
 
 def test_clean_days_cross_a_weekend_and_a_holiday(streak_cfg: sb.BoardConfig):
-    """비거래일은 세지도 깨지도 않는다 — 실제 KRX 캘린더로.
-
-    구체 입력: 10-12 · 10-08 · 10-07 · 10-06 · 10-02 다섯 세션. 그 사이에 10-09(한글날)와
-    주말, 10-05(대체휴일)와 주말이 있고 세션이 하나도 없다. 그 날들이 거래일로 읽히면
-    「세션 없음」으로 깨진 날에 적히므로, ``broke_on`` 이 비어 있는 것이 그 판정이다.
-    """
+    """비거래일은 세지도 깨지도 않는다 — 실제 KRX 캘린더로."""
     board = _board(streak_cfg, D1012)
     long = _streak(board, "long")
     assert (long["days"], long["start"], long["met"]) == (5, "2026-10-02", True)
     assert (long["broke_on"], long["broke_reason"]) == (None, None)
     assert long["pending"] is None and long["error"] is None
     assert long["window_start"] == "2026-10-02"
-    # SHORT 는 세지 않는다(완화 §2 문장 1) — 설정에 없으므로 이 절에 나오지 않는다.
     assert [t["label"] for t in board["clean_streak"]] == ["long"]
     assert "✔ 목표 충족" in sb.render_text(board)
 
 
 def test_the_clean_days_span_christmas(tmp_path: Path):
-    """12-25 휴장도 세지 않고 깨뜨리지도 않는다.
-
-    구체 입력: 12-30 · 12-29 · 12-28 · 12-24 · 12-23 다섯 세션. 12-25(금·크리스마스)와
-    12-26·27 주말에는 세션이 없다. 누적은 5 이고 깨진 날은 없다.
-    """
+    """12-25 휴장도 세지 않고 깨뜨리지도 않는다."""
     state = tmp_path / "december"
     (state / "cp3-sessions").mkdir(parents=True)
     december = (
@@ -1567,12 +1457,7 @@ def test_the_clean_days_span_christmas(tmp_path: Path):
 
 
 def test_a_clean_day_a_lost_day_and_a_clean_day_count_two(tmp_path: Path):
-    """**완화의 핵심.** 깨진 하루가 앞의 기록을 지우지 않는다.
-
-    구체 입력: 10-12 깨끗 · 10-08 LOST(11-10 호스트 크래시의 모양 — 부팅했고 END 줄이
-    없다) · 10-07 깨끗. 연속 판정이었다면 10-08 에서 멈춰 1 이었다. 누적은 2 이고,
-    10-08 은 「마지막 깨진 거래일」로 계속 보고된다.
-    """
+    """**완화의 핵심.** 깨진 하루가 앞의 기록을 지우지 않는다."""
     state = tmp_path / "cumulative"
     (state / "cp3-sessions").mkdir(parents=True)
     _mk_session(state, "long", dt.date(2026, 10, 12))
@@ -1616,8 +1501,6 @@ def test_the_most_recent_broken_day_is_the_one_reported(
     "run_rc, reason",
     [
         (1, "세션 상태 FAILED"),
-        # 143 은 러너가 «정상 정지» 로 보는 코드지만(NORMAL_END_RCS) 누적 판정은 0 만
-        # 깨끗으로 본다 — 숨지 않고 그 rc 가 사유로 찍힌다.
         (143, "런타임 종료 rc=143 (깨끗은 [0])"),
         (None, "세션 상태 NOT-BOOTED"),
     ],
@@ -1638,11 +1521,7 @@ def test_a_session_that_did_not_end_with_a_clean_rc_is_not_counted(
 def test_reaching_the_target_stops_the_walk(
     streak_state: Path, streak_cfg: sb.BoardConfig
 ):
-    """목표에 닿으면 더 걷지 않는다 — 그 앞의 깨진 날은 판정하지 않는다.
-
-    구체 입력: 깨끗한 다섯 거래일 앞(10-01)에 LOST 세션. 목표가 10-02 에서 채워지므로
-    10-01 은 읽지 않고, 「마지막 깨진 거래일」도 비어 있다.
-    """
+    """목표에 닿으면 더 걷지 않는다 — 그 앞의 깨진 날은 판정하지 않는다."""
     _mk_session(streak_state, "long", dt.date(2026, 10, 1), run_rc=None, booted=True)
     long = _streak(_board(streak_cfg, D1012), "long")
     assert (long["days"], long["met"], long["broke_on"]) == (5, True, None)
@@ -1652,12 +1531,7 @@ def test_reaching_the_target_stops_the_walk(
 def test_the_board_date_is_pending_until_it_settles(
     streak_state: Path, streak_cfg: sb.BoardConfig
 ):
-    """진행 중인 오늘은 깨끗도 아니고 깨짐도 아니다 — 아니면 장중에는 늘 오늘이 깨진 날이 된다.
-
-    구체 입력: 오늘(10-12) 세션이 END 줄 없이 돌고 있고 그 앞 네 거래일이 깨끗하다.
-    오늘은 보류로 두고 10-08 부터 센다 → 4. 보류는 **상태판 날짜에만** 쓰므로 같은 모양이
-    어제의 것이면 그대로 깨진 날로 적힌다(위 rc=None 케이스).
-    """
+    """진행 중인 오늘은 깨끗도 아니고 깨짐도 아니다 — 아니면 장중에는 늘 오늘이 깨진 날이 된다."""
     shutil.rmtree(streak_state / "cp3-sessions" / "long-20261012")
     _mk_session(streak_state, "long", D1012, run_rc=None)
     long = _streak(_board(streak_cfg, D1012, today=D1012), "long")
@@ -1669,11 +1543,7 @@ def test_the_board_date_is_pending_until_it_settles(
 def test_only_the_days_inside_the_window_are_counted(
     streak_state: Path, tmp_path: Path
 ):
-    """창 밖의 깨끗한 날은 세지 않는다 — 누적은 «최근 N 달력일» 안의 수다.
-
-    구체 입력: 창을 11 달력일(10-02 까지)로, 목표를 6 으로 좁히고 10-01 에 깨끗한 세션을
-    하나 더 둔다. 그 하루는 창 밖이므로 6 번째로 세지 않는다.
-    """
+    """창 밖의 깨끗한 날은 세지 않는다 — 누적은 «최근 N 달력일» 안의 수다."""
     _mk_session(streak_state, "long", dt.date(2026, 10, 1))
     config = tmp_path / "board.yaml"
     config.write_text(

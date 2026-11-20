@@ -1,33 +1,4 @@
-"""Unit tests for P-SC — the stock MOCK cancel-shape probe (#948 step 1).
-
-No test here opens a socket: ``probes_order.http_json`` is replaced by
-:class:`_Broker`, a small stateful fake of the four KIS surfaces the probe
-touches (quote, order-cash, order-rvsecncl, inquire-daily-ccld,
-inquire-balance). ``shared.kis.auth.KISAuthManager`` is stubbed out.
-
-What is pinned here, one group per way the probe could do harm or lie:
-
-1. **The cancel wire form.** ``VTTC0013U`` is a mock TR, and every ``[필수]``
-   field the official wrapper refuses as empty is present. An empty 원주문번호
-   or 거래소코드 and a zero quantity are refused locally rather than sent — the
-   wrapper's own ``ValueError`` would come back as an opaque broker rejection.
-2. **REAL refusal.** The host and TR seals make a REAL *endpoint* unreachable;
-   they say nothing about the CREDENTIAL. The paper stack really does export
-   ``KIS_STOCK_MARKET=real``, so sourcing the wrong ``.env`` is the live
-   mistake, and it has to be refused before the first socket.
-3. **Session and trading-day refusal.** Outside the window, and on a day the
-   tenant calendar declares closed, nothing is sent.
-4. **Flat start.** Not just "the account looks empty" but "the surfaces
-   PROVED it": a capped balance walk, a refusal, a throttle and a full page are
-   each refusals, because a read that did not answer is not a flat account.
-5. **Cleanup on the failure path.** A trial that raises still leaves the
-   account flat, and the cleanup records its own outcome.
-6. **The five-value verdict.** ``NEITHER_OBSERVED`` (the surface answered and
-   showed neither) and ``UNDETERMINED`` (it did not answer) are different
-   values. Collapsing them is how #948 step 2 would go fail-open.
-7. **The order-call budget**, which is the only limit that bounds how MANY
-   orders a loop may send.
-"""
+"""Unit tests for P-SC — the stock MOCK cancel-shape probe (#948 step 1)."""
 
 from __future__ import annotations
 
@@ -84,24 +55,11 @@ _LAST_PRICE = "70200"
 _ASPR_UNIT = "100"
 _ORG_NO = "06010"
 
-#: A KST instant inside the configured window on a KRX trading day.
-#: 2026-11-02 is a Monday and is not in the tenant calendar's holiday list —
-#: the day the 11-02 run is scheduled for.
 _IN_WINDOW = datetime(2026, 11, 2, 10, 30, tzinfo=probes_stock_cancel.KST)
 
 
-# ---------------------------------------------------------------------------
-# the fake broker
-# ---------------------------------------------------------------------------
-
-
 class _Broker:
-    """A stateful fake of the five surfaces P-SC touches.
-
-    ``cancel_shape`` is the thing under measurement, so it is a knob: the probe
-    must report what the surface showed, and each of the four shapes has to
-    come out as its own verdict rather than as a default.
-    """
+    """A stateful fake of the five surfaces P-SC touches."""
 
     def __init__(
         self,
@@ -132,21 +90,14 @@ class _Broker:
         self.balance_rt_cd = balance_rt_cd
         self.balance_http = balance_http
         self.cancel_rt_cd = cancel_rt_cd
-        #: What the accept response returns as 거래소코드. ``""`` is the input
-        #: M2 is about: the field the cancel TR declares [필수].
         self.org_no = org_no
-        #: Withhold ``aspr_unit`` from the Nth quote onward, so trial A can
-        #: price itself and trial B's quote then fails to establish a tick.
         self.drop_aspr_unit_after = drop_aspr_unit_after
-        #: Fill this many shares regardless of the order quantity — for the
-        #: sell-back split, which needs a holding above ``max_quantity``.
         self.fill_qty_override = fill_qty_override
         self.quotes_served = 0
         self.rows: list[dict[str, Any]] = []
         self.calls: list[dict[str, Any]] = []
         self._next_odno = 8686
 
-    # -- helpers --------------------------------------------------------
     def _odno(self) -> str:
         self._next_odno += 1
         return f"{self._next_odno:010d}"
@@ -155,9 +106,6 @@ class _Broker:
         return {
             "ord_dt": "20261102",
             "odno": odno,
-            # Space-padded zero is the measured wire form for an order that is
-            # not an amend/cancel: P-NMPR-20260731T015139Z, profile
-            # orgn_odno_wire_form.observed == "'         0'".
             "orgn_odno": "         0",
             "ord_dvsn_name": "지정가",
             "sll_buy_dvsn_cd": "02" if side == "BUY" else "01",
@@ -180,7 +128,6 @@ class _Broker:
                 return row
         return None
 
-    # -- the surfaces ---------------------------------------------------
     def _quote(self) -> dict[str, Any]:
         self.quotes_served += 1
         out: dict[str, Any] = {"stck_prpr": _LAST_PRICE}
@@ -197,8 +144,6 @@ class _Broker:
         side = "BUY" if tr_id.endswith("0802U") else "SELL"
         price = body["ORD_UNPR"]
         if side == "SELL":
-            # The flatten is a 시장가 sell and fills fully — the behaviour P-11
-            # measured for a 모의 market order.
             self.holding = max(0, self.holding - qty)
             filled = qty
         elif self.partial_fill is not None:
@@ -236,15 +181,11 @@ class _Broker:
                 "msg1": "원주문을 찾을 수 없습니다",
             }
         if self.cancel_rt_cd != "0":
-            # Accepted nothing and changed nothing. 「정정/취소할 수량이 없습니다」
-            # is the sentence this arm stands for.
             return {
                 "rt_cd": self.cancel_rt_cd,
                 "msg_cd": "APBK0656",
                 "msg1": "정정/취소할 수량이 없습니다",
             }
-        # Read before either branch zeroes it: the cancelled quantity is what a
-        # derived row would carry as its 주문수량.
         cancelled_qty = int(original["rmn_qty"] or 0) or int(original["ord_qty"])
         if self.cancel_shape in ("flag", "both"):
             original["cncl_yn"] = "Y"
@@ -254,20 +195,11 @@ class _Broker:
             derived = self._row(
                 odno=self._odno(), qty=cancelled_qty, filled=0, price="0", side="BUY"
             )
-            # Nothing is working on a cancel row, so 잔여수량 is 0 — otherwise
-            # the row would read as live and the cleanup would chase it. Which
-            # shape the broker really uses is what this probe measures; this is
-            # the plausible one, and the `none` arm covers the other extreme.
             derived["rmn_qty"] = "0"
             derived["ord_dvsn_name"] = "취소"
-            # The field the broker profile says is UNVERIFIED on a row a cancel
-            # produced. Zero-padded here while the original order's own
-            # `orgn_odno` is space-padded: the probe must canonicalise both.
             derived["orgn_odno"] = original["odno"]
             self.rows.append(derived)
         if self.cancel_shape == "none":
-            # Accepted, and nothing on the surface changed. The pathological
-            # case the five-value verdict exists for.
             pass
         if self.late_fill:
             original["tot_ccld_qty"] = str(int(original["tot_ccld_qty"]) + 1)
@@ -313,7 +245,6 @@ class _Broker:
             else [{"pdno": "000660", "hldg_qty": "3"}]
         )
         if not last_page:
-            # Never the end of the set, so a cap test can exhaust the walk.
             return 200, {
                 "rt_cd": "0",
                 "output1": rows,
@@ -326,7 +257,6 @@ class _Broker:
             "output2": [{"dnca_tot_amt": "1000"}],
         }
 
-    # -- the transport --------------------------------------------------
     def __call__(
         self,
         _session: Any,
@@ -362,7 +292,6 @@ class _Broker:
             raise AssertionError(f"unexpected probe URL: {url}")
         return 200, payload, 1.0, "{}"
 
-    # -- assertions helpers ---------------------------------------------
     def order_posts(self) -> list[dict[str, Any]]:
         return [c for c in self.calls if "trading/order-cash" in c["url"]]
 
@@ -386,11 +315,6 @@ def _client(run: ProbeRun) -> Any:
     )
 
 
-# ---------------------------------------------------------------------------
-# fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def mock_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exactly the env vars the stock credential path reads, all mock."""
@@ -404,12 +328,7 @@ def mock_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _config_file(tmp_path: Path, **overrides: Any) -> Path:
-    """A P-SC config with the clocks wound down, written to ``tmp_path``.
-
-    The windows are tiny so a whole run costs milliseconds; no assertion here
-    is on an elapsed duration. Everything else matches the shipped file, so a
-    key renamed there fails these tests rather than passing vacuously.
-    """
+    """A P-SC config with the clocks wound down, written to ``tmp_path``."""
     data: dict[str, Any] = {
         "schema_version": 1,
         "session": {
@@ -486,26 +405,16 @@ def install(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     return _install
 
 
-# ---------------------------------------------------------------------------
-# 1. the cancel wire form
-# ---------------------------------------------------------------------------
-
-
 def test_the_cancel_tr_is_a_mock_tr() -> None:
     """``VTTC0013U`` — 모의. The 실전 twin would be refused by the seal."""
     assert _STOCK_CANCEL_TR_MOCK == "VTTC0013U"
-    assert_mock_trading_tr(_STOCK_CANCEL_TR_MOCK)  # must not raise
+    assert_mock_trading_tr(_STOCK_CANCEL_TR_MOCK)
     with pytest.raises(SafetyViolation):
         assert_mock_trading_tr("TTTC0013U")
 
 
 def test_cancel_body_carries_every_required_field_verbatim() -> None:
-    """Source: ``examples_llm/domestic_stock/order_rvsecncl`` ``[v1_국내주식-003]``.
-
-    The identifiers go back on the wire EXACTLY as the accept response gave
-    them — zero padding included. Canonicalising before sending is a different
-    operation from canonicalising for a comparison.
-    """
+    """Source: ``examples_llm/domestic_stock/order_rvsecncl`` ``[v1_국내주식-003]``."""
     body = build_stock_cancel_body(
         "12345678",
         "90",
@@ -552,11 +461,6 @@ def test_cancel_body_refuses_locally_rather_than_sending(
         build_stock_cancel_body("12345678", "90", **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# 2. REAL refusal
-# ---------------------------------------------------------------------------
-
-
 def test_mock_env_passes(mock_env: None) -> None:
     record = assert_mock_only_env()
     assert record["verdict"] == "MOCK_ONLY"
@@ -575,12 +479,7 @@ def test_mock_env_passes(mock_env: None) -> None:
 def test_refuses_a_real_environment(
     mock_env: None, monkeypatch: pytest.MonkeyPatch, name: str, value: str
 ) -> None:
-    """The failing input the host seal cannot catch: a REAL CREDENTIAL.
-
-    The paper stack exports ``KIS_STOCK_MARKET=real`` because stock quotes need
-    the real key, so a probe that inherited the paper ``.env`` would hold a real
-    app key while every host assertion still passed.
-    """
+    """The failing input the host seal cannot catch: a REAL CREDENTIAL."""
     monkeypatch.setenv(name, value)
     with pytest.raises(SafetyViolation, match=name):
         assert_mock_only_env()
@@ -607,11 +506,6 @@ def test_refuses_futures_asset(mock_env: None, tmp_path: Path) -> None:
 def test_refuses_without_a_symbol(mock_env: None, tmp_path: Path) -> None:
     with pytest.raises(ProbeError, match="--symbol"):
         probe_psc(_args(_config_file(tmp_path), tmp_path, symbol=""))
-
-
-# ---------------------------------------------------------------------------
-# 3. session and trading-day refusal
-# ---------------------------------------------------------------------------
 
 
 def test_window_accepts_an_instant_inside_it(tmp_path: Path) -> None:
@@ -661,11 +555,6 @@ def test_outside_hours_sends_nothing(
     with pytest.raises(ProbeError, match="outside the configured window"):
         probe_psc(_args(_config_file(tmp_path), tmp_path))
     assert broker.calls == []
-
-
-# ---------------------------------------------------------------------------
-# 4. the flat-start proof
-# ---------------------------------------------------------------------------
 
 
 def test_refuses_when_the_symbol_is_already_held(
@@ -722,12 +611,7 @@ def test_refuses_when_the_balance_read_is_throttled(
 def test_refuses_when_the_order_page_came_back_full(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """A full page may have dropped rows, so "no order is open" is unproven.
-
-    Three cancelled rows with a page row cap of 2: the flat check walks and the
-    walk itself is capped, so the run refuses rather than concluding from a
-    page that was full.
-    """
+    """A full page may have dropped rows, so "no order is open" is unproven."""
     broker = _Broker(ccld_page_rows=1)
     for index in range(9):
         row = broker._row(
@@ -742,20 +626,10 @@ def test_refuses_when_the_order_page_came_back_full(
     assert broker.order_posts() == []
 
 
-# ---------------------------------------------------------------------------
-# 5. cleanup on the failure path
-# ---------------------------------------------------------------------------
-
-
 def test_cleanup_runs_and_cancels_when_a_trial_raises(
     mock_env: None, install: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The observation window blows up AFTER the order is resting.
-
-    The cancel the probe would have sent never goes out, so the order is still
-    on the book when the exception surfaces — exactly the state the ``finally``
-    exists for.
-    """
+    """The observation window blows up AFTER the order is resting."""
     broker = install(_Broker(cancel_shape="flag"))
 
     def _boom(*_a: Any, **_k: Any) -> None:
@@ -771,12 +645,7 @@ def test_cleanup_runs_and_cancels_when_a_trial_raises(
 def test_the_cleanup_never_sells_a_holding_this_run_did_not_buy(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """The failing input: the flat-start proof REFUSED, and shares are held.
-
-    That is the one path where "flatten whatever the account holds" would sell
-    somebody else's position — the flat-start guarantee is exactly what is
-    missing there. ``placed`` is empty, so the cleanup does nothing at all.
-    """
+    """The failing input: the flat-start proof REFUSED, and shares are held."""
     broker = install(_Broker(holding=7))
     run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
     client = probes_order.MockTradingClient(
@@ -843,11 +712,6 @@ def test_a_partial_fill_is_reported_when_the_broker_produces_one(
     assert broker.holding == 0
 
 
-# ---------------------------------------------------------------------------
-# 6. the five-value verdict
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("shape", "expected"),
     [
@@ -880,13 +744,7 @@ def test_a_separate_row_records_the_unverified_profile_field(
 
 
 def test_an_unanswered_surface_is_undetermined_not_neither_observed() -> None:
-    """The distinction #948 step 2 would go fail-open on.
-
-    Same empty observation, two different causes: one snapshot answered and
-    showed nothing (NEITHER_OBSERVED), the other never answered
-    (UNDETERMINED). A reader that collapsed them would build a non-execution
-    proof on a read that failed.
-    """
+    """The distinction #948 step 2 would go fail-open on."""
     answered = [{"read_status": _READ_OK, "t_offset_ms": 0.0, "original_row": None}]
     unanswered = [
         {"read_status": _READ_TRANSIENT, "t_offset_ms": 0.0, "original_row": None}
@@ -965,11 +823,6 @@ def test_no_fill_quantity_read_is_undetermined() -> None:
     assert record["verdict"] == "UNDETERMINED_NO_FILL_QUANTITY_READ"
 
 
-# ---------------------------------------------------------------------------
-# 7. the order-call budget
-# ---------------------------------------------------------------------------
-
-
 def test_the_budget_refuses_rather_than_counting() -> None:
     budget = OrderBudget(2)
     budget.spend("a")
@@ -988,12 +841,7 @@ def test_the_budget_refuses_rather_than_counting() -> None:
 
 
 def test_the_reserve_is_one_directional() -> None:
-    """L3. An ordinary call can never reach the flatten's pool.
-
-    A flatten call prefers the reserve and may fall back to the general pool —
-    the asymmetry is the whole point: nothing may eat the flatten's calls, and
-    the flatten may use what is left over.
-    """
+    """L3. An ordinary call can never reach the flatten's pool."""
     budget = OrderBudget(3, reserved_for_flatten=1)
     assert budget.remaining == 2 and budget.reserve_remaining == 1
     budget.spend("cancel-1")
@@ -1011,21 +859,11 @@ def test_the_reserve_is_one_directional() -> None:
 def test_a_budget_too_small_for_the_reserve_and_the_trials_is_refused(
     tmp_path: Path,
 ) -> None:
-    """L3. The floor is derived from the trials, not written down twice.
-
-    2 calls per enabled trial plus ``ceil(total trial qty / max_quantity)``
-    reserved. A smaller cap is not a tighter limit — it is a run that cannot
-    fund its own flatten.
-    """
+    """L3. The floor is derived from the trials, not written down twice."""
     path = _config_file(tmp_path, **{"limits.max_order_calls": 5})
     with pytest.raises(ProbeError, match="below the minimum 6"):
         load_config(path)
     assert load_config(_config_file(tmp_path, **{"limits.max_order_calls": 6}))
-
-
-# ---------------------------------------------------------------------------
-# config validation — every limit, no defaults
-# ---------------------------------------------------------------------------
 
 
 def test_the_shipped_config_loads() -> None:
@@ -1081,11 +919,6 @@ def test_another_schema_version_is_refused(tmp_path: Path) -> None:
     path = _config_file(tmp_path, **{"schema_version": 2})
     with pytest.raises(ProbeError, match="schema_version"):
         load_config(path)
-
-
-# ---------------------------------------------------------------------------
-# artifact shape, and the structural safety claims
-# ---------------------------------------------------------------------------
 
 
 def test_artifact_shape(mock_env: None, install: Any, tmp_path: Path) -> None:
@@ -1207,16 +1040,6 @@ def test_the_three_anchored_lines_are_printed_exactly_once(
     assert "PSC_FLAT_AT_END=yes" in out
 
 
-# ---------------------------------------------------------------------------
-# the runner template — the same three gates run_p_ca.sh and run_p8.sh carry
-#
-# Not new guards: these are the gates the two existing runner templates already
-# have, applied to a third file of the same kind. Each was paid for once — the
-# 2026-09-28 P-8 runner that deleted itself and left one wrong line as the only
-# record, and the SC2034 verdict that depended on how many files shellcheck was
-# handed.
-# ---------------------------------------------------------------------------
-
 _RUNNERS_DIR = (
     Path(__file__).resolve().parents[2] / "tools" / "broker_probes" / "runners"
 )
@@ -1232,11 +1055,7 @@ def test_the_runner_exists_and_is_executable() -> None:
 
 
 def test_the_policy_version_is_the_one_the_runner_expects() -> None:
-    """The handshake constant. A runner copied out of another tree aborts.
-
-    Pinned as a literal on purpose: changing the printed-line contract has to
-    change this string, and changing this string has to change the runner.
-    """
+    """The handshake constant. A runner copied out of another tree aborts."""
     assert probes_stock_cancel.POLICY_VERSION == "p-sc-cancel-shape/1"
     assert (
         f"EXPECT_POLICY_VERSION={probes_stock_cancel.POLICY_VERSION}"
@@ -1270,13 +1089,7 @@ def test_the_runner_shellchecks_alone_and_with_the_shared_helpers() -> None:
 
 
 def test_the_runner_carries_no_non_empty_instance_default() -> None:
-    """A default is how one slot's symbol or fingerprint becomes the next one's.
-
-    Only "off" defaults are allowed (empty, or the literal 0). The shared
-    helpers must carry no ``PSC_`` name at all — they are prefix-free by
-    construction, and a name creeping in there is one runner reading another's
-    environment.
-    """
+    """A default is how one slot's symbol or fingerprint becomes the next one's."""
     import re
 
     pairs = set(
@@ -1309,11 +1122,7 @@ def test_the_runner_never_deletes_itself() -> None:
 
 
 def test_the_runner_carries_no_limit_of_its_own() -> None:
-    """Pacing, quantities and windows live in the YAML, not in two places.
-
-    ``PSC_CONFIG`` names a FILE; it must not be joined by a variable that
-    carries a number the config already owns.
-    """
+    """Pacing, quantities and windows live in the YAML, not in two places."""
     import re
 
     text = _RUNNER.read_text(encoding="utf-8")
@@ -1342,20 +1151,10 @@ def test_a_run_whose_probe_raises_still_leaves_a_salvageable_run(
     assert salvaged.measurements["config"]["limits"]["max_order_calls"] == 10
 
 
-# ---------------------------------------------------------------------------
-# r1 review fixes — M1, M2, L1, L3
-# ---------------------------------------------------------------------------
-
-
 def test_a_rejected_trial_a_cancel_does_not_start_trial_b(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """M1. The broker refuses the cancel, so trial A's order is still resting.
-
-    Placing trial B's order on top of that is the one thing this probe must not
-    do, and a stop of ``none`` would also tell the runner the slot completed
-    cleanly. A rejected cancel is a measurement, not a success.
-    """
+    """M1. The broker refuses the cancel, so trial A's order is still resting."""
     broker = install(_Broker(cancel_rt_cd="1"))
     run = probe_psc(_args(_config_file(tmp_path), tmp_path))
     assert run.measurements["trial_a"]["cancel"]["outcome"] == "rejected"
@@ -1367,12 +1166,7 @@ def test_a_rejected_trial_a_cancel_does_not_start_trial_b(
 def test_an_unconfirmed_cancel_does_not_start_trial_b(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """M1. The cancel was ACCEPTED (rt_cd=0) and the row kept working.
-
-    The shape measurement is still recorded — ``NEITHER_OBSERVED`` is the
-    finding — but "the order stopped working" was never confirmed, so trial B
-    must not add a second order to an account whose first one is still live.
-    """
+    """M1. The cancel was ACCEPTED (rt_cd=0) and the row kept working."""
     install(_Broker(cancel_shape="none"))
     run = probe_psc(_args(_config_file(tmp_path), tmp_path))
     trial = run.measurements["trial_a"]
@@ -1386,12 +1180,7 @@ def test_an_unconfirmed_cancel_does_not_start_trial_b(
 def test_a_probe_error_after_an_accepted_order_still_yields_an_artifact(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """M2. Trial B's quote cannot establish a 호가단위.
-
-    ``ProbeError`` is ``run.py`` rc 4 — "precondition not met", artifact NOT
-    written. That is right before the first order and wrong after it: trial A's
-    whole measurement would vanish because trial B could not price itself.
-    """
+    """M2. Trial B's quote cannot establish a 호가단위."""
     broker = install(_Broker(cancel_shape="flag", drop_aspr_unit_after=1))
     run = probe_psc(_args(_config_file(tmp_path), tmp_path))
     assert (
@@ -1406,14 +1195,7 @@ def test_a_probe_error_after_an_accepted_order_still_yields_an_artifact(
 def test_an_empty_krx_fwdg_ord_orgno_is_a_finding_not_a_crash(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """M2. The accept response omits the 거래소코드 the cancel TR needs.
-
-    ``order_rvsecncl`` declares ``KRX_FWDG_ORD_ORGNO`` [필수] and refuses an
-    empty one, so the cancel cannot be built at all. That is a finding about
-    the accept response — and the holdings still have to be read and the
-    artifact still has to be written, because an order is now resting that this
-    probe cannot cancel.
-    """
+    """M2. The accept response omits the 거래소코드 the cancel TR needs."""
     install(_Broker(org_no=""))
     run = probe_psc(_args(_config_file(tmp_path), tmp_path))
     trial = run.measurements["trial_a"]
@@ -1427,17 +1209,11 @@ def test_an_empty_krx_fwdg_ord_orgno_is_a_finding_not_a_crash(
 def test_cleanup_reaches_the_holding_read_past_a_cancel_it_cannot_send(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """M2. A cancel that cannot even be built must not skip the sell-back.
-
-    Directly: one placed order with no 거래소코드, a holding that order filled.
-    Every cleanup phase has to record its own outcome and the next one has to
-    run anyway.
-    """
+    """M2. A cancel that cannot even be built must not skip the sell-back."""
     broker = install(_Broker(org_no=""))
     run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
     client = _client(run)
     cfg = load_config(_config_file(tmp_path))
-    # One accepted order that filled 1 share and is still working on 1.
     broker.rows.append(
         broker._row(odno="0000008687", qty=2, filled=1, price="70200", side="BUY")
     )
@@ -1470,11 +1246,7 @@ def test_cleanup_reaches_the_holding_read_past_a_cancel_it_cannot_send(
 def test_the_send_point_refuses_a_quantity_above_the_cap(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """L1. ``max_quantity`` validated in the config is not enforced on the wire.
-
-    Config validation covers the two trial quantities. It cannot cover a
-    sell-back quantity, which is derived at run time from what filled.
-    """
+    """L1. ``max_quantity`` validated in the config is not enforced on the wire."""
     install(_Broker())
     run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
     client = _client(run)
@@ -1494,10 +1266,7 @@ def test_the_send_point_refuses_a_quantity_above_the_cap(
 def test_a_sell_back_above_the_cap_is_split_into_capped_orders(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """L1. 3 shares to flatten with a cap of 2 → two orders, 2 then 1.
-
-    Never one order of 3, and never a refusal that leaves the account long.
-    """
+    """L1. 3 shares to flatten with a cap of 2 → two orders, 2 then 1."""
     broker = install(_Broker())
     run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
     client = _client(run)
@@ -1530,13 +1299,7 @@ def test_a_sell_back_above_the_cap_is_split_into_capped_orders(
 def test_the_flatten_reserve_survives_a_starved_cancel_budget(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
-    """L3. Cleanup cancels eat the general budget; the sell-back must still go.
-
-    The broker accepts every cancel and changes nothing, so the cleanup keeps
-    retrying and spends everything it is allowed to. Without a reservation the
-    sell-back is then refused for lack of budget and the run ends holding
-    shares it bought — the worst outcome this probe can produce.
-    """
+    """L3. Cleanup cancels eat the general budget; the sell-back must still go."""
     broker = install(_Broker(cancel_shape="none", partial_fill=1))
     config = _config_file(
         tmp_path,

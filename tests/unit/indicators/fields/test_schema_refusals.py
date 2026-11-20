@@ -1,11 +1,4 @@
-"""Every ``fields.yaml`` refusal, by name.
-
-Plan §2.2 lists what a producer must refuse at boot: unknown op, catalog version
-mismatch, a forward or unknown input reference, a cycle, a publish naming a
-missing field, duplicate names, bad parameters. Each gets a test here, and each
-refusal carries its own message — a producer that refuses without saying which
-rule it refused on is not operable.
-"""
+"""Every ``fields.yaml`` refusal, by name."""
 
 from __future__ import annotations
 
@@ -41,11 +34,6 @@ def _refuse(raw: Any, match: str) -> str:
     return str(excinfo.value)
 
 
-# ---------------------------------------------------------------------------
-# Versions
-# ---------------------------------------------------------------------------
-
-
 class TestVersions:
     def test_a_valid_document_loads(self) -> None:
         loaded = parse_fields_document(document([_CLOSE, _POSITIVE]))
@@ -75,13 +63,8 @@ class TestVersions:
 
     def test_unknown_top_level_key(self) -> None:
         raw = document([_CLOSE, _POSITIVE])
-        raw["publsh"] = []  # a typo must not produce an empty journal
+        raw["publsh"] = []
         _refuse(raw, "unknown key")
-
-
-# ---------------------------------------------------------------------------
-# Fields
-# ---------------------------------------------------------------------------
 
 
 class TestFieldList:
@@ -106,7 +89,7 @@ class TestFieldList:
             document([{"name": "probe", "op": "bar.typical_price"}]),
             "unknown op",
         )
-        assert "bar.close" in message  # the refusal lists the known ops
+        assert "bar.close" in message
 
     def test_duplicate_field_name(self) -> None:
         _refuse(
@@ -123,8 +106,7 @@ class TestReferences:
         )
 
     def test_forward_reference(self) -> None:
-        """Fields may only read EARLIER fields — that is what makes a longer
-        cycle impossible rather than merely unlikely."""
+        """Fields may only read EARLIER fields — that is what makes a longer"""
         _refuse(
             document(
                 [
@@ -271,9 +253,7 @@ class TestParams:
 
     @pytest.mark.parametrize("op", ["rsi", "williams_r"])
     def test_momentum_period_of_one_is_refused(self, op: str) -> None:
-        """TA-Lib returns TA_BAD_PARAM below 2, so a value it will not compute
-        must not reach a published field. (0 and below are already refused by
-        the generic count floor, above.)"""
+        """TA-Lib returns TA_BAD_PARAM below 2, so a value it will not compute"""
         message = _refuse(
             document([{"name": "probe", "op": op, "params": {"period": 1}}]),
             "TA-Lib",
@@ -281,17 +261,13 @@ class TestParams:
         assert "period=1" in message
 
     def test_rsi_period_above_the_catalog_bound_is_refused(self) -> None:
-        """Wilder memory outlives the live seed above ~780/35 bars.
-
-        The failure it prevents is not a crash: the live and the replayed value
-        of the SAME bar would differ while both looked correct.
-        """
+        """Wilder memory outlives the live seed above ~780/35 bars."""
         message = _refuse(
             document([{"name": "probe", "op": "rsi", "params": {"period": 21}}]),
             "above the catalog's limit",
         )
         assert "35 x period" in message
-        assert "williams_r" in message  # the refusal names the way out
+        assert "williams_r" in message
 
     def test_rsi_at_the_bound_still_loads(self) -> None:
         loaded = parse_fields_document(
@@ -434,13 +410,7 @@ class TestParams:
 
     @pytest.mark.parametrize("literal", [".nan", ".inf", "-.inf"])
     def test_non_finite_const(self, literal: str) -> None:
-        """``gt const: .nan`` used to LOAD and then be false on every bar.
-
-        Every comparison against NaN is false, so a NaN threshold is a gate that
-        can never pass — exactly the silently dead gate this loader refuses
-        elsewhere (``warmup > window``, ``lo > hi``). YAML spells it ``.nan``,
-        so it arrives as an ordinary float scalar rather than a string.
-        """
+        """``gt const: .nan`` used to LOAD and then be false on every bar."""
         raw = yaml.safe_load(
             "schema: tos-fields/1\n"
             f"catalog: {CATALOG_VERSION}\n"
@@ -450,7 +420,7 @@ class TestParams:
             "publish:\n"
             "  - {field: probe}\n"
         )
-        assert not math.isfinite(raw["fields"][1]["params"]["const"])  # it parsed
+        assert not math.isfinite(raw["fields"][1]["params"]["const"])
         _refuse(raw, "must be finite")
 
     @pytest.mark.parametrize("bound", ["lo", "hi"])
@@ -579,12 +549,6 @@ class TestParams:
         )
 
 
-# ---------------------------------------------------------------------------
-# Definite values
-# ---------------------------------------------------------------------------
-
-#: A field that is ``None`` during warmup: the lag has no previous sample on the
-#: first bar, so the comparison that reads it propagates the missing value.
 _MAYBE_MISSING: list[dict[str, Any]] = [
     _CLOSE,
     {"name": "t", "op": "gt", "inputs": ["close"], "params": {"const": 0}},
@@ -599,12 +563,7 @@ _MAYBE_MISSING: list[dict[str, Any]] = [
 
 
 class TestMayBeMissing:
-    """A missing value must be refused at LOAD, not on the first warmup bar.
-
-    ``all: [t, gt(c, gated_lag(c))]`` loaded cleanly and then raised on bar 1.
-    A producer that boots and dies one bar later is worse than one that refuses
-    to boot, so the reachability is decided on the declaration.
-    """
+    """A missing value must be refused at LOAD, not on the first warmup bar."""
 
     def test_all_operand_that_may_be_missing(self) -> None:
         message = _refuse(
@@ -613,7 +572,7 @@ class TestMayBeMissing:
             ),
             "may be missing",
         )
-        assert "'raw'" in message  # the refusal names the culprit, not just the op
+        assert "'raw'" in message
 
     @pytest.mark.parametrize("op", ["all", "any"])
     def test_any_boolean_combinator(self, op: str) -> None:
@@ -689,12 +648,7 @@ class TestMayBeMissing:
     def test_a_momentum_indicator_may_be_missing(
         self, op: str, params: dict[str, Any]
     ) -> None:
-        """Their warmup is a hole in the field, so the same rule applies.
-
-        Not an "``atr`` is stateful too, why not that one" distinction by hand:
-        the set is ``catalog.WARMUP_MISSING_OPS`` and ``atr`` reports a partial
-        window from its first bar, so it is definite and not in it.
-        """
+        """Their warmup is a hole in the field, so the same rule applies."""
         message = _refuse(
             document(
                 [
@@ -787,11 +741,6 @@ class TestMayBeMissing:
         assert loaded.fields[-1].name == "good"
 
 
-# ---------------------------------------------------------------------------
-# Publish
-# ---------------------------------------------------------------------------
-
-
 class TestPublish:
     def test_publish_must_be_a_non_empty_list(self) -> None:
         raw = document([_CLOSE, _POSITIVE])
@@ -818,8 +767,7 @@ class TestPublish:
         )
 
     def test_a_number_needs_a_scale(self) -> None:
-        """The kernel drops a float at the border — an unscaled number is a
-        field that would silently never arrive."""
+        """The kernel drops a float at the border — an unscaled number is a"""
         _refuse(
             document([_CLOSE, _POSITIVE], [{"field": "close"}]),
             "it needs a scale",
@@ -879,11 +827,6 @@ class TestPublish:
         assert loaded.publish[0].name == "positive"
         assert loaded.publish[0].field == "positive"
         assert loaded.publish[0].scale is None
-
-
-# ---------------------------------------------------------------------------
-# File loading
-# ---------------------------------------------------------------------------
 
 
 class TestLoadFromFile:

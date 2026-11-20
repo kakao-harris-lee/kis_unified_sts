@@ -1,11 +1,4 @@
-"""Golden pin: momentum.py delegation == pre-retirement values (full series).
-
-``momentum_compat_golden.json`` captures every column of
-``calculate_all_momentum`` (trix/trix_signal/cci/macd_*/sto_*/williams_r/obv/rsi)
-BEFORE the math was relocated into ``MomentumCompatBackend``. These tests assert the
-delegated calculators reproduce the FULL series bit-for-bit — not just the last bar,
-since ``DivergenceDetector`` and strategy df access use the whole column.
-"""
+"""Golden pin: momentum.py delegation == pre-retirement values (full series)."""
 
 from __future__ import annotations
 
@@ -43,5 +36,4 @@ def test_calculate_all_momentum_matches_golden(case) -> None:
     for col in _COLS:
         got = out[col].to_numpy(dtype=float)
         exp = np.asarray(case["cols"][col], dtype=float)
-        # full-series bit-parity (NaN-for-NaN allowed for warmup rows)
         assert np.allclose(got, exp, rtol=0, atol=1e-9, equal_nan=True), col

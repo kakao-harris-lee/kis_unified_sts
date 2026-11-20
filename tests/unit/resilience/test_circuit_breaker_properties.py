@@ -58,15 +58,12 @@ class TestCircuitBreakerProperties:
         """Property: Success in CLOSED state resets failure count."""
         breaker = CircuitBreaker(name="test", failure_threshold=5)
 
-        # Record some failures (not enough to open)
         for _ in range(failures_before):
             breaker.record_failure()
 
-        # Record success
         breaker.record_success()
 
-        # Now we need threshold failures to open (failure count was reset)
-        for _ in range(4):  # Not enough to reach threshold=5
+        for _ in range(4):
             breaker.record_failure()
 
         assert breaker.state == CircuitState.CLOSED
@@ -95,7 +92,7 @@ class TestCircuitBreakerProperties:
     @settings(max_examples=30)
     def test_name_preserved(self, name: str):
         """Property: Name is preserved in status."""
-        assume(name.strip())  # Skip empty/whitespace names
+        assume(name.strip())
         breaker = CircuitBreaker(name=name)
         status = breaker.get_status()
         assert status["name"] == name
@@ -109,7 +106,6 @@ class TestCircuitBreakerProperties:
         """Property: State is always valid after any sequence of operations."""
         breaker = CircuitBreaker(name="test", failure_threshold=5)
 
-        # Interleave failures and successes randomly
         operations = failures + successes
         import random
 
@@ -121,14 +117,12 @@ class TestCircuitBreakerProperties:
             else:
                 breaker.record_success()
 
-        # State should always be valid
         assert breaker.state in (
             CircuitState.CLOSED,
             CircuitState.OPEN,
             CircuitState.HALF_OPEN,
         )
 
-        # Status should be consistent
         status = breaker.get_status()
         assert status["state"] == breaker.state.value
         assert status["failure_count"] >= 0
@@ -209,7 +203,7 @@ class TestCircuitBreakerResetTimeProperties:
             reset_timeout=reset_timeout,
         )
 
-        breaker.record_failure()  # Open the circuit
+        breaker.record_failure()
 
         reset_time = breaker.get_reset_time()
         assert 0 <= reset_time <= reset_timeout
@@ -250,7 +244,6 @@ class TestCircuitBreakerThreadSafety:
         else:
             assert breaker._lock is None
 
-        # Should work regardless of thread_safe setting
         breaker.record_failure()
         breaker.record_success()
         _ = breaker.state

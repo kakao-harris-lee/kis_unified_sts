@@ -31,9 +31,7 @@ class TestGetClientFirstCall:
         ) as mock_cls:
             client = RedisClient.get_client()
 
-        # A Redis instance was constructed exactly once
         mock_cls.assert_called_once()
-        # ping() was called during _create_client (connection verification)
         mock_instance.ping.assert_called_once()
         assert client is mock_instance
 
@@ -42,7 +40,6 @@ class TestGetClientCaching:
     def test_get_client_returns_cached_on_second_call(self):
         """Subsequent calls return the same instance without creating a new one."""
         mock_instance = MagicMock(spec=redis.Redis)
-        # ping always succeeds
         mock_instance.ping.return_value = True
 
         with patch(
@@ -51,10 +48,8 @@ class TestGetClientCaching:
             first = RedisClient.get_client()
             second = RedisClient.get_client()
 
-        # Redis() constructor called only once
         mock_cls.assert_called_once()
         assert first is second is mock_instance
-        # ping called once in _create_client, once in the liveness check for the second call
         assert mock_instance.ping.call_count == 2
 
 
@@ -65,22 +60,18 @@ class TestGetClientReconnectsOnConnectionError:
         fresh_instance = MagicMock(spec=redis.Redis)
         fresh_instance.ping.return_value = True
 
-        # Simulate: first creation OK, subsequent liveness ping fails
         create_side_effects = [stale_instance, fresh_instance]
 
         with patch(
             "shared.streaming.client.redis.Redis", side_effect=create_side_effects
         ) as mock_cls:
-            # Populate the singleton
             first = RedisClient.get_client()
             assert first is stale_instance
 
-            # Make the cached instance appear dead
             stale_instance.ping.side_effect = redis.ConnectionError("lost connection")
 
             second = RedisClient.get_client()
 
-        # Two Redis instances were created
         assert mock_cls.call_count == 2
         assert second is fresh_instance
 
@@ -126,7 +117,7 @@ class TestClose:
     def test_close_is_idempotent_when_no_instance(self):
         """close() when no instance exists must not raise."""
         assert RedisClient._instance is None
-        RedisClient.close()  # should not raise
+        RedisClient.close()
         assert RedisClient._instance is None
 
 
@@ -142,7 +133,6 @@ class TestReset:
 
         RedisClient.reset()
 
-        # reset() is test-only — it skips close() on the underlying client
         mock_instance.close.assert_not_called()
         assert RedisClient._instance is None
 
@@ -198,16 +188,7 @@ class TestCreateClientParams:
 
 
 class TestFailFastConnectDefaults:
-    """Operator decision 2026-09-06: connect must fail fast against a down Redis.
-
-    redis-py 7.x's own `redis.Redis(...)` default retry is
-    `Retry(ExponentialWithJitterBackoff(base=1, cap=10), retries=3)`, applied to
-    connection errors — against an unreachable Redis that makes a single failed
-    acquisition take ~9.6s on the strategy hot path (the deleted
-    `shared/strategy/gates/adapter_helper.py::acquire_infra_clients` was the
-    measured case). These tests pin `_create_client`'s override: NoBackoff + 0
-    retries by default.
-    """
+    """Operator decision 2026-09-06: connect must fail fast against a down Redis."""
 
     def test_default_retry_is_no_backoff_zero_retries(self):
         """By default, _create_client must pass retry=Retry(NoBackoff(), 0)."""
@@ -261,17 +242,7 @@ class TestFailFastConnectDefaults:
                 RedisClient.get_client()
 
     def test_closed_port_fails_fast(self, monkeypatch):
-        """A real connect attempt against a closed local port must fail within 2s wall time.
-
-        Deliberately NOT marked `live_infra`: that marker is skipped by
-        default (tests/conftest.py, unless KIS_RUN_LIVE_INFRA_TESTS=1) and is
-        meant for tests touching a real Redis *service*. A closed TCP port on
-        localhost refuses the connection immediately at the OS level and needs
-        no server at all, so this stays hermetic and always runs. This file is
-        already excluded from tests/unit/conftest.py's hermetic-Redis guard
-        (see that module's docstring), so `_create_client` reaches the real
-        `redis.Redis(...)` here, as intended.
-        """
+        """A real connect attempt against a closed local port must fail within 2s wall time."""
         monkeypatch.setenv("REDIS_HOST", "127.0.0.1")
         monkeypatch.setenv("REDIS_PORT", "1")
 
@@ -286,14 +257,7 @@ class TestFailFastConnectDefaults:
 
 
 class TestConnectParamValidation:
-    """Operator review (2026-09-06): redis-py's own retry guard is
-    `if self._retries >= 0 and failures > self._retries` — so a negative
-    REDIS_CONNECT_RETRIES (e.g. -1) means "retries always <= failures" is
-    never true, i.e. infinite retries, and with NoBackoff that is a tight
-    busy loop against a down Redis. Zero or negative timeouts are similarly
-    nonsensical (a non-positive socket_connect_timeout/socket_timeout).
-    These must raise ValueError at construction, not silently misbehave.
-    """
+    """Operator review (2026-09-06): redis-py's own retry guard is"""
 
     def test_negative_connect_retries_raises_value_error(self, monkeypatch):
         monkeypatch.setenv("REDIS_CONNECT_RETRIES", "-1")

@@ -1,17 +1,4 @@
-"""ATR consumers delegate to the canonical reference.ATRCalculator (value-preserving).
-
-Phase 1 of the ATR SoT unification (docs/plans/2026-07-05-atr-sot-unification.md)
-migrated four standalone ATR consumers to ``reference.ATRCalculator(mode="sma")``.
-These tests lock each consumer to the canonical SMA-of-True-Range value computed
-*independently here*, so the migration is verified non-circularly and cannot
-silently drift from the standalone-ATR convention every consumer used before.
-
-One consumer is left --- ``IndicatorCalculationMixin``. The other three went
-with the legacy removal and their pins went with them: ``shared/strategy/entry/
-trix_golden.py`` in L6, ``shared/llm/stock_screening.py::calc_atr_pct`` and
-``shared/regime/adaptive_detector.py::_calc_atr`` in L7 (both outside the new
-import closure --- docs/plans/2026-11-07-legacy-removal-plan.md §3).
-"""
+"""ATR consumers delegate to the canonical reference.ATRCalculator (value-preserving)."""
 
 from __future__ import annotations
 
@@ -86,7 +73,7 @@ def test_runtime_calc_atr_normalized_is_raw_over_close() -> None:
 
 
 def test_atr_consumers_insufficient_data_return_zero() -> None:
-    highs, lows, closes = _ohlc(n=5)  # < period + 1
+    highs, lows, closes = _ohlc(n=5)
     candles = _candles(highs, lows, closes)
     assert IndicatorCalculationMixin._calc_atr_raw(candles, _PERIOD) == 0.0
     assert IndicatorCalculationMixin._calc_atr_normalized(candles, _PERIOD) == 0.0

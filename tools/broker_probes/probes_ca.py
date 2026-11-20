@@ -1,64 +1,4 @@
-"""P-CA — corporate-action reflection probe. READ-ONLY BY CONSTRUCTION, GET-only.
-
-Why this probe exists (``docs/plans/2026-08-07-tos-p02-nontrade-probe-definition.md``
-§5.2): it is the opportunistic half of the two-probe pair feeding the
-``B_non_trade_event_detect`` / ``B_non_trade_reconcile`` adjacent bound keys
-(``registry.py::ADJACENT_BOUND_KEYS``). N-19
-(``docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md``) is the documentary
-half: KIS exposes 12 GET-only 예탁원정보(ksdinfo) reference TRs (§2.1) carrying
-CA *schedule* fields, but none of them — nor any field of the 주식잔고조회
-balance TR (``TTTC8434R``/``VTTC8434R``) — documents WHEN a CA is reflected in
-balance/position. ``hldg_qty`` (quantity) and ``dnca_tot_amt`` (예수금총금액 —
-cash/deposit total, N-19 §2.3) are the only INDIRECT observation surface: this
-probe polls them.
-
-ADR-002-010 §8:171 forbids collapsing the seven CA times into one "corporate
-action date" (``tos/src/tos/nontrade/records.py:359-366`` keeps them separate).
-This probe honours that: it pairs each OBSERVABLE leg with the one of the seven
-times its rationale calls for (§5.2 table / :func:`_legs_to_track`) and never
-emits a single scalar — ``measurements.class_leg_table`` is the only aggregate
-this probe writes. Both VP-002 keys stay ``NOT_ESTABLISHED``, a Bounds-Approver
-judgement (``common.py::ProbeRun``: "Probes measure; humans approve.").
-
-Falsification-first (§5.2, §8.4 / VP-002:772 "observed 0 != 0"): an unobserved
-leg is never a zero latency. It is CENSORED when the polling window actually
-elapsed, and ABORTED when polling stopped early (rate limit, rejection, page
-cap) — two different epistemic states that must never share a label, because a
-CENSORED row asserts an absence over the full window and an ABORTED row asserts
-nothing at all (2026-09-17 incident, :func:`_finalize`).
-
-Attribution caveat (independent review finding F3): a detected balance change
-is attributed to the CA being measured by TIMING ALONE — the row carries no
-broker-side reference to the specific event. See ``attribution_caveat``
-(:func:`_finalize`) and runbook §5.8.
-
-Safety model — strictly GET-only, and structurally so (mirrors P-BAL):
-
-* :data:`ALLOWLIST` is the complete set of calls this module may ever make: the
-  two balance TRs (real/mock) plus the 12 ksdinfo reference TRs. No
-  order/cancel/amend path exists anywhere in this file.
-* :func:`_get` is the ONLY transport and calls
-  :func:`~tools.broker_probes.common.assert_read_only_call` before the session
-  is touched.
-* This module does not import :mod:`tools.broker_probes.probes_order` or
-  :mod:`tools.broker_probes.probes_real_order` (both carry order paths) —
-  ``tests/tools/test_broker_probes_ca.py`` pins this against the module's own
-  AST, as ``test_broker_probes_balance.py`` does for P-BAL.
-
-Futures are refused outright (§5.2 prerequisite 4): the mock server does not
-serve a futures balance query at all (``shared/kis/client.py:1031`` NOTE, guard
-``:1047``), and the real futures account is never funded with margin
-(CLAUDE.md Non-Negotiable Rules).
-
-This module has a SECOND entry point, :func:`check_holding`
-(``python -m tools.broker_probes.probes_ca --check-holding``): the runner's
-pre-flight "is the symbol held, and do we actually KNOW?" gate. It reuses
-:func:`_read_balance` and therefore the same allowlist, pagination and
-classification — see its own docstring for why the runtime client could not
-answer that question.
-
-Nothing in this module can mutate an order, in mock or in real.
-"""
+"""P-CA — corporate-action reflection probe. READ-ONLY BY CONSTRUCTION, GET-only."""
 
 from __future__ import annotations
 
@@ -108,25 +48,11 @@ from tools.broker_probes.common import (
 )
 from tools.broker_probes.registry import ProbeSpec, get
 
-# ---------------------------------------------------------------------------
-# TR ids and paths — READ from open-trading-api SDK examples (N-19 memo §2.1),
-# not guessed. The balance pair mirrors probes_balance.py exactly.
-# ---------------------------------------------------------------------------
-
-#: 주식 잔고조회 path — shared/kis/client.py:935 (same surface P-BAL reads).
 _STOCK_BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 
-#: shared/kis/client.py:919 — "TTTC8434R" if self.config.is_real else "VTTC8434R".
 _STOCK_TR_REAL = "TTTC8434R"
 _STOCK_TR_MOCK = "VTTC8434R"
 
-#: The 12 예탁원정보(ksdinfo) reference TRs (N-19 memo §2.1, VERIFIED via local
-#: open-trading-api SDK checkout, accessed 2026-09-10). All GET, account-independent
-#: (no CANO/ACNT_PRDT_CD parameter — these are reference-data lookups, not account
-#: queries). MOCK(VTS) support is UNKNOWN for every one of them (N-19 §2.1 — the
-#: wrapper never branches real/mock for this family, which the memo explicitly
-#: warns is NOT evidence either way; ``--reference-check`` is this probe's first
-#: live feasibility observation of that open question).
 _KSDINFO_BASE = "/uapi/domestic-stock/v1/ksdinfo"
 _KSDINFO_TRS: dict[str, tuple[str, str]] = {
     "dividend": ("HHKDB669102C0", f"{_KSDINFO_BASE}/dividend"),
@@ -143,7 +69,6 @@ _KSDINFO_TRS: dict[str, tuple[str, str]] = {
     "sharehld_meet": ("HHKDB669111C0", f"{_KSDINFO_BASE}/sharehld-meet"),
 }
 
-#: CLI ``--event-class`` values (design doc §5.2 + N-19 §2.2 structure table).
 _EVENT_CLASSES: tuple[str, ...] = (
     "cash_dividend",
     "stock_dividend",
@@ -154,9 +79,6 @@ _EVENT_CLASSES: tuple[str, ...] = (
     "cap_dcrs",
 )
 
-#: Which ksdinfo TR answers ``--reference-check`` for a given ``--event-class``.
-#: "split" maps to 액면교체(rev_split — 액면분할/병합), "merger" to 합병/분할
-#: (merger_split), matching N-19 §2.1's class column verbatim.
 _EVENT_CLASS_KSDINFO_KEY: dict[str, str] = {
     "cash_dividend": "dividend",
     "stock_dividend": "dividend",
@@ -167,9 +89,6 @@ _EVENT_CLASS_KSDINFO_KEY: dict[str, str] = {
     "cap_dcrs": "cap_dcrs",
 }
 
-#: Complete read-only allowlist. A call not matching an entry is refused by
-#: :func:`~tools.broker_probes.common.assert_read_only_call` before any socket is
-#: opened. There is deliberately no futures entry — see the module docstring.
 ALLOWLIST: tuple[ReadOnlyCall, ...] = (
     ReadOnlyCall(
         _STOCK_TR_REAL,
@@ -194,97 +113,41 @@ ALLOWLIST: tuple[ReadOnlyCall, ...] = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Pacing — LOCAL re-implementation, deliberately not an import of
-# probes_order._CallPacer / DEFAULT_PACE_S: importing that module would put
-# order-mutating code in this module's import graph, exactly the property
-# test_module_does_not_import_the_order_probe_module pins (P-BAL precedent,
-# probes_balance.py's DEFAULT_INTER_PAGE_S comment makes the same call).
-# ---------------------------------------------------------------------------
-
-#: What the runner checks instead of grepping this file for substrings
-#: (independent review F7). A source grep cannot tell a fix from a mention —
-#: this PR's own plan quotes the literal ``_BAL_TRANSIENT`` — and it breaks on
-#: a rename, failing a scheduled trial with "required fix not present" when the
-#: fix is right there. Bump it whenever the retry policy, the pre-flight
-#: contract, or the anchored lines the runner parses change shape; a runner
-#: copied out of the tree (the 2026-09-30 mistake) then says so instead of
-#: silently driving a probe it was not written for.
-#:
-#: ``/2`` (#830): ``--reference-only`` plus the ``REFERENCE_*`` anchored lines
-#: the runner reads to compare the broker's own ``divi_pay_dt`` against
-#: ``--payable-time`` BEFORE a polling window is spent. A ``/1`` runner never
-#: passes ``--reference-only`` and never looks for those lines, so pairing it
-#: with a ``/2`` probe would silently skip the comparison.
 POLICY_VERSION = "p-ca-retry-policy/2"
 
-#: Default minimum interval between ANY two broker calls this probe makes.
-#: Same measured value P-13/P-BAL use (clean 1.0 rps, P-13-20260729T063120Z);
-#: 1.1s sits just above it.
 DEFAULT_PACE_S = 1.1
 
 
 class _Pacer(Pacer):
-    """Minimum-interval gate before every broker call. See module note above.
-
-    ``wait``/``defer`` are :class:`~tools.broker_probes.common.Pacer`'s — the
-    ONE copy, shared with the order probes' client pacer. Only
-    :meth:`derive` is local to this module.
-    """
+    """Minimum-interval gate before every broker call. See module note above."""
 
     def derive(self, interval_s: float) -> _Pacer:
-        """A pacer on a new interval that still owes THIS pacer's gap.
-
-        The polling loop paces on ``--poll-ms`` rather than ``--pace-s``, but a
-        freshly constructed pacer carries no outstanding gap, so its first call
-        would follow the setup phase's last call (the baseline walk, or the
-        ``--reference-check`` GET) with no interval at all. The broker answers
-        such a pair with a rate limit, which stops the run: the 2026-09-17
-        SK텔레콤 trial lost its whole cash leg to CENSORED off one poll.
-        """
+        """A pacer on a new interval that still owes THIS pacer's gap."""
         successor = _Pacer(interval_s)
         successor._next_allowed_at = self._next_allowed_at
         return successor
 
 
 def _now() -> datetime:
-    """The current wall-clock instant, timezone-aware. A seam for tests.
-
-    Poll timestamps must be compared against operator-supplied ISO-8601 KST
-    instants (``--ex-time`` etc.), so ``time.monotonic()`` cannot serve here —
-    unlike P-EXT, whose t0 is also taken from ``time.monotonic()``.
-    """
+    """The current wall-clock instant, timezone-aware. A seam for tests."""
     return datetime.now(UTC)
 
 
 def _reference_now() -> datetime:
-    """'Now' for the future-time check only (:func:`_parse_operator_time`) —
-    a SEPARATE seam from :func:`_now` so a test's scripted poll clock is never
-    silently consumed by argument validation that runs before polling starts.
-    """
+    """'Now' for the future-time check only (:func:`_parse_operator_time`) —"""
     return datetime.now(UTC)
 
 
-#: KST — the offset every ``--ex-time``/``--effective-time``/``--payable-time``
-#: help string promises. A different (still valid) offset is accepted, never
-#: silently treated as KST (finding F8) — see :func:`_parse_operator_time`.
 _KST_OFFSET = "+09:00"
 
 
 def _offset_str(value: datetime) -> str:
-    """``value``'s UTC offset as ``+HH:MM``/``-HH:MM`` — ``strftime('%z')`` with
-    the colon ``isoformat()`` already uses elsewhere in this module, so the two
-    representations of the same offset never disagree in an artifact."""
+    """``value``'s UTC offset as ``+HH:MM``/``-HH:MM`` — ``strftime('%z')`` with"""
     offset = value.utcoffset()
     total_minutes = int(offset.total_seconds() // 60) if offset else 0
     sign = "+" if total_minutes >= 0 else "-"
     total_minutes = abs(total_minutes)
     return f"{sign}{total_minutes // 60:02d}:{total_minutes % 60:02d}"
-
-
-# ---------------------------------------------------------------------------
-# Trial parameters — parsed and validated once, up front
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -303,43 +166,17 @@ class _Trial:
     payable_time: datetime | None
     settlement_time_raw: str
     reference_check: bool
-    #: ``--reference-only`` (#830): the ksdinfo GET and nothing else — no
-    #: baseline, no holding requirement, no polling, and a FUTURE operator time
-    #: is accepted because nothing is paired against it.
     reference_only: bool
-    #: ``--reference-from``/``--reference-to`` (``YYYYMMDD``), empty when the
-    #: window is derived. See :func:`_ksdinfo_window`.
     reference_from: str
     reference_to: str
-    #: ``--reference-rows-from``: path to a ``--reference-only`` artifact whose
-    #: reference observations this run adopts verbatim INSTEAD of making the
-    #: ksdinfo GET again. See :func:`_adopt_reference_rows`.
     reference_rows_from: str
-    #: Per-flag UTC offset actually supplied (e.g. ``{"effective_time": "+09:00"}``)
-    #: — F8: recorded and warned on when != KST, never silently normalized.
     t0_offsets: dict[str, str]
 
 
 def _parse_operator_time(
     raw: str, flag: str, *, allow_future: bool = False
 ) -> tuple[datetime | None, str | None]:
-    """Parse one operator time. Returns ``(value, offset)``.
-
-    Two preconditions beyond "is it ISO-8601" (independent review F1/F2): a
-    naive value would crash ``now - t0_dt`` in :func:`_poll_loop` AFTER the
-    window is spent — reject it here, before any network call; a future value
-    would record a negative latency — reject it too, against
-    :func:`_reference_now`.
-
-    ``allow_future`` lifts the SECOND check only, and only for
-    ``--reference-only`` (#830). The rationale for refusing a future t0 is that
-    a poll would be paired against it; a reference-only run polls nothing, so
-    the time is pure window-anchoring input (:func:`_ksdinfo_window`) and a
-    future value is the NORMAL case there — the 2026-10-01 058610 pre-check was
-    refused ``rc 4`` before a single reference GET for exactly this reason. The
-    naive-value check is never lifted: a timestamp with no offset cannot be
-    converted to KST for the window either.
-    """
+    """Parse one operator time. Returns ``(value, offset)``."""
     raw = (raw or "").strip()
     if not raw:
         return None, None
@@ -380,8 +217,7 @@ def _parse_reference_date(raw: str, flag: str) -> str:
 
 
 def _parse_trial(args: argparse.Namespace) -> _Trial:
-    """Validate and parse every CLI input. Raises :class:`ProbeError` on any
-    precondition violation, before a single network call is possible."""
+    """Validate and parse every CLI input. Raises :class:`ProbeError` on any"""
     asset = str(getattr(args, "asset", "") or "").strip().lower()
     if asset == "futures":
         raise ProbeError(
@@ -409,11 +245,6 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
     reference_only = bool(getattr(args, "reference_only", False))
 
     window_s = float(getattr(args, "window_s", 0) or 0)
-    # A reference-only run polls nothing, so --window-s has nothing to bound
-    # and is accepted at any value (the runner passes the trial's own window
-    # through without knowing it is irrelevant here). Every other run still
-    # needs a positive window, because an unobserved leg's CENSORED row
-    # asserts an absence OVER that window.
     if window_s <= 0 and not reference_only:
         raise ProbeError("--window-s must be > 0")
     poll_ms = float(getattr(args, "poll_ms", 0) or 0)
@@ -463,9 +294,6 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
         effective_time=effective_time,
         payable_time=payable_time,
         settlement_time_raw=str(getattr(args, "settlement_time", "") or "").strip(),
-        # --reference-only IMPLIES --reference-check: the reference GET is the
-        # only thing a reference-only run does, so requiring both flags would
-        # make "--reference-only alone" a run that contacts nobody.
         reference_check=bool(getattr(args, "reference_check", False)) or reference_only,
         reference_only=reference_only,
         reference_from=reference_from,
@@ -478,16 +306,7 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
 
 
 def _assert_reference_window_is_not_empty(trial: _Trial) -> None:
-    """Refuse a ksdinfo window that cannot contain anything, before the call.
-
-    Checked against the window as DERIVED (:func:`_ksdinfo_window`), not
-    override-against-override: one end is often left to the anchor, so a
-    single ``--reference-to`` earlier than the derived ``F_DT`` produced the
-    same empty window the pair check was added to stop, and it slipped through
-    (round 2, F4). The broker answers an empty window with zero rows, which
-    downstream reads as "this event is not in the reference table" — the one
-    answer the pre-check exists to distinguish from a wrong date.
-    """
+    """Refuse a ksdinfo window that cannot contain anything, before the call."""
     window = _ksdinfo_window(trial)
     if window["f_dt"] <= window["t_dt"]:
         return
@@ -503,14 +322,7 @@ def _assert_reference_window_is_not_empty(trial: _Trial) -> None:
 
 
 def _legs_to_track(trial: _Trial) -> list[tuple[str, str, datetime]]:
-    """(leg name, t0 field name, t0 instant) for every leg ACTUALLY observable
-    on the balance surface. ``cash_dividend``'s 기준가-조정(ex) leg is a PRICE
-    adjustment — N-19 §2.3 confirms no balance field carries a price, so it is
-    NEVER tracked here (finding F4; :func:`probe_pca` emits an explicit
-    ``NOT_OBSERVABLE_ON_BALANCE_SURFACE`` skip for it instead of a silent
-    CENSOR). Every other class's quantity leg (수량 변환) pairs with
-    ``effective_time``. Cash leg always pairs with ``payable_time``.
-    """
+    """(leg name, t0 field name, t0 instant) for every leg ACTUALLY observable"""
     legs: list[tuple[str, str, datetime]] = []
     if trial.event_class != "cash_dividend" and trial.effective_time is not None:
         legs.append(("quantity", "effective_time", trial.effective_time))
@@ -520,23 +332,10 @@ def _legs_to_track(trial: _Trial) -> list[tuple[str, str, datetime]]:
 
 
 def _observable_leg_names(event_class: str) -> tuple[str, ...]:
-    """Which legs this probe COULD observe for ``event_class``, whether or not
-    an operator time was supplied.
-
-    :func:`_legs_to_track` is this list narrowed to the legs that actually
-    have a t0 — it cannot serve a ``--reference-only`` run, which may carry no
-    t0 at all and still has to say, per leg, that it observed nothing
-    (review #831 F1: a reader and the re-arm guard both key on
-    ``legs.<class>.<leg>``). A test pins the two against each other.
-    """
+    """Which legs this probe COULD observe for ``event_class``, whether or not"""
     if event_class == "cash_dividend":
         return ("cash",)
     return ("quantity", "cash")
-
-
-# ---------------------------------------------------------------------------
-# Transport — the ONLY one in this module
-# ---------------------------------------------------------------------------
 
 
 def _get(
@@ -548,11 +347,7 @@ def _get(
     tr_id: str,
     params: dict[str, Any],
 ) -> tuple[int, dict[str, Any], str, float]:
-    """The ONLY transport in this module. GET, allowlisted.
-
-    The allowlist assertion runs BEFORE the session is touched, so a refused call
-    opens no socket. Returns ``(status, parsed_body, raw_text, elapsed_ms)``.
-    """
+    """The ONLY transport in this module. GET, allowlisted."""
     url = f"{base_url}{path}"
     assert_read_only_call("GET", url, tr_id, ALLOWLIST)
     headers = dict(auth.get_auth_headers())
@@ -572,8 +367,7 @@ def _get(
 
 
 def _balance_params(creds: Any, *, fk: str = "", nk: str = "") -> dict[str, str]:
-    """Mirror the runtime's stock balance params (client.py:921-933), with the
-    continuation keys USABLE (finding F6 — see :func:`_read_balance`)."""
+    """Mirror the runtime's stock balance params (client.py:921-933), with the"""
     return {
         "CANO": creds.cano,
         "ACNT_PRDT_CD": creds.acnt_prdt_cd,
@@ -589,32 +383,12 @@ def _balance_params(creds: Any, *, fk: str = "", nk: str = "") -> dict[str, str]
     }
 
 
-#: ``F_DT``/``T_DT`` margins, in days. The ksdinfo window filters on the row's
-#: 기준일 (``record_date``) — the 2026-10-01 re-observation measured that: a run
-#: on 10-01 sent ``F_DT=20260901`` and the 09-30 row's ``record_date=20260831``
-#: came back ABSENT, one day outside (campaign README 2026-10-01 block).
-#:
-#: The lookback is therefore sized for the 기준일→지급일 GAP, not for "recent":
-#: every anchor this probe has is one of the seven ADR §8 times, all of which
-#: come AFTER the record date the window filters on. 30 days was the gap for
-#: one quarterly dividend (000660: record 08-31, pay 09-30) and it put the
-#: next target exactly on the boundary (058610: record 09-22, pay 10-22).
-#: A Korean annual dividend's gap is a different order — record 12-31, paid
-#: after the March AGM — so 30 days excluded those rows ALWAYS, and the
-#: pre-check would have answered "no row" instead of catching a wrong date
-#: (review #831 F4). 120 days covers the annual case with margin; an issuer
-#: outside even that is what ``--reference-from``/``--reference-to`` are for.
 _KSDINFO_LOOKBACK_DAYS = 120
 _KSDINFO_LOOKAHEAD_DAYS = 180
 
 
 def _ksdinfo_anchor(trial: _Trial) -> tuple[datetime | None, str]:
-    """The EARLIEST operator time supplied, and the flag it came from.
-
-    Earliest, because the window's job is to CONTAIN the event: the record
-    date precedes every one of the seven ADR §8 times, so anchoring on the
-    earliest supplied time is the choice that reaches furthest back.
-    """
+    """The EARLIEST operator time supplied, and the flag it came from."""
     supplied = [
         (value, name)
         for value, name in (
@@ -630,26 +404,7 @@ def _ksdinfo_anchor(trial: _Trial) -> tuple[datetime | None, str]:
 
 
 def _ksdinfo_window(trial: _Trial) -> dict[str, Any]:
-    """``F_DT``/``T_DT`` for this trial's ksdinfo GET, and where they came from.
-
-    Anchored on the operator's own t0 whenever one was supplied, not on the
-    run clock (#830). Run time alone is the wrong anchor twice over: a FUTURE
-    event (the 2026-10-22 058610 pay date) sits inside the forward margin by
-    luck, and a PAST one walks out of the lookback as the days pass — which is
-    exactly what the 2026-10-01 re-observation hit, returning zero rows for an
-    event whose row had come back the day before.
-
-    The window spans run time AND the anchor, so neither end can be excluded
-    by the other: ``min(...) - lookback`` … ``max(...) + lookahead``.
-
-    The margins (:data:`_KSDINFO_LOOKBACK_DAYS` /
-    :data:`_KSDINFO_LOOKAHEAD_DAYS`) are sized for the 기준일→지급일 gap, since
-    every anchor is a time that FOLLOWS the record date the window filters on.
-    They are still a heuristic, not a bound, so
-    ``--reference-from``/``--reference-to`` override either end verbatim when
-    an operator knows the record date (the runner passes the former whenever
-    ``PCA_RECORD_DATE`` is set).
-    """
+    """``F_DT``/``T_DT`` for this trial's ksdinfo GET, and where they came from."""
     from datetime import timedelta
 
     kst_now = datetime.now(UTC) + timedelta(hours=9)
@@ -682,17 +437,7 @@ def _ksdinfo_window(trial: _Trial) -> dict[str, Any]:
 
 
 def _ksdinfo_params(key: str, symbol: str, window: dict[str, Any]) -> dict[str, str]:
-    """Param shapes read verbatim from the open-trading-api SDK per-TR wrapper.
-
-    Not every ksdinfo TR takes the same params (N-19 §2.1): ``dividend`` and
-    ``paidin_capin`` add ``GB1``, ``dividend`` alone adds ``HIGH_GB``, and
-    ``rev_split`` adds ``MARKET_GB`` instead. The common trio is
-    ``CTS``/``F_DT``/``T_DT``/``SHT_CD``.
-
-    ``window`` comes from :func:`_ksdinfo_window` and is computed ONCE per
-    reference check, so a retry re-sends the identical window and the artifact
-    records the window that was actually used rather than one recomputed later.
-    """
+    """Param shapes read verbatim from the open-trading-api SDK per-TR wrapper."""
     f_dt, t_dt = str(window["f_dt"]), str(window["t_dt"])
     params: dict[str, str] = {"CTS": "", "F_DT": f_dt, "T_DT": t_dt, "SHT_CD": symbol}
     if key in ("dividend", "paidin_capin"):
@@ -705,8 +450,7 @@ def _ksdinfo_params(key: str, symbol: str, window: dict[str, Any]) -> dict[str, 
 
 
 def _find_symbol_qty(rows: list[Any], symbol: str) -> int | None:
-    """``hldg_qty`` for ``symbol``'s row on THIS page, or ``None`` if the row is
-    not on this page — distinct from "found, and it is 0" (finding F6)."""
+    """``hldg_qty`` for ``symbol``'s row on THIS page, or ``None`` if the row is"""
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -729,28 +473,13 @@ def _read_cash_total(parsed: dict[str, Any]) -> float:
     return 0.0
 
 
-#: Cap on balance pages walked per read (baseline snapshot or each poll).
-#: Finding F6: a single-page read cannot distinguish "not held" from "held on
-#: a later page" (shared/kis/client.py's own defect, measured by P-BAL). A
-#: single-symbol lookup needs far fewer pages than P-BAL's exhaustive walk;
-#: hitting the cap is an ERROR (:data:`_BAL_CAPPED`), never "no holding".
 _MAX_BALANCE_PAGES = 5
 
 _BAL_OK = "OK"
-#: Not a second literal: ``_get_classified`` returns ``common``'s token and
-#: ``_read_balance`` passes it straight through, so the two must be the SAME
-#: string and are now the same object.
 _BAL_RATE_LIMITED = STATUS_RATE_LIMITED
 _BAL_REJECTED = "REJECTED"
 _BAL_CAPPED = "CAPPED"
 
-#: A balance read that failed for a reason NOT attributable to this probe's own
-#: call rate, and is therefore worth ONE retry. The classification, the
-#: precedence and the single retry all live in ``common.py`` now — P-8's
-#: coexistence poll needs the same policy and two copies of it had already
-#: drifted once (#825 independent review F4). These names are kept as local
-#: aliases so the 6-tuple :func:`_read_balance` returns, and every caller and
-#: test pinned to it, keep their shape.
 _BAL_TRANSIENT = STATUS_TRANSIENT
 _TRANSIENT_TRANSPORT = TRANSIENT_TRANSPORT
 _TRANSIENT_LEDGER_THROTTLE = TRANSIENT_LEDGER_THROTTLE
@@ -772,21 +501,7 @@ def _get_classified(
     tr_id: str,
     params: dict[str, Any],
 ) -> tuple[str | None, int, dict[str, Any], str]:
-    """One GET through this module's transport, classified by the shared policy.
-
-    Returns ``(status_kind, http_status, parsed, text)``; ``status_kind`` is
-    ``None`` when the call came back intact and the CALLER has to interpret it
-    (``rt_cd``, pagination, rows). Otherwise it is one of
-    :data:`_BAL_TRANSIENT_TRANSPORT` / :data:`_BAL_RATE_LIMITED` /
-    :data:`_BAL_TRANSIENT_LEDGER_THROTTLE`.
-
-    Only the transport is local; the precedence is
-    :func:`~tools.broker_probes.common.classify_answer`, so it cannot differ
-    between the balance path, the ksdinfo path and P-8's coexistence poll
-    (#825 independent review F4: it already did — a 429 body carrying
-    ``EGW00215`` bought a retry on the reference check and stopped the run at
-    once on the balance walk).
-    """
+    """One GET through this module's transport, classified by the shared policy."""
     try:
         http_status, parsed, text, _elapsed_ms = _get(
             session,
@@ -797,34 +512,15 @@ def _get_classified(
             params=params,
         )
     except transport_transient_types() as exc:
-        # No answer arrived, so there is no body and no HTTP status: 0 is this
-        # module's "no call completed" marker. The excerpt carries the
-        # exception class, never the request.
         return STATUS_TRANSIENT_TRANSPORT, 0, {}, transport_excerpt(exc)
     return classify_answer(http_status, parsed, text), http_status, parsed, text
 
 
-#: Why :func:`_poll_loop` stopped. ``None`` means it ran to its natural end —
-#: ``--window-s`` genuinely elapsed, or every leg was observed — which is the
-#: ONLY state in which an unobserved leg is CENSORED (:func:`_finalize`).
-#: Anything else means the run stopped early and learned nothing about the
-#: remaining legs: the 2026-09-17 SK텔레콤 trial stopped on poll #1 after ~1s
-#: yet labelled its cash leg "CENSORED — no broker-reflect observed within
-#: --window-s=28800.0s", asserting an 8-hour absence that was never observed.
 _STOP_RATE_LIMITED = "rate_limited"
 _STOP_REJECTED = "rejected"
 _STOP_PAGE_CAP = "page_cap"
-#: Two consecutive transport failures (:data:`_BAL_TRANSIENT_TRANSPORT`). A
-#: doubled LEDGER throttle reports :data:`_STOP_RATE_LIMITED` instead — it IS a
-#: rate limit, just not one keyed on ``EGW00201`` — so a reader of the row does
-#: not have to know which code the broker used to know the run was throttled.
 _STOP_TRANSIENT = "transient"
 
-#: Cap on the verbatim broker body carried by a FAILED call's evidence record,
-#: and the record itself. Both live in ``common.py``: P-8's poll records the
-#: same shape for the same reason, and the payload gate that keeps a successful
-#: body (holdings, cash total, raw ``ctx_area_*`` cursors) out of a committed
-#: artifact must not have two versions.
 _BODY_EXCERPT_MAX_CHARS = BODY_EXCERPT_MAX_CHARS
 _call_evidence = call_evidence
 
@@ -838,25 +534,11 @@ def _read_balance(
     symbol: str,
     pacer: _Pacer,
 ) -> tuple[str, int, float, dict[str, Any], str, int]:
-    """Walk balance pages (capped at :data:`_MAX_BALANCE_PAGES`) until
-    ``symbol``'s row is found or the broker signals end-of-set. Returns
-    ``(status, qty, cash, parsed_last_page, text_last_page, http_status)`` where
-    ``status`` is one of :data:`_BAL_OK` / :data:`_BAL_RATE_LIMITED` /
-    :data:`_BAL_REJECTED` / :data:`_BAL_CAPPED` (F6: capped ⇒ INCONCLUSIVE,
-    never "not held") / :data:`_BAL_TRANSIENT_TRANSPORT` /
-    :data:`_BAL_TRANSIENT_LEDGER_THROTTLE`. ``http_status`` is the transport
-    status of the LAST page fetched — the caller records it verbatim
-    (:func:`_call_evidence`); it is ``0`` when no answer arrived at all.
-
-    A transient return ABANDONS the page walk in progress: the continuation
-    cursors of a page that failed are not resumable, so the retry
-    (:func:`_retry_once`) starts the walk again from page 1."""
+    """Walk balance pages (capped at :data:`_MAX_BALANCE_PAGES`) until"""
     fk = nk = ""
     cash = 0.0
     parsed: dict[str, Any] = {}
     text = ""
-    # Bound before the loop so the _BAL_CAPPED return below is always defined;
-    # 0 is "no call completed", which no real transport status can be.
     http_status = 0
     for _page in range(_MAX_BALANCE_PAGES):
         pacer.wait()
@@ -869,9 +551,6 @@ def _read_balance(
             params=_balance_params(creds, fk=fk, nk=nk),
         )
         if kind is not None:
-            # Rate-limited or transient — decided once, in _get_classified.
-            # The rt_cd check below is what EGW00215 used to fall through to
-            # (rt_cd='1' ⇒ _BAL_REJECTED ⇒ immediate stop, 09-30 poll #14).
             return kind, 0, cash, parsed, text, http_status
         rt_cd = str(parsed.get("rt_cd") or "").strip()
         if rt_cd != "0":
@@ -885,21 +564,11 @@ def _read_balance(
         next_fk = str(parsed.get("ctx_area_fk100") or "").strip()
         next_nk = str(parsed.get("ctx_area_nk100") or "").strip()
         if not next_fk and not next_nk:
-            # Broker end-of-set and the symbol was never on any page walked —
-            # genuinely absent, not truncated.
             return _BAL_OK, 0, cash, parsed, text, http_status
         fk, nk = next_fk, next_nk
     return _BAL_CAPPED, 0, cash, parsed, text, http_status
 
 
-# ---------------------------------------------------------------------------
-# Transient-error retry — ONE retry, one full poll interval apart (plan §2.1)
-# ---------------------------------------------------------------------------
-
-
-#: The retry machinery, shared with the order probes (``common.py``). Local
-#: aliases only — one implementation, so the P-CA and P-8 policies cannot
-#: drift apart the way the balance and ksdinfo paths once did.
 _Retries = Retries
 _retry_evidence = retry_evidence
 _Outcome = Outcome
@@ -937,11 +606,7 @@ def _ksdinfo_outcome(
     symbol: str,
     window: dict[str, Any],
 ) -> _Outcome:
-    """One paced ksdinfo GET as an :class:`_Outcome`.
-
-    It goes through the same :func:`_get_classified` as the balance walk, so
-    HTTP 429 / ``EGW00201`` stop the run here too rather than buying a retry.
-    """
+    """One paced ksdinfo GET as an :class:`_Outcome`."""
     ksd_tr, ksd_path = _KSDINFO_TRS[ksd_key]
     pacer.wait()
     kind, http_status, parsed, text = _get_classified(
@@ -958,11 +623,6 @@ def _ksdinfo_outcome(
 _record_retry = record_retry
 
 
-# ---------------------------------------------------------------------------
-# Procedure steps — each kept small and independently readable/testable
-# ---------------------------------------------------------------------------
-
-
 def _do_baseline(
     run: ProbeRun,
     session: Any,
@@ -975,15 +635,7 @@ def _do_baseline(
     retries: _Retries,
     retry_wait_s: float,
 ) -> tuple[int, float] | None:
-    """Paced, paginated balance snapshot (:func:`_read_balance`), retried once
-    on a transient error. Returns ``(qty, cash)`` or ``None`` if the run should
-    stop here (rate-limited, transient twice over, rejected, capped, or no
-    holding).
-
-    The retry belongs here and not only in the poll loop because the 2026-09-30
-    trial 4 died on this very call — the FIRST GET of the run — and left an
-    artifact with no baseline at all.
-    """
+    """Paced, paginated balance snapshot (:func:`_read_balance`), retried once"""
     outcome, _attempts, _retried = _retry_once(
         lambda: _balance_outcome(session, auth, base_url, tr_id, creds, symbol, pacer),
         _record_retry(run, retries),
@@ -1049,19 +701,8 @@ def _do_reference_check(
     trial: _Trial,
     retries: _Retries,
 ) -> None:
-    """One paced GET to the ksdinfo TR matching ``--event-class``, BEFORE
-    polling; retried once on a transient error.
-
-    A transient that survives the retry STOPS the run (:class:`_StopRun`), as a
-    rate limit here always has: the reference check is optional, but two
-    consecutive failures on it say the path to the broker is unhealthy right
-    now, and the polling loop is a far longer walk down that same path. Before
-    this change a transport exception here did not stop the run politely — it
-    escaped the probe entirely (``run.py`` rc 5).
-    """
+    """One paced GET to the ksdinfo TR matching ``--event-class``, BEFORE"""
     ksd_key = _EVENT_CLASS_KSDINFO_KEY[trial.event_class]
-    # ONCE, before the first attempt: a retry must re-send the identical
-    # window, and the artifact has to record the window that actually went out.
     window = _ksdinfo_window(trial)
     run.observe(reference_window=window)
     print(f"{_REFERENCE_WINDOW_PREFIX}{window['f_dt']}-{window['t_dt']}")
@@ -1081,11 +722,6 @@ def _do_reference_check(
             f"reference-check call failed twice in a row with a transient "
             f"{transient} error; stopping"
         )
-        # Said out loud, because the runner's next move is a 16-hour poll down
-        # this same path (review #831 F5). Before this line a stopped reference
-        # check printed NOTHING, so the runner could not tell "the broker is
-        # unreachable" from "this event is not in the table" and launched the
-        # trial anyway — against the very reason this stop exists.
         print(f"{_REFERENCE_STATUS_PREFIX}{_REF_TRANSIENT_STOP}:{transient}")
         raise _StopRun
     if outcome.kind == _BAL_RATE_LIMITED:
@@ -1099,8 +735,6 @@ def _do_reference_check(
     if rt_cd != "0":
         detail = f"{rt_cd}/{parsed.get('msg_cd')}:{parsed.get('msg1')}"
         key = "mock_reference_support" if not trial.is_real else "reference_check_error"
-        # The artifact keeps the value it has always carried; only the wire
-        # token splits (review round 2, F1).
         run.observe(**{key: f"UNSUPPORTED_OR_ERROR:{detail}"})
         token = _reference_refusal_status(status, parsed)
         if token == _REF_ERROR:
@@ -1118,20 +752,11 @@ def _do_reference_check(
     _print_reference_rows(rows)
 
 
-#: The anchored stdout lines the runner parses out of a reference check. Same
-#: discipline as :data:`_HELD_PREFIX`: one record per line, nothing else on
-#: stdout is contractual, and every broker-supplied value goes through
-#: :func:`_reference_field` first.
 _REFERENCE_WINDOW_PREFIX = "REFERENCE_WINDOW="
 _REFERENCE_STATUS_PREFIX = "REFERENCE_STATUS="
 _REFERENCE_ROWS_PREFIX = "REFERENCE_ROWS="
 _REFERENCE_ROW_PREFIX = "REFERENCE_ROW="
 
-#: Every value ``REFERENCE_STATUS=`` can take, each optionally followed by
-#: ``:<detail>``. A reference check prints EXACTLY ONE of these, on every path
-#: it can leave by (review #831 F5) — the two STOP values exist so the runner
-#: can tell "the broker path is unhealthy" from "the table has no such row",
-#: which decides whether a 16-hour trial should start at all.
 _REF_OK = "OK"
 _REF_NO_ROWS = "NO_ROWS"
 _REF_UNSUPPORTED = "UNSUPPORTED"
@@ -1149,72 +774,22 @@ REFERENCE_STATUSES: tuple[str, ...] = (
 
 
 def _reference_refusal_status(http_status: int | None, parsed: dict[str, Any]) -> str:
-    """``UNSUPPORTED`` or ``ERROR`` for a ksdinfo answer with ``rt_cd != '0'``.
-
-    The runner lets UNSUPPORTED through and ABORTS on ERROR, so the split has
-    to be the one that gate is for: did the broker ANSWER, or did the path
-    fail? One token for both put an HTTP 500 carrying a gateway HTML page into
-    the "clean answer" arm and started a 16-hour poll down it (round 2, F1).
-
-    Answered — HTTP 200 and a body that is a real envelope, i.e. it HAS an
-    ``rt_cd`` — is UNSUPPORTED. The path is healthy and the broker is refusing
-    this TR, which is the mock behaviour N-19 §3 opened this observation for
-    and which must not block a trial. Everything else is ERROR: a non-200, or
-    a body with no ``rt_cd`` at all (:func:`_get` hands back ``{}`` for a
-    non-JSON gateway page).
-
-    Deliberately NOT an allowlist of ``msg_cd`` values. No msg_cd for a
-    mock-unsupported ksdinfo answer has ever been measured here — every
-    observation so far is ``SUPPORTED`` — so the list would be empty today and
-    would turn the one case this arm exists to tolerate into an abort: a guard
-    refusing exactly what it was written to allow. The code is printed on the
-    line instead, so the operator sees what the mock actually said and can
-    narrow this with evidence rather than by guess.
-    """
+    """``UNSUPPORTED`` or ``ERROR`` for a ksdinfo answer with ``rt_cd != '0'``."""
     answered = http_status == 200 and "rt_cd" in parsed
     return _REF_UNSUPPORTED if answered else _REF_ERROR
 
 
-#: A date field on an anchored line is DIGITS ONLY (review #831 F7). 16 chars
-#: is twice what ``YYYYMMDD`` needs.
 _REFERENCE_FIELD_MAX_CHARS = 16
 
 
 def _reference_field(value: Any) -> str:
-    """One broker-supplied date, fit for the anchored line the runner parses.
-
-    The runner reads these with ``sed -n 's/^…//p'`` and splits on ``|``, so a
-    value carrying a newline would both split the record and let
-    broker-controlled text begin a line of its own — the property
-    :func:`_one_line` keeps for the holding check.
-
-    Reduced to DIGITS, so the whole wire contract is
-    ``REFERENCE_ROW=YYYYMMDD|YYYYMMDD``. The broker does not spell its two
-    date columns alike — ``record_date`` comes back ``20260831`` and
-    ``divi_pay_dt`` ``2026/09/30`` in every artifact so far — and normalising
-    only one side left the runner matching ``PCA_RECORD_DATE`` verbatim
-    against a field that might carry separators, so a separator-bearing record
-    date could never be selected (review #831 F7). Dropping rather than
-    escaping, because no legitimate ``|``, quote or control character exists
-    in either column, and dropping cannot be got wrong the way escaping can.
-    """
+    """One broker-supplied date, fit for the anchored line the runner parses."""
     text = str(value if value is not None else "")
     return "".join(ch for ch in text if ch.isdigit())[:_REFERENCE_FIELD_MAX_CHARS]
 
 
 def _print_reference_rows(rows: list[Any]) -> None:
-    """``REFERENCE_ROWS=<n>`` then one ``REFERENCE_ROW=`` line per row.
-
-    ``<record_date>|<divi_pay_dt>`` — the two fields the runner compares
-    ``--payable-time`` against (#830). They are printed after sanitising
-    rather than selected here: which rows are candidates is the runner's call
-    (it knows ``PCA_RECORD_DATE``), and a probe that picked one silently would
-    hide the others from the log.
-    """
-    # The count is of the lines actually emitted, not of ``output1``: a body
-    # padded with non-dict entries made ``REFERENCE_ROWS=3`` sit above one
-    # ``REFERENCE_ROW=`` line, so the two halves of the wire contract
-    # disagreed about the same answer (round 2, F10).
+    """``REFERENCE_ROWS=<n>`` then one ``REFERENCE_ROW=`` line per row."""
     emitted = [
         f"{_reference_field(row.get('record_date'))}|"
         f"{_reference_field(row.get('divi_pay_dt'))}"
@@ -1227,9 +802,6 @@ def _print_reference_rows(rows: list[Any]) -> None:
         print(f"{_REFERENCE_ROW_PREFIX}{line}")
 
 
-#: The reference observations a ``--reference-only`` artifact carries, and the
-#: exact set :func:`_adopt_reference_rows` copies forward. Named once, so the
-#: adopting path cannot drift from the GET path's own output.
 _REFERENCE_OBSERVATION_KEYS: tuple[str, ...] = (
     "reference_dates",
     "reference_window",
@@ -1239,27 +811,7 @@ _REFERENCE_OBSERVATION_KEYS: tuple[str, ...] = (
 
 
 def _adopt_reference_rows(run: ProbeRun, trial: _Trial) -> None:
-    """Copy a ``--reference-only`` artifact's reference observations into this
-    run, VERBATIM, instead of re-sending the ksdinfo GET.
-
-    The runner makes that GET in its pre-check (#830 step 5b) and the trial
-    used to make it again — same TR, same symbol, same window — so round 1
-    dropped ``--reference-check`` from the trial. That silently cost the trial
-    artifact its ``reference_dates`` / ``mock_reference_support``
-    observations, which the runbook says a P-CA artifact records (round 2,
-    F5): the ``--note`` substitute held eight rows of two digit-only fields
-    and lost every other ksdinfo column.
-
-    So the rows travel as DATA rather than as a second call. The keys are the
-    ones the GET path writes (:data:`_REFERENCE_OBSERVATION_KEYS`), copied
-    unchanged, plus a provenance observation naming the artifact they came
-    from — a reader must never mistake an adopted row for one this run
-    fetched.
-
-    An unreadable or unparseable path is a precondition failure: the trial
-    would otherwise run a 16-hour window while quietly claiming reference data
-    it does not have.
-    """
+    """Copy a ``--reference-only`` artifact's reference observations into this"""
     import json
     from pathlib import Path
 
@@ -1314,16 +866,7 @@ def _do_reference_only(
     trial: _Trial,
     retries: _Retries,
 ) -> None:
-    """``--reference-only`` (#830): the ksdinfo GET, and nothing else.
-
-    No baseline, so no holding requirement — the 12 ksdinfo TRs are
-    account-independent reference lookups (N-19 §2.1: no ``CANO`` /
-    ``ACNT_PRDT_CD`` parameter, see :func:`_ksdinfo_params`), so the symbol is
-    the only input they need. No poll loop either, so every leg is skipped
-    with ``REFERENCE_ONLY`` rather than CENSORED: nothing was polled, and a
-    CENSORED row would assert an absence over a window that never ran (the
-    2026-09-17 distinction :func:`_finalize` exists to keep).
-    """
+    """``--reference-only`` (#830): the ksdinfo GET, and nothing else."""
     run.observe(
         reference_only=True,
         reference_only_note=(
@@ -1337,20 +880,11 @@ def _do_reference_only(
             "ksdinfo F_DT/T_DT window (observations.reference_window)."
         ),
     )
-    # ``finally``, because a stopped lookup is still a run that has to say,
-    # per leg, that it observed nothing (round 2, F8). Swallowing _StopRun
-    # before these skips left an artifact with args.reference_only=true and no
-    # ``legs.<class>.<leg>`` key at all — the absent answer the F1 disposition
-    # claims this probe no longer writes, reappearing on the error path.
     try:
         _do_reference_check(run, session, auth, base_url, pacer, trial, retries)
     except _StopRun:
         return
     finally:
-        # Per LEG, under the same key a trial uses, because that key is what a
-        # reader and the 10-22 re-arm guard look for when they ask "was this
-        # event observed?". ``REFERENCE_ONLY`` is deliberately neither
-        # CENSORED nor ABORTED: no window ran, so neither claim is available.
         for leg in _observable_leg_names(trial.event_class):
             run.skip(
                 f"legs.{trial.event_class}.{leg}",
@@ -1374,9 +908,7 @@ def _do_reference_only(
 
 
 class _StopRun(ProbeError):
-    """Signal: the reason is ALREADY recorded via ``run.error``; stop and write
-    the artifact as it stands. Never propagates out of :func:`probe_pca`, so it
-    never reaches ``run.py``'s catch-all failure path."""
+    """Signal: the reason is ALREADY recorded via ``run.error``; stop and write"""
 
 
 class _RateLimited(_StopRun):
@@ -1397,40 +929,15 @@ def _poll_loop(
     pacer: _Pacer,
     retries: _Retries,
 ) -> tuple[dict[str, dict[str, Any]], int, int, float, str | None]:
-    """Poll balance until every leg is observed or ``--window-s`` expires.
-
-    Returns ``(found, polls_used, polls_completed, polled_elapsed_s,
-    stop_reason)`` — ``found`` maps leg name to its measurement record for every
-    leg detected live. ``stop_reason`` is ``None`` when the loop ran to its
-    natural end (window elapsed, or every leg observed), in which case a leg
-    absent from ``found`` is CENSORED; otherwise it is one of
-    :data:`_STOP_RATE_LIMITED` / :data:`_STOP_REJECTED` / :data:`_STOP_PAGE_CAP`
-    / :data:`_STOP_TRANSIENT` and the remaining legs were ABORTED, not censored
-    (:func:`_finalize`).
-
-    A transient failure costs one extra ATTEMPT and no completed poll:
-    ``polls_used`` counts both tries, ``polls_completed`` counts the one that
-    came back with a balance. A poll only stops the loop when its retry fails
-    transiently too.
-    """
+    """Poll balance until every leg is observed or ``--window-s`` expires."""
     pending = {name: (t0_field, t0_dt) for name, t0_field, t0_dt in legs}
     found: dict[str, dict[str, Any]] = {}
     poll_pacer = pacer.derive(trial.effective_poll_ms / 1000.0)
-    # Two counters, because one number cannot mean both (review M2): the
-    # 2026-09-17 artifact's "polls_used=1" was the ATTEMPT that rate-limited, so
-    # a reader who took it for "one poll observed nothing" read an observation
-    # into a run that made none. polls_used counts attempts (the failed one that
-    # ends the run included, so it stays the index poll_stop_evidence reports);
-    # polls_completed counts the polls that came back with a usable balance.
     polls_used = 0
     polls_completed = 0
     stop_reason: str | None = None
-    # M3: the ABORTED row must carry how long polling ACTUALLY ran, not just the
-    # requested --window-s it never reached (an ~1s run carrying window_s=28800).
     started_at = time.monotonic()
     deadline = started_at + trial.window_s
-    # Hoisted (review F9): neither depends on loop state, and a 16-hour window
-    # at 30s polls would otherwise build ~1,920 of each for nothing.
     on_transient = _record_retry(run, retries)
 
     def read_balance_now() -> _Outcome:
@@ -1449,9 +956,6 @@ def _poll_loop(
             wait_s=trial.effective_poll_ms / 1000.0,
             phase="poll",
             poll_index_base=polls_used,
-            # F5: a transient that surfaces after the window has elapsed must
-            # not buy another interval of waiting plus another call — the
-            # retry is allowed on exactly the terms a fresh poll would be.
             can_retry=window_still_open,
         )
         status, http_status, parsed, text = (
@@ -1461,23 +965,11 @@ def _poll_loop(
             outcome.text,
         )
         qty, cash = outcome.payload
-        # Every ATTEMPT counts, the retried one included — polls_used is the
-        # index poll_stop_evidence / poll_retry_evidence report, so a reader
-        # can line the records up against it.
         polls_used += attempts
         transient = _transient_kind(status)
         if transient is not None and not retried:
-            # The retry was REFUSED because --window-s had already elapsed, so
-            # the loop ends the way it would have ended anyway: stop_reason
-            # stays None, because the window genuinely ran its course and that
-            # is exactly what CENSORED asserts. The transient itself is in the
-            # artifact as a retry_evidence record with retried=false; it is not
-            # a stop reason, because it did not stop anything (review F5).
             break
         if status in (_BAL_RATE_LIMITED, _BAL_REJECTED, _BAL_CAPPED) or transient:
-            # ONE verbatim evidence record per stop, so a later reader can tell
-            # HTTP 429 from EGW00201 and read the broker's own words (the
-            # 2026-09-17 artifact recorded neither).
             run.observe(
                 poll_stop_evidence={
                     "poll_index": polls_used,
@@ -1539,7 +1031,6 @@ def _poll_loop(
                     "latency_ms": (now - t0_dt).total_seconds() * 1000.0,
                     "poll_interval_ms_effective": trial.effective_poll_ms,
                     "candidate_only": True,
-                    # F3: TIMING ALONE — no broker-side CA reference on the row.
                     "attribution": "UNVERIFIED_ACCOUNT_LEVEL_CHANGE",
                     f"baseline_{name if name == 'quantity' else 'cash'}": baseline,
                     f"observed_{name if name == 'quantity' else 'cash'}": observed,
@@ -1566,40 +1057,19 @@ def _finalize(
     polled_elapsed_s: float,
     stop_reason: str | None,
 ) -> None:
-    """Build ``class_leg_table`` — the ONLY aggregate this probe emits — and
-    skip every unobserved leg explicitly (never a value, never a zero).
-
-    An unobserved leg is CENSORED only when ``stop_reason`` is ``None``: the
-    window truly elapsed, so absence is an informative-but-not-zero observation.
-    When polling stopped early the leg is ABORTED instead — a different
-    epistemic state, in which nothing at all was observed about the leg and the
-    window never elapsed (2026-09-17 incident: an ~1s run claimed an 8-hour
-    censoring window).
-
-    Because ``class_leg_table`` is the only aggregate emitted, each row has to
-    be self-sufficient: it carries ``polled_elapsed_s`` (how long polling
-    ACTUALLY ran) beside ``window_s`` (what was REQUESTED), so the 2026-09-17
-    row's ``window_s=28800.0`` on a one-second run cannot be read as a window
-    that elapsed (review M3).
-    """
+    """Build ``class_leg_table`` — the ONLY aggregate this probe emits — and"""
     class_leg_table: list[dict[str, Any]] = []
     for name, t0_field, t0_dt in legs:
         if name in found:
             row = dict(found[name])
             row["status"] = "OBSERVED"
         else:
-            # No "candidate_only" here (F5): that flag means "a value exists,
-            # unapproved" — a CENSORED/ABORTED row has NO value to flag as a
-            # candidate (and no t1/latency_ms either).
             row = {
                 "event_class": trial.event_class,
                 "leg": name,
                 "t0_field": t0_field,
                 "t0": t0_dt.isoformat(),
                 "status": "CENSORED" if stop_reason is None else "ABORTED",
-                # window_s is what was REQUESTED; polled_elapsed_s is what
-                # actually ran. On an ABORTED row the two differ by orders of
-                # magnitude, and the row is the only aggregate a reader gets.
                 "window_s": trial.window_s,
                 "polled_elapsed_s": polled_elapsed_s,
             }
@@ -1629,10 +1099,6 @@ def _finalize(
         class_leg_table.append(row)
 
     run.observe(
-        # F3: OBSERVED rows are timing-only attribution — see each row's
-        # "attribution": "UNVERIFIED_ACCOUNT_LEVEL_CHANGE" (_poll_loop). This is
-        # the one-sentence artifact-level caveat an approval reader must see
-        # before citing any OBSERVED row as this CA's effect.
         attribution_caveat=(
             "OBSERVED rows in class_leg_table are UNVERIFIED_ACCOUNT_LEVEL_CHANGE: "
             "detected by TIMING ALONE (a balance change during the polling "
@@ -1644,17 +1110,11 @@ def _finalize(
         )
     )
     run.measure("class_leg_table", class_leg_table)
-    # polls_used counts ATTEMPTS and keeps its name for the artifacts already
-    # committed under docs/broker-profiles/evidence/; polls_completed is the
-    # count a reader actually wants when the run stopped early (review M2).
     run.measure("polls_used", polls_used)
     run.measure("polls_completed", polls_completed)
     run.measure("polled_elapsed_s", polled_elapsed_s)
     run.measure("poll_interval_ms_effective", trial.effective_poll_ms)
     run.measure(
-        # Supplements the framework's own mode/errors-only provenance_class
-        # (common.py::ProbeRun.to_dict) with a per-leg signal: a window that
-        # legitimately CENSORS every leg is neither an error nor a measurement.
         "leg_provenance_class",
         "MEASURED" if found else "NOT_MEASURED",
     )
@@ -1668,39 +1128,13 @@ def _finalize(
     )
 
 
-# ---------------------------------------------------------------------------
-# P-CA
-# ---------------------------------------------------------------------------
-
-
 def _open_broker_session(
     *,
     is_real: bool,
     token_cache_dir: Any,
     on_credentials: Callable[[Any], None] | None = None,
 ) -> tuple[Any, Any, str, str, Any]:
-    """Resolve credentials and open the ONE broker session shape this module
-    uses. Returns ``(session, auth, base_url, tr_id, creds)``.
-
-    Both entry points go through here — :func:`probe_pca` and
-    :func:`check_holding` (independent review F6: the pre-flight gate had a
-    line-for-line copy of this and had already drifted, dropping
-    :func:`warn_shared_token_cache`). The caller closes the session.
-
-    ``on_credentials`` fires as soon as the credentials are resolved and
-    accepted, BEFORE the token cache or the HTTP session is touched. The
-    ordering is the point (independent review F4): everything after it can
-    raise something that is not a :class:`ProbeError` — an unreadable token
-    cache directory, malformed cached token JSON — and ``run.py``'s salvage
-    path then writes the artifact as it stands. That artifact has to carry the
-    account fingerprint and which token cache was in use, which is the exact
-    provenance the salvage path exists to preserve (``run.py``: "no account
-    fingerprint, no record of which token cache was in use").
-
-    ``requests`` and ``KISAuthManager`` are imported lazily for the reason the
-    module docstring gives: ``--list``/``--dry-run`` and the registry import
-    this module and must not pay for (or require) the HTTP stack.
-    """
+    """Resolve credentials and open the ONE broker session shape this module"""
     warn_shared_token_cache()
     creds = resolve_credentials("stock", is_real=is_real)
     require_account(creds)
@@ -1725,9 +1159,6 @@ def _build_run(spec: ProbeSpec, args: argparse.Namespace, trial: _Trial) -> Prob
         probe_id=spec.probe_id,
         title=spec.title,
         mode="live" if args.confirm else "dry-run",
-        # NOT spec.environment: §6.2 forbids citing a MOCK_VTS artifact in a
-        # REAL_PROD document, so the artifact must record what was ACTUALLY
-        # contacted (P-BAL precedent, probes_balance.py:611-614).
         environment=ENV_REAL if trial.is_real else ENV_MOCK,
         args=vars(args),
     )
@@ -1784,19 +1215,7 @@ def _dry_run_would_send(trial: _Trial) -> str:
 
 
 def probe_pca(args: argparse.Namespace) -> ProbeRun:
-    """P-CA CORPORATE_ADMINISTRATIVE_EVENTS — opportunistic GET-only reflection latency.
-
-    Procedure (design doc §5.2 ⑤): baseline balance snapshot -> optional
-    ``--reference-check`` -> operator ``[Enter]`` prompt (P-EXT form) -> bounded
-    poll loop (:func:`_poll_loop`) -> per-leg OBSERVED/CENSORED classification
-    (:func:`_finalize`). No aggregate scalar is ever written for
-    ``B_non_trade_event_detect``/``B_non_trade_reconcile`` — a Bounds-Approver
-    decision this probe cannot make.
-
-    ``--reference-only`` (#830) short-circuits all of that to the ksdinfo GET
-    alone (:func:`_do_reference_only`), which is how a FUTURE event can be
-    looked up before its window is scheduled.
-    """
+    """P-CA CORPORATE_ADMINISTRATIVE_EVENTS — opportunistic GET-only reflection latency."""
     spec = get("P-CA")
     trial = _parse_trial(args)
     run = _build_run(spec, args, trial)
@@ -1806,9 +1225,6 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
         run.observe(would_send=_dry_run_would_send(trial))
         return run
 
-    # Before the session, so an unreadable artifact costs no broker call at
-    # all — the whole point of adopting rather than re-fetching is that this
-    # run does not touch the reference TR.
     if trial.reference_rows_from:
         _adopt_reference_rows(run, trial)
 
@@ -1851,9 +1267,6 @@ def probe_pca(args: argparse.Namespace) -> ProbeRun:
                 return run
 
         if trial.event_class == "cash_dividend":
-            # F4: the 기준가-조정(ex) leg is a PRICE adjustment — never CENSOR
-            # it silently (:func:`_legs_to_track` never tracks it at all); say
-            # explicitly why it is unobservable, every cash_dividend run.
             run.skip(
                 "legs.cash_dividend.ex",
                 "NOT_OBSERVABLE_ON_BALANCE_SURFACE — 기준가 조정은 잔고 TR로 "
@@ -2006,45 +1419,13 @@ def write(run: ProbeRun, spec: ProbeSpec, args: argparse.Namespace) -> None:
     run.write(spec, resolve_out_dir(args))
 
 
-# ---------------------------------------------------------------------------
-# Pre-flight holding check — the runner's gate, on THIS module's reader
-# ---------------------------------------------------------------------------
-#
-# Independent review F1/F2. The runner used to ask
-# ``shared/kis/client.py::get_stock_balance`` whether the symbol was held, and
-# that function is the wrong instrument twice over:
-#
-# * it returns ``[]`` on EVERY failure — non-200, non-JSON, ``rt_cd != '0'``,
-#   and a catch-all ``except Exception`` — so a broker-side failure and an
-#   empty account are the SAME answer. That is precisely the 2026-09-30 10:58
-#   misdiagnosis ("held qty=0" for a query that had errored after 32s; a direct
-#   GET two minutes later showed qty 1), i.e. the defect the runner claimed to
-#   fix was reproduced by the tool the fix was built on.
-# * it sends empty ``CTX_AREA_FK100``/``NK100`` and never follows the
-#   continuation cursors, so it reads PAGE 1 ONLY. The mock stock account holds
-#   25 rows across 2 pages; a target on page 2 reads as "not held" — the F6
-#   trap this module's own :func:`_read_balance` was written to close.
-#
-# So the gate runs on :func:`_read_balance`: paced, paginated, and classifying.
-# It prints exactly one machine-readable line for the runner to parse.
-
-#: The three lines the runner parses. Anything else on stdout is diagnostic.
 _HELD_PREFIX = "HELD="
 _HOLDING_FAILED_PREFIX = "HOLDING_QUERY_FAILED="
-#: Printed first, always — so the log of any run records which policy answered,
-#: not just which one the runner expected (:data:`POLICY_VERSION`).
 _POLICY_PREFIX = "POLICY_VERSION="
 
 
 def _holding_failure_detail(outcome: _Outcome) -> str:
-    """The short reason after the status kind.
-
-    ``msg_cd`` only when the broker actually REJECTED the call (``rt_cd`` not
-    ``'0'``). The page cap is the case that forced this (review F4): its
-    ``parsed`` is the last SUCCESSFUL page, so keying on "is there a body"
-    printed a success code — ``CAPPED:KIOK0510`` — as the reason a run was
-    abandoned, and a reader looking that code up finds 정상처리.
-    """
+    """The short reason after the status kind."""
     if outcome.kind == _BAL_CAPPED:
         return f"page_cap:{_MAX_BALANCE_PAGES}"
     rt_cd = str(outcome.parsed.get("rt_cd") or "").strip()
@@ -2055,26 +1436,14 @@ def _holding_failure_detail(outcome: _Outcome) -> str:
 
 
 def _one_line(text: str) -> str:
-    """Broker text, fit for the single anchored line the runner parses.
-
-    Two properties, both load-bearing (independent review F5). CAPPED at
-    :data:`_BODY_EXCERPT_MAX_CHARS`, the same bound every other broker body in
-    this module gets — a gateway that answers HTTP 429 with a colon-free HTML
-    page would otherwise put hundreds of bytes of it into the runner's log,
-    where the runner's own 160-char truncation does not reach. And collapsed to
-    ONE line, because the runner reads this with ``sed -n 's/^…//p'``: an
-    embedded newline would both split the record and let broker-controlled text
-    begin a line of its own.
-    """
+    """Broker text, fit for the single anchored line the runner parses."""
     return " ".join((text or "").split())[:_BODY_EXCERPT_MAX_CHARS]
 
 
 def _print_holding_transient(
     wait_s: float,
 ) -> Callable[[dict[str, Any], str], None]:
-    """The pre-flight's ``on_transient``: say what happened on stderr, and say
-    only what is true — ``_retry_once`` reports EVERY transient, so the one
-    that bought no retry must not announce a retry."""
+    """The pre-flight's ``on_transient``: say what happened on stderr, and say"""
 
     def _print(evidence: dict[str, Any], kind: str) -> None:
         detail = evidence.get("body_excerpt") or evidence.get("msg_cd") or "no detail"
@@ -2089,19 +1458,7 @@ def _print_holding_transient(
 
 
 def check_holding(argv: list[str] | None = None) -> int:
-    """Answer "is ``--symbol`` held, and do we actually KNOW?" for a runner.
-
-    Prints ``POLICY_VERSION=<v>`` and then ONE of two anchored lines, exiting
-    accordingly:
-
-    * ``HELD=<n>`` and 0 — the balance walk completed. ``n`` may be 0, and
-      then it is a real "not held", not a failure wearing its clothes.
-    * ``HOLDING_QUERY_FAILED=<status kind>:<detail>`` and non-zero — anything
-      else: rate limit, rejection, page cap, or two consecutive transients.
-
-    Transients get the same single retry as the probe itself, one pacing
-    interval apart, so one read timeout does not cost a whole trial window.
-    """
+    """Answer "is ``--symbol`` held, and do we actually KNOW?" for a runner."""
     parser = argparse.ArgumentParser(
         prog="python -m tools.broker_probes.probes_ca",
         description=(

@@ -1,24 +1,4 @@
-"""CP-3 PR-2b — the cross-contract (month-stitch) seed, plan §3.2a tests 1-6.
-
-Hermetic: no socket, no credential, no KIS call. The quotation transport is a
-fixture server and the clock a fake one.
-
-Every clause these tests guard is red-proved here, either by its own
-``test_red_*`` companion or by a case inside the test that shows the assertion
-failing when the clause is removed. Two of the six items ARE each other's red
-proof and are written that way on purpose (plan §3.2a: 「1 과 짝 — 정렬 절을
-지워도 전부 초록이면 그 절은 아무것도 하지 않는 것」):
-
-* item 1 says the alignment changes nothing that comes from a price DIFFERENCE;
-* item 2 says it changes something that does not — ``stall_ok`` on a bar in the
-  entry window right after the splice.
-
-The fixture constants are the measured ones wherever a measurement exists:
-``c_x100 = 344`` and the 15:19 / 15:45 session-end mismatch are from
-``docs/broker-profiles/evidence/2026-10-14-cp3-pr2b-expired-contract``, and the
-raw row shape uses the ``stck_`` date/time prefix that evidence §2 recorded on
-a futures TR response.
-"""
+"""CP-3 PR-2b — the cross-contract (month-stitch) seed, plan §3.2a tests 1-6."""
 
 from __future__ import annotations
 
@@ -65,33 +45,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 OLD = "A05610"
 NEW = "A05611"
-#: The roll this PR was designed against: A05610 expires 2026-10-08 and
-#: ``get_front_month_code(product="mini")`` moves to A05611 the next trading
-#: day (2026-10-09 is a holiday, so that is 2026-10-12).
 TARGET = date(2026, 10, 12)
 
-#: The shipped tenant tree this producer serves. Real, not a fixture: the
-#: producer binds the declaration to the session at boot
-#: (``produce_fields.assert_declaration_binds_to_the_run``), so a stand-in
-#: would have to restate the shipped open anchor and vol window to be accepted
-#: — and then it would stop pinning the shipped ones.
 TENANT_TREE = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long"
 SPLICE = date(2026, 10, 8)
-#: Walk order is backwards from TARGET; these are the four trading days the
-#: tenant calendar yields before it (2026-10-05 is a substitute holiday and
-#: 10-03/10-04 a weekend).
 SEED_DAYS = [date(2026, 10, 2), date(2026, 10, 6), date(2026, 10, 7), SPLICE]
 
 OPEN_HM = (8, 45)
-SESSION_BARS = 420  # 08:45..15:44, the real shape of a 2026 futures session
-#: Measured on the 2026-10 roll (evidence §5): P_new - P_old at the last common
-#: parsed minute, +3.44 index points on the mini 0.02 grid.
+SESSION_BARS = 420
 C_X100 = 344
-
-
-# ---------------------------------------------------------------------------
-# Synthetic market
-# ---------------------------------------------------------------------------
 
 
 def _stamp(day: date, index: int) -> datetime:
@@ -121,10 +83,6 @@ def _zigzag(index: int, period: int = 7) -> float:
     return (phase / half) if phase < half else (2 - phase / half)
 
 
-#: Two-bar impulses: a stretch away from VWAP, then a partial turn back that is
-#: still beyond ``extreme_atr_mult``. Without them every bar returns at step 4
-#: and ``stall_ok`` / ``reversal_ok`` are False everywhere — a fixture in which
-#: item 1 would be vacuous (plan §9 LOW-2).
 _SPIKES = {
     60: 8.0,
     61: 6.5,
@@ -163,12 +121,7 @@ def _spiky_session(
 
 
 def _raw_row(bar: tuple, *, volume: int | None = None) -> dict:
-    """One KIS ``output2`` row.
-
-    The date and time keys carry the ``stck_`` prefix while the OHLC keys carry
-    ``futs_`` — the shape evidence
-    ``2026-10-14-cp3-pr2b-expired-contract`` §2 measured on this very TR.
-    """
+    """One KIS ``output2`` row."""
     return {
         "stck_bsop_date": bar[1].strftime("%Y%m%d"),
         "stck_cntg_hour": bar[1].strftime("%H%M%S"),
@@ -178,11 +131,6 @@ def _raw_row(bar: tuple, *, volume: int | None = None) -> dict:
         "futs_prpr": f"{bar[5]:.2f}",
         "cntg_vol": str(bar[6] if volume is None else volume),
     }
-
-
-# ---------------------------------------------------------------------------
-# Strategy / contract inputs
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -212,8 +160,6 @@ def _produce(bars, inputs: dict, *, emit_days=None):
     )
 
 
-#: Published fields that come from a price DIFFERENCE, a ratio of differences,
-#: or the clock. A constant added to every price must leave all of them alone.
 TRANSLATION_INVARIANT = (
     "volume",
     "session_token",
@@ -226,7 +172,6 @@ TRANSLATION_INVARIANT = (
     "vwap_reverted",
     "eod",
 )
-#: Published fields that ARE prices. Each must move by exactly the constant.
 TRANSLATION_SHIFTED = (
     "open_x100",
     "high_x100",
@@ -245,22 +190,10 @@ def invariance_bars() -> list[tuple]:
     return bars
 
 
-# ===========================================================================
-# §3.2a 1 — translation invariance
-# ===========================================================================
-
-
 def test_item1_the_fixture_exercises_both_sides_of_every_gate(
     invariance_bars: list[tuple], inputs: dict
 ) -> None:
-    """Plan §9 LOW-2: an all-permissive fixture would make item 1 vacuous.
-
-    A frame whose ``hi_vol`` is True on every bar (the warm-up regime) or whose
-    deeper gates are never reached tests nothing: a translation cannot flip a
-    gate nobody evaluated. This asserts the fixture reaches BOTH sides —
-    ``hi_vol`` False after the ``vol_warmup_bars`` warm-up, and at least one
-    bar on which the setup ran all the way through ``reversal_ok``.
-    """
+    """Plan §9 LOW-2: an all-permissive fixture would make item 1 vacuous."""
     produced = _produce(invariance_bars, inputs)
     warm = inputs["strategy"].entry_config.vol_warmup_bars
     in_window = [r for r in produced.records if r.fields["entry_window"]]
@@ -279,12 +212,7 @@ def test_item1_the_fixture_exercises_both_sides_of_every_gate(
 def test_item1_adding_the_grid_constant_moves_prices_and_nothing_else(
     invariance_bars: list[tuple], inputs: dict
 ) -> None:
-    """The same frame, shifted by ``c_x100``: differences identical, prices +c.
-
-    This is what plan §3.2a means by 「정렬은 접합 점프를 지운다」. It is only a
-    claim about the published fields — the residues the alignment does NOT
-    remove are measured as S1a / S1b, not asserted here.
-    """
+    """The same frame, shifted by ``c_x100``: differences identical, prices +c."""
     plain = _produce(invariance_bars, inputs)
     shifted = _produce(shift_bars(invariance_bars, C_X100), inputs)
     assert len(plain.records) == len(shifted.records)
@@ -300,22 +228,13 @@ def test_item1_adding_the_grid_constant_moves_prices_and_nothing_else(
 
 
 def test_shift_price_x100_lands_on_the_grid_half_up_names() -> None:
-    """The concrete input that separates the quantised shift from a naive one.
-
-    On a price already on the 1/100 grid the two agree, so this is the input
-    that makes the clause do something at all — and saying so is the point:
-    a guard whose author cannot name a failing input is not guarding anything.
-    Documented as a bounded claim in ``shift_price_x100``'s own docstring.
-    """
-    off_grid, one_tick = 400.025, 2  # half a mini tick, shifted by one tick
+    """The concrete input that separates the quantised shift from a naive one."""
+    off_grid, one_tick = 400.025, 2
     assert (
         b1a.scaled_int_half_up(stitch_mod.shift_price_x100(off_grid, one_tick), 100)
         == 40005
     )
     assert b1a.scaled_int_half_up(off_grid + one_tick / 100.0, 100) == 40004
-    # And on grid-aligned prices — everything parse_ohlcv emits — they agree,
-    # which is why item 1 stays green with either form. Said out loud so the
-    # clause is not read as doing more than it does.
     for on_grid in (400.00, 400.07, 1049.00, 1052.44):
         for offset in (C_X100, one_tick, -C_X100):
             assert b1a.scaled_int_half_up(
@@ -326,13 +245,7 @@ def test_shift_price_x100_lands_on_the_grid_half_up_names() -> None:
 def test_item1_red_a_shift_that_is_not_a_translation_moves_the_gates(
     invariance_bars: list[tuple], inputs: dict
 ) -> None:
-    """Red proof for the test above: the invariance is a property, not a tautology.
-
-    Shift only the FIRST session — a step inside the frame rather than a
-    constant over it, which is exactly what an unaligned splice is — and the
-    boolean gates move. If the assertion above passed for this input too, it
-    would be testing nothing.
-    """
+    """Red proof for the test above: the invariance is a property, not a tautology."""
     first_day = invariance_bars[0][1].date()
     stepped = [
         (shift_bars([bar], C_X100)[0] if bar[1].date() == first_day else bar)
@@ -349,20 +262,8 @@ def test_item1_red_a_shift_that_is_not_a_translation_moves_the_gates(
     assert differing, "a non-uniform shift left every difference-derived field alone"
 
 
-# ===========================================================================
-# §3.2a 2 — the alignment contributes to the decision
-# ===========================================================================
-
-
 def _junction_market() -> tuple[list[tuple], list[tuple]]:
-    """Two previous-month sessions, then the first new-month session.
-
-    Shaped so the ONLY thing the alignment can reach at 09:00-09:14 of the new
-    session is the stall guard's ``_close_window``: the previous month's closes
-    are flat, so its ATR percentile is the same either way, and the splice's own
-    true range sits on the 08:45 bar, outside the fourteen the entry window's
-    ATR averages (plan §3.2a path (a)).
-    """
+    """Two previous-month sessions, then the first new-month session."""
     old: list[tuple] = []
     for day in (date(2026, 10, 7), SPLICE):
         old.extend(_flat_session(OLD, day, 400.00, 0.75))
@@ -370,7 +271,7 @@ def _junction_market() -> tuple[list[tuple], list[tuple]]:
     for index in range(SESSION_BARS):
         if index < 16:
             new.append(_bar(NEW, TARGET, index, 410.00, 0.46))
-        elif index == 16:  # 09:01 — the dip the setup would fade
+        elif index == 16:
             new.append(
                 (NEW, _stamp(TARGET, index), 410.00, 410.00, 397.50, 398.00, 120)
             )
@@ -382,14 +283,7 @@ def _junction_market() -> tuple[list[tuple], list[tuple]]:
 def test_item2_turning_the_alignment_off_flips_the_stall_guard(
     inputs: dict,
 ) -> None:
-    """Plan §3.2a test 2 — and the red proof of the alignment clause itself.
-
-    On a bar in the entry window of the session right after the splice, with
-    ``hi_vol`` true, ``|z|`` past ``extreme_atr_mult`` and the spread wider than
-    ``stall_buffer_atr_mult x ATR``, dropping the back-adjust flips ``stall_ok``.
-    Delete the alignment and this test goes red, which is what makes item 1's
-    invariance a statement about something rather than about nothing.
-    """
+    """Plan §3.2a test 2 — and the red proof of the alignment clause itself."""
     old, new = _junction_market()
     aligned = _produce(
         list(shift_bars(old, C_X100)) + new, inputs, emit_days=frozenset({TARGET})
@@ -413,32 +307,17 @@ def test_item2_turning_the_alignment_off_flips_the_stall_guard(
 
     assert flips, "the alignment changed no decision in 09:00-09:14"
     stamp, fields, other = flips[0]
-    # The plan's three preconditions on the bar that flips, asserted rather
-    # than assumed: a flip on a bar the setup never gated would prove nothing.
     assert fields["hi_vol"] is True
     assert abs(fields["z_x1000"]) >= threshold
     buffer_x100 = entry_config.stall_buffer_atr_mult * fields["atr14_x100"]
     assert buffer_x100 < C_X100, (C_X100, buffer_x100)
     assert fields["stall_ok"] != other["stall_ok"]
-    # The ATR and z are the SAME on both sides: the splice's own true range is
-    # on the 08:45 bar and never enters this bar's fourteen (plan §3.2a).
     assert fields["atr14_x100"] == other["atr14_x100"]
     assert fields["z_x1000"] == other["z_x1000"]
 
 
-# ===========================================================================
-# §3.2a 3 — what ``c`` is derived from
-# ===========================================================================
-
-
 def _two_legs_with_different_session_ends() -> tuple[list[tuple], list[tuple]]:
-    """The measured shape: the expiring month stops at 15:19, the new one 15:45.
-
-    Evidence §4 (2026-10-08): the expiring leg's last raw minute was 15:19 and
-    the successor's 15:45, 26 minutes apart. The plan's test fixes the same
-    shape at 15:20 / 15:45; the point is identical and the numbers here are the
-    measured ones.
-    """
+    """The measured shape: the expiring month stops at 15:19, the new one 15:45."""
     old = [
         _bar(OLD, SPLICE, i, round(400.00 + 0.01 * (i % 7), 2), 0.3) for i in range(395)
     ]
@@ -468,21 +347,12 @@ def test_item3_c_is_the_last_COMMON_minute_not_each_legs_own_last_close() -> Non
     assert junction.new_close_x100 == round(expected_new[5] * 100)
     assert junction.c_x100 == junction.new_close_x100 - junction.old_close_x100
 
-    # RED: each leg's own last close is a DIFFERENT number, so the rule is
-    # load-bearing. Taking it would difference 15:19 against 15:45 and fold 26
-    # minutes of price move into the constant.
     each_legs_last = round(new[-1][5] * 100) - round(old[-1][5] * 100)
     assert each_legs_last != junction.c_x100
 
 
 def test_item3_a_thin_last_common_RAW_minute_is_not_the_minute_chosen() -> None:
-    """Both sides pick the last common PARSED bar (plan §3.2a re-review N-3).
-
-    The last minute both legs have a RAW row for trades below
-    ``KIS_MINUTE_BAR_MIN_VOLUME`` on one of them, so ``parse_ohlcv`` drops it
-    there. A raw-row rule would make the producer and the offline recomputation
-    pick different minutes and every stitched session would be refused.
-    """
+    """Both sides pick the last common PARSED bar (plan §3.2a re-review N-3)."""
     old = [
         _bar(OLD, SPLICE, i, round(400.00 + 0.01 * (i % 7), 2), 0.3) for i in range(60)
     ]
@@ -506,14 +376,8 @@ def test_item3_a_thin_last_common_RAW_minute_is_not_the_minute_chosen() -> None:
         old_bars=old_parsed,
         new_bars=new_parsed,
     )
-    # RED: the raw rule would have chosen `thin_minute`.
     assert junction.common_minute != thin_minute
     assert junction.common_minute == new_parsed[-1][1]
-
-
-# ===========================================================================
-# §3.2a 4 — refusals
-# ===========================================================================
 
 
 def test_item4_refuses_when_the_two_contracts_share_no_parsed_minute() -> None:
@@ -572,11 +436,7 @@ def _unused_fetch(day: date, contract: str) -> list[dict]:  # pragma: no cover
 def test_item4_b1a_refuses_a_session_dir_whose_manifest_was_not_passed(
     stitched_session: StitchedSession,
 ) -> None:
-    """Plan §9 MEDIUM-1 / re-review N-2, with §3.6's layout taken literally.
-
-    ``--data-root`` is ``<session dir>/market`` and ``stitch.json`` sits
-    directly inside it; the check looks exactly there.
-    """
+    """Plan §9 MEDIUM-1 / re-review N-2, with §3.6's layout taken literally."""
     assert (stitched_session.market_root / STITCH_FILENAME).is_file()
     with pytest.raises(ProduceFieldsError, match="no --stitch-manifest"):
         b1a.run(**stitched_session.run_kwargs(out_name="no-flag-b1a"))
@@ -595,11 +455,7 @@ def test_item4_refuses_a_manifest_that_targets_another_symbol(
 def test_item4_refuses_a_manifest_whose_c_x100_does_not_recompute(
     stitched_session: StitchedSession, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    """The sign-flipped manifest plan §3.2a test 4 names.
-
-    Without this, a producer that derived the wrong ``c`` has its mistake
-    reproduced byte for byte offline and the pair passes B3 (plan §9 MEDIUM-3).
-    """
+    """The sign-flipped manifest plan §3.2a test 4 names."""
     payload = json.loads(
         (stitched_session.market_root / STITCH_FILENAME).read_text(encoding="utf-8")
     )
@@ -614,11 +470,6 @@ def test_item4_refuses_a_manifest_whose_c_x100_does_not_recompute(
     kwargs["stitch_manifest"] = forged
     with pytest.raises(ProduceFieldsError, match="disagrees with"):
         b1a.run(**kwargs)
-
-
-# ===========================================================================
-# The producer, end to end on the fixture market (items 5 and 6)
-# ===========================================================================
 
 
 class FakeClock:
@@ -636,12 +487,7 @@ ARRIVAL_LAG_S = 1.1
 
 
 class FakeQuotes:
-    """GET-only by construction: it has no other method.
-
-    No ``band`` method either, since band plan v3 (2026-10-16) moved that GET
-    into its own process: a fake that still offered one would let a producer
-    that called the band pass this suite.
-    """
+    """GET-only by construction: it has no other method."""
 
     def __init__(self, market: dict[tuple[str, date], list[dict]], clock: FakeClock):
         self.market, self.clock = market, clock
@@ -686,9 +532,6 @@ def _write_calendar(tmp_path: Path, *, session_end: str = "09:20") -> Path:
             {"phase": "CONTINUOUS", "start": "08:45", "end": session_end}
         ]
     }
-    # Same reason as ``test_cp3_live_producer.py::_write_calendar``: the shipped dated
-    # override (2026-11-19, #924) names ``krx-stock`` too, and an override for a class
-    # the regular ``sessions`` do not declare is refused at load.
     source["session_overrides"] = {}
     path = tmp_path / "calendar.yaml"
     path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
@@ -712,12 +555,7 @@ def _write_config(tmp_path: Path, **overrides: Any) -> Path:
 
 
 def _fixture_market() -> dict[tuple[str, date], list[dict]]:
-    """Four previous-month seed sessions, the splice day on both legs, today.
-
-    The previous month's prices sit ``C_X100`` below the new month's, which is
-    what makes the stored partitions and the aligned frame observably different
-    in item 6.
-    """
+    """Four previous-month seed sessions, the splice day on both legs, today."""
     market: dict[tuple[str, date], list[dict]] = {}
     for index, day in enumerate(SEED_DAYS):
         bars = _spiky_session(OLD, day, 3.0 + 0.2 * index, base=400.00)
@@ -753,12 +591,7 @@ class StitchedSession:
         symbol: str = NEW,
         min_bars_per_day: int = 0,
     ) -> dict[str, Any]:
-        """B1a/B2 arguments for this session, in §3.6's own shape.
-
-        ``min_bars_per_day`` defaults to 0 here because the fixture's target
-        session is deliberately truncated to keep the boundary loop short; the
-        gate itself is B1a's own constant and has its own tests.
-        """
+        """B1a/B2 arguments for this session, in §3.6's own shape."""
         return {
             "data_root": self.market_root,
             "symbol": symbol,
@@ -794,8 +627,6 @@ def stitched_session(tmp_path_factory: pytest.TempPathFactory) -> StitchedSessio
     return StitchedSession(producer=producer, market=market, out_root=tmp_path / "out")
 
 
-#: A target far enough past the roll that every seed day is already the new
-#: month — the zero-junction case the manifest must still be written for.
 UNSPLIT_TARGET = date(2026, 10, 19)
 UNSPLIT_SEED_DAYS = [date(2026, 10, d) for d in (13, 14, 15, 16)]
 
@@ -829,13 +660,7 @@ def unsplit_session(tmp_path_factory: pytest.TempPathFactory) -> StitchedSession
 def test_stitch_json_is_written_on_a_session_with_no_splice_at_all(
     unsplit_session: StitchedSession,
 ) -> None:
-    """Plan §9 MEDIUM-1: 「`stitch.json` 은 항상 쓴다」, zero junctions included.
-
-    The B1a/B2 refusal below only protects anything if the file is always
-    there. If a same-contract session left it out, the one run where an
-    operator forgot ``--stitch-manifest`` would be the one run with nothing to
-    forget — and a short frame would be compared against the producer's.
-    """
+    """Plan §9 MEDIUM-1: 「`stitch.json` 은 항상 쓴다」, zero junctions included."""
     manifest = load_manifest(unsplit_session.manifest_path)
     assert manifest.junctions == ()
     assert [segment.contract for segment in manifest.segments] == [NEW]
@@ -846,7 +671,6 @@ def test_stitch_json_is_written_on_a_session_with_no_splice_at_all(
     kwargs = unsplit_session.run_kwargs(out_name="unsplit", with_manifest=True)
     kwargs["start"], kwargs["end"] = UNSPLIT_SEED_DAYS[0], UNSPLIT_TARGET
     result = b1a.run(**kwargs)
-    # Nothing is suppressed when the only segment IS the target's.
     assert (
         result.lineage["dataset"]["stitch"][
             "non_target_segment_bars_replayed_not_emitted"
@@ -872,36 +696,12 @@ def test_the_fixture_session_really_is_stitched(
     assert manifest.junctions[0].new_contract == NEW
     assert manifest.target_days == frozenset({TARGET})
     assert manifest.source_sha256, "the manifest does not say what it came from"
-    # The splice day is the walk's own last previous-month day, not a recomputed
-    # expiry (plan §9 LOW-1).
     assert manifest.segments[0].days[-1] == SPLICE
     assert stitched_session.producer.seed.contracts_used == (OLD,)
 
 
-# ===========================================================================
-# §3.2a 5 — one frame, one alignment, no record outside the target segment
-# ===========================================================================
-
-
 def _canonical(frame: Any) -> bytes:
-    """A frame's content as bytes, for an EXACT comparison.
-
-    The two frames are built by different code paths (one from parsed tuples,
-    one through Parquet), so their dtypes and index differ while their CONTENT
-    must not. Serialising the columns that carry meaning is the comparison that
-    says so.
-
-    ⚠ **Every float goes through ``.hex()``, not ``f"{x:.2f}"``** (review
-    MEDIUM-1). The first cut formatted to two decimals, which is the published
-    precision — and therefore rounds away exactly the drift this test exists to
-    find: the reviewer mutated
-    :func:`~tools.tos_cp3.live_producer.stitch_seed.shift_bars` to add
-    ``1e-9`` and all twenty-five tests stayed green. A comparison written at
-    the precision of the thing it compares cannot detect a difference below
-    that precision, and "the producer's frame equals the reconstruction" is a
-    claim about the bits the next ``produce_bars`` will read, not about their
-    printed form. ``float.hex()`` is exact and round-trips.
-    """
+    """A frame's content as bytes, for an EXACT comparison."""
     ordered = frame.sort_values("timestamp").reset_index(drop=True)
     return "\n".join(
         "|".join(
@@ -921,13 +721,7 @@ def _canonical(frame: Any) -> bytes:
 def test_item5_the_reconstructed_frame_equals_the_producers_own(
     stitched_session: StitchedSession,
 ) -> None:
-    """``load_window(stitch_manifest=…)`` rebuilds exactly what the producer fed.
-
-    This is the parity claim the whole manifest exists for: the producer runs
-    ``produce_bars`` on the frame below every minute, and B1a must see the same
-    one after the session or every field would differ for a reason that looks
-    like a defect.
-    """
+    """``load_window(stitch_manifest=…)`` rebuilds exactly what the producer fed."""
     producer = stitched_session.producer
     lived = bars_to_frame(list(producer.seed.bars) + producer.frozen)
     window = b1a.load_window(
@@ -944,8 +738,6 @@ def test_item5_the_reconstructed_frame_equals_the_producers_own(
     assert window.stitch is not None
     assert window.stitch.manifest.junctions[0].c_x100 == C_X100
     assert window.stitch.offsets_x100 == {OLD: C_X100, NEW: 0}
-    # The splice day's new-contract partition was read for the recomputation
-    # and is NOT in the frame (re-review N-3): no day carries two contracts.
     assert window.stitch.recompute_input_files
     per_day = window.df.groupby(window.df["timestamp"].dt.date)["code"].nunique()
     assert set(per_day.unique()) == {1}
@@ -968,19 +760,7 @@ def _window_kwargs(session: StitchedSession, **overrides: Any) -> dict[str, Any]
 def test_the_density_gate_drops_a_thin_day_from_the_STITCHED_frame(
     stitched_session: StitchedSession,
 ) -> None:
-    """The gate runs on the cross-contract frame too, with B1a's own constant.
-
-    Review MEDIUM-2: every other stitched test passes ``min_bars_per_day=0``
-    (the fixture's target session is deliberately truncated to keep the
-    boundary loop short), so the gate call in ``load_stitched_bars`` was never
-    executed and deleting it stayed green — a copy of the gate that nothing
-    exercised. This runs the real constant over the same session and checks
-    that the thin day leaves and the dense ones stay.
-
-    The thin day here is the realistic shape, not a contrivance: a producer
-    that stopped early leaves exactly this — full previous-month seed days and
-    a part-written target day.
-    """
+    """The gate runs on the cross-contract frame too, with B1a's own constant."""
     gate = b1a.DEFAULT_MIN_BARS_PER_DAY
     ungated = b1a.load_window(**_window_kwargs(stitched_session, min_bars_per_day=0))
     per_day = ungated.df.groupby(ungated.df["timestamp"].dt.date).size()
@@ -994,45 +774,26 @@ def test_the_density_gate_drops_a_thin_day_from_the_STITCHED_frame(
     kept = set(gated.df["timestamp"].dt.date)
     assert TARGET not in kept, "the thin target day survived the density gate"
     assert kept == set(SEED_DAYS)
-    assert gated.bars_loaded == int(len(ungated.df))  # PRE-gate count, as B1a reports
+    assert gated.bars_loaded == int(len(ungated.df))
 
 
 def test_the_declared_window_must_be_exactly_the_manifests_span(
     stitched_session: StitchedSession,
 ) -> None:
-    """Both directions, because only one of them was refused (review LOW-1).
-
-    B1a and B2 take the same ``--start``/``--end``, so a window label that is
-    not true of the frame is agreed on by both sides and invisible to B3. The
-    wider case was silently accepted by the first cut.
-    """
-    b1a.load_window(**_window_kwargs(stitched_session))  # the exact span is fine
+    """Both directions, because only one of them was refused (review LOW-1)."""
+    b1a.load_window(**_window_kwargs(stitched_session))
     with pytest.raises(ProduceFieldsError, match="not the stitch manifest's own span"):
-        b1a.load_window(
-            **_window_kwargs(stitched_session, start=date(2026, 9, 1))
-        )  # wider
+        b1a.load_window(**_window_kwargs(stitched_session, start=date(2026, 9, 1)))
     with pytest.raises(ProduceFieldsError, match="not the stitch manifest's own span"):
-        b1a.load_window(
-            **_window_kwargs(stitched_session, end=date(2026, 10, 19))
-        )  # wider
+        b1a.load_window(**_window_kwargs(stitched_session, end=date(2026, 10, 19)))
     with pytest.raises(ProduceFieldsError, match="not the stitch manifest's own span"):
-        b1a.load_window(
-            **_window_kwargs(stitched_session, start=SEED_DAYS[1])
-        )  # narrower
+        b1a.load_window(**_window_kwargs(stitched_session, start=SEED_DAYS[1]))
 
 
 def test_a_session_holding_only_the_PREVIOUS_months_partitions_is_refused(
     tmp_path: Path,
 ) -> None:
-    """Restarting into a post-roll session directory must still be refused.
-
-    Review LOW-2. Right after a roll the seed is entirely the previous month,
-    so a producer that crashed after writing it leaves ``code=A05610`` and NO
-    ``code=A05611`` at all. The first cut's check globbed the traded symbol
-    only: it would find nothing, let the restart proceed, and append every
-    previous-month seed day a second time — the duplicate timestamps that cost
-    B1a the whole session's input.
-    """
+    """Restarting into a post-roll session directory must still be refused."""
     market_root = tmp_path / "market"
     sinks_mod.append_bar_part(
         market_root,
@@ -1047,8 +808,6 @@ def test_a_session_holding_only_the_PREVIOUS_months_partitions_is_refused(
         sinks_mod.refuse_if_partitions_exist(
             market_root, asset_class="futures", symbol=NEW
         )
-    # An empty tree is still accepted — the refusal is about THIS directory's
-    # emptiness, not about sibling months being present anywhere.
     sinks_mod.refuse_if_partitions_exist(
         tmp_path / "fresh", asset_class="futures", symbol=NEW
     )
@@ -1057,12 +816,7 @@ def test_a_session_holding_only_the_PREVIOUS_months_partitions_is_refused(
 def test_item5_no_record_is_emitted_for_a_non_target_segment(
     stitched_session: StitchedSession,
 ) -> None:
-    """Plan §3.2a 「대상 종목이 아닌 구간의 레코드를 출력하지 않는다」.
-
-    The previous month's bars advance the causal windows and are then dropped —
-    counted in the lineage, never stamped with a ``raw_event_id`` naming this
-    symbol, which is the label error §3.2a's truthfulness rule forbids.
-    """
+    """Plan §3.2a 「대상 종목이 아닌 구간의 레코드를 출력하지 않는다」."""
     result = b1a.run(
         **stitched_session.run_kwargs(out_name="b1a-stitched", with_manifest=True)
     )
@@ -1081,22 +835,10 @@ def test_item5_no_record_is_emitted_for_a_non_target_segment(
     assert stitch_block["junction_recompute_only_bars"] > 0
 
 
-# ===========================================================================
-# §3.2a 6 — label and value truthfulness
-# ===========================================================================
-
-
 def test_item6_each_seed_partition_holds_the_unadjusted_parsed_response(
     stitched_session: StitchedSession,
 ) -> None:
-    """What is stored is what the broker returned, under its own contract's name.
-
-    Plan §3.2a 「라벨은 진실하게 … 조정은 저장이 아니라 읽을 때 적용한다」. The
-    legacy A05611 Parquet's date-label defect (plan §6.1) is what happens when
-    one instrument's values are filed under another's name, so this checks both
-    halves: the right contract directory, and values equal to ``parse_ohlcv`` of
-    the raw response rather than the back-adjusted ones.
-    """
+    """What is stored is what the broker returned, under its own contract's name."""
     from shared.storage.market_data_store import ParquetMarketDataStore
 
     store = ParquetMarketDataStore(
@@ -1114,7 +856,6 @@ def test_item6_each_seed_partition_holds_the_unadjusted_parsed_response(
             )
             stored = store.get_minute_bars(segment.contract, start=day, end=day)
             if day == TARGET:
-                # Today is still being written; compare the prefix that exists.
                 expected = expected[: len(stored)]
             assert len(stored) == len(expected), (segment.contract, day)
             for bar, (_, row) in zip(expected, stored.iterrows()):
@@ -1125,8 +866,6 @@ def test_item6_each_seed_partition_holds_the_unadjusted_parsed_response(
             checked += 1
     assert checked >= len(SEED_DAYS)
 
-    # RED for the "unadjusted" half: the FRAME the reader builds is shifted, so
-    # equality above is a statement about storage, not a tautology.
     window = b1a.load_window(
         **{
             key: value
@@ -1177,14 +916,7 @@ def test_the_source_digest_names_the_responses_the_days_were_parsed_from(
 def test_b1a_refuses_a_lineage_whose_three_exit_doors_do_not_add_up(
     stitched_session: StitchedSession,
 ) -> None:
-    """A replayed bar leaves by exactly one of three doors; the lineage says so.
-
-    Added with the non-target counter (plan §3.2a). B2 has always asserted its
-    half of this chain and B1a asserted only the first half, so a counter that
-    missed a bar would publish a sidecar whose own numbers do not add up while
-    B3 compared the file happily. The failing input is right here: a
-    ``ProducedBars`` whose non-target count is one short.
-    """
+    """A replayed bar leaves by exactly one of three doors; the lineage says so."""
     result = b1a.run(
         **stitched_session.run_kwargs(out_name="b1a-accounting", with_manifest=True)
     )
@@ -1230,7 +962,7 @@ def test_b1a_refuses_a_lineage_whose_three_exit_doors_do_not_add_up(
         "input_files": window.input_files,
         "stitch": window.stitch,
     }
-    b1a.build_lineage(produced=produced, **kwargs)  # the honest one is accepted
+    b1a.build_lineage(produced=produced, **kwargs)
     with pytest.raises(ProduceFieldsError, match="non-target stitch-segment bars"):
         b1a.build_lineage(produced=short_by_one, **kwargs)
     assert result.lineage["dataset"]["bars_emitted"] == len(produced.records)

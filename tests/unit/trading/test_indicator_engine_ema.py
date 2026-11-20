@@ -21,7 +21,6 @@ def _feed_candles(engine: StreamingIndicatorEngine, symbol: str, prices: list[fl
             },
             tick_time,
         )
-        # Advance to next minute to finalize candle
         engine.on_tick(
             symbol,
             {

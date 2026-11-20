@@ -1,9 +1,4 @@
-"""Unit tests for shared.utils.parsing (0.0/0-defaulting numeric parsers).
-
-Pins the exact semantics several call sites now delegate to directly
-(O11-④ float-parser convergence) so a future edit cannot silently change
-comma-stripping, the default value, or NaN/inf passthrough.
-"""
+"""Unit tests for shared.utils.parsing (0.0/0-defaulting numeric parsers)."""
 
 from __future__ import annotations
 
@@ -36,9 +31,6 @@ class TestParseFloat:
         assert parse_float(value) == pytest.approx(expected)
 
     def test_nan_passes_through(self):
-        # parse_float does not reject non-finite results (unlike
-        # shared.utils.coercion.to_float) — callers that need NaN/inf
-        # rejected use to_float instead.
         assert math.isnan(parse_float("nan"))
         assert math.isnan(parse_float(float("nan")))
 

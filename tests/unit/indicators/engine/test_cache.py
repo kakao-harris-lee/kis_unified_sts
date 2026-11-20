@@ -1,8 +1,4 @@
-"""Unit tests for the Indicator Cache Engine (dedup + panel store).
-
-Backend-agnostic: a counting fake backend proves the "compute each unique spec
-once per symbol" guarantee without TA-Lib.
-"""
+"""Unit tests for the Indicator Cache Engine (dedup + panel store)."""
 
 from __future__ import annotations
 
@@ -72,7 +68,7 @@ class TestInMemoryPanelStore:
         store.write("005930", {"rsi": 47.1})
         got = store.read("005930")
         got["rsi"] = 0.0
-        assert store.read("005930") == {"rsi": 47.1}  # not mutated
+        assert store.read("005930") == {"rsi": 47.1}
 
 
 class TestIndicatorCacheEngine:
@@ -81,7 +77,7 @@ class TestIndicatorCacheEngine:
             {"rsi"},
             [
                 IndicatorSpec.create("rsi", {"period": 14}),
-                IndicatorSpec.create("rsi", {"period": 14}),  # dup
+                IndicatorSpec.create("rsi", {"period": 14}),
             ],
         )
         assert len(cache.specs) == 1
@@ -119,7 +115,6 @@ class TestIndicatorCacheEngine:
         panels = cache.refresh_many({"005930": _window(), "000660": _window()})
         assert set(panels) == {"005930", "000660"}
         assert panels["005930"] == {"rsi": 1.0, "atr": 1.0}
-        # 2 unique specs x 2 symbols = 4 computations.
         assert len(backend.calls) == 4
 
 
@@ -144,12 +139,10 @@ class TestCachingIndicatorEngine:
         first = engine.compute(spec, window)
         second = engine.compute(spec, window)
         assert len(backend.calls) == 1
-        assert second is first  # memo hit returns the identical result object
+        assert second is first
         assert engine.hits == 1 and engine.misses == 1
 
     def test_equal_window_content_hits_across_instances(self) -> None:
-        # Content-addressed: a NEW but byte-identical window (e.g. the same
-        # bar seen by another strategy) is a hit, never a recompute.
         engine, backend = self._engine({"rsi"})
         spec = IndicatorSpec.create("rsi", {"period": 14})
         engine.compute(spec, _multi_window(1.0, 2.0, 3.0))
@@ -160,7 +153,7 @@ class TestCachingIndicatorEngine:
         engine, backend = self._engine({"rsi"})
         spec = IndicatorSpec.create("rsi", {"period": 14})
         engine.compute(spec, _multi_window(1.0, 2.0, 3.0))
-        engine.compute(spec, _multi_window(2.0, 3.0, 4.0))  # window advanced
+        engine.compute(spec, _multi_window(2.0, 3.0, 4.0))
         assert len(backend.calls) == 2
 
     def test_different_params_are_distinct_entries(self) -> None:
@@ -176,8 +169,8 @@ class TestCachingIndicatorEngine:
         spec = IndicatorSpec.create("rsi", {"period": 14})
         first, second = _multi_window(1.0), _multi_window(2.0)
         engine.compute(spec, first)
-        engine.compute(spec, second)  # evicts `first`
-        engine.compute(spec, first)  # recompute after eviction
+        engine.compute(spec, second)
+        engine.compute(spec, first)
         assert len(backend.calls) == 3
 
     def test_flat_panel_and_compute_many_go_through_memo(self) -> None:

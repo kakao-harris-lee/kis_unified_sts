@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mechanical prose stripper for the tos trees (code-halving plan S4).
+"""Mechanical prose stripper for the tos trees, ``tools/`` and ``tests/``.
 
 Keeps the **first line** of every docstring and deletes comments, except
 comments that carry a tool marker (``noqa``, ``type:``, ``pragma``, ``fmt:``), a
@@ -15,11 +15,15 @@ so any change outside docstring text is a hard failure.
     python tools/strip_prose.py --write            # rewrite in place (verifies first)
     python tools/strip_prose.py --write tos/src    # explicit paths override the scope
 
-Scope is the S4 scope of ``docs/plans/2026-11-13-tos-code-halving-plan.md``.
+Scope started as the S4 scope of
+``docs/plans/2026-11-13-tos-code-halving-plan.md`` (the tos trees and the tos
+tools) and was widened on 2026-11-20 to all of ``tools/`` and ``tests/``.
 ``shared/``, ``scripts/``, ``services/`` and ``cli/`` are refused outright even
 when named explicitly: ``shared/decision/setups/vwap_reversion.py`` and its
 dependencies are the B3 witness and must stay byte-identical until
-``TOS_PAPER_READY``.
+``TOS_PAPER_READY``. The refusal reads the whole path, so the four tests under
+``tests/unit/scripts/`` are refused too -- a false refusal, which is the
+direction this rail is allowed to be wrong in.
 
 Docstrings that are read at run time are left intact. A module that reads a bare
 ``__doc__`` (the ``argparse.ArgumentParser(description=__doc__)`` idiom) keeps
@@ -44,25 +48,18 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-#: S4 scope (plan §S4). Directories are walked for ``*.py``; globs are expanded.
 DEFAULT_SCOPE: tuple[str, ...] = (
     "tos/src",
     "tos/runtime/src",
     "tos/runtime/cp3",
-    "tools/tos_cp3",
-    "tools/tos_*.py",
     "tos/tests",
     "tos/runtime/tests",
-    "tests/tools/test_tos_*.py",
+    "tools",
+    "tests",
 )
 
-#: Never stripped, whatever ``--root`` and the path arguments say. The check is on the path's
-#: own parts, not on a position relative to ``--root``: ``--root <repo>/shared decision`` would
-#: otherwise reach the B3 witness ``shared/decision/setups/vwap_reversion.py``, which must stay
-#: byte-identical until ``TOS_PAPER_READY`` (root ``CLAUDE.md``).
 FORBIDDEN_ROOTS: tuple[str, ...] = ("shared", "scripts", "services", "cli")
 
-#: Directory names pruned while walking.
 PRUNED_DIRS: frozenset[str] = frozenset(
     {
         ".git",
@@ -75,11 +72,6 @@ PRUNED_DIRS: frozenset[str] = frozenset(
     }
 )
 
-#: A comment holding one of these substrings is machine-readable, not prose. The last entry is
-#: this repo's own per-line directive: ``tos/runtime/tests/engine/test_no_direct_core_calls.py``
-#: refuses a direct ``core.handle(``/``core.run(`` call unless its line carries that exact
-#: comment, so stripping it turns five sanctioned call sites into pin violations (measured in
-#: the S4 dry run).
 KEEP_MARKERS: tuple[str, ...] = (
     "noqa",
     "type:",
@@ -105,7 +97,7 @@ class _Edit:
 
 
 def _split_lines(source: str) -> list[str]:
-    """Split on ``\\n`` only -- ``str.splitlines`` also splits on form feeds."""
+    "Split on ``\\n`` only -- ``str.splitlines`` also splits on form feeds."
     parts = source.split("\n")
     lines = [part + "\n" for part in parts[:-1]]
     if parts[-1]:
@@ -144,14 +136,7 @@ def _first_line(text: str) -> str:
 
 
 def _literal(first: str) -> str:
-    """A one-line string literal holding ``first``, stable under a second pass AND under black.
-
-    A first line that starts or ends with a double quote goes to ``repr``. Ending with one
-    would close the literal early. STARTING with one parses fine, but black then inserts a
-    space after the opening delimiter to keep the quotes readable -- which adds a leading
-    space to the docstring's VALUE, so the next strip takes it out again and the two tools
-    oscillate forever (measured on 7 files, 2026-11-13).
-    """
+    """A one-line string literal holding ``first``, stable under a second pass AND under black."""
     if not first:
         return '""'
     if (
@@ -161,9 +146,6 @@ def _literal(first: str) -> str:
         and not first.endswith('"')
     ):
         return f'"""{first}"""'
-    # Pick the quote black would pick, or the two tools rewrite each other forever: black
-    # prefers `"` and switches to `'` only when `"` would need strictly more escapes. A content
-    # ending in a quote takes the other one so no escape lands against the closing delimiter.
     if first.endswith('"'):
         quote = "'"
     elif first.endswith("'"):
@@ -181,12 +163,7 @@ def _literal(first: str) -> str:
 
 
 def _runtime_doc_targets(tree: ast.Module) -> tuple[bool, set[str]]:
-    """``(module docstring is read, names whose docstrings are read)``.
-
-    ``"*"`` in the name set means "keep every docstring in this file": the read is through
-    something this scan cannot resolve to a definition in the file — ``self``/``cls``, a call
-    result, a subscript, or a dynamic ``getattr(x, "__doc__")``.
-    """
+    """``(module docstring is read, names whose docstrings are read)``."""
     keep_module = False
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -246,8 +223,6 @@ def _docstring_edits(
         text = constant.value
         assert isinstance(text, str)
         first = _first_line(text)
-        # black pads a one-line docstring ending in its own quote with a space; that form is
-        # already stripped, or strip and black rewrite each other forever.
         if text == first + " " and first.endswith(('"', "'")):
             continue
         replacement = _literal(first)
@@ -283,7 +258,6 @@ def _comment_edits(
         line = lines[row - 1]
         prefix = line[:col]
         if not prefix.strip():
-            # Comment-only line: delete the line, newline included.
             edits.append(_Edit(offsets[row - 1], offsets[row], b""))
             continue
         cut = col
@@ -342,14 +316,7 @@ def verify_equivalent(before: str, after: str) -> None:
 
 
 def _is_forbidden(path: Path, root: Path) -> bool:
-    """True unless ``path`` is under ``root`` and no part of it names a forbidden root.
-
-    The forbidden check reads the WHOLE resolved path, not just its first part relative to
-    ``root``: ``--root <repo>/shared decision`` would otherwise make
-    ``shared/decision/setups/vwap_reversion.py`` — the B3 witness — reachable. A checkout whose
-    own ancestor directory is named ``shared``/``scripts``/``services``/``cli`` therefore strips
-    nothing: a false refusal, which is the direction this rail is allowed to be wrong in.
-    """
+    """True unless ``path`` is under ``root`` and no part of it names a forbidden root."""
     resolved = path.resolve()
     try:
         resolved.relative_to(root.resolve())
@@ -440,8 +407,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     for path, reason in failures:
         print(f"FAIL {relative(path)}: {reason}", file=sys.stderr)
 
-    # All or nothing: a single unverifiable file leaves the whole tree untouched, so a failed
-    # run never has to be half-reverted.
     if args.write and not failures:
         for path, stripped in changed:
             path.write_bytes(stripped.encode("utf-8"))

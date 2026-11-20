@@ -1,25 +1,4 @@
-"""Unit tests for the P-BAL balance-pagination probe (``tools/broker_probes``).
-
-P-BAL exists because a runtime trace found that ``shared/kis/client.py`` reads one
-page of every balance query and cannot notice it, while
-``services/trading/broker_verification.py`` turns a "missing" position into
-``remove_position(reason="broker_absent")`` (:187-190). The probe measures the page
-size so that consequence stops being inference.
-
-The properties these tests guard are the ones a code read at review time cannot
-confirm:
-
-1. **The verdict is derived, not self-reported.** On a small account the honest
-   answer is "page size UNESTABLISHED, here is a lower bound" — never "page size =
-   8" and never "no truncation risk". All three verdict branches are exercised,
-   including the fail-open trap where our own page cap ended the walk.
-2. **A total row count is never reported when OUR cap stopped the walk.** The
-   prior pagination probe (P-5b) hit exactly that wall.
-3. **Both continuation keys are recorded per page.** The prior campaign saw a case
-   where only one of the two moved; a single boolean would have erased it.
-4. **The module is structurally read-only.** Asserted against the module's own
-   AST, because a comment promising "no order path" is not a guarantee.
-"""
+"""Unit tests for the P-BAL balance-pagination probe (``tools/broker_probes``)."""
 
 from __future__ import annotations
 
@@ -36,11 +15,6 @@ from tools.broker_probes.common import ProbeError, SafetyViolation
 from tools.broker_probes.registry import coverage_report, get
 
 _ACCOUNT = "1234567890"
-
-
-# ---------------------------------------------------------------------------
-# fixtures / doubles
-# ---------------------------------------------------------------------------
 
 
 class _FakeResponse:
@@ -189,11 +163,6 @@ def _stock_page(
     return _FakeResponse(body, headers={"tr_cont": tr_cont} if tr_cont else {})
 
 
-# ---------------------------------------------------------------------------
-# registry metadata
-# ---------------------------------------------------------------------------
-
-
 def test_registry_entry_is_read_only_and_confirm_gated() -> None:
     spec = get("P-BAL")
     assert spec.kind == "REAL_READ_ONLY"
@@ -227,11 +196,6 @@ def test_followup_probe_does_not_inflate_the_ratified_counts() -> None:
     assert "P-BAL" not in report["canonical_12"]
     assert "P-BAL" not in report["census_4"]
     assert "P-BAL" not in report["order_emitting"]
-
-
-# ---------------------------------------------------------------------------
-# structural read-only property (module AST — not prose)
-# ---------------------------------------------------------------------------
 
 
 def _module_ast() -> ast.Module:
@@ -295,11 +259,6 @@ def test_allowlist_carries_no_mock_futures_entry() -> None:
     assert not [e for e in futures if e.tr_id.startswith("V")]
 
 
-# ---------------------------------------------------------------------------
-# read-only enforcement
-# ---------------------------------------------------------------------------
-
-
 def test_get_refuses_a_non_allowlisted_path_before_any_contact() -> None:
     session = _ExplodingSession()
     with pytest.raises(SafetyViolation, match="read-only allowlist"):
@@ -323,11 +282,6 @@ def test_get_refuses_an_allowlisted_tr_on_the_wrong_path() -> None:
             tr_id="TTTC8434R",
             params={},
         )
-
-
-# ---------------------------------------------------------------------------
-# truncation verdict — three branches, computed from the data
-# ---------------------------------------------------------------------------
 
 
 def test_single_page_records_a_lower_bound_and_never_a_page_size() -> None:
@@ -423,11 +377,6 @@ def test_unknown_termination_cause_is_refused() -> None:
         pb.truncation_verdict(page_row_counts=[1], termination="MAYBE")
 
 
-# ---------------------------------------------------------------------------
-# walk behaviour — termination classification and per-key recording
-# ---------------------------------------------------------------------------
-
-
 def test_broker_end_of_set_is_classified_as_such(stock_env: None, wire: Any) -> None:
     session = wire(_ScriptedSession([_stock_page(8)]))
     run = pb.probe_pbal(_args())
@@ -462,7 +411,6 @@ def test_our_cap_is_classified_as_our_cap_not_broker_end(
     assert risk["page_size"] == 15
     assert risk["holdings_total"] is None
     assert risk["holdings_total_lower_bound"] == 30
-    # The second call must carry the keys the first response returned.
     assert session.calls[1]["params"]["CTX_AREA_FK100"] == "F1"
     assert session.calls[1]["params"]["CTX_AREA_NK100"] == "N1"
     assert session.calls[1]["headers"]["tr_cont"] == pb._TR_CONT_REQUEST_NEXT
@@ -485,7 +433,7 @@ def test_only_one_key_advancing_is_recorded_per_key(stock_env: None, wire: Any) 
     assert run.measurements["continuation_key_asymmetry"] == [
         {"page": 1, "fk_advanced": False, "nk_advanced": True}
     ]
-    page1 = run.observations[2]  # [0] = attestation, [1] = page 0
+    page1 = run.observations[2]
     assert page1["page"] == 1
     assert page1["continuation_keys"]["fk"]["advanced"] is False
     assert page1["continuation_keys"]["nk"]["advanced"] is True
@@ -493,7 +441,6 @@ def test_only_one_key_advancing_is_recorded_per_key(stock_env: None, wire: Any) 
         page1["continuation_keys"]["fk"]["fingerprint"]
         != page1["continuation_keys"]["nk"]["fingerprint"]
     )
-    # Page 0 has no predecessor, so "advanced" must not claim anything.
     assert run.observations[1]["continuation_keys"]["fk"]["advanced"] is None
 
 
@@ -537,9 +484,7 @@ def test_non_advancing_keys_stop_the_walk_as_an_error(
 def test_tr_cont_end_code_stops_the_walk_as_broker_end(
     stock_env: None, wire: Any
 ) -> None:
-    """The real stock endpoint's shape (P-BAL-20260731T083102Z): tr_cont='D'
-    with a static padded cursor still present in the body. The broker's end
-    signal must win — one request, no error, no re-fetch of the same page."""
+    """The real stock endpoint's shape (P-BAL-20260731T083102Z): tr_cont='D'"""
     session = wire(_ScriptedSession([_stock_page(8, fk="PADDED-CURSOR", tr_cont="D")]))
     run = pb.probe_pbal(_args())
 
@@ -553,8 +498,7 @@ def test_tr_cont_end_code_stops_the_walk_as_broker_end(
 def test_tr_cont_f_is_more_follows_and_the_walk_continues(
     stock_env: None, wire: Any
 ) -> None:
-    """KIS's official inquire_balance example recurses on tr_cont in ('M', 'F');
-    'F' must not be misread as end-of-set."""
+    """KIS's official inquire_balance example recurses on tr_cont in ('M', 'F');"""
     session = wire(
         _ScriptedSession(
             [
@@ -573,9 +517,7 @@ def test_tr_cont_f_is_more_follows_and_the_walk_continues(
 def test_duplicate_refetch_before_end_code_is_not_double_counted(
     stock_env: None, wire: Any
 ) -> None:
-    """Page 0 without a tr_cont header forces a key-driven re-request; the
-    repeat page then carries tr_cont='D'. End-of-set is honoured, but the
-    repeated page's rows are the same rows again and must not enter a total."""
+    """Page 0 without a tr_cont header forces a key-driven re-request; the"""
     wire(
         _ScriptedSession(
             [
@@ -597,8 +539,7 @@ def test_duplicate_refetch_before_end_code_is_not_double_counted(
 def test_more_code_with_no_cursor_is_an_error_not_end_of_set(
     stock_env: None, wire: Any
 ) -> None:
-    """tr_cont says more follows but no continuation key came back: there is no
-    cursor to continue with, so the total is a lower bound, not a total."""
+    """tr_cont says more follows but no continuation key came back: there is no"""
     wire(_ScriptedSession([_stock_page(15, tr_cont="M")]))
     run = pb.probe_pbal(_args())
 
@@ -608,8 +549,7 @@ def test_more_code_with_no_cursor_is_an_error_not_end_of_set(
 
 
 def test_static_keys_without_end_code_stay_an_error(stock_env: None, wire: Any) -> None:
-    """A frozen cursor while tr_cont still claims more follows is a genuine
-    anomaly — the loop-risk classification must survive the tr_cont fix."""
+    """A frozen cursor while tr_cont still claims more follows is a genuine"""
     wire(
         _ScriptedSession(
             [
@@ -636,9 +576,7 @@ def test_broker_rejection_is_an_error_termination(stock_env: None, wire: Any) ->
 def test_kiok0560_empty_set_is_an_answer_not_a_rejection(
     stock_env: None, wire: Any
 ) -> None:
-    """The real futures balance pairs the empty-result msg_cd KIOK0560 with
-    rt_cd='7' (P-BAL-20260731T114054Z) where the stock sibling uses rt_cd='0'.
-    An empty set is an answer: no error, broker end-of-set, explicit skip."""
+    """The real futures balance pairs the empty-result msg_cd KIOK0560 with"""
     wire(
         _ScriptedSession(
             [
@@ -699,7 +637,6 @@ def test_tr_cont_header_is_read_and_recorded(stock_env: None, wire: Any) -> None
     run = pb.probe_pbal(_args())
     assert run.measurements["tr_cont_header_observed"] is True
     assert run.observations[1]["tr_cont_response"] == "D"
-    # Only "M" is code-evidenced as "more follows" (client.py:354).
     assert run.observations[1]["tr_cont_more_code_evidenced"] is False
 
 
@@ -714,11 +651,6 @@ def test_runtime_visible_row_count_is_recorded_separately(
     assert run.observations[1]["rows"] == 3
     assert run.observations[1]["rows_with_positive_qty"] == 2
     assert run.measurements["rows_with_positive_qty_total"] == 2
-
-
-# ---------------------------------------------------------------------------
-# targets: mock-futures skip, environment labelling, dry-run
-# ---------------------------------------------------------------------------
 
 
 def test_mock_futures_skips_with_the_unsupported_reason(
@@ -769,8 +701,6 @@ def test_real_futures_target_is_supported(futures_env: None, wire: Any) -> None:
         "CTX_AREA_NK200",
     ]
     assert "CTX_AREA_FK200" in session.calls[0]["params"]
-    # REAL_PROD rejects the runtime's param set without these two (rt_cd=7
-    # APMP0001, P-BAL-20260731T084304Z); KIS's official example marks both 필수.
     assert session.calls[0]["params"]["MGNA_DVSN"] == "01"
     assert session.calls[0]["params"]["EXCC_STAT_CD"] == "1"
 
@@ -803,11 +733,6 @@ def test_dry_run_contacts_no_broker(
     assert run.errors == []
     assert "termination_cause" not in run.measurements
     assert any("would_send" in obs for obs in run.observations)
-
-
-# ---------------------------------------------------------------------------
-# preconditions
-# ---------------------------------------------------------------------------
 
 
 def test_known_page_size_without_a_source_is_refused(stock_env: None) -> None:

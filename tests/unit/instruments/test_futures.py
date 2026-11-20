@@ -26,21 +26,15 @@ def test_kospi200_rolls_after_expiry():
 
 
 def test_next_month_code_mini_is_month_after_front():
-    # 2026-07 front (expiry 07-09) → next is 2026-08.
     assert get_next_month_code(product="mini", target_date=date(2026, 7, 1)) == "A05608"
 
 
 def test_next_month_code_kospi200_is_next_quarterly():
-    # 2026-07 → front quarterly is 09, next is 12.
     assert (
         get_next_month_code(product="kospi200", target_date=date(2026, 7, 1))
         == "A01612"
     )
 
-
-# ---------------------------------------------------------------------------
-# Contract / roll-state classification (docs §4.1)
-# ---------------------------------------------------------------------------
 
 _ASOF = datetime(2026, 7, 1, 8, 0)
 
@@ -61,10 +55,10 @@ def _state(target_date, *, product="mini", night="1A01609", night_required=True)
 @pytest.mark.parametrize(
     ("target_date", "expected_dte", "expected_state", "new_entry"),
     [
-        (date(2026, 7, 1), 8, "normal", True),  # dte 8 > pre_roll 5
-        (date(2026, 7, 4), 5, "pre_roll", True),  # dte 5 <= pre_roll
-        (date(2026, 7, 7), 2, "roll_required", False),  # dte 2 <= block
-        (date(2026, 7, 9), 0, "expired", False),  # expiry day
+        (date(2026, 7, 1), 8, "normal", True),
+        (date(2026, 7, 4), 5, "pre_roll", True),
+        (date(2026, 7, 7), 2, "roll_required", False),
+        (date(2026, 7, 9), 0, "expired", False),
     ],
 )
 def test_roll_state_boundaries(target_date, expected_dte, expected_state, new_entry):
@@ -75,7 +69,6 @@ def test_roll_state_boundaries(target_date, expected_dte, expected_state, new_en
 
 
 def test_front_rolls_after_expiry_day():
-    # Day after the 07-09 expiry → front is the August contract, dte far out.
     state = _state(date(2026, 7, 10))
     assert state.front_symbol == "A05608"
     assert state.roll_state == "normal"
@@ -112,7 +105,6 @@ def test_contract_state_to_fields_contract():
     assert fields["new_entry_front_allowed"] == "true"
     assert fields["hedge_front_allowed"] == "true"
     assert fields["expiry_date"] == "2026-07-09"
-    # Every published value is a string (Redis hash contract).
     assert all(isinstance(v, str) for v in fields.values())
 
 

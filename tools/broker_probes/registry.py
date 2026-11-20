@@ -1,45 +1,4 @@
-"""Machine-readable probe register — the single source for the runbook table.
-
-Sources of the probe set (12 + 4 = 16 ratified, plus 8 follow-ups):
-
-* **12 canonical** — ``docs/plans/2026-07-29-tos-broker-capability-profile-kis-draft.md``
-  §5 "측정 프로시저 제안" table (:225-238): P-1, P-2, P-5, P-5b, P-8, P-11,
-  P-13, P-14, P-15, P-16, P-EXT, P-FQP.
-* **4 census additions** — ``docs/plans/2026-07-29-tos-phase0-p02-execution-plan.md``
-  §1 T2 (:34-38): N-15, N-16, N-17, N-18.
-* **8 follow-ups**, all deliberately **outside** the ratified 16 — each one's
-  ``source`` starts with neither "draft" nor "plan", so the canonical/census
-  counts in :func:`coverage_report` stay exactly as ratified:
-
-  * P-NMPR — ``docs/plans/2026-07-29-tos-p02-n17-spec-collation.md`` §2 소견 2.
-  * P-BAL — wave-3b runtime trace H4 (stock-balance pagination).
-  * P-R5-PRE / P-R5 — wave-3b D-2's NOT-IN-SCOPE item. **P-R5 is the only probe
-    in this register that places orders on a REAL account**; see
-    ``tools/broker_probes/probes_real_order.py`` and runbook §5.7.
-  * N-19 / P-CA — ``docs/plans/2026-08-07-tos-p02-nontrade-probe-definition.md``
-    §5, registering probes for the two ``B_non_trade_event_detect`` /
-    ``B_non_trade_reconcile`` ``ADJACENT_BOUND_KEYS``. Both ``supported=False``
-    (see ``skip_reason``); N-19 is a documentary cross-check (``ENV_NONE``),
-    P-CA is an opportunistic GET-only observation gated on N-19.
-  * P-VL — ``docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md``
-    v2 (PR #879 head ``de3c7e98``) §4, the corroboration leg of CP-3 decision 9.
-    GET-only on 모의투자; the 호가수량한도 it is about comes from the KRX
-    rulebook, not from the probe.
-  * P-SC — issue #948 step 1. The stock cancel row shape on 모의투자, which
-    nothing has measured and which #948 steps 2-3 and #980 both need. Places
-    모의 stock orders (``emits_orders=True``) and is the only order-emitting
-    probe here whose limits all come from a YAML file
-    (``config/broker_probes/stock_cancel_probe.yaml``).
-
-``bounds_keys`` cite ``tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml``
-key names verified by direct read (line numbers in :data:`BOUND_KEYS`).
-``instance_fields`` cite paths in
-``docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`` as enumerated
-in the draft memo §3.1 / §5.
-
-Nothing here invents a value. A probe that cannot run in 모의투자 declares
-``supported=False`` with the file:line evidence for *why*.
-"""
+"""Machine-readable probe register — the single source for the runbook table."""
 
 from __future__ import annotations
 
@@ -47,9 +6,6 @@ from dataclasses import dataclass, field
 
 from tools.broker_probes.common import ENV_MOCK, ENV_NONE, ENV_REAL
 
-#: The Verification Profile these bound keys cite. The file was retired with the
-#: spec corpus on 2026-11-13 (docs/plans/2026-11-13-tos-code-halving-plan.md §S3);
-#: the citation is kept as a git-history pointer for the measured bounds below.
 _VP = "tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml"
 
 
@@ -67,11 +23,6 @@ class BoundKey:
     note: str = ""
 
 
-#: The broker-related Verification-Profile keys enumerated in design #10
-#: ``docs/plans/2026-07-25-tos-broker-capability-design.md`` :1168-1171 (the
-#: "broker bounds 10키" of the P0-2 execution plan §1 T2 — 10 bullets, 11
-#: distinct keys because ``B_external_activity_detect``/``_contain`` share one
-#: bullet). Values/lines read directly from VERIFICATION-PROFILE-002.yaml.
 BOUND_KEYS: dict[str, BoundKey] = {
     "B_external_activity_detect": BoundKey(
         "B_external_activity_detect",
@@ -188,8 +139,6 @@ BOUND_KEYS: dict[str, BoundKey] = {
     ),
 }
 
-#: Broker-touching keys OUTSIDE the design #10 ten-bullet enumeration. Listed so
-#: the runbook does not silently over-claim coverage.
 ADJACENT_BOUND_KEYS: dict[str, BoundKey] = {
     "B_protection_gap": BoundKey(
         "B_protection_gap",
@@ -258,20 +207,20 @@ class ProbeSpec:
     probe_id: str
     title: str
     source: str
-    kind: str  # ORDER | QUERY | AUTH | SESSION | MANUAL | SPEC_CROSSCHECK | REAL_READ_ONLY
+    kind: str
     environment: str
     dimension: str
     bounds_keys: tuple[str, ...]
     instance_fields: tuple[str, ...]
     statistic: str
-    risk: str  # LOW | MEDIUM | HIGH
+    risk: str
     duration: str
     emits_orders: bool = False
     requires_confirm: bool = False
     supported: bool = True
     skip_reason: str = ""
     prerequisites: tuple[str, ...] = field(default_factory=tuple)
-    entrypoint: str = ""  # "module:function"
+    entrypoint: str = ""
 
     @property
     def command(self) -> str:
@@ -282,7 +231,6 @@ class ProbeSpec:
 _S = ProbeSpec
 
 PROBES: dict[str, ProbeSpec] = {
-    # ---------------- canonical 12 (draft §5:225-238) ----------------
     "P-1": _S(
         probe_id="P-1",
         title="ORDER_IDENTITY — client-supplied order id field存否",
@@ -575,7 +523,6 @@ PROBES: dict[str, ProbeSpec] = {
         prerequisites=("모의투자 session open", "run after P-5"),
         entrypoint="tools.broker_probes.probes_order:probe_pfqp",
     ),
-    # ---------------- census additions 4 (plan §1 T2:34-38) ----------------
     "N-15": _S(
         probe_id="N-15",
         title="Token 1-minute reissue limit x invalidate→retry token blackout",
@@ -612,10 +559,6 @@ PROBES: dict[str, ProbeSpec] = {
         environment=ENV_REAL,
         dimension="POSITIONS_BALANCES_MARGIN",
         bounds_keys=(),
-        # Patch-0057 remap: a response-schema capture is an evidence artifact,
-        # not a profile property (ADR-002-004 §8.10 lists no schema item), so it
-        # is cited from the dimension's own `evidence_refs`. The former
-        # `…position_balance_margin.schema_captured` never existed in the draft.
         instance_fields=(
             "capabilities.position_balance_margin.evidence_refs",
             "capabilities.position_balance_margin.status",
@@ -643,12 +586,6 @@ PROBES: dict[str, ProbeSpec] = {
         bounds_keys=(),
         instance_fields=(
             "capabilities.client_generated_order_id.status",
-            # Patch-0057 remap: the order-request field inventory IS the
-            # required/default field semantics (ADR-002-004 §8.17:512 "evidenced
-            # API/SDK defaults, field-presence rules"); §7 checklist items 6/7/5
-            # land on these three existing keys with zero residue. The former
-            # `…command_construction_and_wire_semantics.field_inventory` never
-            # existed in the draft.
             "capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics",
             "capabilities.command_construction_and_wire_semantics.duplicate_unknown_and_omitted_field_behavior",
             "capabilities.command_construction_and_wire_semantics.unit_multiplier_currency_and_numeric_encoding",
@@ -696,29 +633,14 @@ PROBES: dict[str, ProbeSpec] = {
         ),
         entrypoint="tools.broker_probes.probes_real:probe_n18",
     ),
-    # ---- follow-up from the N-17 collation (not part of the canonical 12 or
-    # the census 4 — `source` deliberately starts with neither "draft" nor
-    # "plan" so coverage_report()'s counts stay exactly as ratified) ----
     "P-NMPR": _S(
         probe_id="P-NMPR",
         title="Required quote fields — blank vs explicit NMPR_TYPE_CD/KRX_NMPR_CNDT_CD (A/B)",
         source="N-17 §2 소견 2 (spec collation, 2026-07-29)",
         kind="ORDER",
         environment=ENV_MOCK,
-        # Same dimension as N-17: the brokercap CapabilityDimension enum has 17
-        # members and `command_construction_and_wire_semantics` is one of the two
-        # template-only keys with no dimension of its own (INSTANCE draft :259-260),
-        # so its probes are filed under the dimension N-17 already uses. Inventing
-        # an 18th member here would put a name in the taxonomy that the model has
-        # no slot for.
         dimension="MARKET_INSTRUMENT_CONSTRAINTS",
         bounds_keys=(),
-        # NOT `live_scope.time_in_force_values`: both arms carry
-        # KRX_NMPR_CNDT_CD ∈ {"0", ""} — 없음 or blank. The probe never sends 3
-        # (IOC) or 4 (FOK), so it cannot enumerate the TIF value set; that stays
-        # N-17's documentary finding. What it does establish is whether a [필수]
-        # field may be blank and what a blank then means — which is exactly the
-        # required/default and omitted-field semantics below (§4.3, Patch-0057).
         instance_fields=(
             "capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics",
             "capabilities.command_construction_and_wire_semantics.duplicate_unknown_and_omitted_field_behavior",
@@ -745,27 +667,11 @@ PROBES: dict[str, ProbeSpec] = {
     "P-BAL": _S(
         probe_id="P-BAL",
         title="BALANCE_PAGINATION — balance-query page size / continuation walk (GET-only)",
-        # Deliberately starts with neither "draft" nor "plan": like P-NMPR this is
-        # a follow-up, so coverage_report()'s canonical-12 / census-4 counts stay
-        # exactly as ratified.
         source="wave-3b runtime trace H4 (stock-balance pagination, 2026-07-31)",
         kind="REAL_READ_ONLY",
-        # The default target is REAL stock: the destructive consumer
-        # (services/trading/broker_verification.py:187-190) runs against live
-        # stock. The probe overrides the artifact's `environment` from `--env`,
-        # because §6.2 forbids citing a MOCK_VTS artifact in a REAL_PROD document.
         environment=ENV_REAL,
         dimension="POSITIONS_BALANCES_MARGIN",
-        # No latency bound. Page size is a count, and the truncation verdict is
-        # categorical; claiming B_broker_query_consistency here would file a
-        # completeness finding against a consistency-latency key.
         bounds_keys=(),
-        # `position_balance_margin` carries NO `.completeness`/`.pagination` pair
-        # (unlike `open_order_query`, INSTANCE draft :3294,:3296), so the
-        # pagination finding has no dedicated slot. It files the same way N-16's
-        # schema capture does after the Patch-0057 remap — as evidence plus
-        # reachability — and the runbook flags the missing slot as a §9.1-class
-        # item rather than this file inventing a field name.
         instance_fields=(
             "capabilities.position_balance_margin.evidence_refs",
             "capabilities.position_balance_margin.status",
@@ -794,15 +700,6 @@ PROBES: dict[str, ProbeSpec] = {
         ),
         entrypoint="tools.broker_probes.probes_balance:probe_pbal",
     ),
-    # ---- REAL-MONEY calibration pair. Also outside the ratified 12+4: `source`
-    # starts with neither "draft" nor "plan", so coverage_report()'s counts stay
-    # exactly as ratified.
-    #
-    # Deliberately TWO entries rather than one probe with a --stage flag. The
-    # preflight is REAL_READ_ONLY with emits_orders=False and the order stage is
-    # ORDER with emits_orders=True, so `--list` and
-    # coverage_report()["order_emitting"] tell the truth about which one can
-    # spend money. A single entry would have had to claim one or the other. ----
     "P-R5-PRE": _S(
         probe_id="P-R5-PRE",
         title="REAL preflight for P-R5 — GET-only account/market/instrument gate",
@@ -816,9 +713,6 @@ PROBES: dict[str, ProbeSpec] = {
         environment=ENV_REAL,
         dimension="OPEN_ORDER_QUERY",
         bounds_keys=(),
-        # Claims nothing about the profile. It establishes preconditions, and a
-        # precondition is not a capability observation — filing one here would
-        # inflate coverage with a gate check.
         instance_fields=(),
         statistic=(
             "categorical verdict: READY_FOR_STAGE_2, or exactly one named "
@@ -888,8 +782,6 @@ PROBES: dict[str, ProbeSpec] = {
         ),
         entrypoint="tools.broker_probes.probes_real_order:probe_real_order",
     ),
-    # ---- non_trade follow-up (source starts with neither "draft" nor "plan" so
-    # coverage_report()'s canonical-12 / census-4 counts stay exactly as ratified) ----
     "N-19": _S(
         probe_id="N-19",
         title=(
@@ -928,7 +820,7 @@ PROBES: dict[str, ProbeSpec] = {
         ),
         source="non_trade 2키 프로브 정의 설계 (2026-08-07)",
         kind="MANUAL",
-        environment=ENV_MOCK,  # P-BAL식 --env 오버라이드; 아티팩트가 실제 env 기록 (§5.2 M-3)
+        environment=ENV_MOCK,
         dimension="CORPORATE_ADMINISTRATIVE_EVENTS",
         bounds_keys=("B_non_trade_event_detect", "B_non_trade_reconcile"),
         instance_fields=(
@@ -945,9 +837,9 @@ PROBES: dict[str, ProbeSpec] = {
             "hard_maximum 주장 금지. 늦은 반영 0관측 != 0 (VP-002:772). 1차 산출 = N-19 "
             "모델/후보 봉쇄창 대비 FALSIFICATION."
         ),
-        risk="LOW",  # GET-only (P-BAL 극성); 표와 일치
+        risk="LOW",
         duration="이벤트 창 전후 폴링, operator in the loop",
-        emits_orders=False,  # GET 전용; 보유는 선행조건(P-BAL 선례)
+        emits_orders=False,
         requires_confirm=True,
         supported=True,
         skip_reason="",
@@ -994,12 +886,7 @@ PROBES: dict[str, ProbeSpec] = {
             "GET 으로 관측 불가 — 아티팩트에 맥락으로만 적고 1차 출처는 규정 "
             "문서다"
         ),
-        # Same polarity as P-16: a read-only MOCK query probe is LOW risk, and
-        # --confirm still gates broker contact (prerequisites below).
         risk="LOW",
-        # GET 4: 시세 1 + 주문가능 3. L2 is offline and sends none — the
-        # number is derived in the module as GET_CALL_COUNT and a test pins
-        # this string against it.
         duration="~10 s (GET 4 + 토큰 1, 1.1 s 페이싱)",
         emits_orders=False,
         requires_confirm=True,

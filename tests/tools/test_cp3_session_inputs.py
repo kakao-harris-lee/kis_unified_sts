@@ -1,17 +1,4 @@
-"""CP-3 §3.6 — the two session-derived B3 inputs, all hermetic.
-
-No sqlite file outside ``tmp_path``, no network, no ``tos`` import. Every
-refusal in :mod:`tools.tos_cp3.session_inputs` has a red proof here: a concrete
-input that makes it fire, and the test goes green only because the guard is
-there.
-
-The fixture stores are built from the COMMITTED hinge
-``tos/runtime/tests/fixtures/cp3-session-store-reads.json`` — the same file
-``tos/runtime/tests/operations/test_cp3_session_store_reads.py`` checks against
-the real migrations. So a column this extractor reads but the hinge does not
-declare is a sqlite error here, and a column the runtime stops declaring is red
-there.
-"""
+"""CP-3 §3.6 — the two session-derived B3 inputs, all hermetic."""
 
 from __future__ import annotations
 
@@ -67,16 +54,7 @@ def _create_store(path: Path, spec: dict[str, Any], *, user_version: int) -> Non
 
 
 def _window(index: int) -> tuple[int, int]:
-    """Bar *index*'s durable handling window, as the driver would write it.
-
-    ``(EVENT_HANDLING_STARTED seq, EVENT_CONSUMED seq)``, 100 apart so each
-    bar has room for its own records and the windows cannot overlap by
-    accident. Bar 0 opens at ``0`` deliberately: a real driver's first receipt
-    IS seq 0 (measured —
-    ``tos/runtime/tests/operations/test_cp3_session_store_reads.py``'s driver
-    test), so any code that tests this stamp for truthiness instead of
-    ``is None`` drops bar 0's whole window.
-    """
+    """Bar *index*'s durable handling window, as the driver would write it."""
     return (100 * index, 100 * index + 99)
 
 
@@ -86,23 +64,11 @@ def _seq(index: int, offset: int = 1) -> int:
     return 100 * index + offset
 
 
-#: The four committed snapshot shapes, named by what the REAL
-#: ``SnapshotIssuer`` did to them: ``fresh`` (every field VALID),
-#: ``stale_by_age`` (both fields UNKNOWN, issued past ``max_age_ms``),
-#: ``absent_field`` (one declared field the payload never carried) and
-#: ``unprojectable`` (a float token the kernel's ``project_scalar`` refuses).
-#: They are the whole decision table of
-#: ``tos_runtime.marketfeed.snapshot._derive_field_state``.
 SNAPSHOT_SHAPES = ("fresh", "stale_by_age", "absent_field", "unprojectable")
 
 
 def _snapshot_json(hinge: dict[str, Any], name: str, *, snapshot_id: str) -> str:
-    """One committed snapshot's bytes, re-keyed to *snapshot_id*.
-
-    ``name`` is one of :data:`SNAPSHOT_SHAPES`. Only the id is rewritten — the
-    ``field_evaluations`` and ``observations`` the extractor reads are the
-    issuer's own.
-    """
+    """One committed snapshot's bytes, re-keyed to *snapshot_id*."""
     document = json.loads(
         hinge["payloads"]["marketfeed_snapshots"][name]["snapshot_json"]
     )
@@ -111,12 +77,7 @@ def _snapshot_json(hinge: dict[str, Any], name: str, *, snapshot_id: str) -> str
 
 
 def _preimage_json(hinge: dict[str, Any], name: str) -> str:
-    """The tokens that snapshot's observation attested, as the store wrote them.
-
-    The companion half of :func:`_snapshot_json`: whether an UNKNOWN field's
-    key is IN here, and whether its token projects, is what separates "the
-    issuer held the value and refused it" from "the payload never carried it".
-    """
+    """The tokens that snapshot's observation attested, as the store wrote them."""
     return str(hinge["payloads"]["marketfeed_snapshots"][name]["preimage_json"])
 
 
@@ -135,20 +96,7 @@ def _write_session(
     inbox_version: int | None = None,
     skip_inbox: bool = False,
 ) -> Path:
-    """A session data dir holding the three stores, with the given rows.
-
-    ``entries`` and ``ticks`` carry ``payload_json`` as a STRING, never as an
-    object this file would re-serialise: the point of the hinge is that the
-    extractor parses the bytes the real stores write (see
-    :func:`_real_entry`), and a helper that rebuilt them from a dict would be
-    testing the rebuild.
-
-    A ``snapshots`` row may omit ``snapshot_json``, a ``preimages`` row its
-    ``preimage_json`` and a ``ticks`` row the two receipt stamps; they then
-    carry the committed all-VALID (``fresh``) snapshot and its preimage, and a
-    window from :func:`_window` — so a test that is not about field states or
-    attribution does not have to spell them out.
-    """
+    """A session data dir holding the three stores, with the given rows."""
     data_dir = tmp_path / "data" / INSTRUMENT
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -239,11 +187,6 @@ def _write_session(
     return data_dir
 
 
-# ---------------------------------------------------------------------------
-# The committed bytes the real stores wrote (the hinge's second half)
-# ---------------------------------------------------------------------------
-
-
 def _real_entry(hinge: dict[str, Any], kind: str) -> str:
     """The committed ``payload_json`` string for one evidence kind."""
     for entry in hinge["payloads"]["evidence_entries"]:
@@ -259,11 +202,7 @@ def _real_record(hinge: dict[str, Any], kind: str) -> dict[str, Any]:
 
 
 def _entry(record: Mapping[str, Any]) -> str:
-    """Re-wrap a (possibly edited) engine record the way the store does.
-
-    Only for the variations a test needs — the unedited cases use
-    :func:`_real_entry`, so the baseline is never a reconstruction.
-    """
+    """Re-wrap a (possibly edited) engine record the way the store does."""
     return json.dumps(
         {"payload": dict(record), "masked_keys": []},
         sort_keys=True,
@@ -303,32 +242,15 @@ class Bar:
     raw_event_id: str
     as_of_ms: int
     tick_payload: str
-    #: The committed snapshot bytes this bar's row carries, re-keyed to its
-    #: own id — the field evaluations M5 reads live in here.
     snapshot_json: str
-    #: The committed preimage bytes of the same shape — the tokens those
-    #: evaluations were made against.
     preimage_json: str
-    #: ``(handling_started_evidence_seq, consumed_evidence_seq)``: the durable
-    #: bracket a capsule-less decision record is attributed by. ``None`` for
-    #: either end is a real shape (never ran / never finished) and some tests
-    #: build one deliberately.
     window: tuple[int | None, int | None]
 
 
 def _bars(
     hinge: dict[str, Any], count: int, *, states: list[str] | None = None
 ) -> list[Bar]:
-    """``count`` bars whose ticks are the COMMITTED ones where there are any.
-
-    The first two carry the real inbox bytes (capsule and snapshot ids
-    included), so the keyed join is exercised against what the runtime writes;
-    any further bar is that same event with its two ids replaced, which keeps
-    the shape real even where the fixture runs out.
-
-    ``states`` names each bar's committed snapshot shape
-    (:data:`SNAPSHOT_SHAPES`); the default is all-``fresh``.
-    """
+    """``count`` bars whose ticks are the COMMITTED ones where there are any."""
     bars: list[Bar] = []
     committed = len(hinge["payloads"]["inbox_events"])
     for index in range(count):
@@ -407,11 +329,6 @@ def _three_bar_session(tmp_path: Path, hinge: dict[str, Any], **kwargs: Any) -> 
     return _session(tmp_path, hinge, _bars(hinge, 3), **kwargs)
 
 
-# ===========================================================================
-# consumed-ids
-# ===========================================================================
-
-
 def test_consumed_ids_are_the_preimage_rows(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
@@ -427,7 +344,6 @@ def test_consumed_ids_are_the_preimage_rows(
     assert document["instrument"] == INSTRUMENT
     assert document["counts"]["snapshots"] == 3
     assert document["counts"]["consumed_raw_event_ids"] == 3
-    # with no producer log there are no reasons at all — not guessed ones
     assert document["unpaired_reasons"] == {}
     assert document["counts"]["unpaired"] == 0
     assert document["generated_from"]["marketfeed_sqlite3"]["sha256"]
@@ -437,15 +353,7 @@ def test_consumed_ids_are_the_preimage_rows(
 def test_red_a_store_at_another_schema_version_is_refused(
     tmp_path: Path, hinge: dict[str, Any], store: str
 ) -> None:
-    """**Guard: the mirrored schema version, on each of the three stores.**
-
-    Concrete input: the store file stamps ``PRAGMA user_version`` one past what
-    this extractor was written for — exactly what a ``migrate`` run does. The
-    queries would still "work" (sqlite does not mind extra columns), so without
-    this pin the extractor would answer a question about a store shape nobody
-    checked. Remove the version comparison in ``_connect_ro`` and all three
-    cases pass silently.
-    """
+    """**Guard: the mirrored schema version, on each of the three stores.**"""
     bumped = hinge[store]["schema_version"] + 1
     bars = _bars(hinge, 1)
     data_dir = _session(
@@ -465,17 +373,7 @@ def test_red_a_store_at_another_schema_version_is_refused(
 def test_red_a_snapshot_without_exactly_one_preimage_is_refused(
     tmp_path: Path, hinge: dict[str, Any], covered: int
 ) -> None:
-    """**Guard: one snapshot covers one observation.**
-
-    Two concrete inputs. ``0`` is the restore-path loss the store's own
-    docstring describes — a snapshot id in hand and every value UNKNOWN — and
-    the id this decision was about is simply gone. ``2`` means a snapshot
-    covered several observations, so "the bar" is not a question with one
-    answer and the ordered pairing below would be joining decisions to a
-    guess. Drop the length check and ``covered=0`` silently shortens the id
-    filter while ``covered=2`` silently keeps whichever row sqlite returned
-    first.
-    """
+    """**Guard: one snapshot covers one observation.**"""
     extra = [("snap-1", _event_id("0859"))] if covered == 2 else []
     data_dir = _write_session(
         tmp_path,
@@ -491,14 +389,7 @@ def test_red_a_snapshot_without_exactly_one_preimage_is_refused(
 def test_red_two_instruments_in_one_session_are_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard: a tenant session is one instrument.**
-
-    Concrete input: a second contract month's snapshot in the same durable set
-    — the shape a roll-day session gets if the contract is derived twice
-    instead of once (runbook §7.3 5-a). Without the check the id filter mixes
-    two instruments' bars and B3 compares one month's offline stream against
-    another month's live decisions.
-    """
+    """**Guard: a tenant session is one instrument.**"""
     data_dir = _write_session(
         tmp_path,
         hinge,
@@ -519,13 +410,7 @@ def test_red_two_instruments_in_one_session_are_refused(
 def test_red_a_session_that_consumed_nothing_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard: an empty filter is not a filter.**
-
-    Concrete input: a store with no snapshots — a session that booted and never
-    TICKed. An empty id set would restrict B3's comparison to zero bars, and
-    "UNRESOLVED 0 over zero bars" is the acceptance criterion passing
-    vacuously.
-    """
+    """**Guard: an empty filter is not a filter.**"""
     data_dir = _write_session(tmp_path, hinge, snapshots=[], preimages=[])
     with pytest.raises(si.SessionInputsError) as excinfo:
         _document(tmp_path, data_dir)
@@ -535,34 +420,23 @@ def test_red_a_session_that_consumed_nothing_is_refused(
 def test_unpaired_bars_carry_the_producers_own_reason(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """Plan §5: pre-boot / ``skipped_behind`` / ``produce_error`` /
-    ``omitted_unusable`` bars have no live counterpart, and that is normal —
-    so each is counted under its own name, and a published line the runtime
-    did NOT consume after boot is NOT folded in with them.
-    """
+    """Plan §5: pre-boot / ``skipped_behind`` / ``produce_error`` /"""
     data_dir = _three_bar_session(tmp_path, hinge)
     producer_log = tmp_path / "producer-log.jsonl"
     producer_log.write_text(
         "\n".join(
             json.dumps(event)
             for event in [
-                # consumed — no reason row at all
                 {"stage": "published", "raw_event_id": _event_id("0900")},
                 {"stage": "published", "raw_event_id": _event_id("0901")},
                 {"stage": "published", "raw_event_id": _event_id("0902")},
-                # published before the runtime booted
                 {"stage": "published", "raw_event_id": _event_id("0858")},
-                # published after boot and never consumed — the M5 defect shape
                 {"stage": "published", "raw_event_id": _event_id("0903")},
-                # never published, each for its own reason
                 {"stage": "skipped_behind", "raw_event_id": _event_id("0845")},
                 {"stage": "produce_error", "raw_event_id": _event_id("0846")},
                 {"stage": "omitted_unusable", "raw_event_id": _event_id("0847")},
-                # a bar that missed its boundary and completed late: the LAST
-                # dispositive stage is how the session left it
                 {"stage": "missing_no_successor", "raw_event_id": _event_id("0848")},
                 {"stage": "late_completed", "raw_event_id": _event_id("0848")},
-                # not a disposition — must not become a reason
                 {
                     "stage": "already_frozen_not_published",
                     "raw_event_id": _event_id("0847"),
@@ -599,23 +473,13 @@ def test_unpaired_bars_carry_the_producers_own_reason(
         "skipped_behind": 1,
     }
     assert document["counts"]["pre_boot_lines_at_boot"] == 1
-    # The ids themselves, not just how many: B3 holds exactly these bars out of
-    # its LIVE comparison (`diff_decisions.apply_consumed_filter`), and a count
-    # cannot name a bar. This document is the only place B3 reads them from —
-    # it takes no --boot-snapshot of its own.
     assert document["pre_boot_raw_event_ids"] == [_event_id("0858")]
 
 
 def test_the_document_carries_an_empty_pre_boot_list_when_the_journal_was_empty(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """``[]`` is a measurement; a MISSING key would be "did not say".
-
-    B3 holds the listed ids out of its live comparison and treats an absent key
-    as "no information, hold nothing out". So an empty boot journal has to come
-    through as an empty list, or every session with nothing pre-boot would read
-    as a session whose document was never written.
-    """
+    """``[]`` is a measurement; a MISSING key would be "did not say"."""
     data_dir = _three_bar_session(tmp_path, hinge)
 
     document = _document(tmp_path, data_dir)
@@ -655,30 +519,7 @@ def _close_log(tmp_path: Path, *events: dict[str, Any], seeded: bool = True) -> 
 def test_a_line_stamped_at_or_after_the_close_is_not_counted_as_a_miss(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Plan §5 M5's second count, and the session's own last bar.**
-
-    The scheduler's FIRST clause is ``SKIPPED_SESSION_CLOSED``
-    (``tos_runtime.marketfeed.scheduler.decide_tick``), so a line that only
-    exists after the close can never be ticked. The session's closing bar is
-    always such a line: it completes only once the minute after it elapses
-    (``SessionWindow.end_boundary``), so the producer stamps it past the
-    close, every day. Counted as a miss it put a permanent 1 in a number plan
-    §5 M5 requires to be 0 — measured on the 2026-10-15 LONG genesis session.
-
-    Three bars, one per side of the boundary, so the predicate is a
-    measurement and not a label:
-
-    * 15:43, stamped 15:44:59 — BEFORE the close. A real miss, and it keeps
-      the defect name. This is the clause that stops the new reason from
-      swallowing the count it was carved out of.
-    * 15:44, stamped exactly 15:45:00 — the boundary itself is "closed".
-    * 15:45, stamped 15:46:02 — the shape the genesis session produced.
-
-    The close comes from the producer's own ``seed`` record, which takes it
-    from the tenant calendar the runtime also loads; 15:45 is never written
-    here (``live_producer/calendar.py``'s module docstring on why a literal
-    would be a second source of truth).
-    """
+    """**Plan §5 M5's second count, and the session's own last bar.**"""
     data_dir = _three_bar_session(tmp_path, hinge)
     producer_log = _close_log(
         tmp_path,
@@ -716,19 +557,7 @@ def test_a_line_stamped_at_or_after_the_close_is_not_counted_as_a_miss(
 def test_the_close_is_built_in_the_bars_own_offset_not_the_hosts_timezone(
     tmp_path: Path, hinge: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**PR #904 review round 1 LOW 5 — pin the tz handling.**
-
-    ``_published_after_close`` builds the close instant with ``tzinfo`` taken
-    from the BAR's own join key (``+0900``). Dropping that argument leaves a
-    naive datetime whose ``.timestamp()`` is interpreted in the HOST's local
-    zone — which on this KST host is the same number, so the mutation would
-    stay green here and only break on a UTC runner.
-
-    So this test runs under ``TZ=UTC``. With the offset honoured the 15:45 bar
-    stamped at 15:46:02 KST is still past a 15:45:00+09:00 close; without it
-    the close would be read as 15:45 UTC, nine hours later, and the bar would
-    fall back to the defect name.
-    """
+    """**PR #904 review round 1 LOW 5 — pin the tz handling.**"""
     monkeypatch.setenv("TZ", "UTC")
     time.tzset()
     try:
@@ -738,8 +567,6 @@ def test_the_close_is_built_in_the_bars_own_offset_not_the_hosts_timezone(
             {
                 "stage": "published",
                 "raw_event_id": _event_id("1545"),
-                # computed with an explicit +0900, so the INPUT does not depend
-                # on the host zone either
                 "as_of_ms": _stamp("154602"),
             },
         )
@@ -763,19 +590,7 @@ def test_the_close_is_built_in_the_bars_own_offset_not_the_hosts_timezone(
 def test_red_a_close_that_cannot_be_decided_leaves_the_defect_name(
     tmp_path: Path, hinge: dict[str, Any], seeded: bool, stamped: bool
 ) -> None:
-    """**An unanswerable question is not a clean answer.**
-
-    Two ways the refinement can go blind — a producer log with no ``seed``
-    record (nothing says where the close is) and a ``published`` event with
-    no ``as_of_ms`` (nothing says when the line appeared) — and in both the
-    bar keeps :data:`REASON_UNCONSUMED_AFTER_BOOT`. The alternative is the
-    failure mode this whole reason exists to avoid in the other direction: a
-    real miss quietly excused as scenery.
-
-    ``producer_session_close`` is what makes a ZERO in the new reason
-    readable, so it is asserted too: without it "no bar was published after
-    the close" and "the question was never asked" are the same document.
-    """
+    """**An unanswerable question is not a clean answer.**"""
     data_dir = _three_bar_session(tmp_path, hinge)
     event: dict[str, Any] = {
         "stage": "published",
@@ -797,14 +612,7 @@ def test_red_a_close_that_cannot_be_decided_leaves_the_defect_name(
 def test_red_a_boot_snapshot_without_the_pre_boot_list_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard: the boot snapshot must be the runner's own.**
-
-    Concrete input: a JSON object with everything but
-    ``pre_boot_raw_event_ids`` — a truncated or hand-made file. Read
-    permissively it would mean "no pre-boot lines", which moves every
-    structurally-unconsumable pre-boot line into
-    ``published_not_consumed``: the benign case reported as the defect shape.
-    """
+    """**Guard: the boot snapshot must be the runner's own.**"""
     data_dir = _three_bar_session(tmp_path, hinge)
     boot_snapshot = tmp_path / "boot.json"
     boot_snapshot.write_text(json.dumps({"captured_at_kst": "09:05"}), encoding="utf-8")
@@ -813,19 +621,8 @@ def test_red_a_boot_snapshot_without_the_pre_boot_list_is_refused(
     assert "pre_boot_raw_event_ids" in str(excinfo.value)
 
 
-# ===========================================================================
-# live-decisions — the keyed join, on the bytes the real stores write
-# ===========================================================================
-
-
 def _unscoped(records: list[dict[str, Any]], ticks: Any) -> si.LiveScope:
-    """A scope that filters nothing — for the tests whose subject is the COUNTS.
-
-    The scoping itself has its own tests below
-    (:func:`test_live_decisions_are_scoped_to_the_one_session_day`); these pass
-    the records straight through so ``ticks_without_a_decision`` is read off
-    the join and not off a filter.
-    """
+    """A scope that filters nothing — for the tests whose subject is the COUNTS."""
     return si.LiveScope(
         session_day=None,
         days_present=(),
@@ -865,18 +662,7 @@ def _flow_halted(hinge: dict[str, Any], reason: str) -> str:
 def test_live_decisions_are_keyed_to_their_bar_by_capsule_id(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**The join (Claude-lane MEDIUM M1), on real bytes (BLOCKER B1).**
-
-    Each decision names the capsule it consumed; the inbox says which snapshot
-    that capsule bound; the snapshot's preimage is the bar. Nothing here
-    counts positions.
-
-    The entries are the committed ``payload_json`` the real
-    ``SqliteEvidenceStore`` wrote, wrapper and all — which is what the first
-    cut got wrong: it read the wrapper as the record, found no
-    ``outcome_type`` and no ``capsule_id``, and would have refused every
-    genesis session. Its tests passed because they wrote flat rows.
-    """
+    """**The join (Claude-lane MEDIUM M1), on real bytes (BLOCKER B1).**"""
     bars = _bars(hinge, 3)
     data_dir = _session(
         tmp_path,
@@ -899,7 +685,6 @@ def test_live_decisions_are_keyed_to_their_bar_by_capsule_id(
     assert [record["capsule_id"] for record in records] == [
         bar.capsule_id for bar in bars
     ]
-    # the keys B3 reads from a trace line are all present
     for record in records:
         assert set(record) >= {
             "raw_event_id",
@@ -908,7 +693,7 @@ def test_live_decisions_are_keyed_to_their_bar_by_capsule_id(
             "rule_id",
             "capacity_denied",
         }
-        assert record["rule_id"] is None  # not derivable; the sidecar says so
+        assert record["rule_id"] is None
         assert record["capacity_denied"] is False
     assert records[0]["as_of_ms"] == bars[0].as_of_ms
 
@@ -916,14 +701,7 @@ def test_live_decisions_are_keyed_to_their_bar_by_capsule_id(
 def test_red_the_store_wrapper_is_read_through_not_as_the_record(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**BLOCKER B1's own red proof.**
-
-    Concrete input: an entry whose ``payload_json`` is the engine record with
-    NO wrapper — exactly what this suite used to write, and exactly what the
-    broken reader expected. A reader that takes the outer object as the record
-    accepts it happily; the fixed one refuses, because a row the store did not
-    write is a row whose shape it cannot vouch for.
-    """
+    """**BLOCKER B1's own red proof.**"""
     bars = _bars(hinge, 1)
     record = _real_record(hinge, "DECISION_OUTCOME_EMITTED")
     record["capsule_id"] = bars[0].capsule_id
@@ -947,17 +725,7 @@ def test_red_the_store_wrapper_is_read_through_not_as_the_record(
 def test_red_a_shifted_sequence_is_attributed_by_key_not_by_position(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**MEDIUM M1's red proof: the shift the ordered pairing could not see.**
-
-    Concrete input: the middle tick produced no decision (a held runtime
-    drains it later) and an unrelated decision sits where it would have been.
-    Pairing by position hands bar 2's record to bar 3 and every later record
-    moves with it — silently, because the counts still line up.
-
-    Both keys answer: bar 1 and bar 3 get the decisions that NAME them, and
-    the withheld record — which names no capsule — lands in the one handling
-    window that contains its evidence seq, bar 2's.
-    """
+    """**MEDIUM M1's red proof: the shift the ordered pairing could not see.**"""
     bars = _bars(hinge, 3)
     data_dir = _session(
         tmp_path,
@@ -971,12 +739,9 @@ def test_red_a_shifted_sequence_is_attributed_by_key_not_by_position(
     )
     records = si.live_decision_records(data_dir)
     attributed = {record["raw_event_id"]: record for record in records}
-    # the two keyed decisions landed on the bars they NAME, not on positions
-    # 1 and 2
     assert attributed[bars[0].raw_event_id]["attributed_by"] == "capsule_id"
     assert attributed[bars[2].raw_event_id]["attributed_by"] == "capsule_id"
     assert attributed[bars[2].raw_event_id]["evidence_seq"] == _seq(2)
-    # and the unkeyed one landed in the window that holds it
     assert attributed[bars[1].raw_event_id]["attributed_by"] == "evidence_seq_range"
     assert attributed[bars[1].raw_event_id]["outcome_kind"] == si.NO_OUTCOME_KIND
 
@@ -984,22 +749,7 @@ def test_red_a_shifted_sequence_is_attributed_by_key_not_by_position(
 def test_red_an_unkeyed_decision_goes_to_the_window_that_holds_it_not_the_next_bar(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**MEDIUM R1's red proof — the reviewer's own sequence.**
-
-    Three ticks c1–c3 over bars 1–3. The runtime withheld on bar 1, DROPPED
-    tick 2 on recovery (it ran, wrote no decision), and withheld again on bar
-    3. Neither withheld record names a capsule, so the positional pairing took
-    "the next unclaimed tick in file order" and put bar 3's record on **bar
-    2** — with the counts still matching, no refusal, and B3 then comparing
-    the live decision of one bar against the offline decision of another.
-
-    The durable bracket cannot shift: B's evidence seq is inside c3's
-    ``(handling_started, consumed]`` window and no other, so it is c3's.
-    Bar 2 is left with no decision, which the lineage reports as
-    ``ticks_without_a_decision``.
-
-    Red on the positional cut: it asserts bar 2 carries B.
-    """
+    """**MEDIUM R1's red proof — the reviewer's own sequence.**"""
     bars = _bars(hinge, 3)
     data_dir = _session(
         tmp_path,
@@ -1007,8 +757,6 @@ def test_red_an_unkeyed_decision_goes_to_the_window_that_holds_it_not_the_next_b
         bars,
         entries=[
             (_seq(0), "DECISION_WITHHELD", _withheld(hinge, detail="A_FOR_BAR1")),
-            # tick 2 ran and was dropped on recovery: a real entry, not a
-            # decision kind, inside c2's own window
             (
                 _seq(1),
                 "DECISION_TICK_DROPPED_ON_RECOVERY",
@@ -1035,15 +783,7 @@ def test_red_an_unkeyed_decision_goes_to_the_window_that_holds_it_not_the_next_b
 def test_red_a_tick_queued_and_never_run_takes_no_record(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**MEDIUM R1, the other shape: the held tick that never started.**
-
-    Concrete input: tick 2 is admitted and never handled — both receipt
-    stamps NULL, which is exactly what a tick still in the queue at shutdown
-    looks like. Positionally it is "the next unclaimed tick", so the withheld
-    record written while bar 3 was handled landed on it. A row that never
-    started handling brackets nothing, so it takes nothing, and the record
-    goes where its seq says.
-    """
+    """**MEDIUM R1, the other shape: the held tick that never started.**"""
     bars = _bars(hinge, 3)
     held = bars[1]
     data_dir = _write_session(
@@ -1072,15 +812,7 @@ def test_red_a_tick_queued_and_never_run_takes_no_record(
 def test_red_a_keyed_record_outside_its_own_ticks_window_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard (MEDIUM R1's cross-check).**
-
-    Concrete input: a decision that NAMES bar 1's capsule but whose evidence
-    seq falls inside bar 2's handling window — the shape a replayed record, a
-    copied store or a mis-stamped row produces. The two durable keys then
-    disagree about which event wrote the record, and preferring either one
-    (the capsule, as the second cut did, or the window) would be a choice
-    recorded as a fact.
-    """
+    """**Guard (MEDIUM R1's cross-check).**"""
     bars = _bars(hinge, 2)
     data_dir = _session(
         tmp_path,
@@ -1095,11 +827,7 @@ def test_red_a_keyed_record_outside_its_own_ticks_window_is_refused(
 def test_red_a_keyed_record_whose_tick_never_started_handling_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: a decision naming a capsule whose inbox row
-    has a NULL ``handling_started_evidence_seq``. The driver writes that stamp
-    before the handler can write any decision record, so the two cannot both
-    be true — and without a window there is nothing to cross-check the key
-    against, which is where a silent mis-attribution would re-enter."""
+    """**Guard.** Concrete input: a decision naming a capsule whose inbox row"""
     bars = _bars(hinge, 1)
     data_dir = _write_session(
         tmp_path,
@@ -1116,11 +844,7 @@ def test_red_a_keyed_record_whose_tick_never_started_handling_is_refused(
 def test_red_an_unkeyed_record_in_two_windows_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: bar 1's row was never marked consumed (a
-    crash inside handling), so its window has no upper end and bar 2's lies
-    inside it. A capsule-less record after that point belongs to either, and
-    picking the narrower — or the later — would be this module deciding what
-    the receipts do not say."""
+    """**Guard.** Concrete input: bar 1's row was never marked consumed (a"""
     bars = _bars(hinge, 2)
     data_dir = _write_session(
         tmp_path,
@@ -1140,11 +864,7 @@ def test_red_an_unkeyed_record_in_two_windows_is_refused(
 def test_red_a_decision_naming_a_capsule_the_inbox_never_admitted_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: a decision whose capsule id is not in the
-    inbox — the two stores disagree about what this session processed. Falling
-    back to position here would paper over exactly the disagreement the key
-    exists to surface.
-    """
+    """**Guard.** Concrete input: a decision whose capsule id is not in the"""
     bars = _bars(hinge, 2)
     data_dir = _session(
         tmp_path,
@@ -1171,10 +891,7 @@ def test_red_a_decision_naming_a_capsule_the_inbox_never_admitted_is_refused(
 def test_red_two_decisions_on_one_tick_are_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: two emitted records naming the SAME capsule
-    — a replayed decision, or a recovery that re-ran one tick. One bar cannot
-    have two live decisions, and silently keeping the last would hide the
-    re-run."""
+    """**Guard.** Concrete input: two emitted records naming the SAME capsule"""
     bars = _bars(hinge, 2)
     data_dir = _session(
         tmp_path,
@@ -1192,12 +909,7 @@ def test_red_two_decisions_on_one_tick_are_refused(
 def test_red_an_unkeyed_decision_in_no_window_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: a withheld record whose evidence seq is
-    after every admitted tick's window closed — a record from a run whose
-    inbox rows are not these, or a store pair that was mixed. It names no
-    capsule, so there is nothing to key on either, and handing it the last
-    bar (what "the next unclaimed tick" amounts to once the list runs out)
-    would be inventing the attribution this join exists to avoid."""
+    """**Guard.** Concrete input: a withheld record whose evidence seq is"""
     bars = _bars(hinge, 1)
     data_dir = _session(
         tmp_path,
@@ -1212,10 +924,7 @@ def test_red_an_unkeyed_decision_in_no_window_is_refused(
 def test_red_two_unkeyed_decisions_in_one_window_are_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: two withheld records inside ONE tick's
-    handling window. Exactly one decision terminates one pass, so a second is
-    a replay or a re-run; keeping either silently would report one bar's
-    outcome as the other's."""
+    """**Guard.** Concrete input: two withheld records inside ONE tick's"""
     bars = _bars(hinge, 2)
     data_dir = _session(
         tmp_path,
@@ -1233,10 +942,7 @@ def test_red_two_unkeyed_decisions_in_one_window_are_refused(
 def test_red_a_tick_whose_snapshot_is_missing_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: the inbox admitted a tick whose snapshot the
-    marketfeed store does not hold — the restore-path loss the store's own
-    docstring describes, seen from the other side. The decision is real and
-    the bar it was about is not knowable."""
+    """**Guard.** Concrete input: the inbox admitted a tick whose snapshot the"""
     bars = _bars(hinge, 1)
     data_dir = _write_session(
         tmp_path,
@@ -1253,18 +959,7 @@ def test_red_a_tick_whose_snapshot_is_missing_is_refused(
 def _append_consumed_bar(
     hinge: dict[str, Any], data_dir: Path, bar: Bar, *, tick_seq: int
 ) -> None:
-    """Append one more consumed bar, in the RUNTIME's own write order.
-
-    Snapshot and preimage first (``marketfeed/store.py::SqliteSnapshotStore
-    .put``), then the inbox admission of the tick that names it
-    (``engine/inbox.py::SqliteEventInbox.enqueue``), then the decision record
-    that admission caused — the order ``marketfeed/scheduler.py::tick_once``
-    writes, each commit separate, exactly as a live session grows its stores
-    while a reader is part-way through them.
-
-    ``tick_seq`` is 1-based over the session's bars, so ``tick_seq - 1`` is this
-    bar's index and :func:`_seq` of it lands inside ``bar.window``.
-    """
+    """Append one more consumed bar, in the RUNTIME's own write order."""
     conn = sqlite3.connect(data_dir / hinge["marketfeed"]["file_name"])
     try:
         conn.execute(
@@ -1313,26 +1008,7 @@ def test_a_bar_written_between_two_store_reads_is_not_a_lost_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     appended: int,
 ) -> None:
-    """**The 2026-11-04 false refusal's red proof.**
-
-    Concrete input: a LIVE session that admits one more tick in the window
-    between two of the three store reads. At 11:19:07 KST that day the status
-    board read ``marketfeed`` FIRST and refused the whole leaf — ``inbox seq
-    4138 names snapshot 'cis-7907fe…', which the marketfeed store does not
-    hold`` — for a snapshot issued at 11:19:02.225, 5 s before the command ran
-    but after that first read. Nothing was lost: the same command read clean
-    after the close.
-
-    Each case appends a snapshot + tick + decision triple in the runtime's own
-    write order (:func:`_append_consumed_bar`) after a read returns. With ONE
-    append, after the first read, the old order (snapshots, ticks, blocks)
-    raises exactly the refusal above; appending at every read also makes it
-    raise ``capsule … is not one the inbox admitted``, the same race on the
-    other pair. Under the reverse order (blocks, ticks, snapshots) every
-    cross-store reference a read can see is satisfied by the stores read after
-    it, so nothing raises: the surplus is an unconsumed tick and unconsumed
-    bars, both normal session shapes.
-    """
+    """**The 2026-11-04 false refusal's red proof.**"""
     bars = _bars(hinge, 1 + appended)
     data_dir = _session(
         tmp_path,
@@ -1359,8 +1035,6 @@ def test_a_bar_written_between_two_store_reads_is_not_a_lost_snapshot(
 
     records = si.live_decision_records(data_dir)
 
-    # Only the decision the blocks read saw is attributed; the bars written
-    # after it are unconsumed, not missing.
     assert [record["raw_event_id"] for record in records] == [bars[0].raw_event_id]
     assert [record["attributed_by"] for record in records] == ["capsule_id"]
     assert next(pending, None) is None, "a queued bar was never written"
@@ -1369,13 +1043,7 @@ def test_a_bar_written_between_two_store_reads_is_not_a_lost_snapshot(
 def test_a_tick_without_a_decision_is_reported_not_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """The held-runtime shape, which the keyed join can now answer.
-
-    A tick enqueued and drained later leaves fewer decisions than ticks. The
-    first cut refused the whole document for it (the counts had to match,
-    because position was the only link); with a key, every decision that DID
-    run has a real answer and the gap is a number in the sidecar.
-    """
+    """The held-runtime shape, which the keyed join can now answer."""
     bars = _bars(hinge, 3)
     data_dir = _session(
         tmp_path,
@@ -1433,13 +1101,7 @@ def test_capacity_denial_comes_from_the_flow_halt_in_the_same_block(
 def test_red_a_flow_record_before_any_decision_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard: a flow record belongs to the decision that started it.**
-
-    Concrete input: a ``FLOW_HALTED`` row at a lower ``seq`` than the first
-    decision — what a replayed or recovered flow looks like in the store.
-    Attributing it forward would put one tick's capacity denial on another
-    tick's bar.
-    """
+    """**Guard: a flow record belongs to the decision that started it.**"""
     bars = _bars(hinge, 2)
     data_dir = _session(
         tmp_path,
@@ -1463,14 +1125,7 @@ def test_red_a_flow_record_before_any_decision_is_refused(
 def test_a_proposal_is_named_proposal_not_guessed_and_not_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**MEDIUM M3.** ACTION vs FLAT is not in the durable record — measured:
-    ``position_effect`` occurs nowhere in ``tos/src/tos/engine``.
-
-    So the live side says PROPOSAL: "an outcome was emitted and it was not a
-    no-action". The first cut refused the whole document over one such bar,
-    which threw away every other bar's answer with it; guessing ACTION or FLAT
-    would make this module the thing that decided.
-    """
+    """**MEDIUM M3.** ACTION vs FLAT is not in the durable record — measured:"""
     bars = _bars(hinge, 2)
     data_dir = _session(
         tmp_path,
@@ -1490,17 +1145,13 @@ def test_a_proposal_is_named_proposal_not_guessed_and_not_refused(
         "NO_ACTION",
         si.PROPOSAL_KIND,
     ]
-    # the other bars keep their answers — the point of not refusing
     assert records[0]["raw_event_id"] == bars[0].raw_event_id
 
 
 def test_red_an_emitted_record_without_an_outcome_type_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: an emitted-outcome record with no
-    ``outcome_type`` — the shape a wrapper-read-as-record produces, and the
-    only way PROPOSAL could become a bucket for "I could not read this".
-    """
+    """**Guard.** Concrete input: an emitted-outcome record with no"""
     bars = _bars(hinge, 1)
     record = _real_record(hinge, "DECISION_OUTCOME_EMITTED")
     record["capsule_id"] = bars[0].capsule_id
@@ -1518,13 +1169,7 @@ def test_red_an_emitted_record_without_an_outcome_type_is_refused(
 def test_a_tick_that_emitted_no_outcome_keeps_b1bs_own_token(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """A withheld decision is ``NO_OUTCOME``, not a fourth decision kind.
-
-    B1b refuses to call it one (``replay.py::_attribute_rule``), so the live
-    side records the same token and B3's closed-set check surfaces it rather
-    than this module quietly calling it NO_ACTION — which would report a
-    withheld tick as agreement with an offline no-action.
-    """
+    """A withheld decision is ``NO_OUTCOME``, not a fourth decision kind."""
     bars = _bars(hinge, 3)
     data_dir = _session(
         tmp_path,
@@ -1561,11 +1206,7 @@ def test_a_tick_that_emitted_no_outcome_keeps_b1bs_own_token(
 def test_red_an_inbox_tick_without_its_two_ids_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: a ``DECISION_TICK`` whose capsule block lost
-    its ``capsule_id`` — the shape a moved field in ``EngineEvent`` would
-    produce. Without those two ids the join is back to guessing by position,
-    and doing that silently is what this whole item replaced.
-    """
+    """**Guard.** Concrete input: a ``DECISION_TICK`` whose capsule block lost"""
     bars = _bars(hinge, 1)
     broken = json.loads(bars[0].tick_payload)
     broken["decision_tick"]["capsule"].pop("capsule_id")
@@ -1584,9 +1225,7 @@ def test_red_an_inbox_tick_without_its_two_ids_is_refused(
 def test_red_two_inbox_ticks_sharing_a_capsule_id_are_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: two admitted ticks with one capsule id. The
-    key would then name two bars, and a key that is sometimes ambiguous is not
-    a key — picking either would be a coin toss recorded as an attribution."""
+    """**Guard.** Concrete input: two admitted ticks with one capsule id. The"""
     bars = _bars(hinge, 2)
     data_dir = _write_session(
         tmp_path,
@@ -1601,11 +1240,6 @@ def test_red_two_inbox_ticks_sharing_a_capsule_id_are_refused(
     )
     with pytest.raises(si.SessionInputsError, match="was already admitted"):
         si.live_decision_records(data_dir)
-
-
-# ===========================================================================
-# CLI, hinge, firewall
-# ===========================================================================
 
 
 def test_cli_writes_both_inputs(tmp_path: Path, hinge: dict[str, Any]) -> None:
@@ -1659,7 +1293,6 @@ def test_cli_writes_both_inputs(tmp_path: Path, hinge: dict[str, Any]) -> None:
     assert lineage["counts"]["outcome_kinds"] == {"NO_ACTION": 3}
     assert lineage["counts"]["attributed_by"] == {"capsule_id": 3}
     assert lineage["counts"]["ticks_without_a_decision"] == 0
-    # the sidecar states the three things a reader must not assume
     assert "rationale" in lineage["join"]["rule_id"]
     assert "NOT B1a's bar label" in lineage["join"]["as_of_ms"]
     assert "capsule_id" in lineage["join"]["key"]
@@ -1700,14 +1333,7 @@ def test_hinge_the_pinned_reads_are_the_committed_ones(hinge: dict[str, Any]) ->
 def test_hinge_the_committed_payloads_are_the_ones_these_tests_parse(
     hinge: dict[str, Any],
 ) -> None:
-    """The second half of the hinge, stated here so it cannot quietly lapse.
-
-    Every evidence row these tests feed the extractor starts from
-    ``payloads.evidence_entries`` — bytes
-    ``tos/runtime/tests/operations/test_cp3_session_store_reads.py`` proves the
-    REAL store writes. If a future edit went back to hand-rolled rows, the
-    wrapper could be dropped again and nothing here would notice.
-    """
+    """The second half of the hinge, stated here so it cannot quietly lapse."""
     wrapped = json.loads(_real_entry(hinge, "DECISION_OUTCOME_EMITTED"))
     assert set(wrapped) == {"payload", "masked_keys"}
     assert si.EVIDENCE_PAYLOAD_KEY in wrapped
@@ -1718,13 +1344,7 @@ def test_hinge_the_committed_payloads_are_the_ones_these_tests_parse(
 
 
 def test_the_extractor_imports_neither_tos_nor_the_runtime() -> None:
-    """Sqlite read-only, by construction: the module's own import list.
-
-    The firewall's reverse scan already refuses ``import tos`` anywhere outside
-    ``tos/``; this states the stronger property this module claims — it reaches
-    the three stores as FILES, through stdlib only, so nothing here can be
-    satisfied by "the kernel happened to be importable".
-    """
+    """Sqlite read-only, by construction: the module's own import list."""
     source = Path(si.__file__).read_text(encoding="utf-8")
     imported: set[str] = set()
     for node in ast.walk(ast.parse(source)):
@@ -1740,12 +1360,7 @@ def test_the_extractor_imports_neither_tos_nor_the_runtime() -> None:
 
 
 def _tick_with_view(hinge: dict[str, Any], bar: Bar, *, values: list[Any]) -> str:
-    """That bar's committed tick with a resolved ``value_view`` attached.
-
-    The committed events publish none (``value_view: null``), which is one of
-    the three shapes M5 counts; the other two are built here from the same
-    bytes rather than from a hand-written event.
-    """
+    """That bar's committed tick with a resolved ``value_view`` attached."""
     event = json.loads(bar.tick_payload)
     event["decision_tick"]["value_view"] = {
         "snapshot_id": bar.snapshot_id,
@@ -1760,21 +1375,7 @@ def _tick_with_view(hinge: dict[str, Any], bar: Bar, *, values: list[Any]) -> st
 def test_the_value_view_counts_say_what_the_resolver_did_and_not_m5(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Claude-lane LOW L3, corrected by MEDIUM R2.**
-
-    The three shapes of the resolver's ``value_view`` are still reported —
-    they say what the resolver did — but the block no longer claims to be
-    M5's STALE count, and its note points at the one that is. An empty view
-    has ten possible reasons (``_admit_one``), only one of which is
-    state-shaped, and that one folds STALE in with UNKNOWN, CONFLICTED and
-    INVALID.
-
-    Two of the three ticks are the COMMITTED bytes: the first published no
-    view and the second a real ``ContextValueView`` with one admitted value,
-    so the counted-as-admitted case runs on what the inbox actually stores
-    rather than on a view this file wrote. Only the explicitly-empty shape is
-    built here, from those same bytes.
-    """
+    """**Claude-lane LOW L3, corrected by MEDIUM R2.**"""
     bars = _bars(hinge, 3)
     data_dir = _write_session(
         tmp_path,
@@ -1782,32 +1383,25 @@ def test_the_value_view_counts_say_what_the_resolver_did_and_not_m5(
         snapshots=_snapshot_rows(bars),
         preimages=_preimage_rows(bars),
         ticks=[
-            (1, bars[0].tick_payload, *bars[0].window),  # committed: no view
-            (2, bars[1].tick_payload, *bars[1].window),  # committed: one value
+            (1, bars[0].tick_payload, *bars[0].window),
+            (2, bars[1].tick_payload, *bars[1].window),
             (
                 3,
                 _tick_with_view(hinge, bars[2], values=[]),
                 *bars[2].window,
-            ),  # -> empty_view
+            ),
         ],
     )
     document = _document(tmp_path, data_dir)
     view = document["consumed_value_view"]
     assert view["counts"] == {"no_view": 1, "empty_view": 1, "values_admitted": 1}
     assert view["raw_event_ids_with_admitted_values"] == [bars[1].raw_event_id]
-    # the note says what the store says, and refuses the inference it used to
-    # make
     assert "nothing was admissible" in view["note"]
     assert "NOT M5's first number" in view["note"]
     assert (
         "m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"
         in view["note"]
     )
-
-
-# ===========================================================================
-# M5's first count — the issuer held the value and refused it (BLOCKER R2')
-# ===========================================================================
 
 
 def _boot_snapshot(tmp_path: Path, ids: list[str]) -> Path:
@@ -1830,20 +1424,7 @@ def _document(
 def test_m5s_first_number_counts_a_value_the_issuer_held_and_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**BLOCKER R2'.** Plan §5 M5's first number, from what the issuer did.
-
-    Four consumed bars, each carrying a snapshot the REAL ``SnapshotIssuer``
-    produced — one per outcome of its own ``_derive_field_state``. The
-    over-age one is the line M5 asks about, and the durable shape it leaves
-    is ``UNKNOWN`` with its two fields PRESENT and projectable in the
-    preimage: the issuer had the values and refused them on age. The absent
-    field and the float token are UNKNOWN too and are NOT that, so they are
-    counted under their own cause names.
-
-    A count of the persisted word ``STALE`` would be 0 on all four — the
-    issuer never writes it (``tos/runtime/tests/operations
-    /test_cp3_session_store_reads.py`` asserts that against the issuer).
-    """
+    """**BLOCKER R2'.** Plan §5 M5's first number, from what the issuer did."""
     bars = _bars(hinge, 4, states=list(SNAPSHOT_SHAPES))
     data_dir = _session(tmp_path, hinge, bars)
     states = _document(tmp_path, data_dir)["consumed_field_states"]
@@ -1862,7 +1443,6 @@ def test_m5s_first_number_counts_a_value_the_issuer_held_and_refused(
     assert states["counts"]["consumed_ids"] == 4
     assert states["counts"]["post_boot_consumed_ids"] == 4
     assert states["counts"]["consumed_ids_without_field_evaluations"] == 0
-    # the word itself appears nowhere, and the block says so
     assert states["other_field_evaluation_states"] == {}
     assert "never STALE" in states["definition"]
     assert "stale, or evaluation clock unknown" in states["definition"]
@@ -1871,16 +1451,7 @@ def test_m5s_first_number_counts_a_value_the_issuer_held_and_refused(
 def test_red_an_absent_field_is_not_counted_as_a_refused_value(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**BLOCKER R2''s first red proof.**
-
-    Concrete input: three bars whose snapshots are the issuer's
-    ``absent_field`` one — a declared field the payload never carried, which
-    the issuer records as ``UNKNOWN`` exactly like an over-age field does.
-    Counting UNKNOWN alone would report three stale lines on a session whose
-    clock was perfect; the preimage says the key was never there, so M5's
-    number is 0 and the three are visible under
-    ``absent_from_payload``.
-    """
+    """**BLOCKER R2''s first red proof.**"""
     bars = _bars(hinge, 3, states=["absent_field"] * 3)
     data_dir = _session(tmp_path, hinge, bars)
     states = _document(tmp_path, data_dir)["consumed_field_states"]
@@ -1896,14 +1467,7 @@ def test_red_an_absent_field_is_not_counted_as_a_refused_value(
 def test_red_an_unprojectable_token_is_not_counted_as_a_refused_value(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**BLOCKER R2''s second red proof.**
-
-    Concrete input: the issuer's ``unprojectable`` snapshot — a float token
-    the kernel's own ``project_scalar`` refuses, recorded ``UNKNOWN`` while
-    the clock was fine. "Present in the preimage" alone would count it; the
-    projection mirror separates it, and it is reported under its own cause
-    rather than dropped.
-    """
+    """**BLOCKER R2''s second red proof.**"""
     bars = _bars(hinge, 2, states=["unprojectable", "unprojectable"])
     data_dir = _session(tmp_path, hinge, bars)
     states = _document(tmp_path, data_dir)["consumed_field_states"]
@@ -1919,13 +1483,7 @@ def test_red_an_unprojectable_token_is_not_counted_as_a_refused_value(
 def test_red_a_fresh_session_counts_nothing(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**BLOCKER R2''s third red proof, and the genesis expectation.**
-
-    Concrete input: three bars the issuer evaluated VALID throughout. A
-    counter that read "UNKNOWN or anything not VALID" would still find
-    nothing here, but one that counted ids rather than causes could; this
-    pins the healthy session at 0 on every key.
-    """
+    """**BLOCKER R2''s third red proof, and the genesis expectation.**"""
     bars = _bars(hinge, 3)
     data_dir = _session(tmp_path, hinge, bars)
     states = _document(tmp_path, data_dir)["consumed_field_states"]
@@ -1943,14 +1501,7 @@ def test_red_a_fresh_session_counts_nothing(
 def test_red_a_pre_boot_refused_line_is_not_in_the_post_boot_count(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**BLOCKER R2''s fourth red proof (and MEDIUM R2's, kept).**
-
-    Concrete input: two bars the issuer refused on age, one of them listed in
-    the runner's boot-journal snapshot. Plan §5 M5 excludes pre-boot lines
-    from both of its counts — they are structurally unconsumable-fresh — so
-    counting it would report a defect the criterion does not ask about, on
-    every genesis session that consumed its first journal line.
-    """
+    """**BLOCKER R2''s fourth red proof (and MEDIUM R2's, kept).**"""
     bars = _bars(hinge, 2, states=["stale_by_age", "stale_by_age"])
     data_dir = _session(tmp_path, hinge, bars)
     states = _document(tmp_path, data_dir, pre_boot=[bars[0].raw_event_id])[
@@ -1976,20 +1527,11 @@ def test_red_a_pre_boot_refused_line_is_not_in_the_post_boot_count(
 def test_red_consumed_ids_without_a_boot_snapshot_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**LOW L-a's red proof.**
-
-    Concrete input: the document built with no boot snapshot at all. Every
-    document carries M5's counts and both of them exclude pre-boot lines, so
-    without the runner's own record EVERY pre-boot line is counted as a
-    post-boot one — silently, in the number the acceptance criterion is read
-    off. 'No pre-boot lines' is an empty list, which the runner writes; a
-    missing file is a different thing.
-    """
+    """**LOW L-a's red proof.**"""
     bars = _bars(hinge, 1, states=["stale_by_age"])
     data_dir = _session(tmp_path, hinge, bars)
     with pytest.raises(si.SessionInputsError, match="--boot-snapshot"):
         si.build_consumed_ids_document(data_dir=data_dir)
-    # and the CLI cannot be invoked without the flag either
     with pytest.raises(SystemExit):
         si.build_parser().parse_args(
             ["consumed-ids", "--data-dir", str(data_dir), "--out", str(tmp_path / "x")]
@@ -1999,11 +1541,7 @@ def test_red_consumed_ids_without_a_boot_snapshot_is_refused(
 def test_red_a_field_evaluation_without_a_state_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: a ``field_evaluations`` entry with no
-    ``state`` key — what a renamed field in ``FieldEvaluation`` would produce.
-    Read permissively it is "not a finding", so M5's number would silently
-    drop to 0 on a session full of refused lines: the undercount the whole
-    criterion exists to catch."""
+    """**Guard.** Concrete input: a ``field_evaluations`` entry with no"""
     bars = _bars(hinge, 1, states=["stale_by_age"])
     broken = json.loads(bars[0].snapshot_json)
     broken["field_evaluations"][0].pop("state")
@@ -2023,13 +1561,7 @@ def test_red_a_field_evaluation_without_a_state_is_refused(
 def test_red_a_field_evaluation_without_a_field_ref_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: an UNKNOWN evaluation with no ``field_ref``.
-
-    Its cause is then undecidable — there is no key to look up in the
-    preimage — and the obvious permissive readings are both wrong: treating
-    it as absent drops a possibly-stale line from M5, treating it as present
-    invents one. Refusing names the drift instead.
-    """
+    """**Guard.** Concrete input: an UNKNOWN evaluation with no ``field_ref``."""
     bars = _bars(hinge, 1, states=["stale_by_age"])
     broken = json.loads(bars[0].snapshot_json)
     broken["field_evaluations"][0].pop("field_ref")
@@ -2049,13 +1581,7 @@ def test_red_a_field_evaluation_without_a_field_ref_is_refused(
 def test_red_a_preimage_row_that_is_not_a_preimage_is_refused(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """**Guard.** Concrete input: a ``preimage_json`` with no ``entries``.
-
-    Read permissively, every field looks ABSENT from the payload — the one
-    UNKNOWN cause M5 excludes — so a session of stale lines would report 0
-    refused values and a pile of "absent" ones, which is the undercount with
-    a different label on it.
-    """
+    """**Guard.** Concrete input: a ``preimage_json`` with no ``entries``."""
     bars = _bars(hinge, 1, states=["stale_by_age"])
     data_dir = _write_session(
         tmp_path,
@@ -2073,13 +1599,7 @@ def test_red_a_preimage_row_that_is_not_a_preimage_is_refused(
 def test_a_snapshot_with_no_field_evaluations_is_counted_not_read_as_valid(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """A snapshot that evaluated nothing is its own shape.
-
-    Not a refusal (it is a legal snapshot) and not VALID either — the kernel's
-    own gate floors an unevaluated field at UNKNOWN. It is counted, so a
-    session whose snapshots carry no evaluations reads as "M5 measured
-    nothing" instead of "M5 passed".
-    """
+    """A snapshot that evaluated nothing is its own shape."""
     bars = _bars(hinge, 1)
     empty = json.loads(bars[0].snapshot_json)
     empty["field_evaluations"] = []
@@ -2102,14 +1622,7 @@ def test_a_snapshot_with_no_field_evaluations_is_counted_not_read_as_valid(
 def test_hinge_the_committed_snapshots_are_the_issuers_four_outcomes(
     hinge: dict[str, Any],
 ) -> None:
-    """The tools half of the snapshot hinge (the tos half is in ``tos/runtime``).
-
-    Stated here so a regeneration that lost the over-age row turns red where
-    the counting is tested, not only where the bytes are compared: without
-    it every assertion above would pass against a fixture that cannot produce
-    a refused value at all. It also pins the thing the BLOCKER turned on —
-    the persisted state of an over-age field is UNKNOWN, never STALE.
-    """
+    """The tools half of the snapshot hinge (the tos half is in ``tos/runtime``)."""
     rows = hinge["payloads"]["marketfeed_snapshots"]
     assert set(rows) == set(SNAPSHOT_SHAPES)
 
@@ -2134,7 +1647,6 @@ def test_hinge_the_committed_snapshots_are_the_issuers_four_outcomes(
     assert set(evaluations("fresh").values()) == {si.VALID_FIELD_STATE}
     assert set(evaluations("stale_by_age").values()) == {si.UNKNOWN_FIELD_STATE}
     assert si.STALE_FIELD_STATE not in evaluations("stale_by_age").values()
-    # and the three causes are told apart by the preimage, not by the state
     assert si._projectable(tokens("stale_by_age")["close"])
     assert "session" not in tokens("absent_field")
     assert evaluations("absent_field")["session"] == si.UNKNOWN_FIELD_STATE
@@ -2142,27 +1654,10 @@ def test_hinge_the_committed_snapshots_are_the_issuers_four_outcomes(
     assert evaluations("unprojectable")["close"] == si.UNKNOWN_FIELD_STATE
 
 
-# ===========================================================================
-# M5 scoping — the durable leaf accumulates sessions (2026-10-22 README §4)
-# ===========================================================================
-
-
 def test_m5_counts_only_this_session_day_not_the_whole_accumulated_leaf(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """⛔ **The measured miscount.** A tenant session writes into a NAMED DURABLE LEAF that is
-    never cleared, so ``snapshots`` holds every session the leaf ever ran — on 2026-10-22 the
-    10-15 genesis session was still in there. The boot snapshot only lists TODAY's pre-boot
-    ids, so the OLDER session's pre-boot line had nothing marking it pre-boot and was counted
-    as a post-boot refusal: M5 read **2 store-wide against 1 for the session**, and the real
-    measurement had to filter by day by hand to say which was which.
-
-    Here: three bars of the session day and one ``stale_by_age`` bar from an earlier day. The
-    older day's bar must not be counted, and the document must SAY what it scoped to — a fix
-    that silently drops rows would be the same class of problem as the bug.
-
-    Red before the scoping: ``m5...`` is 2 and ``session_day`` does not exist.
-    """
+    """⛔ **The measured miscount.** A tenant session writes into a NAMED DURABLE LEAF that is"""
     bars = _bars(hinge, 4, states=["fresh", "fresh", "fresh", "stale_by_age"])
     older = replace(bars[3], raw_event_id=f"{INSTRUMENT}:1m:20261015T090000+0900")
     data_dir = _session(tmp_path, hinge, [*bars[:3], older])
@@ -2170,14 +1665,12 @@ def test_m5_counts_only_this_session_day_not_the_whole_accumulated_leaf(
 
     assert states["session_day"] == "20261019"
     assert states["days_present"] == ["20261015", "20261019"]
-    # The older day's refusal is out of scope; this session refused nothing.
     assert (
         states["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"] == 0
     )
     assert (
         states["post_boot_raw_event_ids_with_a_present_value_refused_as_unknown"] == []
     )
-    # Scoped denominators, with the accumulation still visible beside them.
     assert states["counts"]["consumed_ids"] == 3
     assert states["counts"]["consumed_ids_all_days"] == 4
     assert states["counts"]["post_boot_consumed_ids"] == 3
@@ -2186,24 +1679,7 @@ def test_m5_counts_only_this_session_day_not_the_whole_accumulated_leaf(
 def test_live_decisions_are_scoped_to_the_one_session_day(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """⛔ **The 2026-10-22 scope fix covered only the consumed-ids document, and
-    that is why no session has ever produced a B3 summary.**
-
-    Measured 2026-10-29 on the 10-28 LONG session's own stores (its leaf read
-    from the cold-backup generation taken after the session stopped): five of
-    B3's six steps exited 0 and ``diff_decisions.py`` refused with
-
-        1939 live decision(s) name bars that are not compared, first
-        ['A05611:1m:20261015T100100+0900', …]
-
-    — ``live.jsonl`` carried every decision the leaf had accumulated since the
-    10-15 genesis (2,348 records over six days) while the offline three cover
-    one session's frozen frame. Scoped, the same run writes a summary:
-    409 bars, ``unresolved`` 0.
-
-    Here, in miniature: two bars of the session day and one from an earlier
-    session the leaf still holds.
-    """
+    """⛔ **The 2026-10-22 scope fix covered only the consumed-ids document, and"""
     bars = _bars(hinge, 3)
     older = replace(bars[0], raw_event_id=_event_id_on("20261015", "1001"))
     leaf = [older, *bars[1:]]
@@ -2232,11 +1708,8 @@ def test_live_decisions_are_scoped_to_the_one_session_day(
         bars[1].raw_event_id,
         bars[2].raw_event_id,
     ]
-    # the tick count moves with the records, or `ticks_without_a_decision`
-    # would count an earlier session's ticks against this one
     assert (ticks, scope.ticks_all_days) == (2, 3)
     assert scope.records_all_days == 3
-    # one session, so bar_index is the n-th decision OF IT
     assert [record["bar_index"] for record in records] == [0, 1]
 
     lineage = si.build_live_lineage(
@@ -2259,14 +1732,7 @@ def test_live_decisions_are_scoped_to_the_one_session_day(
 def test_the_live_scope_comes_from_the_boot_snapshot_like_the_other_document(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """One source of truth for both session-derived inputs.
-
-    The failing input the newest-day fallback alone cannot handle is already
-    recorded on :func:`session_inputs.derive_session_day`: a session that dies
-    before consuming anything reads the PREVIOUS session's numbers as its own.
-    Here that disagreement must refuse rather than scope ``live.jsonl`` to a
-    day the boot snapshot does not name.
-    """
+    """One source of truth for both session-derived inputs."""
     bars = _bars(hinge, 2)
     data_dir = _session(
         tmp_path,
@@ -2287,9 +1753,7 @@ def test_the_live_scope_comes_from_the_boot_snapshot_like_the_other_document(
 
 
 def test_red_a_live_record_with_no_readable_day_is_refused_not_dropped() -> None:
-    """A record that cannot be placed in a day would VANISH from a filtered
-    file with nothing saying so — the same rule
-    :func:`session_inputs.scope_to_session_day` applies to the other document."""
+    """A record that cannot be placed in a day would VANISH from a filtered"""
     with pytest.raises(si.SessionInputsError, match="no readable"):
         si.scope_live_decisions(
             [{"raw_event_id": "A05611-no-stamp"}],
@@ -2302,8 +1766,7 @@ def test_red_a_live_record_with_no_readable_day_is_refused_not_dropped() -> None
 def test_the_live_cli_requires_the_boot_snapshot(
     tmp_path: Path, hinge: dict[str, Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Required, not optional: an omitted flag would silently write the
-    store-wide file whose refusal downstream this scope exists to prevent."""
+    """Required, not optional: an omitted flag would silently write the"""
     data_dir = _session(tmp_path, hinge, _bars(hinge, 2))
     with pytest.raises(SystemExit) as excinfo:
         si.main(
@@ -2333,16 +1796,7 @@ def test_the_emitted_definition_names_what_the_number_is(
 def test_a_session_that_died_before_consuming_refuses_the_previous_days_numbers(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """⛔ **Review MEDIUM-1.** Newest-consumed-day alone answers the WRONG session.
-
-    The leaf holds 10-19 snapshots; today's 10-20 session dies before consuming a single bar,
-    and its boot snapshot lists a 10-20 pre-boot id. Newest-day would answer ``20261019`` —
-    so yesterday's stale count is reported as today's, and yesterday's pre-boot ids (absent
-    from today's boot snapshot) read as post-boot refusals. Nothing else catches it: the
-    snapshot list is non-empty, so no emptiness guard fires.
-
-    The two inputs are not from the same session, so no number is salvageable: refuse.
-    """
+    """⛔ **Review MEDIUM-1.** Newest-consumed-day alone answers the WRONG session."""
     bars = _bars(hinge, 2, states=["fresh", "stale_by_age"])
     data_dir = _session(tmp_path, hinge, bars)
 
@@ -2359,8 +1813,7 @@ def test_a_session_that_died_before_consuming_refuses_the_previous_days_numbers(
 def test_the_boot_snapshot_decides_the_session_day_when_both_agree(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """The other side of MEDIUM-1: agreement is silent, and the pre-boot id is still excluded
-    from the post-boot denominator exactly as before."""
+    """The other side of MEDIUM-1: agreement is silent, and the pre-boot id is still excluded"""
     bars = _bars(hinge, 3)
     data_dir = _session(tmp_path, hinge, bars)
     states = _document(tmp_path, data_dir, pre_boot=[bars[0].raw_event_id])[
@@ -2375,10 +1828,7 @@ def test_the_boot_snapshot_decides_the_session_day_when_both_agree(
 def test_an_unreadable_raw_event_id_is_refused_not_silently_dropped(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """⛔ **Review MEDIUM-2.** An id with no ``:1m:`` stamp has no day, so a day filter drops
-    it from EVERY count and the totals shrink with nothing saying so — the same silently-wrong
-    -count class the scoping was added to fix. The id names a bar the runtime consumed, so
-    there is no honest "skip"."""
+    """⛔ **Review MEDIUM-2.** An id with no ``:1m:`` stamp has no day, so a day filter drops"""
     bars = _bars(hinge, 2)
     malformed = replace(bars[1], raw_event_id=f"{INSTRUMENT}:20261019T151300+0900")
     data_dir = _session(tmp_path, hinge, [bars[0], malformed])
@@ -2393,13 +1843,7 @@ def test_an_unreadable_raw_event_id_is_refused_not_silently_dropped(
 def test_the_session_day_is_taken_in_kst_not_in_the_ids_own_offset(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """⛔ **Review LOW-3.** The stamp carries its OWN offset. ``20261019T233000+0000`` is
-    2026-10-20 08:30 in Seoul, so its session day is the 20th; reading the date off the stamp
-    as written would file it under the 19th and scope the session to the wrong day.
-
-    Today every id is written ``+0900`` by one producer — a fact about that producer, not a
-    property of the grammar this function parses.
-    """
+    """⛔ **Review LOW-3.** The stamp carries its OWN offset. ``20261019T233000+0000`` is"""
     assert si.session_day_of(f"{INSTRUMENT}:1m:20261019T233000+0000") == "20261020"
     assert si.session_day_of(f"{INSTRUMENT}:1m:20261019T151200+0900") == "20261019"
     assert si.session_day_of(f"{INSTRUMENT}:20261019T151200+0900") is None
@@ -2408,17 +1852,7 @@ def test_the_session_day_is_taken_in_kst_not_in_the_ids_own_offset(
 def test_every_count_in_the_document_is_this_sessions_not_the_whole_leaf(
     tmp_path: Path, hinge: dict[str, Any]
 ) -> None:
-    """⛔ **Review LOW-4.** The scope is applied ONCE, to the whole document.
-
-    An earlier cut scoped only ``consumed_field_states``, leaving ``counts.snapshots``,
-    ``counts.consumed_raw_event_ids``, ``raw_event_ids`` and the consumed set behind
-    ``unpaired_reasons`` store-wide — a document whose M5 block said "this session" while the
-    counts above it said "this leaf, all time". Two scopes in one document is worse than one
-    wrong scope: every reader has to know which number is which.
-
-    Three bars of the session day, one from an earlier one. Red before: ``snapshots`` and
-    ``consumed_raw_event_ids`` read 4 and ``raw_event_ids`` carries the older day's id.
-    """
+    """⛔ **Review LOW-4.** The scope is applied ONCE, to the whole document."""
     bars = _bars(hinge, 4)
     older = replace(bars[3], raw_event_id=f"{INSTRUMENT}:1m:20261015T090000+0900")
     data_dir = _session(tmp_path, hinge, [*bars[:3], older])
@@ -2429,7 +1863,6 @@ def test_every_count_in_the_document_is_this_sessions_not_the_whole_leaf(
     assert document["days_present"] == ["20261015", "20261019"]
     assert document["counts"]["snapshots"] == 3
     assert document["counts"]["consumed_raw_event_ids"] == 3
-    # the leaf's own total stays visible beside the scoped numbers
     assert document["counts"]["snapshots_all_days"] == 4
     assert older.raw_event_id not in document["raw_event_ids"]
     assert len(document["raw_event_ids"]) == 3

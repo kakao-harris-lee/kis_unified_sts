@@ -1,30 +1,4 @@
-"""Contract pins for ``shared.indicators.reference`` (P1-a absorption gate).
-
-These tests freeze the exact numeric contracts of the reference calculators
-BEFORE the math moves behind the engine (``ReferenceBackend``) so the move is
-provably value-preserving. They import only the public
-``shared.indicators.reference`` surface, so they must pass identically before
-and after the restructure (the module becomes a thin re-export shim).
-
-Pinned contracts:
-
-* **Warmup**: NaN-preserving warmup positions (first valid index) for the
-  Wilder RSI, ATR (both modes), ADX, and StochRSI %K series.
-* **Flat-window sentinels** (verified empirically, not from lore):
-    - reference Wilder RSI on a flat window -> ``50.0`` (TA-Lib -> ``0.0``);
-    - reference MFI on a flat window -> ``100.0`` (zero negative flow — the
-      regime convention; TA-Lib -> ``0.0``);
-    - reference MFI with fewer than ``period`` classified bars -> ``50.0``;
-    - reference StochRSI on a flat RSI window -> ``50.0``.
-* **ATR smoothing modes**: exact last-bar values for ``mode="sma"`` vs
-  ``mode="wilder"`` on the fixed synthetic series (they genuinely differ).
-* **StochRSI %K/%D**: exact last-bar (and prior-bar %K) values on the fixed
-  synthetic series.
-* **ADX / MFI**: exact last-bar values on the fixed synthetic series.
-
-Input generation is the same RNG-free closed-form OHLCV as
-``test_reference.py`` so the snapshot constants are deterministic.
-"""
+"""Contract pins for ``shared.indicators.reference`` (P1-a absorption gate)."""
 
 from __future__ import annotations
 
@@ -87,7 +61,6 @@ def frame(ohlcv: dict[str, list[float]]) -> pd.DataFrame:
     return pd.DataFrame(ohlcv)
 
 
-# Exact last-bar snapshots on the deterministic series (period=14 defaults).
 _RSI_LAST = 47.09914310988074
 _ATR_SMA_LAST = 2.3615510655506173
 _ATR_WILDER_LAST = 2.2903558861698596
@@ -98,11 +71,6 @@ _ADX_LAST = 31.634447762095665
 _MFI_LAST = 55.974243199902375
 
 _EXACT = 1e-9
-
-
-# ---------------------------------------------------------------------------
-# Warmup contracts (NaN-preserving; first valid index)
-# ---------------------------------------------------------------------------
 
 
 def test_warmup_rsi_first_valid_at_period(frame: pd.DataFrame) -> None:
@@ -135,11 +103,6 @@ def test_warmup_stochrsi_k_first_valid_index(frame: pd.DataFrame) -> None:
     assert int(out["stochrsi_k"].first_valid_index()) == 27
 
 
-# ---------------------------------------------------------------------------
-# Flat-window sentinels (reference vs TA-Lib divergence pinned explicitly)
-# ---------------------------------------------------------------------------
-
-
 def test_flat_window_rsi_sentinel_is_50() -> None:
     """Reference Wilder RSI returns neutral 50.0 on a flat window."""
     flat = pd.Series([100.0] * 40)
@@ -148,12 +111,7 @@ def test_flat_window_rsi_sentinel_is_50() -> None:
 
 
 def test_flat_window_mfi_sentinel_is_100() -> None:
-    """Reference MFI returns 100.0 on a flat window (zero negative flow).
-
-    This is the regime detector's own contract — NOT the 50.0 the intraday
-    streaming MFI uses on flat windows. Pinned so the absorption cannot
-    silently "fix" it to either 50 or TA-Lib's 0.
-    """
+    """Reference MFI returns 100.0 on a flat window (zero negative flow)."""
     flat = [100.0] * 40
     vol = [1000.0] * 40
     assert MFICalculator(period=14).mfi_last(flat, flat, flat, vol) == pytest.approx(
@@ -179,12 +137,7 @@ def test_flat_window_stochrsi_sentinel_is_50() -> None:
 
 
 def test_flat_window_sentinels_diverge_from_talib() -> None:
-    """TA-Lib returns 0.0 where the reference convention returns 50/100.
-
-    Empirically verified divergence (RSI 50 vs 0, MFI 100 vs 0). This is the
-    convention gap the ``STS_INDICATOR_CONVENTION`` gate exists for; the P1-a
-    absorption must preserve the reference side untouched.
-    """
+    """TA-Lib returns 0.0 where the reference convention returns 50/100."""
     talib = pytest.importorskip("talib")
     flat = np.full(40, 100.0)
     vol = np.full(40, 1000.0)
@@ -192,11 +145,6 @@ def test_flat_window_sentinels_diverge_from_talib() -> None:
     assert float(talib.MFI(flat, flat, flat, vol, timeperiod=14)[-1]) == pytest.approx(
         0.0, abs=_EXACT
     )
-
-
-# ---------------------------------------------------------------------------
-# ATR mode="sma" vs mode="wilder" exact outputs
-# ---------------------------------------------------------------------------
 
 
 def test_atr_sma_mode_exact_snapshot(ohlcv: dict[str, list[float]]) -> None:
@@ -218,11 +166,6 @@ def test_atr_modes_differ_on_real_shaped_data(ohlcv: dict[str, list[float]]) -> 
     assert abs(_ATR_SMA_LAST - _ATR_WILDER_LAST) > 1e-3
 
 
-# ---------------------------------------------------------------------------
-# StochRSI %K / %D exact outputs on the fixed synthetic series
-# ---------------------------------------------------------------------------
-
-
 def test_stochrsi_k_d_exact_snapshot(frame: pd.DataFrame) -> None:
     calc = StochRSICalculator()
     out = calc.calculate(frame.copy())
@@ -236,11 +179,6 @@ def test_stochrsi_k_d_exact_snapshot(frame: pd.DataFrame) -> None:
     assert values["stochrsi_k"] == pytest.approx(_STOCHRSI_K_LAST, abs=_EXACT)
     assert values["stochrsi_d"] == pytest.approx(_STOCHRSI_D_LAST, abs=_EXACT)
     assert values["stochrsi_k_prev"] == pytest.approx(_STOCHRSI_K_PREV, abs=_EXACT)
-
-
-# ---------------------------------------------------------------------------
-# RSI / ADX / MFI exact last-bar values
-# ---------------------------------------------------------------------------
 
 
 def test_rsi_exact_snapshot(frame: pd.DataFrame) -> None:

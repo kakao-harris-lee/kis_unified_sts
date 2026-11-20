@@ -21,20 +21,9 @@ def _reset_config_loader() -> None:
 
 @pytest.fixture(autouse=True)
 def clean_env():
-    """Isolate CORS tests from full-suite config pollution.
-
-    ``create_app()`` resolves CORS origins through ``ConfigLoader``. A prior
-    test in the full suite that leaves ``KIS_CONFIG_DIR`` pointing at a fixture
-    config lacking the ``development`` overlay makes ``load_api_config()`` skip
-    the dev merge and serve production origins, so the localhost CORS header
-    silently disappears (these tests pass in isolation but fail in the full
-    suite). Clear that override and reset the ConfigLoader singleton so
-    create_app() always loads the repo's real config/api.yaml.
-    """
+    """Isolate CORS tests from full-suite config pollution."""
     env_vars = ["ENVIRONMENT", "KIS_CONFIG_DIR"]
     old_values = {k: os.environ.get(k) for k in env_vars}
-    # Drop any leaked config-dir override so ConfigLoader falls back to the
-    # repo's config/ (which carries the development overlay).
     os.environ.pop("KIS_CONFIG_DIR", None)
     _reset_config_loader()
     yield
@@ -65,7 +54,6 @@ async def test_cors_rejects_unknown_origin():
             },
         )
 
-        # Should not have Access-Control-Allow-Origin for unknown origin
         origin_header = response.headers.get("access-control-allow-origin")
         assert origin_header != "https://malicious-site.com"
 
@@ -100,7 +88,6 @@ async def test_cors_allows_vite_dev_server():
     """Test that CORS allows requests from Vite dev server when using default config."""
     os.environ["ENVIRONMENT"] = "development"
 
-    # Mock config loader to return empty config — tests default origins
     with patch("services.dashboard.app.load_api_config", return_value={}):
         from services.dashboard.app import create_app
 
@@ -141,7 +128,6 @@ async def test_cors_dev_mode_uses_explicit_origins():
             },
         )
 
-        # In dev mode, arbitrary external origins should NOT be allowed
         origin_header = response.headers.get("access-control-allow-origin")
         assert origin_header != "https://any-site.com"
 
@@ -166,6 +152,5 @@ async def test_cors_methods_restricted():
         )
 
         allowed_methods = response.headers.get("access-control-allow-methods", "")
-        # Should have specific methods, not wildcard
         assert "GET" in allowed_methods
         assert "POST" in allowed_methods

@@ -77,14 +77,12 @@ class TestConfigMixinFromDictProperties:
         self, known_key: str, unknown_keys: dict
     ):  # noqa: ARG002
         """Property: Unknown keys should be ignored."""
-        # Ensure unknown keys don't overlap with config fields
         config_fields = {"name", "count", "rate", "enabled"}
         unknown_keys = {k: v for k, v in unknown_keys.items() if k not in config_fields}
 
         data = {"name": "test", **unknown_keys}
         config = SimpleConfig.from_dict(data)
 
-        # Should only have known attributes
         for key in unknown_keys:
             assert not hasattr(config, key) or key in config_fields
 
@@ -168,7 +166,6 @@ class TestConfigMixinValidationProperties:
             }
         )
 
-        # Should not raise
         config.validate()
 
         assert config.threshold == threshold
@@ -207,7 +204,6 @@ class TestConfigMixinValidationProperties:
     @settings(max_examples=20)
     def test_validation_can_be_skipped(self, threshold: float):
         """Property: Validation can be disabled."""
-        # Should NOT raise when validation is disabled
         config = ValidatedConfig.from_dict({"threshold": threshold}, validate=False)
 
         assert config.threshold == threshold
@@ -227,10 +223,8 @@ class TestConfigMixinEdgeCases:
     @settings(max_examples=50)
     def test_handles_arbitrary_dicts(self, data: dict):
         """Property: Should handle arbitrary dicts without crashing."""
-        # Should not raise, even with weird data
         config = SimpleConfig.from_dict(data)
 
-        # Result should always be a valid SimpleConfig
         assert isinstance(config, SimpleConfig)
         assert isinstance(config.name, str)
         assert isinstance(config.count, int)

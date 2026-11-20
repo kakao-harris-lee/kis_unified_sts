@@ -1,29 +1,4 @@
-"""Unit tests for the N-19 / P-CA non_trade probe registrations.
-
-``docs/plans/2026-08-07-tos-p02-nontrade-probe-definition.md`` §5/§8 defines two
-probes for the two adjacent ``VERIFICATION-PROFILE-002`` bound keys
-``B_non_trade_event_detect`` / ``B_non_trade_reconcile``:
-
-* **N-19** — a documentary spec cross-check (no broker contact, ``ENV_NONE``).
-* **P-CA** — an opportunistic GET-only observation, gated on N-19 landing
-  first, that can never place an order.
-
-N-19 is a documentary cross-check, not a script (``supported=False`` — see its
-``skip_reason``). P-CA landed as a runnable probe
-(``tools/broker_probes/probes_ca.py::probe_pca``, tested in
-``tests/tools/test_broker_probes_ca.py``) once N-19
-(``docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md``) established the
-CA-API exists (VERIFIED/E1); this test guards the *registration* for both —
-the right kind/environment/flags are on file, both bound keys are cited, N-19
-shows up in ``coverage_report()['unsupported']`` with a real reason, P-CA does
-not, and the ratified canonical-12 / census-4 counts are untouched by adding
-follow-ups. Two tests here re-read the live ``VERIFICATION-PROFILE-002.yaml`` to pin the
-``ADJACENT_BOUND_KEYS`` ``vp_line`` values against drift. That file went with the
-``tos-spec/`` corpus on 2026-11-13
-(``docs/plans/2026-11-13-tos-code-halving-plan.md`` §S3), so the drift guard has no
-target left and was removed with it; the ``vp_line`` values stay in the registry as
-git-history pointers to the measured bounds.
-"""
+"""Unit tests for the N-19 / P-CA non_trade probe registrations."""
 
 from __future__ import annotations
 
@@ -43,10 +18,6 @@ class TestAdjacentBoundKeys:
     """§8.1 — the adjacent bound-key entries stay on file with their notes."""
 
     def test_other_adjacent_bound_keys_untouched(self) -> None:
-        # Scope discipline: this registration touches only the two non_trade
-        # keys' note/vp_line. The other two ADJACENT_BOUND_KEYS entries are a
-        # separate, already-known drift class (design doc §9 M-1) out of scope
-        # here — just confirm they still exist and still carry a note.
         assert ADJACENT_BOUND_KEYS["B_protection_gap"].note
         assert ADJACENT_BOUND_KEYS["B_post_trade_effect_to_obligation_commit"].note
 
@@ -106,7 +77,6 @@ class TestPCARegistration:
         assert spec.supported is True
 
     def test_skip_reason_is_now_empty(self) -> None:
-        # P-CA landed as a runnable probe — skip_reason is cleared, not stale.
         spec = get("P-CA")
         assert spec.skip_reason == ""
 
@@ -136,20 +106,7 @@ class TestCoverageInvariantsUnchanged:
         assert report["census_count"] == 4
 
     def test_total_is_24(self) -> None:
-        """A deliberate literal: the register grows only by an explicit edit.
-
-        The number is NOT derived (``canonical + census + followups`` is
-        tautological — every probe lands in exactly one bucket, so such an
-        assertion would block nothing). It is a hand-maintained count, so adding
-        a probe has to come here and say which one. What the 24 is made of:
-
-        * 12 canonical (draft §5) + 4 census (P0-2 plan §1 T2) — pinned above,
-          and those two MUST NOT move;
-        * 8 follow-ups, outside the ratified sets: P-NMPR, P-BAL, P-R5-PRE,
-          P-R5, N-19, P-CA, P-VL (2026-10-08, CP-3 decision 9 corroboration
-          probe — ``docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md``
-          §4), and P-SC (issue #948 step 1, the stock cancel row shape).
-        """
+        """A deliberate literal: the register grows only by an explicit edit."""
         report = coverage_report()
         assert report["total"] == 24
         followups = sorted(
@@ -169,16 +126,11 @@ class TestCoverageInvariantsUnchanged:
         ]
 
     def test_n19_still_unsupported_pca_no_longer_is(self) -> None:
-        # N-19 is a documentary cross-check, not a script — it stays unsupported.
-        # P-CA landed as a runnable probe and must not appear here any more.
         unsupported = coverage_report()["unsupported"]
         assert "N-19" in unsupported and unsupported["N-19"].strip() != ""
         assert "P-CA" not in unsupported
 
     def test_non_trade_bound_keys_touched(self) -> None:
-        # B_non_trade_event_detect / _reconcile live in ADJACENT_BOUND_KEYS, not
-        # BOUND_KEYS, so they were never part of bound_keys_not_touched — but
-        # they should now be reachable via PROBES for anyone iterating bounds_keys.
         touched = {
             key
             for spec in PROBES.values()
@@ -188,18 +140,6 @@ class TestCoverageInvariantsUnchanged:
         assert touched == set(_NON_TRADE_KEYS)
 
 
-# ---------------------------------------------------------------------------
-# runbook §3 table <-> registry agreement
-#
-# The runbook calls itself a view of this register ("the single source for the
-# runbook table", registry.py:1), but nothing checked that. P-VL shipped with
-# 주문 발생 = 예 against emits_orders=False, contradicting its own
-# "QUERY (GET 전용)" cell and the note two lines below that reads the 예 set as
-# "모의투자 전용 order probes" — four reviewers found it independently, which is
-# what an unparsed table costs. The failing input for the test below is exactly
-# that row.
-# ---------------------------------------------------------------------------
-
 _RUNBOOK = (
     Path(__file__).resolve().parents[2]
     / "docs"
@@ -207,19 +147,11 @@ _RUNBOOK = (
     / "kis-capability-probes.md"
 )
 
-#: The 주문 발생 column's vocabulary. ``n/a`` is not in use today; a cell that is
-#: none of these fails loudly rather than being read as "no".
 _ORDER_CELL_TRUTH = {"예": True, "아니오": False}
 
 
 def _runbook_order_column() -> dict[str, bool]:
-    """``{probe_id: emits_orders}`` as the runbook §3 table states it.
-
-    Deliberately strict: a row whose ID is bold-wrapped, or whose 주문 발생 cell
-    carries emphasis or a parenthetical ("**예 (실전)**" for P-R5), is normalised
-    rather than skipped. Skipping is how a table drifts — the row stops being
-    checked and nobody notices.
-    """
+    """``{probe_id: emits_orders}`` as the runbook §3 table states it."""
     rows: dict[str, bool] = {}
     for line in _RUNBOOK.read_text(encoding="utf-8").splitlines():
         if not line.startswith("|"):

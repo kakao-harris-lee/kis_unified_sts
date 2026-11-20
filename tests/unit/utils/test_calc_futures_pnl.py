@@ -10,7 +10,6 @@ MULT = 50_000.0
 
 
 def test_long_win() -> None:
-    # (333.00-331.20)*1*1*50000 = 90000
     assert calc_futures_realized_pnl(
         331.20, 333.00, 1, "long", multiplier_krw_per_point=MULT
     ) == pytest.approx(90_000.0)
@@ -23,7 +22,6 @@ def test_long_loss() -> None:
 
 
 def test_short_win() -> None:
-    # short: (329.40-331.20)*(-1)*1*50000 = 90000
     assert calc_futures_realized_pnl(
         331.20, 329.40, 1, "short", multiplier_krw_per_point=MULT
     ) == pytest.approx(90_000.0)

@@ -1,10 +1,4 @@
-"""IndicatorContract.from_specs — typed builder-style requirements (P2-b).
-
-Additive API: a strategy can declare ``IndicatorSpec`` requests (indicator id
-+ params) and get back a contract whose required keys come from the shared
-``flat_key`` catalog — no magic strings. Legacy string contracts must behave
-exactly as before.
-"""
+"""IndicatorContract.from_specs — typed builder-style requirements (P2-b)."""
 
 from __future__ import annotations
 
@@ -60,7 +54,6 @@ def test_extra_keys_go_through_legacy_string_parsing() -> None:
     assert contract.needs_ohlcv
     assert len(contract.momentum_requests) == 1
     assert len(contract.mtf_base_requests) == 1
-    # Only the typed request carries a spec.
     typed = [req for req in contract.requests if req.spec is not None]
     assert len(typed) == 1
     assert typed[0].name == "rsi"
@@ -73,8 +66,7 @@ def test_legacy_string_contract_is_unchanged() -> None:
 
 
 def test_resolver_fulfils_spec_derived_keys_as_base_payload() -> None:
-    """A specs-built contract needs zero resolver changes: its flat keys are
-    the very names the live base payload publishes."""
+    """A specs-built contract needs zero resolver changes: its flat keys are"""
     contract = IndicatorContract.from_specs(
         [
             IndicatorSpec.create("rsi", {"period": 14}),
@@ -91,8 +83,7 @@ def test_resolver_fulfils_spec_derived_keys_as_base_payload() -> None:
 
 
 def test_conflicting_specs_collapsing_to_one_key_raise() -> None:
-    """rsi is not period-keyed: rsi(7) and rsi(21) both flatten to "rsi" —
-    ambiguous, so from_specs must refuse instead of silently keeping one."""
+    """rsi is not period-keyed: rsi(7) and rsi(21) both flatten to "rsi" —"""
     with pytest.raises(ValueError, match="flat key collision"):
         IndicatorContract.from_specs(
             [

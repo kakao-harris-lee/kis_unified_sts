@@ -13,23 +13,7 @@ def make_position(
     highest_price: float | None = None,
     lowest_price: float | None = None,
 ) -> Position:
-    """Build a real ``Position`` with optional raw extreme overrides.
-
-    ``Position.__post_init__`` normalizes unset extremes
-    (``highest_price == 0.0`` / ``lowest_price == inf``) to ``entry_price``.
-    To exercise the legacy unset-extreme fallbacks the overrides are applied
-    *after* construction, bypassing that normalization.
-
-    Args:
-        side: Position direction.
-        entry_price: Entry price (may be ``0`` / negative for guard tests).
-        quantity: Position size.
-        highest_price: Raw ``highest_price`` to force post-construction.
-        lowest_price: Raw ``lowest_price`` to force post-construction.
-
-    Returns:
-        A ``shared.models.position.Position`` instance.
-    """
+    """Build a real ``Position`` with optional raw extreme overrides."""
     position = Position(
         id="test-pos",
         code="005930",

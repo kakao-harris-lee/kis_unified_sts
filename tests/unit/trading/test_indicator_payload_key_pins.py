@@ -1,13 +1,4 @@
-"""Live indicator payload key-set pins (P2-b resolver-path safety net).
-
-``StreamingIndicatorResolver.collect_entry_indicators`` forwards the payloads
-built here verbatim to live strategies, so the exact key names ARE the live
-contract. These pins freeze the key sets of ``get_indicators`` /
-``get_indicators_tf`` / ``get_indicator_features`` so refactoring the name
-derivations (e.g. onto the shared ``flat_key`` catalog) can be proven
-payload-identical. A failing pin means the live payload changed — that is
-never a refactor.
-"""
+"""Live indicator payload key-set pins (P2-b resolver-path safety net)."""
 
 from __future__ import annotations
 

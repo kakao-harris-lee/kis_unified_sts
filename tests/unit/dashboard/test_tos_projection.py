@@ -88,9 +88,7 @@ def test_valid_projection_round_trips(monkeypatch, tmp_path):
     assert body["projection"]["schema_version"] == 1
     assert body["projection"]["projection_generation"] == 17
     assert body["projection"]["non_authorizing"] is True
-    # ``OperationsFacts.schema_versions`` is declared ``dict[str, int | None]``
     # (compose/_types.py) — a store whose ``PRAGMA user_version`` is not
-    # readable yet reports ``None`` for its own key, and that must survive.
     assert body["projection"]["operations"]["schema_versions"] == {
         "evidence": 1,
         "rcl": 1,
@@ -147,21 +145,7 @@ _TOS_PREFIX = "/api/tos"
 
 
 def _declared_methods_under_prefix(routes, prefix: str) -> set[str]:
-    """Union of the declared HTTP methods of every route under ``prefix``.
-
-    Nothing is subtracted. FastAPI's ``APIRoute`` stores exactly the methods
-    the decorator declared — a GET-only route reports ``{"GET"}``, with no
-    implicit ``HEAD``/``OPTIONS`` (asserted by
-    ``test_declared_methods_include_no_implicit_head_or_options`` below). An
-    earlier version of this helper subtracted ``{"HEAD", "OPTIONS"}``
-    defensively, which meant an explicit ``@router.head`` would have passed
-    the GET-only check — the guard would have admitted the very thing it
-    names (plan §2 decision 8c pins the *whole* router to GET).
-
-    Matches by ``path.startswith(prefix)`` rather than an exact path so a new
-    route added anywhere under the prefix (not just at the one path this
-    module happens to define today) is caught.
-    """
+    """Union of the declared HTTP methods of every route under ``prefix``."""
     methods: set[str] = set()
     for route in routes:
         path = getattr(route, "path", None)
@@ -186,14 +170,7 @@ def test_declared_methods_include_no_implicit_head_or_options():
 
 
 def test_an_explicit_head_route_fails_the_get_only_check():
-    """Negative self-check for the removed subtraction.
-
-    This router declares HEAD and nothing else, so the old helper's
-    ``- {"HEAD", "OPTIONS"}`` reduced it to the **empty set** — which the
-    GET-only assertion's own ``assert router_methods`` guard would have
-    reported as "no routes registered", not as a read-only violation. Either
-    way the explicit HEAD was invisible as what it is. It must now show up.
-    """
+    """Negative self-check for the removed subtraction."""
     from fastapi import APIRouter
 
     poisoned = APIRouter(prefix="/api/tos", tags=["tos"])
@@ -212,23 +189,13 @@ def test_route_is_get_only():
     assert app_methods, "expected at least one /api/tos route registered on the app"
     assert app_methods == {"GET"}
 
-    # Independent of the app's prefix/mounting: check the router object
-    # itself, so a route added to `router` would be caught even if some
-    # future app wiring changed how/where it's mounted.
     router_methods = _declared_methods_under_prefix(tos_projection.router.routes, "")
     assert router_methods, "expected at least one route on tos_projection.router"
     assert router_methods == {"GET"}
 
 
 def test_get_only_checker_detects_an_added_post():
-    """Negative self-check: prove the checker actually catches a violation.
-
-    Builds a throwaway router with one POST endpoint under /api/tos/... and
-    runs the same `_declared_methods_under_prefix` helper against it. If this
-    assertion ever stopped failing, the positive checks above would be
-    vacuous — this is the same idiom as the runtime's negative-grep
-    self-tests (`tests/operator/test_no_write_port.py`).
-    """
+    """Negative self-check: prove the checker actually catches a violation."""
     from fastapi import APIRouter
 
     poisoned = APIRouter(prefix="/api/tos", tags=["tos"])
@@ -262,45 +229,11 @@ def test_route_module_does_not_import_tos_or_tos_runtime():
             ), f"forbidden import-from {module!r} in {_ROUTE_MODULE}"
 
 
-# The contract set, named here the way the other two readers name it: the
-# runtime test parametrizes on both files and the UI loader selects between
-# them. Pinning the set is what keeps the loop below from passing on zero
-# matches — a glob that finds nothing iterates zero times and asserts nothing,
-# so a fixture moved or renamed away from this directory would otherwise go
-# silently green here while the other two readers go red. Adding a third
-# fixture is a deliberate edit in all three readers, not a silent pickup.
 SHARED_PROJECTION_FIXTURES = frozenset(
     {"operator-projection-v1.json", "operator-projection-v1-unknown.json"}
 )
 
 
-# What this test checks: the API accepts each shared fixture and mirrors it
-# back byte-for-byte. The fixtures are OWNED by the producing distribution and
-# live in its tree (`tos/runtime/tests/fixtures/`, review note e of #861): the
-# document is produced by `tos_runtime.operator.projection`, and the planned
-# repo split keeps `tos/` while removing this legacy runtime, so the readers
-# point into `tos/` and never the reverse. The same files are read by the UI
-# tests (`strategy-builder-ui/src/test/tosFixture.ts`) and by the runtime's
-# `tos/runtime/tests/operator/test_projection.py::
-# test_shared_product_contract_fixture`, which substitutes the fixture's own
-# groups for the projection's readers and so proves assembler pass-through
-# only — it never exercises the real `_operations_wiring` readers. The
-# producer's actual key set is checked separately, from the producer source.
-# No imports cross the TOS boundary.
-#
-# This assertion is the only lane that reads fixture CONTENT against the DTO.
-# The runtime test named above cannot stand in for it: it feeds each group
-# back as its own reader and `OperatorProjection.build` does not validate
-# reader return values, so group content there is a pure echo.
-#
-# CI reach: the fixtures sit under `tos/`, which
-# `.github/workflows/test.yml` excludes with `!tos/**` — so that file
-# re-includes `tos/runtime/tests/fixtures/**` as its LAST pattern, and a PR
-# that changes only those fixtures runs this job. Both halves of the guard
-# are here: this content assertion and the `SHARED_PROJECTION_FIXTURES` pin
-# that catches the directory moving again. Removing that re-include line, or
-# moving it above `!tos/**`, silently takes both out of reach of every
-# fixture-only change.
 def test_shared_projection_contract_fixtures(monkeypatch, tmp_path):
     fixture_dir = Path(__file__).resolve().parents[3] / "tos/runtime/tests/fixtures"
     matched = sorted(fixture_dir.glob("operator-projection-v1*.json"))
@@ -413,11 +346,7 @@ def test_atomic_replace_reads_age_and_payload_from_same_inode(monkeypatch, tmp_p
 
 
 def test_reason_lists_keep_absent_distinct_from_empty(monkeypatch, tmp_path):
-    """지적 2: ``null`` is accepted, and an absent key stays ``null``, not ``[]``.
-
-    An empty list is a fact ("evaluated, nothing to report"); absence is not.
-    Defaulting to ``[]`` would render as 「없음」 on the page.
-    """
+    """지적 2: ``null`` is accepted, and an absent key stays ``null``, not ``[]``."""
     payload = dict(
         _VALID_PROJECTION,
         recovery={"readiness_verdict": "READY", "reasons": None},
@@ -429,7 +358,6 @@ def test_reason_lists_keep_absent_distinct_from_empty(monkeypatch, tmp_path):
 
     assert body["available"] is True, body
     assert body["projection"]["recovery"]["reasons"] is None
-    # Absent, not explicitly null — still must not become [].
     assert body["projection"]["driver"]["halt_reason"] is None
 
 
@@ -482,12 +410,7 @@ def test_schema_versions_accepts_a_store_without_a_readable_version(
 
 
 def test_schema_mismatch_reason_never_echoes_the_file_contents(monkeypatch, tmp_path):
-    """지적 3: pydantic's ``str(exc)`` carries ``input_value=...``.
-
-    The response body is polled every 15 s by a browser, so the reason
-    reports the failing location and the exception type only — the same
-    reduction the invalid-JSON branch already made.
-    """
+    """지적 3: pydantic's ``str(exc)`` carries ``input_value=...``."""
     secret = "SENTINEL-/srv/private/custody/secret"
     payload = dict(_VALID_PROJECTION, projection_generation=secret)
     path = tmp_path / "mismatch.json"
@@ -596,12 +519,7 @@ def test_unsupported_schema_version_reports_the_shape_of_a_structured_value(
 
 
 def test_schema_mismatch_location_never_echoes_a_mapping_key(monkeypatch, tmp_path):
-    """지적 2: inside a mapping the failing segment is a key from the file.
-
-    ``operations.schema_versions`` is ``dict[str, int | None]``, so pydantic's
-    raw ``loc`` ends in whatever key the file used. The location is resolved
-    against the DTO and the key is replaced.
-    """
+    """지적 2: inside a mapping the failing segment is a key from the file."""
     hostile = "SENTINEL-/srv/private/custody/key"
     payload = dict(
         _VALID_PROJECTION,
@@ -657,13 +575,7 @@ def _unavailable_log_record(monkeypatch, tmp_path, path, caplog):
 def test_an_absent_projection_logs_the_path_at_info_not_warning(
     monkeypatch, tmp_path, caplog
 ):
-    """지적 1 (2 회차): absent is the normal state outside a paper session.
-
-    At WARNING an open tab wrote about 240 visible lines an hour for a state
-    this PR's own docs call normal. INFO keeps the record without that: with
-    no root handler configured (uvicorn declares only its own three
-    loggers), an INFO from this module produces no output at all.
-    """
+    """지적 1 (2 회차): absent is the normal state outside a paper session."""
     projection_path = tmp_path / "gone.json"
     body, record = _unavailable_log_record(
         monkeypatch, tmp_path, projection_path, caplog
@@ -677,11 +589,7 @@ def test_an_absent_projection_logs_the_path_at_info_not_warning(
 
 
 def test_a_real_fault_logs_the_path_at_warning(monkeypatch, tmp_path, caplog):
-    """The other side: a fault must stay visible.
-
-    WARNING reaches the container's stderr through ``logging.lastResort``
-    even with no handler on the root logger.
-    """
+    """The other side: a fault must stay visible."""
     path = tmp_path / "a-directory.json"
     path.mkdir()
     body, record = _unavailable_log_record(monkeypatch, tmp_path, path, caplog)
@@ -693,13 +601,7 @@ def test_a_real_fault_logs_the_path_at_warning(monkeypatch, tmp_path, caplog):
 
 
 def test_the_configured_root_logger_shows_warning_and_hides_info():
-    """Pins the measured premise the level split rests on.
-
-    Nothing in this app configures logging, and uvicorn's ``LOGGING_CONFIG``
-    declares only ``uvicorn``/``uvicorn.error``/``uvicorn.access`` — so the
-    root logger keeps no handler and level WARNING, and ``logging.lastResort``
-    (stderr, WARNING) is what carries a record out.
-    """
+    """Pins the measured premise the level split rests on."""
     import logging.config
 
     import uvicorn.config
@@ -714,13 +616,10 @@ def test_the_configured_root_logger_shows_warning_and_hides_info():
     saved_handlers = logging.root.handlers[:]
     saved_level = logging.root.level
     try:
-        # Start from a bare root, as a container does. pytest installs its own
-        # root handlers, which is why this cannot be read off the live root.
         logging.root.handlers[:] = []
         logging.root.setLevel(logging.WARNING)
         logging.config.dictConfig(uvicorn.config.LOGGING_CONFIG)
 
-        # The premise: uvicorn's config adds nothing to the root logger.
         assert logging.root.handlers == []
         assert logging.root.level == logging.WARNING
         module_logger = logging.getLogger(tos_projection.__name__)
@@ -728,7 +627,6 @@ def test_the_configured_root_logger_shows_warning_and_hides_info():
         assert module_logger.propagate is True
         assert module_logger.getEffectiveLevel() == logging.WARNING
 
-        # So a WARNING goes out through lastResort and an INFO goes nowhere.
         assert logging.lastResort is not None
         assert logging.lastResort.level == logging.WARNING
         assert module_logger.isEnabledFor(logging.WARNING) is True
@@ -751,12 +649,7 @@ def test_the_log_line_never_carries_projection_content(monkeypatch, tmp_path, ca
 
 
 def _reason_literal(call: ast.Call) -> ast.expr:
-    """The ``reason`` argument of an ``_unavailable`` call, positional or not.
-
-    Requiring ``call.args`` (an earlier version of this check did) silently
-    skipped every keyword-only call — the scan then counted fewer reasons and
-    still passed its ``>= 5`` floor.
-    """
+    """The ``reason`` argument of an ``_unavailable`` call, positional or not."""
     if call.args:
         return call.args[0]
     for keyword in call.keywords:
@@ -786,12 +679,7 @@ def _unavailable_calls(tree: ast.AST) -> list[ast.Call]:
 
 
 def _unavailable_reason_prefixes(source: str) -> list[str]:
-    """Every reason an ``_unavailable`` call site can produce.
-
-    The returned list has one entry per call site — no call site may be
-    skipped, which is what makes this a completeness check rather than a
-    sample.
-    """
+    """Every reason an ``_unavailable`` call site can produce."""
     tree = ast.parse(source)
     calls = _unavailable_calls(tree)
     prefixes = [_reason_prefix_of(_reason_literal(call)) for call in calls]
@@ -800,18 +688,9 @@ def _unavailable_reason_prefixes(source: str) -> list[str]:
 
 
 def _unavailable_response_sites(source: str) -> set[str]:
-    """Functions that build a ``TosProjectionResponse`` with ``available`` false.
-
-    ``_unavailable`` is the only place allowed to: it is where the reason
-    prefix and the log line live. A branch that returned the DTO directly
-    would bypass the prefix set entirely, and the prefix scan above would
-    never see it.
-    """
+    """Functions that build a ``TosProjectionResponse`` with ``available`` false."""
     tree = ast.parse(source)
     owners: set[str] = set()
-    # Both kinds: `ast.AsyncFunctionDef` is not a subclass of
-    # `ast.FunctionDef`, and this route's endpoint is an `async def` — a
-    # DTO built there would have been invisible to this guard.
     functions = [
         node
         for node in ast.walk(tree)
@@ -828,8 +707,6 @@ def _unavailable_response_sites(source: str) -> set[str]:
             available = next(
                 (kw.value for kw in node.keywords if kw.arg == "available"), None
             )
-            # A non-literal `available` is treated as a false path too: the
-            # check cannot prove it is always true.
             if isinstance(available, ast.Constant) and available.value is True:
                 continue
             owners.add(function.name)
@@ -837,13 +714,7 @@ def _unavailable_response_sites(source: str) -> set[str]:
 
 
 def test_every_emitted_reason_starts_with_a_pinned_prefix():
-    """노트 f: the Python emitter and the TS matcher share one list.
-
-    Completeness is read off the route source: every ``_unavailable(...)``
-    call site's reason must begin with one of the pinned prefixes, so a new
-    failure cause cannot be added without either reusing a prefix the UI
-    already maps or updating the shared fixture (and with it the UI test).
-    """
+    """노트 f: the Python emitter and the TS matcher share one list."""
     prefixes = _reason_prefixes()
     emitted = _unavailable_reason_prefixes(_ROUTE_MODULE.read_text(encoding="utf-8"))
 
@@ -855,11 +726,7 @@ def test_every_emitted_reason_starts_with_a_pinned_prefix():
 
 
 def test_only_unavailable_builds_an_unavailable_response():
-    """The other half of completeness (지적 2, 2 회차).
-
-    Scanning ``_unavailable`` call sites proves nothing if a branch can
-    return ``TosProjectionResponse(available=False, ...)`` on its own.
-    """
+    """The other half of completeness (지적 2, 2 회차)."""
     owners = _unavailable_response_sites(_ROUTE_MODULE.read_text(encoding="utf-8"))
     assert owners == {"_unavailable"}, owners
 
@@ -899,7 +766,6 @@ def test_the_reason_scan_catches_a_keyword_only_call():
     prefixes = _reason_prefixes()
     emitted = _unavailable_reason_prefixes(_KEYWORD_CALL_MODULE)
 
-    # Keyed by value, not position: ast.walk order is not source order.
     assert "brand new cause nobody mapped" in emitted, emitted
     unmapped = [
         reason
@@ -961,7 +827,7 @@ def _dto_leaf_names(model: type) -> set[str]:
     for name, field in model.model_fields.items():
         names.add(name)
         target = tos_projection._field_target(field.annotation)
-        while isinstance(target, tuple):  # ("dict"|"list", inner)
+        while isinstance(target, tuple):
             target = target[1]
         if isinstance(target, type) and issubclass(target, BaseModel):
             names |= _dto_leaf_names(target)
@@ -969,26 +835,13 @@ def _dto_leaf_names(model: type) -> set[str]:
 
 
 def _ts_declared_identifiers(source: str) -> set[str]:
-    """Property names declared anywhere in the TS contract file.
-
-    Matches at a line start or after ``{``/``;``, because this file packs
-    several properties onto one line — anchoring on ``^`` alone would see
-    only the first of each line and report the rest as missing.
-    """
+    """Property names declared anywhere in the TS contract file."""
     pattern = r"(?:^|[{;])\s*([A-Za-z_][A-Za-z0-9_]*)\??:"
     return set(re.findall(pattern, source, re.MULTILINE))
 
 
 def test_every_dto_leaf_name_appears_in_the_ts_contract():
-    """노트 c: the claim is a property, so check it as one.
-
-    ``tos.ts`` says the Python DTO is its wire contract. The round-1 test
-    backed that with four hand-listed leaves out of the DTO's full set; this
-    walks the DTO instead, so a leaf added on the Python side and forgotten
-    in TS fails here. It stays on the Python side because a PR that adds a
-    leaf may touch no file under ``strategy-builder-ui/`` and so would not
-    run the path-gated ``ui`` job (.github/workflows/ui.yml).
-    """
+    """노트 c: the claim is a property, so check it as one."""
     declared = _ts_declared_identifiers(_TS_CONTRACT.read_text(encoding="utf-8"))
     leaves = _dto_leaf_names(tos_projection.TosOperatorProjection)
 
@@ -1007,12 +860,7 @@ def test_the_ts_contract_scan_catches_a_dropped_leaf():
 
 
 def test_the_response_scan_sees_an_async_function():
-    """Red proof for 지적 2's residual: ``async def`` is a different node type.
-
-    ``ast.AsyncFunctionDef`` does not subclass ``ast.FunctionDef``, and this
-    route's endpoint is an ``async def`` — so a scan over ``FunctionDef``
-    alone would have reported this module as clean.
-    """
+    """Red proof for 지적 2's residual: ``async def`` is a different node type."""
     assert _unavailable_response_sites(_ASYNC_RETURN_MODULE) == {
         "_unavailable",
         "get_tos_projection",
@@ -1020,12 +868,7 @@ def test_the_response_scan_sees_an_async_function():
 
 
 def test_a_boolean_schema_version_is_rejected(monkeypatch, tmp_path):
-    """노트 a: ``True != 1`` is False, so JSON ``true`` walked the version gate.
-
-    pydantic then coerced it, and the document rendered as a valid v1
-    projection. Reverting the ``type(...) is int`` clause makes this fail with
-    ``available=true``.
-    """
+    """노트 a: ``True != 1`` is False, so JSON ``true`` walked the version gate."""
     payload = dict(_VALID_PROJECTION, schema_version=True)
     path = tmp_path / "boolean-version.json"
     path.write_text(json.dumps(payload), encoding="utf-8")

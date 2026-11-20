@@ -70,14 +70,10 @@ other_service:
 
         assert config.name == "from_section"
         assert config.threshold == 0.9
-        assert config.enabled is True  # default
+        assert config.enabled is True
 
     def test_from_yaml_section_not_found_raises(self, tmp_path):
-        """An unresolvable section is a config defect, not a silent fallback.
-
-        This previously fell back to the root document, so a typo'd or moved
-        section produced pure Pydantic defaults with no error at all.
-        """
+        """An unresolvable section is a config defect, not a silent fallback."""
         yaml_file = tmp_path / "config.yaml"
         yaml_file.write_text("""
 name: root_level
@@ -89,7 +85,6 @@ threshold: 0.6
 
     def test_from_yaml_uses_default_file(self, tmp_path, monkeypatch):
         """Test that default config file from class attribute is used."""
-        # Create the default config file
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         yaml_file = config_dir / "test_service.yaml"
@@ -99,7 +94,6 @@ my_service:
   value: 42
 """)
 
-        # Mock ConfigLoader to use our temp directory
         monkeypatch.setenv("KIS_CONFIG_DIR", str(config_dir))
 
         config = ConfigWithDefaults.from_yaml()
@@ -121,7 +115,6 @@ threshold: 0.5
 enabled: true
 """)
 
-        # Set env vars
         monkeypatch.setenv("MY_SERVICE_THRESHOLD", "0.9")
         monkeypatch.setenv("MY_SERVICE_ENABLED", "false")
 
@@ -129,9 +122,9 @@ enabled: true
             str(yaml_file), apply_env_overrides=True, env_prefix="MY_SERVICE_"
         )
 
-        assert config.name == "from_yaml"  # Not overridden
-        assert config.threshold == 0.9  # Overridden by env
-        assert config.enabled is False  # Overridden by env
+        assert config.name == "from_yaml"
+        assert config.threshold == 0.9
+        assert config.enabled is False
 
     def test_from_yaml_ignores_unknown_fields(self, tmp_path):
         """Test that unknown fields in YAML are ignored."""
@@ -170,8 +163,8 @@ name: partial
         config = SimpleConfig.from_yaml(str(yaml_file))
 
         assert config.name == "partial"
-        assert config.threshold == 0.5  # default
-        assert config.enabled is True  # default
+        assert config.threshold == 0.5
+        assert config.enabled is True
 
 
 class TestServiceConfigBaseFromEnv:
@@ -206,13 +199,11 @@ class TestServiceConfigBaseFromEnv:
         monkeypatch.setenv("MY_SERVICE_NAME", "from_env")
         monkeypatch.setenv("MY_SERVICE_THRESHOLD", "0.7")
 
-        config = SimpleConfig.from_env(
-            env_prefix="MY_SERVICE_", enabled=False  # Override via kwarg
-        )
+        config = SimpleConfig.from_env(env_prefix="MY_SERVICE_", enabled=False)
 
         assert config.name == "from_env"
         assert config.threshold == 0.7
-        assert config.enabled is False  # From override
+        assert config.enabled is False
 
     def test_from_env_bool_conversion(self, monkeypatch):
         """Test boolean field conversion from env vars."""
@@ -261,7 +252,6 @@ class TestServiceConfigBaseFromEnv:
 
         config = SimpleConfig.from_env(env_prefix="TEST_")
 
-        # Pydantic will use the default for None
         assert config.name == "default"
 
     def test_from_env_ignores_unknown_vars(self, monkeypatch):
@@ -287,7 +277,6 @@ class TestServiceConfigBaseFromEnv:
 
     def test_from_env_case_insensitive(self, monkeypatch):
         """Test that env var name matching is case-insensitive."""
-        # Env vars are uppercase, but should map to lowercase field names
         monkeypatch.setenv("TEST_NAME", "case_test")
         monkeypatch.setenv("TEST_MAX_ITEMS", "100")
 
@@ -303,16 +292,14 @@ class TestServiceConfigBaseFromEnv:
         config = SimpleConfig.from_env(env_prefix="TEST_")
 
         assert config.name == "only_name"
-        assert config.threshold == 0.5  # default
-        assert config.enabled is True  # default
+        assert config.threshold == 0.5
+        assert config.enabled is True
 
     def test_from_env_invalid_type_conversion(self, monkeypatch, caplog):
         """Test handling of invalid type conversion."""
         monkeypatch.setenv("TEST_THRESHOLD", "not_a_float")
         monkeypatch.setenv("TEST_MAX_ITEMS", "not_an_int")
 
-        # Pydantic will raise ValidationError during construction
-        # because it can't convert the invalid values
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
@@ -342,18 +329,18 @@ class TestServiceConfigBaseDatabaseValidation:
     def test_validate_database_name_invalid(self):
         """Test that invalid database names are rejected."""
         invalid_names = [
-            "drop; table",  # SQL injection attempt
-            "db-name",  # Hyphen not allowed
-            "db.name",  # Dot not allowed
-            "db name",  # Space not allowed
-            "db/name",  # Slash not allowed
-            "db\\name",  # Backslash not allowed
-            "db'name",  # Quote not allowed
-            'db"name',  # Double quote not allowed
-            "db;name",  # Semicolon not allowed
-            "",  # Empty string
-            "db(name)",  # Parentheses not allowed
-            "db[name]",  # Brackets not allowed
+            "drop; table",
+            "db-name",
+            "db.name",
+            "db name",
+            "db/name",
+            "db\\name",
+            "db'name",
+            'db"name',
+            "db;name",
+            "",
+            "db(name)",
+            "db[name]",
         ]
 
         for name in invalid_names:
@@ -422,9 +409,9 @@ service:
             env_prefix="TEST_",
         )
 
-        assert config.name == "from_yaml"  # From YAML
-        assert config.database == "env_db"  # Overridden by env
-        assert config.port == 9999  # Overridden by env
+        assert config.name == "from_yaml"
+        assert config.database == "env_db"
+        assert config.port == 9999
 
     def test_model_dump_yaml(self):
         """Test exporting config as YAML."""
@@ -443,11 +430,9 @@ service:
         """Test that Pydantic validates on field assignment."""
         config = SimpleConfig()
 
-        # Valid assignment
         config.threshold = 0.99
         assert config.threshold == 0.99
 
-        # Invalid type should raise ValidationError
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
@@ -481,7 +466,6 @@ threshold: 0.7
 
     def test_config_file_not_found(self):
         """Test handling of missing config file."""
-        # ConfigLoader will raise ConfigNotFoundError
         with pytest.raises(ConfigNotFoundError):
             SimpleConfig.from_yaml("/nonexistent/path/config.yaml")
 
@@ -499,8 +483,6 @@ threshold: 0.5
 
         config = SimpleConfig.from_yaml(str(yaml_file))
 
-        # None should trigger default or be handled by Pydantic
-        # Depending on Field configuration
         assert config.threshold == 0.5
 
     def test_complex_yaml_structure(self, tmp_path):
@@ -515,14 +497,7 @@ services:
     name: ignored
 """)
 
-        # Load the 'services' section which contains nested configs
         SimpleConfig.from_yaml(str(yaml_file), section="services")
-
-        # The section extraction gets the 'services' dict, which isn't
-        # directly a valid config. This tests that Pydantic uses defaults
-        # when the extracted section doesn't match the expected structure
-        # (or it might fail, depending on implementation)
-        # This documents the behavior with nested structures
 
     def test_yaml_with_only_section_key(self, tmp_path):
         """Test YAML file that is just the section dict."""
@@ -532,7 +507,6 @@ name: direct
 threshold: 0.6
 """)
 
-        # Load without section - should use root level
         config = SimpleConfig.from_yaml(str(yaml_file))
 
         assert config.name == "direct"
@@ -542,17 +516,12 @@ threshold: 0.6
         """Test that env prefix works with or without trailing underscore."""
         monkeypatch.setenv("PREFIX_NAME", "test1")
 
-        # With trailing underscore
         config1 = SimpleConfig.from_env(env_prefix="PREFIX_")
         assert config1.name == "test1"
 
         monkeypatch.setenv("PREFIX_NAME", "test2")
 
-        # Without trailing underscore (will match PREFIXNAME)
-        # This tests that the implementation handles both cases
         SimpleConfig.from_env(env_prefix="PREFIX")
-        # Should match PREFIX_NAME when looking for PREFIXNAME
-        # (depends on implementation)
 
     def test_multiple_configs_independent(self):
         """Test that multiple config instances are independent."""
@@ -564,7 +533,6 @@ threshold: 0.6
         assert config1.threshold == 0.3
         assert config2.threshold == 0.7
 
-        # Modifying one shouldn't affect the other
         config1.name = "modified"
         assert config2.name == "config2"
 
@@ -611,7 +579,7 @@ class TestServiceConfigBaseFromYAMLSections:
 
         assert config.name == "only_env"
         assert config.threshold == 0.7
-        assert config.enabled is True  # default
+        assert config.enabled is True
 
     def test_sections_empty_list_uses_defaults(self, monkeypatch):
         monkeypatch.setattr(
@@ -647,8 +615,8 @@ class TestServiceConfigBaseFromYAMLSections:
         )
 
         assert config.name == "from_yaml"
-        assert config.threshold == 0.99  # env override
-        assert config.max_items == 20  # from reward section
+        assert config.threshold == 0.99
+        assert config.max_items == 20
 
     def test_sections_non_dict_section_skipped(self, monkeypatch):
         monkeypatch.setattr(
@@ -681,12 +649,7 @@ class MissingSectionConfig(ServiceConfigBase):
 
 
 class TestSectionResolution:
-    """A requested section either resolves, or loading fails loudly.
-
-    Returning Pydantic defaults for a section that could not be resolved is the
-    defect these tests seal: it is indistinguishable from a config that was
-    read and happened to match every default.
-    """
+    """A requested section either resolves, or loading fails loudly."""
 
     def test_dotted_section_resolves_nested_path(self, tmp_path):
         yaml_file = tmp_path / "config.yaml"
@@ -754,15 +717,10 @@ some_other_section:
         message = str(excinfo.value)
         assert "typo_section" in message
         assert "MissingSectionConfig" in message
-        assert "some_other_section" in message  # available keys, for diagnosis
+        assert "some_other_section" in message
 
     def test_section_error_is_not_a_missing_file_error(self):
-        """Must not be swallowed by ``except ConfigNotFoundError: return cls()``.
-
-        Many call sites treat a missing config *file* as an opt-in to defaults.
-        A missing *section* inside a file that does exist is a defect and must
-        not inherit that escape hatch.
-        """
+        """Must not be swallowed by ``except ConfigNotFoundError: return cls()``."""
         assert not issubclass(ConfigSectionNotFoundError, ConfigNotFoundError)
 
     def test_scalar_document_with_declared_section_raises(self, tmp_path):
@@ -803,11 +761,7 @@ class TestSectionResolutionDoesNotOverSeal:
         assert config.threshold == 0.6
 
     def test_sections_merge_still_tolerates_absent_members(self, monkeypatch):
-        """``sections=[...]`` is an explicit merge-what-exists request.
-
-        Unlike a single declared section, the caller has named several keys and
-        asked for their union; an absent member is not a resolution failure.
-        """
+        """``sections=[...]`` is an explicit merge-what-exists request."""
         monkeypatch.setattr(
             "shared.config.base.ConfigLoader.load",
             lambda path, **kw: {"env": {"name": "only_env"}},
@@ -828,12 +782,7 @@ class TestSectionResolutionDoesNotOverSeal:
 
 
 class TestShippedConfigsResolveTheirDeclaredSection:
-    """Every shipped config class must actually resolve the section it declares.
-
-    This is the regression net for the whole class of defect: it fails the
-    moment a config file is restructured out from under a ``_default_section``,
-    instead of that class quietly degrading to Pydantic defaults.
-    """
+    """Every shipped config class must actually resolve the section it declares."""
 
     def test_all_default_sections_resolve(self):
         import importlib
@@ -848,7 +797,7 @@ class TestShippedConfigsResolveTheirDeclaredSection:
                 try:
                     module = importlib.import_module(mod.name)
                 except Exception:
-                    continue  # optional deps (talib, redis, ...) are not this test
+                    continue
                 for obj in vars(module).values():
                     if (
                         isinstance(obj, type)
@@ -868,7 +817,7 @@ class TestShippedConfigsResolveTheirDeclaredSection:
             except ConfigSectionNotFoundError as exc:
                 failures.append(f"{name}: {exc}")
             except Exception:
-                pass  # unrelated validation/env problems are other tests' business
+                pass
 
         assert not failures, "configs whose declared section does not resolve:\n" + (
             "\n".join(failures)

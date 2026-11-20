@@ -35,7 +35,7 @@ def test_malformed_mtf_base_token_falls_back_to_plain_base():
     assert reqs[0].kind == IndicatorKind.BASE
     assert reqs[0].timeframe is None
     assert reqs[0].name == "mtf_base_NOTATOKEN"
-    assert c.mtf_base_requests == ()  # malformed must NOT count as a tf-base req
+    assert c.mtf_base_requests == ()
 
 
 def test_mtf_timeframes_collects_momentum_and_base_sorted_distinct():
@@ -61,8 +61,6 @@ def test_warmth_timeframe_none_for_1m_only_strategy():
 
 
 def test_warmth_timeframe_excludes_daily():
-    # 'daily' (mtf_base_1d => 1440 min) is seeded separately from Parquet and
-    # must not gate is_warm. Warmth follows the deepest *intraday* tf.
     c = IndicatorContract.from_required_keys(["mtf_base_15m", "mtf_base_1d"])
     assert 1440 in c.mtf_timeframes
     assert c.warmth_timeframe == 15

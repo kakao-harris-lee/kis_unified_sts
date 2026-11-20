@@ -1,34 +1,4 @@
-"""지표 계산 경로 parity/특성화(characterization) 테스트 하네스.
-
-목적
-----
-지표 계산 로직이 최소 5개 경로에 분산되어 중복 구현되어 있고, 그 결과 같은
-지표라도 경로마다 값(algorithm)과 키 이름(schema)이 갈린다:
-
-    * RSI        : 런타임(rolling-SMA) vs shared(Wilder EMA)  -> 값이 다름
-    * Stochastic : 런타임 ``stoch_k``/``stoch_d`` vs shared ``sto_k``/``sto_d``
-                   -> 키 이름이 다름 (같은 파일 안에서도 두 규약이 공존)
-    * ADX        : 런타임(full Wilder-smoothed ADX) 스냅샷. 두 번째 경로였던
-                   regime detector 는 레거시 제거 L7 에서 사라졌다
-                   (docs/plans/2026-11-07-legacy-removal-plan.md §3)
-    * Bollinger  : 런타임(sample std, ddof=1) -> 스냅샷 특성화만 수행
-
-이 파일은 "정답"을 규정하는 테스트가 아니라, **현재 동작을 스냅샷으로 고정하는
-안전망**이다. 향후 통합(Single-Source-of-Truth) 리팩토링 시 값/키가 바뀌면 이
-테스트가 시끄럽게 실패하여 델타를 드러낸다. 실패하면 통합을 수행한 사람이
-스냅샷 상수를 의식적으로 갱신하면 된다.
-
-설계 원칙
---------
-* 정확한 float 동치 assert 금지. 대신
-  (a) 구조 불변식(키 존재/범위/단조성),
-  (b) "일치해야 하는 쌍"은 tolerance 비교,
-  (c) "알려진 divergence"는 문서화된 expected 상수 + 델타 floor 로 스냅샷.
-* 입력 OHLCV 는 RNG 없이 순수 수식으로 생성한다. numpy/pandas 의 RNG 버전
-  정책과 무관하게 완전히 결정론적이므로 스냅샷 상수가 영원히 안정적이다.
-
-주의: 이 파일은 대상 구현 모듈을 절대 수정하지 않는다(읽기/임포트 전용).
-"""
+"""지표 계산 경로 parity/특성화(characterization) 테스트 하네스."""
 
 import math
 
@@ -37,28 +7,17 @@ import pandas as pd
 import pytest
 
 from shared.indicators.momentum import RSICalculator, StochasticCalculator
-
-# 대상 구현 (읽기/임포트 전용 — 수정 금지)
 from shared.indicators.streaming.calculations import IndicatorCalculationMixin
 from shared.indicators.streaming.candles import Candle
 
 pytestmark = pytest.mark.unit
 
 
-# ---------------------------------------------------------------------------
-# 결정론적 OHLCV 샘플 (RNG 미사용 — 순수 수식)
-# ---------------------------------------------------------------------------
-
-_N_BARS = 64  # BB(20)/RSI(14)/ADX(14*2)/Stoch(14) 모두 충분히 채우는 길이
+_N_BARS = 64
 
 
 def _build_ohlcv() -> dict[str, list[float]]:
-    """결정론적 OHLCV 딕셔너리 생성.
-
-    상승 드리프트 위에 두 개의 서로소 주기 사인/코사인을 겹쳐, 상승/하락
-    구간이 골고루 섞이도록 만든다(지표가 극단값으로 포화되지 않게 함).
-    RNG 를 쓰지 않으므로 numpy/python 버전과 무관하게 값이 고정된다.
-    """
+    """결정론적 OHLCV 딕셔너리 생성."""
     opens: list[float] = []
     highs: list[float] = []
     lows: list[float] = []
@@ -70,7 +29,6 @@ def _build_ohlcv() -> dict[str, list[float]]:
         high = close + span
         low = close - span * (0.7 + 0.3 * abs(math.cos(i / 5.0)))
         open_ = close - 0.4 * math.sin(i / 2.0)
-        # OHLC 정합성 보장 (high >= max(o,c), low <= min(o,c))
         high = max(high, open_, close)
         low = min(low, open_, close)
         volume = 2000.0 + 900.0 * abs(math.sin(i / 2.5)) + 15.0 * i
@@ -96,11 +54,7 @@ def ohlcv() -> dict[str, list[float]]:
 
 @pytest.fixture
 def frame(ohlcv: dict[str, list[float]]) -> pd.DataFrame:
-    """함수 스코프 DataFrame.
-
-    shared 계산기는 입력 df 에 컬럼을 추가(mutate)하므로, 매 테스트마다 새
-    DataFrame 을 제공하여 테스트 간 오염을 막는다.
-    """
+    """함수 스코프 DataFrame."""
     return pd.DataFrame(ohlcv)
 
 
@@ -121,11 +75,7 @@ def candles(ohlcv: dict[str, list[float]]) -> list[Candle]:
 
 
 class _RuntimeIndicatorHost(IndicatorCalculationMixin):
-    """Mixin 의 인스턴스 메서드(``_calc_rsi``/``_calc_bb``)를 호출하기 위한 최소 host.
-
-    Mixin 은 ``self.bb_period``/``self.bb_std``/``self.rsi_period`` 를 참조하므로,
-    프로덕션 기본값과 동일하게 세팅한 껍데기 클래스를 둔다.
-    """
+    """Mixin 의 인스턴스 메서드(``_calc_rsi``/``_calc_bb``)를 호출하기 위한 최소 host."""
 
     def __init__(self) -> None:
         self.bb_period = 20
@@ -138,45 +88,22 @@ def runtime_host() -> _RuntimeIndicatorHost:
     return _RuntimeIndicatorHost()
 
 
-# ---------------------------------------------------------------------------
-# 스냅샷 상수 (현재 동작 특성화 — 통합 시 갱신 대상)
-# ---------------------------------------------------------------------------
-# 아래 값들은 _build_ohlcv() 로 만든 고정 입력에 대해 현재 각 구현이 산출하는
-# 실제 값이다. 알고리즘/스키마가 바뀌면 이 상수와 어긋나 테스트가 실패한다.
+_RSI_SHARED_WILDER = 47.099143
+_RSI_RUNTIME_WILDER = 47.099143
+_RSI_CONVERGENCE_TOL = 1e-6
 
-# RSI: M2 (2026-07-04) 런타임이 Wilder EMA(shared 표준)로 수렴.
-# 과거 런타임은 gains/losses 의 rolling-SMA 로 47.099143 이 아닌 60.198576 을 냈다
-# (델타 13.1). 이제 런타임 _calc_rsi 는 ewm(alpha=1/period, adjust=False, first-delta
-# seed) 를 순수 파이썬으로 포팅해 shared RSICalculator 와 1e-6 안에서 일치한다.
-_RSI_SHARED_WILDER = 47.099143  # 런타임 == shared (수렴 후 공통값)
-_RSI_RUNTIME_WILDER = 47.099143  # was 60.198576 (defective rolling-SMA)
-_RSI_CONVERGENCE_TOL = 1e-6  # 두 경로가 사실상 동일함을 요구하는 tolerance
-
-# Stochastic 값 스냅샷 (키 이름은 별도 테스트에서 특성화)
 _STOCH_K_RUNTIME = 32.771277
 _STOCH_D_RUNTIME = 49.647273
 _STOCH_K_SHARED = 56.017756
 _STOCH_D_SHARED = 77.266641
 
-# ADX: full Wilder-smoothed ADX(런타임).
-# 두 번째 경로였던 `shared/regime/adaptive_detector._calc_adx` 는 레거시 제거 L7
-# 에서 모듈째 사라졌다. 런타임 값이 정통 Wilder 인지는 `test_reference.py` 의
-# `_ADX_REF` 대조가 계속 고정한다(그쪽은 reference.ADXCalculator 가 기준이다).
 _ADX_RUNTIME_WILDER = 31.719136
 
-# Bollinger (런타임 ddof=1 sample std)
 _BB_LOWER = 99.902454
 _BB_MID = 107.210789
 _BB_UPPER = 114.519124
 
-# 스냅샷 값 비교용 절대 허용오차. float 라이브러리 버전 드리프트(<1e-6)는
-# 흡수하되, 실제 알고리즘 교체(수 단위 변화)는 반드시 잡아내는 크기.
 _SNAPSHOT_ABS_TOL = 5e-3
-
-
-# ---------------------------------------------------------------------------
-# 1) RSI 두 경로 대조
-# ---------------------------------------------------------------------------
 
 
 def test_rsi_range_invariant_both_paths(
@@ -193,24 +120,13 @@ def test_rsi_range_invariant_both_paths(
 def test_rsi_runtime_uses_wilder_smoothing(
     runtime_host: _RuntimeIndicatorHost, frame: pd.DataFrame
 ) -> None:
-    """런타임 RSI 가 Wilder EMA(shared 표준)로 수렴했음을 스냅샷으로 고정 (M2).
-
-    ``shared.indicators.streaming.calculations._calc_rsi`` 는 이제 최근
-    rsi_period 개 delta 의 SMA 가 아니라, first-delta 로 seed 한 뒤 전체 시계열에
-    Wilder 재귀(alpha=1/period, adjust=False)를 적용한다 — shared RSICalculator 와
-    동일 규약. 과거 rolling-SMA 값(60.198576)에서 47.099143 으로 이동했다.
-    """
+    """런타임 RSI 가 Wilder EMA(shared 표준)로 수렴했음을 스냅샷으로 고정 (M2)."""
     rsi_runtime = runtime_host._calc_rsi(frame["close"].tolist())
     assert rsi_runtime == pytest.approx(_RSI_RUNTIME_WILDER, abs=_SNAPSHOT_ABS_TOL)
 
 
 def test_rsi_shared_uses_wilder_ema_smoothing(frame: pd.DataFrame) -> None:
-    """shared RSI 는 Wilder EMA(alpha=1/period) 방식임을 스냅샷으로 고정.
-
-    ``shared.indicators.momentum.RSICalculator`` 는 ewm(alpha=1/period) 로
-    gains/losses 를 스무딩한다. 초기 rsi_period 구간을 지수적으로 누적하므로
-    런타임 SMA 방식과 값이 갈린다.
-    """
+    """shared RSI 는 Wilder EMA(alpha=1/period) 방식임을 스냅샷으로 고정."""
     rsi_shared = float(RSICalculator(period=14).calculate(frame)["rsi"].iloc[-1])
     assert rsi_shared == pytest.approx(_RSI_SHARED_WILDER, abs=_SNAPSHOT_ABS_TOL)
 
@@ -218,68 +134,39 @@ def test_rsi_shared_uses_wilder_ema_smoothing(frame: pd.DataFrame) -> None:
 def test_rsi_two_paths_converge(
     runtime_host: _RuntimeIndicatorHost, frame: pd.DataFrame
 ) -> None:
-    """두 RSI 경로가 이제 **동일**함을 안전망으로 고정 (M2, 2026-07-04).
-
-    과거(특성화 하네스의 원래 목적): 런타임은 rolling-SMA, shared 는 Wilder-EMA
-    스무딩이라 같은 close 시계열에서도 서로 다른 RS(델타 13.1)를 냈다. Diff 1 에서
-    런타임 _calc_rsi 를 shared RSICalculator 와 동일한 Wilder 재귀로 포팅해 둘이
-    수렴했다. 이 테스트가 다시 벌어지면(delta > 1e-6) 런타임 RSI 가 표준에서
-    다시 이탈한 것이다 — 모든 RSI 소비 전략의 신호가 바뀌므로 실패로 드러나야 한다.
-    """
+    """두 RSI 경로가 이제 **동일**함을 안전망으로 고정 (M2, 2026-07-04)."""
     rsi_runtime = runtime_host._calc_rsi(frame["close"].tolist())
     rsi_shared = float(RSICalculator(period=14).calculate(frame)["rsi"].iloc[-1])
     delta = abs(rsi_runtime - rsi_shared)
 
-    # 두 경로가 사실상 동일 (Wilder EMA 표준으로 수렴)
     assert (
         delta < _RSI_CONVERGENCE_TOL
     ), "RSI 런타임/shared 경로가 다시 벌어짐 — 런타임이 Wilder 표준에서 이탈?"
     assert rsi_runtime == pytest.approx(_RSI_SHARED_WILDER, abs=_SNAPSHOT_ABS_TOL)
 
 
-# ---------------------------------------------------------------------------
-# 2) Stochastic 키 이름 불일치 특성화
-# ---------------------------------------------------------------------------
-
-
 def test_stochastic_key_schemas_coexist(
     candles: list[Candle], frame: pd.DataFrame
 ) -> None:
-    """런타임 ``stoch_k``/``stoch_d`` 와 shared ``sto_k``/``sto_d`` 가 공존함을 명시.
-
-    왜 다른가: 두 구현이 독립적으로 작성되며 서로 다른 키 규약을 채택했다.
-    실제로 ``shared/indicators/streaming/queries.py`` 는 한 파일 안에서
-    ``stoch_k``/``stoch_d`` (런타임 계산 경로)와 ``sto_k``/``sto_d`` (shared
-    momentum 경로)를 **둘 다** 사용한다 — SoT 통합의 핵심 리스크 포인트.
-    """
-    # 런타임 경로: 튜플 반환 -> 호출부(indicator_queries)가 stoch_k/stoch_d 로 매핑
+    """런타임 ``stoch_k``/``stoch_d`` 와 shared ``sto_k``/``sto_d`` 가 공존함을 명시."""
     stoch_k, stoch_d = IndicatorCalculationMixin._calc_stochastic(candles)
     runtime_result = {"stoch_k": stoch_k, "stoch_d": stoch_d}
 
-    # shared 경로: DataFrame 컬럼 sto_k/sto_d 로 산출
     shared_df = StochasticCalculator().calculate(frame)
 
     runtime_keys = set(runtime_result.keys())
     shared_keys = {"sto_k", "sto_d"}
 
-    # 런타임 키 규약
     assert runtime_keys == {"stoch_k", "stoch_d"}
-    # shared 키 규약
     assert "sto_k" in shared_df.columns
     assert "sto_d" in shared_df.columns
-    # 두 키 체계는 서로소 — 한쪽 키로 다른 쪽 값을 읽으면 KeyError/누락
     assert runtime_keys.isdisjoint(shared_keys)
 
 
 def test_stochastic_values_in_range_and_snapshotted(
     candles: list[Candle], frame: pd.DataFrame
 ) -> None:
-    """두 Stochastic 값 모두 [0, 100] 범위 + 현재 값 스냅샷.
-
-    값도 다르다: 런타임은 period=14 raw %K 와 마지막 smooth=3 SMA(%D),
-    shared 는 fastk=12 slow-stochastic(slowk=5, slowd=5) 이라 스무딩 구조가
-    달라 %D 가 특히 크게 갈린다.
-    """
+    """두 Stochastic 값 모두 [0, 100] 범위 + 현재 값 스냅샷."""
     stoch_k, stoch_d = IndicatorCalculationMixin._calc_stochastic(candles)
     shared_df = StochasticCalculator().calculate(frame)
     sto_k = float(shared_df["sto_k"].iloc[-1])
@@ -294,11 +181,6 @@ def test_stochastic_values_in_range_and_snapshotted(
     assert sto_d == pytest.approx(_STOCH_D_SHARED, abs=_SNAPSHOT_ABS_TOL)
 
 
-# ---------------------------------------------------------------------------
-# 3) ADX 런타임 경로 특성화
-# ---------------------------------------------------------------------------
-
-
 def test_adx_range_invariant_runtime_path(candles: list[Candle]) -> None:
     """ADX/DX 는 [0, 100] 범위 불변식을 지킨다."""
     adx_runtime = IndicatorCalculationMixin._calc_adx(candles, period=14)
@@ -308,59 +190,31 @@ def test_adx_range_invariant_runtime_path(candles: list[Candle]) -> None:
 
 
 def test_adx_runtime_snapshot(candles: list[Candle]) -> None:
-    """런타임 ADX 값 스냅샷 (canonical Wilder ADX).
-
-    과거(특성화 하네스의 원래 목적): `shared/regime/adaptive_detector._calc_adx`
-    는 이름만 ADX 이고 실제로는 마지막 바의 단일 DX(15.873272)를 단순평균으로
-    산출했다 — 방향성 이동 규칙 누락 + SMA-DI + DX→ADX Wilder 스무딩 생략.
-    런타임(31.719136)과 약 15.8 포인트 벌어져, ADX 를 임계값으로 쓰는 regime
-    gate 가 오작동했다. M2(2026-07-04) 에서 detector 가
-    `reference.ADXCalculator` 에 위임하도록 고쳐 두 경로가 수렴했고, L7 에서
-    detector 모듈 자체가 사라졌다(폐포 밖 —
-    docs/plans/2026-11-07-legacy-removal-plan.md §3). 남은 런타임 경로의 값을
-    여기서 계속 고정한다.
-    """
+    """런타임 ADX 값 스냅샷 (canonical Wilder ADX)."""
     adx_runtime = IndicatorCalculationMixin._calc_adx(candles, period=14)
 
     assert adx_runtime is not None
     assert adx_runtime == pytest.approx(_ADX_RUNTIME_WILDER, abs=_SNAPSHOT_ABS_TOL)
 
 
-# ---------------------------------------------------------------------------
-# 4) Bollinger 두 구현 대조
-# ---------------------------------------------------------------------------
-
-
 def test_bollinger_runtime_uses_sample_std_ddof1(
     runtime_host: _RuntimeIndicatorHost, ohlcv: dict[str, list[float]]
 ) -> None:
-    """런타임 BB 는 sample std(ddof=1) 를 쓰며 구조 불변식을 만족.
-
-    ``_calc_bb`` 는 Polars ``rolling_std`` 기본값(ddof=1)에 맞추기 위해
-    표본분산(ddof=1)을 쓴다. 여기서는
-      (a) lower < mid < upper 단조성,
-      (b) mid == 윈도우 평균,
-      (c) std 가 ddof=1(표본) 이며 ddof=0(모집단) 과는 다름
-    을 특성화한다.
-    """
+    """런타임 BB 는 sample std(ddof=1) 를 쓰며 구조 불변식을 만족."""
     closes = ohlcv["close"]
     lower, mid, upper = runtime_host._calc_bb(closes)
 
     window = np.asarray(closes[-runtime_host.bb_period :])
-    sample_std = float(window.std(ddof=1))  # Polars rolling_std 기본
+    sample_std = float(window.std(ddof=1))
     population_std = float(window.std(ddof=0))
 
-    # (a) 단조성
     assert lower < mid < upper
-    # (b) 중앙선 == 단순평균
     assert mid == pytest.approx(float(window.mean()), abs=1e-9)
-    # (c) ddof=1 사용 확인: sample std 와 일치, population std 와는 불일치
     expected_upper_sample = float(window.mean()) + runtime_host.bb_std * sample_std
     expected_upper_pop = float(window.mean()) + runtime_host.bb_std * population_std
     assert upper == pytest.approx(expected_upper_sample, abs=1e-9)
     assert upper != pytest.approx(expected_upper_pop, abs=1e-6)
 
-    # 값 스냅샷
     assert lower == pytest.approx(_BB_LOWER, abs=_SNAPSHOT_ABS_TOL)
     assert mid == pytest.approx(_BB_MID, abs=_SNAPSHOT_ABS_TOL)
     assert upper == pytest.approx(_BB_UPPER, abs=_SNAPSHOT_ABS_TOL)

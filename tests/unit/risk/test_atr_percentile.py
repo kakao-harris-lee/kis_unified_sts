@@ -1,19 +1,4 @@
-"""shared.risk.atr_percentile — the one ATR-percentile calculation.
-
-Two things are pinned here:
-
-1. **Backtest parity.** The live volatility-reference publisher and the
-   backtest replay reference must agree on what "the 90th percentile of this
-   ATR series" means.  Before this module the only implementation lived inside
-   ``MarketContextReplay._precompute``; the tests below pin that the promoted
-   helper reproduces that expression exactly, and that the replay itself still
-   produces the value it always did.
-
-2. **Never 0.0.** A ``0.0`` threshold is the precise historical defect: every
-   live ATR exceeds it, so the filter would reject every entry and halt all
-   trading.  The helper returns ``None`` for every degenerate case instead, so
-   "unknown threshold" and "threshold of zero" cannot be confused.
-"""
+"""shared.risk.atr_percentile — the one ATR-percentile calculation."""
 
 from __future__ import annotations
 
@@ -23,16 +8,8 @@ import pytest
 from shared.risk.atr_percentile import DEFAULT_ATR_PERCENTILE, atr_percentile
 
 
-# The exact expression that used to live in MarketContextReplay._precompute.
-# Deliberately re-spelled here rather than imported: an independent anchor
-# cannot drift in lockstep with the code it pins.
 def _legacy_replay_percentile(series) -> float:
     return float(np.nanpercentile(series, 90))
-
-
-# ---------------------------------------------------------------------------
-# Parity with the pre-promotion backtest expression
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -60,12 +37,7 @@ def test_default_percentile_is_the_90th() -> None:
 
 
 def test_replay_reference_is_unchanged_by_the_promotion() -> None:
-    """The backtest replay still computes what it always did, via the helper.
-
-    Pins the DRY promotion end to end: the replay no longer owns the
-    arithmetic, and its published ``atr_90th_percentile`` is still the
-    full-series 90th percentile of its own ATR series.
-    """
+    """The backtest replay still computes what it always did, via the helper."""
     pd = pytest.importorskip("pandas")
     from shared.backtest.market_context_replay import MarketContextReplay
 
@@ -96,11 +68,6 @@ def test_replay_reference_is_unchanged_by_the_promotion() -> None:
     assert replay._atr_90th > 0.0
 
 
-# ---------------------------------------------------------------------------
-# The "never 0.0" contract
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("series", "label"),
     [
@@ -111,12 +78,7 @@ def test_replay_reference_is_unchanged_by_the_promotion() -> None:
     ],
 )
 def test_undefined_percentile_is_none_not_zero(series, label) -> None:
-    """A degenerate series yields None — never a 0.0 threshold.
-
-    ``0.0`` would satisfy ``current_atr > threshold`` for every live reading,
-    rejecting every entry.  ``None`` means "no threshold known" and makes the
-    filter skip loudly instead.
-    """
+    """A degenerate series yields None — never a 0.0 threshold."""
     assert atr_percentile(series, 90.0) is None, label
 
 
@@ -132,11 +94,6 @@ def test_all_nan_input_does_not_warn() -> None:
 
 def test_positive_percentile_is_returned_verbatim() -> None:
     assert atr_percentile([1.0, 2.0, 3.0, 4.0], 50.0) == pytest.approx(2.5)
-
-
-# ---------------------------------------------------------------------------
-# Misconfiguration fails loudly, not silently
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("percentile", [-1.0, 100.1, 900.0])

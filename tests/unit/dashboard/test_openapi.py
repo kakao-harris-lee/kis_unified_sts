@@ -34,9 +34,6 @@ async def test_openapi_has_tags():
     data = response.json()
     assert "tags" in data
     tag_names = [tag["name"] for tag in data["tags"]]
-    # L4 reduced the app to the TOS projection surface, so "tos" is the only
-    # declared tag left (the trading/signals/trades tags went with their
-    # routers).
     assert tag_names == ["tos"]
 
 
@@ -50,7 +47,6 @@ async def test_docs_endpoint_available():
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/docs")
 
-    # Should redirect or return HTML
     assert response.status_code in [200, 307]
 
 

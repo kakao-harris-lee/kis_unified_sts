@@ -1,11 +1,4 @@
-"""Hermetic tests for ``tools/strip_prose.py`` (code-halving plan S4).
-
-Covers the behaviours the strip must never get wrong: idempotence, a function
-whose whole body is a docstring, marker comments (``noqa``/``type:``/``pragma``/
-``fmt:``/shebang/encoding cookie) surviving, docstrings that are read at run time
-surviving, non-ASCII column arithmetic, strings that merely look like docstrings
-being left alone, the ``shared/`` refusal, and AST equivalence.
-"""
+"""Hermetic tests for ``tools/strip_prose.py`` (code-halving plan S4)."""
 
 from __future__ import annotations
 
@@ -45,11 +38,6 @@ def _roundtrip(source: str) -> str:
     sp.verify_equivalent(original, stripped)
     assert sp.strip_source(stripped) == stripped, "second pass changed the file"
     return stripped
-
-
-# --------------------------------------------------------------------------
-# docstrings
-# --------------------------------------------------------------------------
 
 
 def test_docstring_keeps_only_the_first_line():
@@ -124,8 +112,6 @@ def test_docstring_containing_a_triple_quote_falls_back_to_repr():
 
 
 def test_docstring_with_a_backslash_keeps_its_value_exactly():
-    # A raw docstring: the two source backslashes are two characters of value,
-    # so a naive re-emission as a plain string would silently change it.
     original = 'def f():\n    r"""Path C:\\\\x and more.\n\n    prose\n    """\n'
     before = ast.get_docstring(ast.parse(original).body[0])  # type: ignore[arg-type]
     assert before is not None and before.startswith("Path C:\\\\x and more.")
@@ -149,13 +135,7 @@ def test_docstring_with_a_backslash_keeps_its_value_exactly():
     ],
 )
 def test_the_emitted_literal_is_the_one_black_would_leave_alone(first):
-    """strip and black must agree on the quote, or they rewrite each other forever.
-
-    Black prefers ``"`` and switches to ``'`` only when ``"`` would need strictly more escapes,
-    and it inserts a space rather than let a quote sit against the opening delimiter. A literal
-    that disagrees survives one ``strip -> black`` round trip and comes back changed, which is
-    how the 2026-11-13 apply run found this.
-    """
+    """strip and black must agree on the quote, or they rewrite each other forever."""
     literal = sp._literal(first)
     assert ast.literal_eval(literal) == first
     source = f"def f():\n    {literal}\n"
@@ -202,11 +182,6 @@ def test_multiline_strings_and_fstrings_in_code_are_untouched():
     assert "line two  # not a comment" in stripped
     assert "second line" in stripped
     assert "prose" not in stripped
-
-
-# --------------------------------------------------------------------------
-# comments
-# --------------------------------------------------------------------------
 
 
 def test_comment_only_lines_are_deleted_and_markers_are_kept():
@@ -281,11 +256,6 @@ def test_comment_on_the_line_closing_a_multiline_docstring():
         ''')
     assert '"""Summary."""' in stripped
     assert "trailing prose" not in stripped
-
-
-# --------------------------------------------------------------------------
-# docstrings read at run time
-# --------------------------------------------------------------------------
 
 
 def test_module_docstring_survives_a_bare_dunder_doc_read():
@@ -372,11 +342,6 @@ def test_the_repos_own_per_line_directive_comment_survives():
     assert marker in stripped
 
 
-# --------------------------------------------------------------------------
-# equivalence / safety
-# --------------------------------------------------------------------------
-
-
 def test_verify_equivalent_rejects_a_change_outside_docstrings():
     before = 'def f():\n    """Doc."""\n    return 1\n'
     after = 'def f():\n    """Doc."""\n    return 2\n'
@@ -431,7 +396,6 @@ def test_a_failing_file_makes_the_whole_write_a_no_op(tmp_path, capsys, monkeypa
 
     def sabotaged(source: str) -> str:
         seen.append(source)
-        # the second file's first pass returns code that is not AST-equivalent
         if len(seen) > 2:
             return real_strip(source) + "\nY = 2\n"
         return real_strip(source)

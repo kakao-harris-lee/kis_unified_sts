@@ -1,9 +1,4 @@
-"""
-KIS Auth Security Tests
-
-Tests for security-critical aspects of KIS authentication,
-particularly file permission handling to prevent credential leaks.
-"""
+"""KIS Auth Security Tests"""
 
 import inspect
 import json
@@ -16,18 +11,12 @@ import pytest
 
 
 def test_token_cache_file_created_with_secure_permissions():
-    """토큰 캐시 파일이 0o600 권한으로 atomic하게 생성되어야 함
-
-    SECURITY: 토큰 파일이 default 권한으로 생성된 후 chmod하면
-    그 사이 world-readable 상태로 노출되는 race condition 발생.
-    os.open()으로 파일 생성과 동시에 권한 설정 필요.
-    """
+    """토큰 캐시 파일이 0o600 권한으로 atomic하게 생성되어야 함"""
     from shared.kis.auth import TokenCache, _save_token_cache_secure
 
     with tempfile.TemporaryDirectory() as tmpdir:
         cache_path = Path(tmpdir) / "token_cache.json"
 
-        # Create test token cache
         cache = TokenCache(
             app_key="test_key",
             token="secret_token_data",
@@ -35,18 +24,14 @@ def test_token_cache_file_created_with_secure_permissions():
             issued_at="2024-01-01T00:00:00",
         )
 
-        # Save using secure method
         _save_token_cache_secure(cache, cache_path)
 
-        # Verify file exists
         assert cache_path.exists()
 
-        # Verify permissions are exactly 0o600 (owner read/write only)
         file_stat = os.stat(cache_path)
         file_mode = stat.S_IMODE(file_stat.st_mode)
         assert file_mode == 0o600, f"Expected 0o600, got {oct(file_mode)}"
 
-        # Verify content is correct
         with open(cache_path) as f:
             data = json.load(f)
 
@@ -65,7 +50,6 @@ def test_token_cache_secure_save_handles_errors():
         issued_at="2024-01-01T00:00:00",
     )
 
-    # Try to save to invalid path (no permission)
     invalid_path = Path("/root/impossible_path/token.json")
 
     with pytest.raises((OSError, PermissionError)):
@@ -73,17 +57,11 @@ def test_token_cache_secure_save_handles_errors():
 
 
 def test_token_cache_no_world_readable_window():
-    """토큰 파일이 생성 과정에서 world-readable 상태로 노출되지 않는지 확인
-
-    이 테스트는 개념적 검증용. 실제 race condition은 테스트하기 어려우므로
-    구현 자체가 os.open()을 사용하는지 확인하는 것으로 대체.
-    """
+    """토큰 파일이 생성 과정에서 world-readable 상태로 노출되지 않는지 확인"""
     from shared.kis.auth import _save_token_cache_secure
 
-    # Check that implementation uses os.open (atomic permission setting)
     source = inspect.getsource(_save_token_cache_secure)
 
-    # Must use os.open with explicit mode
     assert "os.open" in source, "Must use os.open for atomic permission setting"
     assert "0o600" in source, "Must explicitly set 0o600 permission"
 
@@ -168,7 +146,6 @@ async def test_retry_once_no_retry_when_auth_manager_cannot_invalidate():
         attempts.append(attempt)
         return "expired"
 
-    # auth_manager is None: getattr(None, "invalidate", None) is not callable.
     result = await retry_once_on_token_expiry(
         request_fn, None, is_expired=lambda r: r == "expired"
     )
@@ -180,24 +157,7 @@ async def test_retry_once_no_retry_when_auth_manager_cannot_invalidate():
 def test_red_a_cache_write_in_progress_never_exposes_a_partial_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A reader mid-write sees the OLD cache, never a prefix of the new one.
-
-    CP-3 (band plan v3, 2026-10-16) runs two processes against ONE fingerprinted
-    token cache file: the minute producer and the short-lived band probe. Before
-    this, ``_save_token_cache_secure`` opened the destination with ``O_TRUNC``
-    and wrote in place — "atomic" was true of create+permission only, not of the
-    contents — so a concurrent reader could ``json.load`` a truncated file. The
-    damage is not a crash: ``_load_from_cache`` swallows ``JSONDecodeError`` and
-    returns False, so the process quietly re-issues a token, and KIS rate-limits
-    token issuance.
-
-    The observation is taken deterministically rather than by racing threads:
-    the write is split in half, and in between we read the destination exactly
-    the way ``_load_from_cache`` does. Under the temp-file + ``os.replace``
-    implementation the destination is still the previous file in full. Put the
-    ``O_TRUNC`` write back and this read returns half a JSON document, which is
-    the mutation.
-    """
+    """A reader mid-write sees the OLD cache, never a prefix of the new one."""
     from shared.kis import auth as auth_module
     from shared.kis.auth import TokenCache, _save_token_cache_secure
 
@@ -235,12 +195,10 @@ def test_red_a_cache_write_in_progress_never_exposes_a_partial_file(
 
     assert len(seen) == 1, "the write was not intercepted"
     assert seen[0] == bytes_before, "a reader saw neither the old nor the new file"
-    # ...and that is the read `_load_from_cache` performs, so spell it out.
     mid_write = TokenCache.from_dict(json.loads(seen[0].decode("utf-8")))
     assert mid_write.app_key == "old_key"
     assert mid_write.token == previous.token
 
-    # The replacement landed, kept 0o600, and left no temp file behind.
     after = TokenCache.from_dict(json.loads(cache_path.read_text(encoding="utf-8")))
     assert after.app_key == "new_key"
     assert after.token == updated.token

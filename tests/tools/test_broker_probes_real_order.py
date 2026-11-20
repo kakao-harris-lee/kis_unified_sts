@@ -1,36 +1,4 @@
-"""Safety-envelope tests for the REAL-MONEY order probe (``P-R5`` / ``P-R5-PRE``).
-
-This file is where the safety envelope is pinned. Every guard in
-``tools/broker_probes/probes_real_order.py`` has a test here that fails if the
-guard is deleted or weakened, because the probe it protects submits orders to a
-real brokerage account with real capital at risk and there is no undo.
-
-Three properties get special attention:
-
-1. **The GET-only module stays GET-only.** ``probes_real.py``'s docstring makes a
-   structural claim — "There is no POST helper in this module" — that the new
-   order path could have quietly destroyed by living there.
-   :func:`test_get_only_real_module_has_no_mutating_http_method_literal` and its
-   neighbours assert the property against the module's own AST, not its prose.
-2. **A refused order sends nothing.** Where a guard fires on the send path, the
-   test asserts both that it raised AND that the recording transport saw no
-   POST. A guard that raises after the wire would be decoration.
-3. **Stage 1 cannot build an order body.** The preflight is run end to end with
-   :func:`~tools.broker_probes.probes_real_order.build_real_futures_order_body`
-   replaced by a bomb; it must still reach ``READY_FOR_STAGE_2``.
-
-No test here opens a socket: ``probes_real_order.http_json`` is replaced by a
-recorder, and ``KISAuthManager`` by a stub. Pacing is set to zero so the suite
-does not pay the 1.1 s call interval.
-
-Guards tested in isolation vs. at their call site
--------------------------------------------------
-Time- and calendar-dependent guards (market session) are asserted directly with
-injected clocks, because asserting them through the end-to-end path would make
-the suite fail on weekends. The *call site* is pinned separately by replacing the
-guard with one that raises and asserting the probe aborts — so deleting either
-the guard or its invocation fails a test.
-"""
+"""Safety-envelope tests for the REAL-MONEY order probe (``P-R5`` / ``P-R5-PRE``)."""
 
 from __future__ import annotations
 
@@ -62,9 +30,6 @@ _ACCOUNT = "1234567890"
 _MINI_SYMBOL = "A05609"
 _FULL_SYMBOL = "A01609"
 
-#: A representative KOSPI200 level. Mini tick is 0.02, so 350.00 and the 5 %
-#: resting price 332.50 are both exact tick multiples, and the ±8 % band below
-#: brackets them. Notional = max(350, 332.5) x 50,000 x 1 = 17,500,000 KRW.
 _TOUCH = 350.00
 _BAND_LOW = "322.00"
 _BAND_HIGH = "378.00"
@@ -73,23 +38,13 @@ _MINI_MULTIPLIER = 50_000
 _TRIAL_NOTIONAL = Decimal(17_500_000)
 
 
-# ---------------------------------------------------------------------------
-# fixtures / doubles
-# ---------------------------------------------------------------------------
-
-
 class _StubAuth:
     def get_auth_headers(self) -> dict[str, str]:
         return {"authorization": "Bearer stub"}
 
 
 class _Recorder:
-    """Stand-in for :func:`common.http_json` that records and replays.
-
-    ``responses`` maps a ``tr_id`` to either a response dict or a callable taking
-    the zero-based call index for that TR, so a poll sequence can change answer
-    between polls.
-    """
+    """Stand-in for :func:`common.http_json` that records and replays."""
 
     def __init__(
         self, responses: dict[str, Any] | None = None, *, status: int = 200
@@ -125,7 +80,6 @@ class _Recorder:
             response = response(index)
         return self.status, response, 1.0, json.dumps(response, ensure_ascii=False)
 
-    # -- assertions helpers ---------------------------------------------
     @property
     def posts(self) -> list[dict[str, Any]]:
         return [c for c in self.calls if c["method"] == "POST"]
@@ -257,23 +211,12 @@ def _client(
     )
 
 
-# ===========================================================================
-# 1. STRUCTURAL — the GET-only module must stay GET-only
-# ===========================================================================
-
-
 def _module_ast(module: Any) -> ast.Module:
     return ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
 
 
 def test_get_only_real_module_has_no_mutating_http_method_literal() -> None:
-    """``probes_real.py`` must keep its committed property: no POST path at all.
-
-    Its docstring says "There is no POST helper in this module. ``_get`` is the
-    only transport." The real-money order path was deliberately put in a separate
-    module so that this stays true; this test is what makes "deliberately" hold
-    for the next reader.
-    """
+    """``probes_real.py`` must keep its committed property: no POST path at all."""
     literals = {
         node.value.strip().upper()
         for node in ast.walk(_module_ast(probes_real))
@@ -298,7 +241,6 @@ def test_get_only_real_module_allowlist_has_no_order_path_or_order_tr() -> None:
     for entry in probes_real.ALLOWLIST:
         assert "/trading/order" not in entry.path
         assert not entry.path.endswith("/order")
-        # Mock/real order TRs end in U (VTTO1101U / TTTO1101U); inquiries end R.
         assert not entry.tr_id.endswith("U"), entry.tr_id
 
 
@@ -321,25 +263,12 @@ def test_get_only_real_module_does_not_import_the_real_order_module() -> None:
 
 
 def test_real_order_module_does_not_import_the_mock_trading_client() -> None:
-    """Reusing pure helpers from ``probes_order`` is fine; its client is not.
-
-    ``MockTradingClient`` asserts the mock host, so importing it here would be
-    both useless and confusing about which environment is in play.
-    """
-    source = Path(pro.__file__).read_text(encoding="utf-8")
-    assert (
-        "MockTradingClient" in source
-    ), "sanity: the docstring should still mention it, to say it is NOT imported"
+    """Reusing pure helpers from ``probes_order`` is fine; its client is not."""
     imported_names: set[str] = set()
     for node in ast.walk(_module_ast(pro)):
         if isinstance(node, ast.ImportFrom):
             imported_names |= {a.name for a in node.names}
     assert "MockTradingClient" not in imported_names
-
-
-# ===========================================================================
-# 2. Stage-1 allowlist — the preflight cannot mutate anything
-# ===========================================================================
 
 
 def test_preflight_allowlist_has_no_order_path() -> None:
@@ -379,11 +308,6 @@ def test_inquire_tr_mismatch_with_the_sot_refuses(
         pro.assert_inquire_tr_matches_sot()
 
 
-# ===========================================================================
-# 3. Host / TR direction guards
-# ===========================================================================
-
-
 def test_mock_host_is_refused_on_the_real_probe() -> None:
     """A mock-host call would produce a MOCK number wearing a REAL_PROD label."""
     with pytest.raises(SafetyViolation, match="not the real host"):
@@ -402,11 +326,6 @@ def test_mock_trading_tr_is_refused_on_the_real_host() -> None:
 def test_empty_trading_tr_is_refused() -> None:
     with pytest.raises(SafetyViolation, match="empty tr_id"):
         pro.assert_real_trading_tr("")
-
-
-# ===========================================================================
-# 4. The long-form authorisation flag
-# ===========================================================================
 
 
 def test_live_mode_without_the_long_form_flag_refuses() -> None:
@@ -448,14 +367,7 @@ def test_the_long_form_flag_cannot_be_abbreviated() -> None:
 
 
 def test_every_shared_default_the_hard_caps_forbid_is_lowered() -> None:
-    """A default invocation must be runnable, not an instant abort.
-
-    ``add_common_args`` sets ``--samples`` to 30 for the mock probes, where a
-    sample is free. Here 30 is above :data:`HARD_MAX_SAMPLES`, so leaving the
-    shared default would make ``P-R5`` abort on its own default — fail-closed,
-    but a confusing way to greet an operator. This test is the general form: no
-    shared default may sit outside a hard cap.
-    """
+    """A default invocation must be runnable, not an instant abort."""
     parser = argparse.ArgumentParser()
     from tools.broker_probes.common import add_common_args
 
@@ -512,11 +424,6 @@ def test_max_notional_has_no_default() -> None:
     assert parser.parse_args([]).max_notional_krw is None
 
 
-# ===========================================================================
-# 5. Account fingerprint
-# ===========================================================================
-
-
 def test_fingerprint_mismatch_refuses(fingerprint: str) -> None:
     with pytest.raises(pro.RealOrderAbort) as excinfo:
         pro.assert_account_fingerprint(fingerprint, "deadbeefcafe")
@@ -538,11 +445,6 @@ def test_the_raw_account_number_never_appears_in_the_fingerprint(
 ) -> None:
     assert _ACCOUNT not in fingerprint
     assert len(fingerprint) == 12
-
-
-# ===========================================================================
-# 6. Market session
-# ===========================================================================
 
 
 def _schedule_file(tmp_path: Path, *, open_at: str, close_at: str, holidays: list[str]):
@@ -569,7 +471,6 @@ def test_market_closed_outside_the_window_refuses(
         "_MARKET_SCHEDULE_CONFIG",
         _schedule_file(tmp_path, open_at="08:45", close_at="15:45", holidays=[]),
     )
-    # A Wednesday, well after the close.
     when = datetime(2026, 7, 29, 17, 30, tzinfo=pro.KST)
     with pytest.raises(pro.RealOrderAbort) as excinfo:
         pro.assert_market_open(when, min_remaining_s=0.0)
@@ -607,14 +508,13 @@ def test_configured_holiday_refuses(
 def test_too_little_session_remaining_refuses(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A cancel is not accepted after the close, so a run that could be cut off
-    by it is refused rather than started."""
+    """A cancel is not accepted after the close, so a run that could be cut off"""
     monkeypatch.setattr(
         pro,
         "_MARKET_SCHEDULE_CONFIG",
         _schedule_file(tmp_path, open_at="08:45", close_at="15:45", holidays=[]),
     )
-    when = datetime(2026, 7, 29, 15, 40, tzinfo=pro.KST)  # 5 minutes left
+    when = datetime(2026, 7, 29, 15, 40, tzinfo=pro.KST)
     with pytest.raises(pro.RealOrderAbort) as excinfo:
         pro.assert_market_open(when, min_remaining_s=1800.0)
     assert excinfo.value.verdict == pro.ABORT_SESSION_TOO_SHORT
@@ -647,20 +547,11 @@ def test_unreadable_schedule_fails_closed(
 
 
 def test_there_is_no_flag_that_overrides_the_market_guard() -> None:
-    """``probes_real.py`` has ``--ignore-session-window``; this probe must not.
-
-    A read-only call outside a window yields a weaker observation. An order
-    outside one yields exposure.
-    """
+    """``probes_real.py`` has ``--ignore-session-window``; this probe must not."""
     parser = argparse.ArgumentParser()
     pro.add_real_order_args(parser)
     options = {s for action in parser._actions for s in action.option_strings}
     assert not [o for o in options if "ignore" in o or "force" in o]
-
-
-# ===========================================================================
-# 7. Order-available amount
-# ===========================================================================
 
 
 def test_zero_order_available_refuses() -> None:
@@ -693,11 +584,6 @@ def test_positive_order_available_is_admitted_and_recorded() -> None:
     record = pro.assert_order_available(parsed["output"], parsed)
     assert record["order_available_krw"] == "9500000"
     assert record["ord_psbl_cash"] == "9000000"
-
-
-# ===========================================================================
-# 8. Positions and pre-existing orders
-# ===========================================================================
 
 
 def test_preexisting_position_refuses() -> None:
@@ -755,11 +641,6 @@ def test_failed_open_order_query_refuses() -> None:
     assert excinfo.value.verdict == pro.ABORT_ACCOUNT_STATE_UNREADABLE
 
 
-# ===========================================================================
-# 9. Contract resolution — smallest only, multiplier read not assumed
-# ===========================================================================
-
-
 def test_non_smallest_contract_refuses() -> None:
     with pytest.raises(pro.RealOrderAbort) as excinfo:
         pro.resolve_smallest_contract(_FULL_SYMBOL)
@@ -775,8 +656,6 @@ def test_smallest_contract_resolves_and_reports_the_ratio() -> None:
         declared["kospi200_mini"]["multiplier_krw_per_point"]
     )
     assert tick.size == Decimal(str(declared["kospi200_mini"]["tick_size_points"]))
-    # The campaign's 1/5 claim, recorded as an observation rather than asserted
-    # as a constant: the ratio is derived from the registry, not hardcoded.
     assert record["multiplier_ratio_to_largest"] == "50000/250000"
 
 
@@ -816,11 +695,6 @@ def test_unregistered_symbol_refuses() -> None:
     assert excinfo.value.verdict == pro.ABORT_INSTRUMENT_UNRESOLVED
 
 
-# ===========================================================================
-# 10. Resting price — distance, tick, band
-# ===========================================================================
-
-
 def test_the_happy_plan_is_a_tick_multiple_clear_of_the_touch() -> None:
     plan = _plan()
     assert plan.price.wire == _RESTING_WIRE
@@ -830,8 +704,7 @@ def test_the_happy_plan_is_a_tick_multiple_clear_of_the_touch() -> None:
 
 
 def test_price_too_close_to_the_touch_refuses() -> None:
-    """The floor is checked against a number that is NOT the offset that produced
-    the price, so lowering the offset does not silently lower the floor."""
+    """The floor is checked against a number that is NOT the offset that produced"""
     with pytest.raises(pro.RealOrderAbort) as excinfo:
         _plan(offset_pct=0.5, min_distance_pct=3.0)
     assert excinfo.value.verdict == pro.ABORT_PRICE_TOO_CLOSE
@@ -883,11 +756,6 @@ def test_the_snap_moves_away_from_the_touch_never_toward_it() -> None:
     assert plan.price.rounding == "floor"
 
 
-# ===========================================================================
-# 11. Caps
-# ===========================================================================
-
-
 def _budget(**overrides: Any) -> pro.RunBudget:
     kwargs: dict[str, Any] = {
         "max_samples": 3,
@@ -909,9 +777,9 @@ def test_notional_cap_exceeded_refuses() -> None:
 def test_cumulative_notional_cap_is_enforced_across_orders() -> None:
     budget = _budget(max_samples=10, max_cumulative_notional_krw=Decimal(30_000_000))
     plan = _plan()
-    budget.authorize(plan)  # 17.5m
+    budget.authorize(plan)
     with pytest.raises(pro.RealOrderAbort) as excinfo:
-        budget.authorize(plan)  # would reach 35m
+        budget.authorize(plan)
     assert excinfo.value.verdict == pro.ABORT_CUMULATIVE_NOTIONAL_CAP
     assert budget.orders_sent == 1
 
@@ -965,11 +833,6 @@ def test_cumulative_notional_is_documented_as_turnover_not_exposure() -> None:
     assert "TURNOVER" in text and "one order is live at a time" in text
 
 
-# ===========================================================================
-# 12. The send path — a refused order sends NOTHING
-# ===========================================================================
-
-
 def test_over_cap_notional_sends_no_order(
     monkeypatch: pytest.MonkeyPatch, creds: ProbeCredentials
 ) -> None:
@@ -986,12 +849,10 @@ def test_over_cap_notional_sends_no_order(
 def test_a_price_that_fails_the_floor_sends_no_order(
     monkeypatch: pytest.MonkeyPatch, creds: ProbeCredentials
 ) -> None:
-    """The send path re-takes the price assertions, so a stale plan cannot slip
-    through when the touch has moved."""
+    """The send path re-takes the price assertions, so a stale plan cannot slip"""
     recorder = _Recorder()
     monkeypatch.setattr(pro, "http_json", recorder)
     plan = _plan()
-    # The touch rallied to just above the resting price: the gap is gone.
     moved = pro.RestingPlan(
         symbol=plan.symbol,
         side=plan.side,
@@ -1029,12 +890,10 @@ def test_an_accepted_order_carries_the_runtime_body_shape_and_the_real_tr(
     sent = recorder.posts[0]
     assert sent["tr_id"] == "TTTO1101U"
     assert sent["url"].endswith(pro._ORDER_PATH)
-    assert sent["body"]["ORD_DVSN_CD"] == "01"  # 지정가
-    assert sent["body"]["SLL_BUY_DVSN_CD"] == "02"  # BUY
+    assert sent["body"]["ORD_DVSN_CD"] == "01"
+    assert sent["body"]["SLL_BUY_DVSN_CD"] == "02"
     assert sent["body"]["UNIT_PRICE"] == _RESTING_WIRE
     assert sent["body"]["ORD_QTY"] == "1"
-    # The [필수] quote fields are explicit, never blank: P-NMPR's finding that a
-    # blank behaves as 01 was a MOCK finding and does not transfer to 실전.
     assert sent["body"]["NMPR_TYPE_CD"] == "01"
     assert sent["body"]["KRX_NMPR_CNDT_CD"] == "0"
 
@@ -1061,11 +920,6 @@ def test_the_order_body_is_the_only_one_in_the_package() -> None:
         if "futures_order_day_real" in source:
             offenders.append(path.name)
     assert offenders == [], f"a real futures order TR appeared elsewhere: {offenders}"
-
-
-# ===========================================================================
-# 13. Fill detection — a fill is a safety event, not a data point
-# ===========================================================================
 
 
 def test_a_full_fill_aborts_the_run() -> None:
@@ -1123,11 +977,6 @@ def test_a_detected_fill_stops_the_trial_loop_before_another_order(
     assert excinfo.value.verdict == pro.ABORT_FILL_DETECTED
     assert len(recorder.by_tr("TTTO1101U")) == 1, "no second order after a fill"
     assert unresolved == ["0000000762"], "the order is left registered for the sweep"
-
-
-# ===========================================================================
-# 14. Cancel — bounded retry, verified, and abort on failure
-# ===========================================================================
 
 
 def test_a_cancel_failure_aborts_the_run_and_places_no_further_order(
@@ -1194,8 +1043,6 @@ def test_a_successful_cancel_is_verified_and_deregisters_the_order(
     )
 
     assert unresolved == []
-    # Verbatim zero-padded ODNO on the wire — canonicalisation is for comparison
-    # only and must never reach a body (harness defect #3).
     assert recorder.by_tr("TTTO1103U")[0]["body"]["ORGN_ODNO"] == "0000000762"
     assert any("cancel_verified" in o for o in client.run.observations)
 
@@ -1223,19 +1070,10 @@ def test_a_fill_found_during_cancel_verification_aborts(
     assert excinfo.value.verdict == pro.ABORT_FILL_DETECTED
 
 
-# ===========================================================================
-# 15. Latency measurement — same computation as mock P-5
-# ===========================================================================
-
-
 def test_the_visibility_measurement_matches_a_space_padded_query_row(
     monkeypatch: pytest.MonkeyPatch, creds: ProbeCredentials
 ) -> None:
-    """Harness defect #3: the accept zero-pads and the row space-pads.
-
-    A raw strip-and-compare asks ``"762" == "0000000762"`` and censors every
-    trial, so both sides go through ``odno_key``.
-    """
+    """Harness defect #3: the accept zero-pads and the row space-pads."""
     recorder = _Recorder(
         {
             "TTTO1101U": {"rt_cd": "0", "output": {"ODNO": "0000000762"}},
@@ -1292,11 +1130,6 @@ def test_a_rejected_submit_stops_the_run_rather_than_retrying(
     assert len(recorder.by_tr("TTTO1101U")) == 1
 
 
-# ===========================================================================
-# 16. Stage-1 artifact — required, fresh, matching, and still re-validated
-# ===========================================================================
-
-
 def _stage1_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "artifact_id": "P-R5-PRE-20260731T010000Z",
@@ -1338,13 +1171,7 @@ def test_a_fresh_ready_artifact_is_accepted(tmp_path: Path) -> None:
 
 
 def test_a_missing_stage1_path_refuses() -> None:
-    """An empty path is refused BY NAME, not by falling into a read failure.
-
-    Dropping the explicit-empty check still refuses — ``Path("")`` resolves to a
-    directory and the read raises — so the message is what the test pins. The
-    operator needs to be told which flag is missing, not handed
-    ``could not read stage-1 artifact .``.
-    """
+    """An empty path is refused BY NAME, not by falling into a read failure."""
     with pytest.raises(pro.RealOrderAbort) as excinfo:
         _load("")
     assert excinfo.value.verdict == pro.ABORT_STAGE1_MISSING
@@ -1424,11 +1251,6 @@ def test_the_stage1_age_flag_cannot_exceed_the_hard_cap(
     assert run.measurements["verdict"] == pro.ABORT_STAGE1_STALE
 
 
-# ===========================================================================
-# 17. Stage 1 end to end — and it never constructs an order body
-# ===========================================================================
-
-
 def _preflight_responses() -> dict[str, Any]:
     return {
         "CTRP6550R": {
@@ -1444,12 +1266,7 @@ def _preflight_responses() -> dict[str, Any]:
 
 @pytest.fixture
 def preflight_env(monkeypatch: pytest.MonkeyPatch, real_env: None, tmp_path: Path):
-    """Wire stage 1 to a recorder, a stub auth manager, and an open session.
-
-    The session guard is stubbed here (and asserted directly in §6) so the suite
-    does not fail on weekends. Its call site is pinned by
-    :func:`test_stage1_aborts_when_the_market_guard_fires`.
-    """
+    """Wire stage 1 to a recorder, a stub auth manager, and an open session."""
     recorder = _Recorder(_preflight_responses())
     monkeypatch.setattr(pro, "http_json", recorder)
     monkeypatch.setattr(pro, "market_session_state", lambda now: _open_session_state())
@@ -1587,11 +1404,6 @@ def test_a_broker_price_off_the_registered_tick_is_reported_as_a_contradiction()
     assert record["non_multiples"] == ["futs_prpr=350.013"]
 
 
-# ===========================================================================
-# 18. Stage 2 — dry run, and aborts produce artifacts
-# ===========================================================================
-
-
 def test_stage2_dry_run_sends_nothing_and_lists_its_preconditions(
     monkeypatch: pytest.MonkeyPatch, real_env: None
 ) -> None:
@@ -1654,11 +1466,7 @@ def test_every_exit_path_records_the_scope_note(
     real_env: None,
     tmp_path: Path,
 ) -> None:
-    """Including the dry runs, which an early ``return`` used to skip.
-
-    An artifact without the both-ways inheritance prohibition on it is an
-    artifact a reader could cite into the wrong environment's declaration.
-    """
+    """Including the dry runs, which an early ``return`` used to skip."""
     dry_stage2 = pro.probe_real_order(
         _args(confirm=False, **{pro._CONFIRM_DEST: False})
     )
@@ -1674,11 +1482,6 @@ def test_every_exit_path_records_the_scope_note(
 def test_a_symbol_is_required() -> None:
     with pytest.raises(ProbeError, match="--symbol is required"):
         pro.probe_real_order(_args(symbol=""))
-
-
-# ===========================================================================
-# 19. Page-size walk honesty
-# ===========================================================================
 
 
 def test_a_walk_our_cap_ended_leaves_the_total_unestablished(
@@ -1719,11 +1522,6 @@ def test_a_walk_the_broker_ended_establishes_the_total(
     record = client.run.measurements["real_page_size"]
     assert record["walk_terminated_by_our_max_pages"] is False
     assert record["total_rows_established"] is True
-
-
-# ===========================================================================
-# 20. Order-class ramp honesty
-# ===========================================================================
 
 
 def test_a_disabled_ramp_records_an_explicit_skip_not_a_silent_omission(
@@ -1771,11 +1569,6 @@ def test_the_ramp_stops_at_the_first_throttle_and_reports_a_bracket(
     assert record["throttled_submit_interval_ms"] is not None
     assert record["candidate_only"] is True
     assert "CANCEL class NOT measured" in record["endpoint_class"]
-
-
-# ===========================================================================
-# 21. Registry metadata
-# ===========================================================================
 
 
 def test_the_order_stage_declares_that_it_emits_real_orders() -> None:
@@ -1827,17 +1620,6 @@ def test_the_order_stage_prerequisites_name_the_live_gate_bypass() -> None:
     assert "two order sources" in joined
 
 
-# ---------------------------------------------------------------------------
-# the live-futures interlock itself
-#
-# CLAUDE.md Non-Negotiable Rule: every futures order probe calls
-# `assert_no_live_futures_config()`, which refuses while
-# `config/futures_live.yaml::enabled` is true. Until now only the registry
-# PREREQUISITE STRING above was asserted — nothing exercised the refusal, so a
-# parser change that stopped matching `enabled: true` would have passed CI.
-# ---------------------------------------------------------------------------
-
-
 def _futures_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> None:
     """Point the interlock at a scratch ``config/futures_live.yaml`` holding ``body``."""
     config = tmp_path / "config"
@@ -1855,18 +1637,11 @@ def _futures_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) ->
         "enabled: 1\n",
         "enabled:   true\n",
         "enabled: true   # armed for the trial\n",
-        # PyYAML's bool resolver reads each of these as true as well. Before
-        # 2026-11-15 the guard matched only `true|True|yes|1`, so `enabled: ON`
-        # armed the live path with this interlock saying nothing.
         "enabled: TRUE\n",
         "enabled: on\n",
         "enabled: On\n",
         "enabled: ON\n",
         "enabled: YES\n",
-        # Indented is still armed. The guard strips each line before matching,
-        # so an `enabled: true` nested under any key refuses too — fail-closed
-        # is the right direction for this one, and pinning it keeps a future
-        # "only match at column 0" tidy-up from quietly widening the gate.
         "futures:\n  enabled: true\n",
     ],
 )

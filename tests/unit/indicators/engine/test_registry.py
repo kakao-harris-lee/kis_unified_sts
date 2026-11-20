@@ -1,7 +1,4 @@
-"""Unit tests for the IndicatorEngine registry (resolution + dedup).
-
-Backend-agnostic: uses a counting fake backend so these run without TA-Lib.
-"""
+"""Unit tests for the IndicatorEngine registry (resolution + dedup)."""
 
 from __future__ import annotations
 
@@ -75,12 +72,12 @@ def test_compute_many_dedups_identical_specs(window: OHLCVWindow) -> None:
     engine = IndicatorEngine([backend])
     specs = [
         IndicatorSpec.create("rsi", {"period": 14}),
-        IndicatorSpec.create("rsi", {"period": 14}),  # duplicate
-        IndicatorSpec.create("rsi", {"period": 14}),  # duplicate
+        IndicatorSpec.create("rsi", {"period": 14}),
+        IndicatorSpec.create("rsi", {"period": 14}),
     ]
     results = engine.compute_many(specs, window)
     assert len(results) == 1
-    assert len(backend.calls) == 1  # computed once despite 3 requests
+    assert len(backend.calls) == 1
 
 
 def test_compute_many_keeps_distinct_params(window: OHLCVWindow) -> None:
@@ -126,9 +123,6 @@ class _PeriodEchoBackend(IndicatorBackend):
 
 
 def test_flat_panel_last_wins_on_flatkey_collision(window: OHLCVWindow) -> None:
-    # rsi is NOT period-keyed, so rsi(14) and rsi(21) both flatten to "rsi".
-    # compute_many keeps them distinct (2 computations) but flat_panel is
-    # last-wins on the shared key — this pins that documented foot-gun.
     engine = IndicatorEngine([_PeriodEchoBackend()])
     specs = [
         IndicatorSpec.create("rsi", {"period": 14}),
@@ -136,9 +130,6 @@ def test_flat_panel_last_wins_on_flatkey_collision(window: OHLCVWindow) -> None:
     ]
     assert len(engine.compute_many(specs, window)) == 2
     assert engine.flat_panel(specs, window) == {"rsi": 21.0}
-
-
-# --- Phase C: runtime indicator convention gate ------------------------------
 
 
 def test_runtime_convention_defaults_to_streaming(monkeypatch) -> None:

@@ -1,17 +1,4 @@
-"""Unit tests for ``shared.risk.primitives.breakers`` (P4-d).
-
-Pins the shared loss-breaker predicates to independent golden values (spec
-formulae / literal constants), never read back from a consumer — so a sign,
-denominator, or boundary-operator regression is actually caught.
-
-Two consumer families share these predicates with different boundary/guard
-arguments:
-
-* kill-switch conditions → ``inclusive=True`` (at-or-beyond) +
-  ``equity_nonpositive="safe"`` (``equity <= 0`` never trips).
-* MDD filters → ``inclusive=False`` (strict) + ``equity_nonpositive="raise"``
-  (guardless division; ``equity == 0`` raises).
-"""
+"""Unit tests for ``shared.risk.primitives.breakers`` (P4-d)."""
 
 from __future__ import annotations
 
@@ -19,10 +6,9 @@ import pytest
 
 from shared.risk.primitives.breakers import consecutive_exceeds, loss_fraction_exceeds
 
-# 100M equity, 3% limit → boundary loss = -3,000,000 KRW.
 EQUITY = 100_000_000.0
 LIMIT = 0.03
-BOUNDARY_LOSS = -EQUITY * LIMIT  # exactly at the limit
+BOUNDARY_LOSS = -EQUITY * LIMIT
 
 
 class TestLossFractionBoundary:
@@ -70,7 +56,7 @@ class TestLossFractionBoundary:
         )
 
     def test_neither_trips_within_limit(self) -> None:
-        within = BOUNDARY_LOSS + 1.0  # smaller loss
+        within = BOUNDARY_LOSS + 1.0
         assert (
             loss_fraction_exceeds(
                 within, EQUITY, LIMIT, inclusive=True, equity_nonpositive="safe"
@@ -119,7 +105,6 @@ class TestLossFractionSign:
     def test_golden_fraction_matches_hand_derived(self) -> None:
         """-4,000,000 / 100M = -0.04; loss magnitude 0.04 > 0.03 → trip."""
         pnl = -4_000_000.0
-        # Independent restatement of the intended math, not read from the fn.
         loss_magnitude = -(pnl / EQUITY)
         assert loss_magnitude == pytest.approx(0.04)
         assert (
@@ -156,10 +141,7 @@ class TestLossFractionEquityNonPositive:
             )
 
     def test_raise_negative_equity_computes_without_raising(self) -> None:
-        """MDD filter behavior: ``equity < 0`` divides (sign-flipped), no raise.
-
-        pnl=-100, equity=-1000 → loss_fraction = +0.1 → ``0.1 < -0.03`` False.
-        """
+        """MDD filter behavior: ``equity < 0`` divides (sign-flipped), no raise."""
         assert (
             loss_fraction_exceeds(
                 -100.0, -1000.0, LIMIT, inclusive=False, equity_nonpositive="raise"
@@ -185,7 +167,7 @@ class TestConsecutiveExceeds:
         ("count", "threshold", "expected"),
         [
             (5, 6, False),
-            (6, 6, True),  # inclusive boundary: equal fires
+            (6, 6, True),
             (7, 6, True),
             (0, 1, False),
             (10, 10, True),
@@ -199,7 +181,7 @@ class TestConsecutiveExceeds:
     @pytest.mark.parametrize(
         ("count", "threshold", "expected"),
         [
-            (6, 6, False),  # strict: equal does NOT fire
+            (6, 6, False),
             (7, 6, True),
         ],
     )

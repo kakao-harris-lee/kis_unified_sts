@@ -30,8 +30,6 @@ def test_websocket_requires_auth():
 
     app = create_app(require_auth=True, api_key="test-api-key")
 
-    # Avoid starlette TestClient websocket_connect here since it relies on
-    # anyio BlockingPortal cross-thread calls which can hang in some environments.
     middleware_names = [m.cls.__name__ for m in app.user_middleware]
     assert "APIKeyMiddleware" in middleware_names
 
@@ -56,12 +54,10 @@ async def test_auth_middleware_validates_websocket():
     """Test that auth middleware validates WebSocket API key."""
     from services.dashboard.middleware.auth import APIKeyMiddleware
 
-    # Create mock app
     mock_app = AsyncMock()
 
     middleware = APIKeyMiddleware(app=mock_app, api_key="valid-key")
 
-    # Test valid key
     scope = {
         "type": "websocket",
         "query_string": b"api_key=valid-key",
@@ -73,7 +69,6 @@ async def test_auth_middleware_validates_websocket():
 
     await middleware(scope, receive, send)
 
-    # App should be called (connection allowed)
     mock_app.assert_called_once()
 
 
@@ -85,7 +80,6 @@ async def test_auth_middleware_rejects_invalid_websocket():
     mock_app = AsyncMock()
     middleware = APIKeyMiddleware(app=mock_app, api_key="valid-key")
 
-    # Test invalid key
     scope = {
         "type": "websocket",
         "query_string": b"api_key=wrong-key",
@@ -97,10 +91,8 @@ async def test_auth_middleware_rejects_invalid_websocket():
 
     await middleware(scope, receive, send)
 
-    # App should NOT be called
     mock_app.assert_not_called()
 
-    # Close should be sent
     send.assert_called_once()
     call_args = send.call_args[0][0]
     assert call_args["type"] == "websocket.close"
@@ -115,7 +107,6 @@ async def test_auth_middleware_rejects_missing_websocket_key():
     mock_app = AsyncMock()
     middleware = APIKeyMiddleware(app=mock_app, api_key="valid-key")
 
-    # Test missing key
     scope = {
         "type": "websocket",
         "query_string": b"",
@@ -127,10 +118,8 @@ async def test_auth_middleware_rejects_missing_websocket_key():
 
     await middleware(scope, receive, send)
 
-    # App should NOT be called
     mock_app.assert_not_called()
 
-    # Close should be sent
     send.assert_called_once()
 
 
@@ -140,16 +129,12 @@ def test_auth_timing_safe_comparison():
 
     middleware = APIKeyMiddleware(app=MagicMock(), api_key="secret-key")
 
-    # Valid key
     assert middleware._validate_api_key("secret-key") is True
 
-    # Invalid key
     assert middleware._validate_api_key("wrong-key") is False
 
-    # Empty key
     assert middleware._validate_api_key("") is False
 
-    # None
     assert middleware._validate_api_key(None) is False
 
 
@@ -159,16 +144,11 @@ def test_auth_public_paths():
 
     middleware = APIKeyMiddleware(app=MagicMock(), api_key="secret-key")
 
-    # Public paths. /health is the container health check (Dockerfile.dashboard
-    # HEALTHCHECK + docker-compose healthcheck curl it with no API key).
     assert middleware._is_public_path("/health") is True
     assert middleware._is_public_path("/docs") is True
     assert middleware._is_public_path("/redoc") is True
     assert middleware._is_public_path("/openapi.json") is True
 
-    # Protected paths. "/" (the removed root pointer) and "/metrics" (the
-    # removed Prometheus endpoint) lost their exemptions with the routes they
-    # served in L4.
     assert middleware._is_public_path("/") is False
     assert middleware._is_public_path("/metrics") is False
     assert middleware._is_public_path("/api/tos/projection") is False

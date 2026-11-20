@@ -1,10 +1,4 @@
-"""Per-op goldens: every ``tos-field-catalog/1`` op against a hand computation.
-
-Each value below is worked out from the op's definition on bars small enough to
-do in the head, and chosen so the arithmetic is exact in binary (no tolerance:
-P2-b compares byte for byte, so a tolerance here would hide the drift it is
-supposed to catch).
-"""
+"""Per-op goldens: every ``tos-field-catalog/1`` op against a hand computation."""
 
 from __future__ import annotations
 
@@ -34,29 +28,12 @@ def _last(fields: list[dict[str, Any]], bars: list[FieldBar]) -> dict[str, Any]:
     return _values(fields, bars)[-1]
 
 
-# ---------------------------------------------------------------------------
-# Catalog shape
-# ---------------------------------------------------------------------------
-
-
 class TestCatalogShape:
     def test_version(self) -> None:
         assert CATALOG_VERSION == "tos-field-catalog/1"
 
     def test_is_exactly_the_plan_table(self) -> None:
-        """§2.3's table, op for op, plus `const`, `rsi` and `williams_r`.
-
-        `const` is the first op added after the first catalog PR (P2-b): the
-        legacy's `abs(prev_z) - abs(z) >= 0.2` needs a difference compared to a
-        constant, and `ratio_z`'s divisor must be a FIELD, so a literal-valued
-        field is what makes that shape expressible. `rsi` and `williams_r` are
-        the second addition — general indicators for the first tenant strategy
-        written as YAML rather than as Python
-        (`docs/plans/2026-11-19-tos-usage-plan.md` §4.1 step 1, §5). Adding an
-        op does not bump `CATALOG_VERSION` — see the rule next to that constant.
-
-        A new op is a reviewed catalog change; this test is the review's record.
-        """
+        """§2.3's table, op for op, plus `const`, `rsi` and `williams_r`."""
         assert set(known_op_names()) == {
             "abs",
             "all",
@@ -89,20 +66,7 @@ class TestCatalogShape:
         }
 
     def test_no_op_carries_a_strategy_name(self) -> None:
-        """Roadmap §5 risk 2: ops differ by parameters, never by strategy.
-
-        The three Setup D gates are ``gated_percentile``/``gated_max``/
-        ``gated_min`` plus comparisons — nothing in the catalog is named after
-        the setup, the registry name, or any of its field names.
-
-        The bare token ``williams`` was on this list while Williams %R existed
-        in this repo only as the NAME OF A PLANNED STRATEGY. It is off it now
-        that the indicator itself is a catalog op: ``williams_r`` is what
-        TA-Lib calls ``WILLR``, parameterized by ``period`` and nothing else.
-        What stays banned is the strategy shape — ``reversion`` covers both
-        ``vwap_reversion`` and the ``rsi_williams_reversion`` tenant that will
-        USE these two ops, which is exactly the name an op must never take.
-        """
+        """Roadmap §5 risk 2: ops differ by parameters, never by strategy."""
         banned = (
             "setup",
             "reversion",
@@ -120,11 +84,6 @@ class TestCatalogShape:
         for spec in CATALOG.values():
             assert isinstance(spec.returns, ValueKind)
             assert spec.summary, f"op {spec.name!r} has no summary"
-
-
-# ---------------------------------------------------------------------------
-# Bar raw values
-# ---------------------------------------------------------------------------
 
 
 class TestBarOps:
@@ -171,11 +130,11 @@ class TestMinutesSinceOpen:
     @pytest.mark.parametrize(
         ("hour", "minute", "expected"),
         [
-            (8, 45, 0.0),  # at the open
-            (9, 0, 15.0),  # 15 minutes in — the legacy's valid_minutes_min
+            (8, 45, 0.0),
+            (9, 0, 15.0),
             (9, 3, 18.0),
-            (14, 30, 345.0),  # the legacy's no_entry_after cutoff
-            (8, 30, -15.0),  # before the open: negative, never wrapped
+            (14, 30, 345.0),
+            (8, 30, -15.0),
         ],
     )
     def test_golden(self, hour: int, minute: int, expected: float) -> None:
@@ -200,14 +159,9 @@ class TestMinutesSinceOpen:
             },
             {"name": "probe", "op": "gt", "inputs": ["mso"], "params": {"const": 0}},
         ]
-        bars = [bar(20, hour=9)]  # 09:20
+        bars = [bar(20, hour=9)]
         assert _last(futures, bars)["mso"] == 35.0
         assert _last(stock, bars)["mso"] == 20.0
-
-
-# ---------------------------------------------------------------------------
-# Window values
-# ---------------------------------------------------------------------------
 
 
 class TestAtr:
@@ -232,7 +186,6 @@ class TestAtr:
             bar(0, high=10.0, low=8.0, close=9.0, day=11),
             bar(0, high=11.0, low=10.0, close=9.0, day=12),
         ]
-        # bar 1 TR = max(11-10=1, |11-9|=2, |10-9|=1) = 2 -> ATR(2) = (2+2)/2
         assert [v["atr"] for v in _values(self.FIELDS, bars)] == [2.0, 2.0]
 
     def test_period_is_required(self) -> None:
@@ -248,18 +201,6 @@ class TestRsi:
         {"name": "probe", "op": "permissive", "inputs": ["raw"]},
     ]
 
-    #: close 10 -> 13 -> 12 -> 14, so the changes are +3, -1, +2.
-    #:
-    #: ===  ======  ==================================  =====
-    #: bar  change  averages (period 2)                 rsi
-    #: ===  ======  ==================================  =====
-    #: 0    --      no change yet                       None
-    #: 1    +3      1 of 2 seed changes                 None
-    #: 2    -1      seed: gain 3/2=1.5, loss 1/2=0.5    75.0
-    #: 3    +2      gain (1.5+2)/2=1.75, loss 0.5/2     87.5
-    #: ===  ======  ==================================  =====
-    #:
-    #: 100*1.5/2.0 = 75.0 and 100*1.75/2.0 = 87.5 — both exact.
     CLOSES = (10.0, 13.0, 12.0, 14.0)
 
     def _bars(self) -> list[FieldBar]:
@@ -291,7 +232,7 @@ class TestRsi:
         ]
         series = [values["rsi"] for values in _values(fields, bars)]
         assert series[:5] == [None] * 5
-        assert series[5] == 100.0  # every change a gain: avg_loss is 0
+        assert series[5] == 100.0
 
     def test_only_the_close_moves_it(self) -> None:
         """RSI reads closes; a wild high or low on the same bar changes nothing."""
@@ -310,11 +251,7 @@ class TestRsi:
 
 
 class TestWilliamsR:
-    """Hand goldens on a window exactly 100 wide, where %R is exact in binary.
-
-    ``(hh - close) / ((hh - ll) / -100)`` with ``hh - ll == 100`` divides by
-    ``-1.0``, so each value below is just ``-(hh - close)``.
-    """
+    """Hand goldens on a window exactly 100 wide, where %R is exact in binary."""
 
     FIELDS = [
         {"name": "wr", "op": "williams_r", "params": {"period": 2}},
@@ -322,17 +259,6 @@ class TestWilliamsR:
         {"name": "probe", "op": "permissive", "inputs": ["raw"]},
     ]
 
-    #: ===  ====  ===  =====  ==================  ======
-    #: bar  high  low  close  window (2 bars)     %R
-    #: ===  ====  ===  =====  ==================  ======
-    #: 0    200   150  180    only 1 bar          None
-    #: 1    190   100  175    hh 200, ll 100      -25.0
-    #: 2    200   160  170    hh 200, ll 100      -30.0
-    #: 3    260   160  200    hh 260, ll 160      -60.0
-    #: ===  ====  ===  =====  ==================  ======
-    #:
-    #: Bar 3 is the window cap: bar 1's low of 100 has left, so ``ll`` is 160.
-    #: Had it still been in the window the value would be -37.5 instead.
     BARS = (
         (200.0, 150.0, 180.0),
         (190.0, 100.0, 175.0),
@@ -351,12 +277,7 @@ class TestWilliamsR:
         assert series == [None, -25.0, -30.0, -60.0]
 
     def test_the_current_bar_is_in_its_own_window(self) -> None:
-        """Unlike ``gated_*``: %R is a position within a window that includes now.
-
-        Two identical bars of range 100, so the window is this bar's own range
-        and the close sits a quarter below the high. A ``gated_max`` reading
-        the same window would exclude the current bar and have no value yet.
-        """
+        """Unlike ``gated_*``: %R is a position within a window that includes now."""
         bars = [
             bar(0, open=150.0, high=200.0, low=100.0, close=175.0),
             bar(1, open=150.0, high=200.0, low=100.0, close=175.0),
@@ -397,16 +318,11 @@ class TestSessionVwapTypical:
             values["vwap"] for values in _values(self.FIELDS, [*hand_bars, next_day])
         ]
         assert series[:3] == [9.0, 9.75, 9.9]
-        assert series[3] == 15.0  # (20+10+15)/3, the new session's only bar
+        assert series[3] == 15.0
 
     def test_zero_volume_session_falls_back_to_the_close(self) -> None:
         bars = [bar(0, high=10.0, low=8.0, close=9.25, volume=0.0)]
         assert _last(self.FIELDS, bars)["vwap"] == 9.25
-
-
-# ---------------------------------------------------------------------------
-# Arithmetic
-# ---------------------------------------------------------------------------
 
 
 class TestArithmeticOps:
@@ -418,7 +334,6 @@ class TestArithmeticOps:
             {"name": "z", "op": "ratio_z", "inputs": ["h", "c", "lo"]},
             {"name": "probe", "op": "gt", "inputs": ["z"], "params": {"const": 0}},
         ]
-        # (12 - 10) / 8 = 0.25
         bars = [bar(0, high=12.0, low=8.0, close=10.0)]
         assert _last(fields, bars)["z"] == 0.25
 
@@ -430,7 +345,6 @@ class TestArithmeticOps:
             {"name": "z", "op": "ratio_z", "inputs": ["c", "h", "lo"]},
             {"name": "probe", "op": "gt", "inputs": ["z"], "params": {"const": -1}},
         ]
-        # (10 - 12) / 8 = -0.25
         bars = [bar(0, high=12.0, low=8.0, close=10.0)]
         assert _last(fields, bars)["z"] == -0.25
 
@@ -447,11 +361,6 @@ class TestArithmeticOps:
         values = _last(fields, bars)
         assert values["z"] == -0.25
         assert values["az"] == 0.25
-
-
-# ---------------------------------------------------------------------------
-# Comparison
-# ---------------------------------------------------------------------------
 
 
 def _compare(op: str, params: dict[str, Any], inputs: list[str]) -> bool:
@@ -489,12 +398,10 @@ class TestComparisonOps:
     @pytest.mark.parametrize(
         ("op", "mult", "expected"),
         [
-            # rhs = low * mult = 8 * 1.5 = 12; high = 12 -> equality
             ("ge", 1.5, True),
             ("gt", 1.5, False),
             ("le", 1.5, True),
             ("lt", 1.5, False),
-            # rhs = 8 * 2.0 = 16
             ("lt", 2.0, True),
             ("gt", 2.0, False),
         ],
@@ -506,16 +413,15 @@ class TestComparisonOps:
         assert _compare(op, {"mult": mult}, ["h", "lo"]) is expected
 
     def test_const_times_mult(self) -> None:
-        # rhs = 4.0 * 2.0 = 8.0; high = 12
         assert _compare("gt", {"const": 4.0, "mult": 2.0}, ["h"]) is True
         assert _compare("gt", {"const": 7.0, "mult": 2.0}, ["h"]) is False
 
     @pytest.mark.parametrize(
         ("lo", "hi", "expected"),
         [
-            (10.0, 20.0, True),  # lower edge is inclusive
-            (0.0, 10.0, True),  # upper edge is inclusive
-            (10.0, 10.0, True),  # degenerate but valid
+            (10.0, 20.0, True),
+            (0.0, 10.0, True),
+            (10.0, 10.0, True),
             (10.5, 20.0, False),
             (0.0, 9.5, False),
         ],
@@ -529,7 +435,7 @@ class TestComparisonOps:
     @pytest.mark.parametrize(
         ("at", "hour", "minute", "expected"),
         [
-            ("15:40", 15, 40, True),  # the EOD cutoff bar itself qualifies
+            ("15:40", 15, 40, True),
             ("15:40", 15, 39, False),
             ("15:40", 15, 41, True),
             ("15:40:30", 15, 40, False),
@@ -557,8 +463,6 @@ class TestBooleanOps:
         ],
     )
     def test_golden(self, op: str, flags: tuple[bool, ...], expected: bool) -> None:
-        # Each flag is a comparison of close (10.0) against a const that makes
-        # it true or false, so the declaration stays inside the catalog.
         fields: list[dict[str, Any]] = [{"name": "c", "op": "bar.close"}]
         names = []
         for index, flag in enumerate(flags):
@@ -599,8 +503,7 @@ class TestConst:
         assert [row["one"] for row in values] == [1.0] * 5
 
     def test_divisor_of_one_makes_ratio_z_an_exact_difference(self) -> None:
-        """Why the op exists: ``x / 1.0 == x`` in IEEE-754, so ``ratio_z`` with
-        a 1.0 divisor is the legacy's plain subtraction, bit for bit."""
+        """Why the op exists: ``x / 1.0 == x`` in IEEE-754, so ``ratio_z`` with"""
         fields = [
             {"name": "one", "op": "const", "params": {"value": 1.0}},
             {"name": "h", "op": "bar.high"},
@@ -613,8 +516,7 @@ class TestConst:
             assert _last(fields, bars)["diff"] == high - low
 
     def test_the_legacy_z_improvement_gate_is_reproducible(self) -> None:
-        """``abs(prev_z) - abs(z) >= reversal_confirm_atr_mult`` — the shape
-        that was inexpressible before this op."""
+        """``abs(prev_z) - abs(z) >= reversal_confirm_atr_mult`` — the shape"""
         fields = [
             {"name": "one", "op": "const", "params": {"value": 1.0}},
             {"name": "h", "op": "bar.high"},
@@ -627,12 +529,7 @@ class TestConst:
                 "params": {"const": 0.2},
             },
         ]
-        # 0.25 clears the 0.2 gate; 0.125 does not. Both differences are
-        # exact in binary — `1.2 - 1.0` would NOT be (it is
-        # 0.19999999999999996, i.e. below the gate), which is exactly why the
-        # legacy's own subtraction has to be reproduced rather than approximated.
         assert _last(fields, [bar(0, high=1.25, low=1.0, close=1.0)])["probe"] is True
         assert _last(fields, [bar(0, high=1.125, low=1.0, close=1.0)])["probe"] is False
-        # The near-gate case, pinned against plain Python arithmetic.
         assert (1.2 - 1.0) < 0.2
         assert _last(fields, [bar(0, high=1.2, low=1.0, close=1.0)])["probe"] is False

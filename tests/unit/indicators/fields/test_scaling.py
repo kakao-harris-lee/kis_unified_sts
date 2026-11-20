@@ -1,10 +1,4 @@
-"""Scaling goldens: the two rounding modes, their edges, and their one home.
-
-The edges are the point. A price exactly on a half and a negative signed value
-are where ``half_up``, ``toward_zero`` and Python's own ``round`` all disagree,
-and a published integer that disagrees with the legacy producer by one unit is a
-threshold that fires on a different bar.
-"""
+"""Scaling goldens: the two rounding modes, their edges, and their one home."""
 
 from __future__ import annotations
 
@@ -23,23 +17,16 @@ class TestHalfUp:
     @pytest.mark.parametrize(
         ("value", "scale", "expected"),
         [
-            # Exact halves round AWAY from zero on the positive side...
             (0.5, 1, 1),
             (1.5, 1, 2),
-            (2.5, 1, 3),  # round(2.5) is 2 — banker's rounding, not this
+            (2.5, 1, 3),
             (3.5, 1, 4),
-            # ...and UP (toward zero) on the negative side: floor(x + 0.5).
             (-0.5, 1, 0),
             (-1.5, 1, -1),
             (-2.5, 1, -2),
-            # Prices at scale 100 — the CP-3 journal's own cases.
             (559.45, 100, 55945),
-            # 559.455 is 559.45500000000004 as a double, so *100 lands just
-            # ABOVE the half and floor(x + 0.5) carries in BOTH directions —
-            # the exact-half asymmetry above only shows on a true half.
             (559.455, 100, 55946),
             (-559.455, 100, -55946),
-            # Below/above the half.
             (1.4999, 1, 1),
             (1.5001, 1, 2),
             (0.0, 100, 0),
@@ -64,17 +51,14 @@ class TestTowardZero:
     @pytest.mark.parametrize(
         ("value", "scale", "expected"),
         [
-            # The symmetry case from the z_x1000 docstring.
             (1.7995, 1000, 1799),
             (-1.7995, 1000, -1799),
-            # Exact halves truncate, both signs.
             (0.5, 1, 0),
             (-0.5, 1, 0),
             (1.5, 1, 1),
             (-1.5, 1, -1),
             (2.5, 1, 2),
             (-2.5, 1, -2),
-            # Magnitudes below one unit collapse to zero, never to -1.
             (0.9, 1, 0),
             (-0.9, 1, 0),
             (1.8, 1000, 1800),
@@ -92,11 +76,7 @@ class TestTowardZero:
             )
 
     def test_conservative_at_the_trigger(self) -> None:
-        """``abs(scaled) >= scaled(threshold)`` only when ``abs(z) >= threshold``.
-
-        The property the CP-3 journal's ``z_x1000`` is published for: a policy
-        written on the integer never fires where the legacy setup did not.
-        """
+        """``abs(scaled) >= scaled(threshold)`` only when ``abs(z) >= threshold``."""
         threshold = scaled_int_toward_zero(1.8, 1000)
         for z in (1.7999, -1.7999, 1.79999, -1.79999):
             assert abs(scaled_int_toward_zero(z, 1000)) < threshold
@@ -104,7 +84,7 @@ class TestTowardZero:
             assert abs(scaled_int_toward_zero(z, 1000)) >= threshold
 
     def test_differs_from_half_up_exactly_where_it_should(self) -> None:
-        assert scaled_int_half_up(1.7995, 1000) == 1800  # the half-up rule
+        assert scaled_int_half_up(1.7995, 1000) == 1800
         assert scaled_int_toward_zero(1.7995, 1000) == 1799
 
 
@@ -115,12 +95,7 @@ class TestOneHome:
         assert ROUNDING_MODES["toward_zero"] is scaled_int_toward_zero
 
     def test_producer_reads_the_same_functions(self) -> None:
-        """``produce_fields`` must not carry a second copy of either rule.
-
-        The CP-3 producer and the declarative evaluator publish the same journal
-        fields; identity (``is``) is what makes "byte-identical rounding" a fact
-        rather than a hope.
-        """
+        """``produce_fields`` must not carry a second copy of either rule."""
         from tools.tos_cp3 import produce_fields
 
         assert produce_fields.scaled_int_half_up is scaled_int_half_up

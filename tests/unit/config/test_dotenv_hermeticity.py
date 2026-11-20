@@ -1,28 +1,4 @@
-"""Hermeticity guards: a test process must never reach a real ``.env`` (#698).
-
-On 2026-09-15 a unit-test run inside a git worktree nested under the primary
-checkout (``<repo>/.claude/worktrees/<name>/``) loaded the **primary**
-checkout's ``.env``, put the operator's real KIS app key in the test process
-and had a real token issued and written to ``.kis_token_real``. The mechanism
-was python-dotenv's ``find_dotenv()``, which walks from the calling file up to
-the filesystem root, reached by the argument-less ``load_dotenv()`` that
-``cli/commands/common.py`` ran at import time. That module went with the legacy
-CLI in the legacy removal L3
-(``docs/plans/2026-11-07-legacy-removal-plan.md``), so the probe below now reads
-``DASHBOARD_HOST_PORT`` through the shipped helper it used
-(``shared.config.runtime_defaults.dashboard_host_port_from_env``) in the same
-order — load first, read after — rather than through the deleted wrapper.
-
-Two layers are asserted here, and they fail independently:
-
-* the **code** layer — ``shared.config.dotenv_guard.load_project_dotenv`` reads
-  at most two exact paths and never walks up. Proven in a subprocess with no
-  hermetic flag set, i.e. a production-shaped process, so these tests would
-  still catch a regression if the pytest guard below were removed.
-* the **session** layer — ``tests/conftest.py`` empties the ``KIS_*`` /
-  ``TELEGRAM_*`` namespace, pins the config and token-cache directories, and
-  makes ``dotenv.load_dotenv`` refuse real files.
-"""
+"""Hermeticity guards: a test process must never reach a real ``.env`` (#698)."""
 
 from __future__ import annotations
 
@@ -48,10 +24,6 @@ CANARY_APP_KEY = "CANARY-APP-KEY-MUST-NEVER-BE-LOADED"
 CANARY_PORT = "4111"
 CHECKOUT_PORT = "5999"
 
-#: The files a fake checkout needs to run the loader. Everything else is an
-#: empty package marker, so the tree is self-contained: no PYTHONPATH entry
-#: points at the real repository and ``project_root()`` resolves to the fake
-#: checkout rather than to this one.
 _COPIED = (
     "shared/config/dotenv_guard.py",
     "shared/config/runtime_defaults.py",
@@ -104,11 +76,7 @@ def _make_checkout(root: Path) -> Path:
 
 
 def _run_probe(checkout: Path, cwd: Path, *, hermetic: bool = False) -> dict:
-    """Import the copied entrypoint in a clean process and report what it saw.
-
-    The environment is built from scratch rather than inherited, so the result
-    reflects the loader's own behavior and not this pytest session's scrub.
-    """
+    """Import the copied entrypoint in a clean process and report what it saw."""
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
@@ -133,12 +101,7 @@ def _run_probe(checkout: Path, cwd: Path, *, hermetic: bool = False) -> dict:
 
 @pytest.fixture
 def reset_config_loader():
-    """Hand back a ConfigLoader reset that is undone at teardown.
-
-    The singleton is class state shared by every test in the worker, so
-    clearing it inline leaks a re-resolved loader into whatever runs next
-    under ``-n auto``.
-    """
+    """Hand back a ConfigLoader reset that is undone at teardown."""
     from shared.config.loader import ConfigLoader
 
     saved_instance = ConfigLoader._instance
@@ -158,18 +121,8 @@ def reset_config_loader():
     ConfigLoader._cache.update(saved_cache)
 
 
-# ---------------------------------------------------------------------------
-# The code layer: load_project_dotenv never walks out of its own checkout
-# ---------------------------------------------------------------------------
-
-
 def test_nested_checkout_never_reads_the_outer_env(tmp_path):
-    """#698 regression: a worktree must not load the primary checkout's .env.
-
-    Red before the fix: ``find_dotenv()`` walked from
-    ``<outer>/<inner>/cli/commands`` up to ``<outer>/.env`` and exported the
-    canary key.
-    """
+    """#698 regression: a worktree must not load the primary checkout's .env."""
     outer = tmp_path / "primary"
     _write_canary_env(outer / ".env", CANARY_PORT)
     checkout = _make_checkout(outer / "worktree")
@@ -200,11 +153,6 @@ def test_candidates_are_only_the_checkout_and_the_working_directory(tmp_path):
     ]
 
 
-# ---------------------------------------------------------------------------
-# The runtime path: the CLI outside tests still loads .env exactly as before
-# ---------------------------------------------------------------------------
-
-
 def test_checkout_dotenv_still_loads_outside_tests(tmp_path):
     """The paper/live CLI keeps reading its own checkout's .env."""
     outer = tmp_path / "primary"
@@ -219,18 +167,11 @@ def test_checkout_dotenv_still_loads_outside_tests(tmp_path):
     assert seen["loaded"] == str(checkout / ".env")
     assert seen["DASHBOARD_HOST_PORT"] == CHECKOUT_PORT
     assert seen["dashboard_url"] == f"http://localhost:{CHECKOUT_PORT}"
-    # The outer checkout's .env was right there and still was not read.
     assert seen["KIS_APP_KEY"] is None
 
 
 def test_checkout_dotenv_wins_over_the_working_directory(tmp_path):
-    """Another project's directory must not supply this project's config.
-
-    Thirteen scripts replaced in #698 called ``load_dotenv(REPO_ROOT/".env")``
-    — cwd-independent by construction. Running one of them from another
-    project's directory on this host must still load *this* checkout's file,
-    not that project's.
-    """
+    """Another project's directory must not supply this project's config."""
     checkout = _make_checkout(tmp_path / "checkout")
     (checkout / ".env").write_text(f"DASHBOARD_HOST_PORT={CHECKOUT_PORT}\n")
     foreign = tmp_path / "other-project"
@@ -270,11 +211,6 @@ def test_hermetic_flag_disables_every_load(tmp_path):
     assert seen["loaded"] is None
     assert seen["KIS_APP_KEY"] is None
     assert seen["dashboard_url"] == "http://localhost:5081"
-
-
-# ---------------------------------------------------------------------------
-# The session layer: this very pytest process is hermetic
-# ---------------------------------------------------------------------------
 
 
 def test_session_carries_no_broker_credentials():
@@ -317,14 +253,7 @@ def test_token_cache_is_pinned_outside_the_checkout_and_home():
 def test_no_token_cache_was_created_or_rewritten_by_this_session(
     token_cache_snapshot,
 ):
-    """No stray ``.kis_token_*`` appeared where the pin cannot reach.
-
-    Compared against a snapshot taken before any test ran, never asserted
-    absent. The primary checkout holds ``.kis_token_real`` (2026-07-08) and
-    ``.kis_token_mock`` (2026-06-09) from ordinary host ``sts`` runs, because
-    the default cache directory is ``Path.cwd()``; an existence check would
-    fail there forever and blame this run for files written months earlier.
-    """
+    """No stray ``.kis_token_*`` appeared where the pin cannot reach."""
     touched = hermetic_env.token_caches_touched_since(token_cache_snapshot)
 
     assert touched == [], (
@@ -376,11 +305,7 @@ def test_config_dir_is_pinned_to_this_checkout(reset_config_loader):
 
 
 def test_hermetic_switch_is_one_name_shared_with_the_runtime_loader():
-    """conftest and the loader must never read different variables.
-
-    They import the same constant, so this pins the literal the docs and the
-    runbook name — a rename stays a deliberate, visible change.
-    """
+    """conftest and the loader must never read different variables."""
     assert dotenv_guard.HERMETIC_ENV == "KIS_TEST_HERMETIC"
     assert hermetic_env.HERMETIC_ENV is dotenv_guard.HERMETIC_ENV
     assert hermetic_env.TRUTHY_VALUES is dotenv_guard.TRUTHY_VALUES
@@ -459,9 +384,6 @@ def test_dotenv_inside_the_sandbox_is_allowed(tmp_path, monkeypatch):
     probe = "KIS_TEST_HERMETICITY_PROBE"
     env_file = tmp_path / ".env"
     env_file.write_text(f"{probe}=inside-sandbox\n")
-    # Registered with monkeypatch so the variable is removed at teardown;
-    # python-dotenv writes straight into os.environ and would otherwise leave
-    # it behind for the rest of the session.
     monkeypatch.setenv(probe, "placeholder")
 
     assert dotenv.load_dotenv(env_file, override=True) is True
@@ -483,12 +405,7 @@ def test_guard_installs_once():
 
 
 def test_guard_installs_without_python_dotenv(monkeypatch):
-    """Installing is a no-op where python-dotenv is absent.
-
-    The ``tos-firewall`` job installs the root project with ``--no-deps``, so
-    conftest runs there with no loader to wrap. Importing dotenv
-    unconditionally turned that job's whole collection into an ImportError.
-    """
+    """Installing is a no-op where python-dotenv is absent."""
     monkeypatch.setitem(sys.modules, "dotenv", None)
     monkeypatch.setitem(sys.modules, "dotenv.main", None)
 
@@ -496,28 +413,14 @@ def test_guard_installs_without_python_dotenv(monkeypatch):
     restore()
 
 
-# ---------------------------------------------------------------------------
-# The hermetic session and the live-infra gate are one switch, not two
-# ---------------------------------------------------------------------------
-
-
 def test_hermeticity_does_not_depend_on_the_live_infra_gate(
     hermetic_session_state,
 ):
-    """Hermeticity is unconditional; the opt-in lifts the Redis gate only.
-
-    The two answer different questions — "may a test talk to real Redis?" and
-    "may this process hold real broker credentials?" — and sharing one switch
-    made the one CI job that always opts in (``performance``) the only job
-    with no scrub, no dotenv guard and no token-cache pin. Nothing in this
-    test tree needs real broker credentials; the probe harness that does
-    lives in ``tools/``.
-    """
+    """Hermeticity is unconditional; the opt-in lifts the Redis gate only."""
     assert hermetic_session_state.hermetic is True
     assert os.environ[hermetic_env.HERMETIC_ENV] == "1"
     assert hermetic_session_state.live_infra_enabled is live_infra_enabled()
 
-    # Whatever the gate says, the credential namespace stays empty.
     leaked = [
         key
         for key in os.environ
@@ -531,37 +434,15 @@ def test_hermeticity_does_not_depend_on_the_live_infra_gate(
 def test_redis_is_not_pinged_unless_the_live_infra_gate_is_open(
     hermetic_session_state,
 ):
-    """No real socket to Redis DB 1 — which the paper runtime shares — unless
-    the operator opted in.
-
-    ``pytest_runtest_setup`` reaches ``redis_failure()`` only for an item
-    marked ``live_infra`` *and* ``live_infra_enabled()``. This is now the only
-    thing the opt-in controls, so it is the only thing worth pinning: with the
-    gate shut, nothing in the process has probed Redis.
-    """
+    """No real socket to Redis DB 1 — which the paper runtime shares — unless"""
     if hermetic_session_state.live_infra_enabled:
         pytest.skip("the operator opened the gate; probing is the point")
 
     assert hermetic_session_state.redis_probed() is False
 
 
-# ---------------------------------------------------------------------------
-# --basetemp: the sandbox is where pytest actually puts tmp_path
-# ---------------------------------------------------------------------------
-
-
 def test_basetemp_outside_the_system_temp_dir_must_be_registered(tmp_path, monkeypatch):
-    """A relocated basetemp is not sandboxed until the session registers it.
-
-    ``pytest --basetemp=./.pytest-tmp`` puts every ``tmp_path`` inside the
-    checkout. Without registration the guard then refuses the suite's own
-    fixture files — the dotenv tests below, and
-    ``test_load_repo_env_uses_repo_dotenv_without_overriding_existing``.
-
-    The system temp dir is faked so the assertion is not vacuous: under the
-    real one, ``tmp_path`` is already sandboxed and this would pass without
-    testing anything.
-    """
+    """A relocated basetemp is not sandboxed until the session registers it."""
     fake_system_tmp = tmp_path / "system-tmp"
     fake_system_tmp.mkdir()
     monkeypatch.setattr(
@@ -606,14 +487,7 @@ def test_this_session_registered_its_basetemp(request):
 
 
 def test_pinned_token_cache_is_under_one_session_wide_root(hermetic_session_state):
-    """Every process's pin lives under a root the controller can scan.
-
-    A per-process ``mkdtemp`` would be invisible to the run's verdict: under
-    ``-n auto`` a worker's ``pytest_sessionfinish`` sets only its own exit
-    status, which xdist does not propagate, so a token written there would be
-    printed and then ignored. Sharing the root is what makes
-    ``new_token_caches_under`` cover the whole run (#698).
-    """
+    """Every process's pin lives under a root the controller can scan."""
     base = hermetic_session_state.token_cache_base
     pinned = hermetic_session_state.token_cache_dir
 
@@ -626,21 +500,8 @@ def test_pinned_token_cache_is_under_one_session_wide_root(hermetic_session_stat
         assert pinned.name == worker
 
 
-# ---------------------------------------------------------------------------
-# The scrub must not take the live-infra gate's own inputs with it
-# ---------------------------------------------------------------------------
-
-
 def test_scrub_keeps_redis_connection_variables():
-    """``REDIS_*`` survives the scrub, which touches only KIS_*/TELEGRAM_*.
-
-    The live-infra tests reach Redis through
-    ``shared.streaming.client.RedisClient``, which reads
-    ``REDIS_HOST``/``REDIS_PORT``/``REDIS_DB``/``REDIS_PASSWORD``. The CI
-    ``performance`` job injects the first three. Scrubbing them would leave
-    the gate open and every gated benchmark unmeasured — which that job
-    reports as an error, not a skip (#845).
-    """
+    """``REDIS_*`` survives the scrub, which touches only KIS_*/TELEGRAM_*."""
     environ = {
         "REDIS_HOST": "redis.example",
         "REDIS_PORT": "6399",
@@ -665,9 +526,6 @@ def test_scrub_keeps_redis_connection_variables():
     }
 
 
-#: A gated module from ``_LIVE_INFRA_TEST_PATHS``. Pointed at a closed port on
-#: purpose: both gate states are observable without ever reaching a real
-#: Redis, and this host's DB 1 is shared with the paper runtime.
 _GATED_MODULE = "tests/integration/test_redis_tls.py"
 
 
@@ -715,9 +573,6 @@ def test_live_infra_item_skips_without_the_flag():
     collected = _run_gated_module(
         flag=None, args=("--collect-only", "-m", "live_infra")
     )
-    # The live_infra marker is applied by tests/conftest.py, so selecting on
-    # it pins that the item is gated by *us* — the skip below is not merely
-    # the module's own "Redis not available" guard.
     selected = re.search(rf"{re.escape(_GATED_MODULE)}: (\d+)", collected)
     assert selected is not None, collected
     assert int(selected.group(1)) > 0
@@ -729,14 +584,7 @@ def test_live_infra_item_skips_without_the_flag():
 
 
 def test_live_infra_item_runs_when_the_flag_is_set():
-    """With the flag set the item RUNS — the hermetic session must not close
-    the gate as a side effect.
-
-    "It ran" shows up as #845's reachability failure, because the port is
-    closed. A skip here would be the regression: the CI ``performance`` job
-    would leave six baseline entries unmeasured, which it reports as an error
-    rather than silence.
-    """
+    """With the flag set the item RUNS — the hermetic session must not close"""
     output = _run_gated_module(flag="1")
 
     assert f"{hermetic_env.LIVE_INFRA_ENV} is set" in output

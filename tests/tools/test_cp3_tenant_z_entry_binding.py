@@ -1,29 +1,4 @@
-"""The tenant trees' entry threshold: ``fields.yaml`` const <-> ``z_entry_*`` binding.
-
-#1076 deleted ``tos/runtime/cp3/tests/test_cp3_strategy_content.py`` and with it
-``test_cited_extreme_atr_mult_still_matches_the_legacy_setup_d_yaml``, which left
-the shipped trees' +-1800 unpinned (#1080). This restores that cover, and moves
-its SOURCE: P2-c made ``fields.yaml`` the producer's declaration (#1067/#1068),
-so the derivation is pinned against the const the evaluator actually reads
-rather than against the legacy YAML alone.
-
-What could drift without this, concretely: edit ``z_long_side``'s const in a
-tree's ``fields.yaml`` from -1.8 to -1.5 and the producer starts calling bars
-extreme at a looser stretch, while ``z_entry_max_x1000: -1800`` keeps the DSL
-entry rule at the old one. Nothing else compares the two numbers, so both files
-stay internally consistent and the tenant silently evaluates two thresholds.
-
-Read-only over ``config/tos_runtime/``: this module opens the shipped trees and
-asserts, it never renders or writes them.
-
-Related cover, deliberately not duplicated here:
-  * ``tests/tools/test_cp3_fields_equivalence.py::...::test_extreme_threshold_both_signs``
-    ties each tree's fields.yaml const to the legacy strategy YAML.
-  * ``tos/runtime/tests/compose/test_tenant_tree_short.py::test_short_z_entry_
-    binding_is_plus_trunc_extreme_atr_mult_times_1000`` ties the LONG/SHORT
-    bindings to that same legacy YAML. Neither reaches the stock tree's binding,
-    and neither compares fields.yaml to a binding.
-"""
+"""The tenant trees' entry threshold: ``fields.yaml`` const <-> ``z_entry_*`` binding."""
 
 from __future__ import annotations
 
@@ -42,24 +17,14 @@ LEGACY_STRATEGY_YAML = (
     REPO_ROOT / "config" / "strategies" / "futures" / "setup_d_vwap_reversion.yaml"
 )
 
-#: The shipped trees, and for each: the strategy stem, the binding key its DSL
-#: entry rule reads, and the sign that key carries.
-#:
-#: The DSL has no ``abs()`` (DSL-G1), so each direction compares the one side it
-#: needs: LONG takes ``z_x1000 <= -1800``, SHORT takes ``z_x1000 >= +1800``.
-#: The stock tree is a LONG tree.
 TREES: tuple[tuple[str, str, str, int], ...] = (
     ("cp3-setup-d-long", "setup_d_long.strategy", "z_entry_max_x1000", -1),
     ("cp3-setup-d-short", "setup_d_short.strategy", "z_entry_min_x1000", +1),
     ("cp3-setup-d-stock-005930", "setup_d_long.strategy", "z_entry_max_x1000", -1),
-    # One stock tenant per symbol (operator directive 2026-11-19). Their decision contract
-    # is byte-identical to 005930's, so they carry the same stem, key and sign.
     ("cp3-setup-d-stock-000660", "setup_d_long.strategy", "z_entry_max_x1000", -1),
     ("cp3-setup-d-stock-005380", "setup_d_long.strategy", "z_entry_max_x1000", -1),
 )
 
-#: The value under test, written out. ``extreme_atr_mult: 1.8`` x 1000, truncated
-#: toward zero, which is the quantization the ``z_x1000`` lineage declares.
 EXPECTED_EXTREME_ATR_MULT = 1.8
 EXPECTED_ABS_BINDING = 1800
 
@@ -108,13 +73,7 @@ def test_tenant_binds_z_entry_to_the_signed_threshold(
 def test_binding_is_trunc_of_its_own_tree_fields_const_times_1000(
     tree: str, stem: str, key: str, sign: int
 ) -> None:
-    """The derivation, read from THIS tree's fields.yaml -- not a test-local literal.
-
-    ``z_x1000`` is published as thousandths with ``quantization:
-    truncate_toward_zero``, so the binding is ``trunc(const x 1000)`` and carries
-    the side's sign. Reading the const from the tree under test is the point: a
-    literal here would stay green while the two files drifted apart.
-    """
+    """The derivation, read from THIS tree's fields.yaml -- not a test-local literal."""
     consts = _field_consts(tree)
     side_const = consts["z_short_side"] if sign > 0 else consts["z_long_side"]
 
@@ -130,13 +89,7 @@ def test_the_two_directions_are_exact_mirrors() -> None:
 
 
 def test_the_cited_extreme_atr_mult_still_matches_the_legacy_setup_d_yaml() -> None:
-    """The citation every tree's ``strategy_bindings.yaml`` derivation rests on.
-
-    Restored from the test #1076 deleted. The legacy Setup D YAML is frozen until
-    ``TOS_PAPER_READY``; while it is, a change to it must not leave the trees'
-    written-out derivation ("extreme_atr_mult: 1.8 -> -trunc(1800) = -1800") a
-    false statement.
-    """
+    """The citation every tree's ``strategy_bindings.yaml`` derivation rests on."""
     legacy = yaml.safe_load(LEGACY_STRATEGY_YAML.read_text(encoding="utf-8"))
     extreme = legacy["strategy"]["entry"]["params"]["extreme_atr_mult"]
 
@@ -168,12 +121,7 @@ def test_the_strategy_rule_actually_reads_the_bound_key(
 
 @pytest.mark.parametrize("tree", _tree_ids())
 def test_fields_yaml_compares_each_side_with_the_matching_operator(tree: str) -> None:
-    """The threshold is only half the declaration -- the operator is the other half.
-
-    ``const: -1.8`` under ``ge`` instead of ``le`` selects the opposite tail and
-    still reads as a correct-looking number, so pinning the value without the
-    operator leaves the cheaper half of the mistake uncovered.
-    """
+    """The threshold is only half the declaration -- the operator is the other half."""
     document = load_fields_file(CONFIG_ROOT / tree / "fields.yaml")
     by_name = {spec.name: spec for spec in document.fields}
 
@@ -182,13 +130,7 @@ def test_fields_yaml_compares_each_side_with_the_matching_operator(tree: str) ->
 
 
 def test_every_shipped_tenant_tree_is_covered_by_this_module() -> None:
-    """A tree added later must not be silently skipped by this module's TREES.
-
-    Every assertion here is parametrized over TREES, so a fourth tenant would be
-    covered by nothing while the suite stayed green. Discovery is by the files
-    themselves rather than by a second hand-written list: searched recursively,
-    so a tree nested one level deeper is found too.
-    """
+    """A tree added later must not be silently skipped by this module's TREES."""
     discovered_bindings = {
         path.parent.relative_to(CONFIG_ROOT).as_posix()
         for path in CONFIG_ROOT.rglob("strategy_bindings.yaml")

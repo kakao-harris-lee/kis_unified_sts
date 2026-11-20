@@ -15,7 +15,7 @@ class TestToFloat:
         [
             ("1.5", 1.5),
             (2, 2.0),
-            (0, 0.0),  # real zero survives (not None)
+            (0, 0.0),
             (-3.25, -3.25),
             ("0.0000", 0.0),
         ],
@@ -73,19 +73,12 @@ class TestToBool:
         assert to_bool(value) is None
 
     def test_bool_passthrough_not_stringified(self):
-        # Real bools bypass token matching.
         assert to_bool(True) is True
         assert to_bool(False) is False
 
 
 def test_no_execution_import():
-    """coercion must stay stdlib-only so the hedge lane can import it.
-
-    Checked in a CLEAN subprocess: an in-process ``sys.modules`` scan is polluted
-    by any sibling test in the same xdist worker that already imported
-    ``shared.execution``, which made this assertion flaky (order-dependent).
-    A fresh interpreter that imports only ``shared.utils.coercion`` is hermetic.
-    """
+    """coercion must stay stdlib-only so the hedge lane can import it."""
     import subprocess
     import sys
 
@@ -101,5 +94,4 @@ def test_no_execution_import():
     assert (
         result.returncode == 0
     ), f"coercion pulled in shared.execution:\n{result.stderr}"
-    # sanity: module uses math for isfinite
     assert math.isfinite(1.0)

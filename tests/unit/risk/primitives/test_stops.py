@@ -1,19 +1,4 @@
-"""Unit + golden tests for ``shared.risk.primitives.stops``.
-
-Test contract (post P4-b): every stop primitive is pinned to **independent
-golden values** — the expected result is restated from the documented formula
-or written as a literal, never read back from an exit class.
-
-    Why not differential vs the legacy call sites? P4-b rewired
-    ``momentum_decay._stop_hit`` / ``three_stage._stop_hit`` /
-    ``setup_target._price_crossed(trigger="stop")`` → :func:`abs_stop_hit`,
-    ``track_a_exit.trail_stop_price`` → :func:`atr_stop_level`, and
-    ``three_stage._calculate_trailing_stop`` → :func:`pct_trailing_stop_level`
-    (gap selection stays at the call site). Comparing a primitive against a
-    method that now *delegates* to it is a tautology (``f(x) == f(x)``) with no
-    independent cross-check, so the grids below compare against the hand-derived
-    formula instead — same input width, real regression protection.
-"""
+"""Unit + golden tests for ``shared.risk.primitives.stops``."""
 
 from __future__ import annotations
 
@@ -72,14 +57,7 @@ class TestAbsStopHitUnit:
 
 
 class TestAbsStopHitGolden:
-    """abs_stop_hit pinned to the direction-aware inclusive-cross formula.
-
-    Golden: LONG fires when ``current <= stop``; SHORT fires when
-    ``current >= stop``. This single golden subsumes the former differential
-    tests against ``momentum_decay._stop_hit`` / ``three_stage._stop_hit`` /
-    ``setup_target._price_crossed(trigger="stop")`` — all of which delegate to
-    ``abs_stop_hit`` after P4-b, so those comparisons were tautological.
-    """
+    """abs_stop_hit pinned to the direction-aware inclusive-cross formula."""
 
     @pytest.mark.parametrize("side", SIDES)
     @pytest.mark.parametrize("current", PRICES)
@@ -114,15 +92,7 @@ class TestPctStopHit:
     def test_grid_golden(
         self, side: PositionSide, factor: float, threshold: float
     ) -> None:
-        """Fires iff the side-aware profit ratio <= threshold.
-
-        Golden profit is restated from the spec (``(current - entry) / entry``
-        for LONG, mirror for SHORT) using the same ``current`` the primitive
-        sees, so the boolean is float-stable at the -0.02/-0.03 boundaries and
-        independent of the primitive's own arithmetic (the old
-        ``_calc_profit_pct(...) <= threshold`` derivation delegated to
-        ``profit_pct`` after P4-b and was tautological).
-        """
+        """Fires iff the side-aware profit ratio <= threshold."""
         entry = 100.0
         pos = make_position(side, entry)
         current = entry * factor
@@ -158,12 +128,7 @@ class TestAtrStopLevel:
     def test_grid_golden(
         self, side: PositionSide, extreme: float, atr: float, mult: float
     ) -> None:
-        """LONG: ``extreme - mult*atr`` ; SHORT: ``extreme + mult*atr``.
-
-        Independent formula (formerly compared against
-        ``track_a_exit.trail_stop_price``, which delegates to this primitive
-        after P4-b — a tautology).
-        """
+        """LONG: ``extreme - mult*atr`` ; SHORT: ``extreme + mult*atr``."""
         offset = mult * atr
         expected = extreme - offset if side == PositionSide.LONG else extreme + offset
         assert atr_stop_level(extreme, atr, mult, side) == expected
@@ -174,16 +139,11 @@ class TestAtrStopLevel:
     def test_chandelier_level_golden(
         self, highest_high: float, atr: float, mult: float
     ) -> None:
-        """chandelier_stop = highest_high - atr * multiplier (LONG-shaped).
-
-        The reference level is computed inline (independent), and the strict
-        ``close < chandelier_stop`` cross semantics are pinned directly.
-        """
+        """chandelier_stop = highest_high - atr * multiplier (LONG-shaped)."""
         chandelier_stop = highest_high - atr * mult
         assert atr_stop_level(highest_high, atr, mult, PositionSide.LONG) == (
             chandelier_stop
         )
-        # Strict cross semantics: close < chandelier_stop.
         for close in (chandelier_stop - 0.01, chandelier_stop, chandelier_stop + 0.01):
             assert abs_stop_hit(
                 PositionSide.LONG, close, chandelier_stop, inclusive=False
@@ -214,12 +174,7 @@ class TestPctTrailingStopLevel:
     @pytest.mark.parametrize("gap", [-0.05, -0.03, -0.015])
     @pytest.mark.parametrize("side", SIDES)
     def test_grid_golden(self, extreme: float, gap: float, side: PositionSide) -> None:
-        """LONG: ``extreme*(1-|gap|)`` ; SHORT: ``extreme*(1+|gap|)``.
-
-        Independent formula (formerly compared against
-        ``three_stage._calculate_trailing_stop`` with the overshoot branch off,
-        which delegates the level math to this primitive after P4-b).
-        """
+        """LONG: ``extreme*(1-|gap|)`` ; SHORT: ``extreme*(1+|gap|)``."""
         g = abs(gap)
         if side == PositionSide.LONG:
             expected = extreme * (1 - g)
@@ -230,20 +185,14 @@ class TestPctTrailingStopLevel:
     @pytest.mark.parametrize(
         ("side", "extreme", "expected"),
         [
-            (PositionSide.LONG, 110.0, 108.35),  # 110 * (1 - 0.015)
-            (PositionSide.SHORT, 90.0, 91.35),  # 90 * (1 + 0.015)
+            (PositionSide.LONG, 110.0, 108.35),
+            (PositionSide.SHORT, 90.0, 91.35),
         ],
     )
     def test_overshoot_gap_level_golden(
         self, side: PositionSide, extreme: float, expected: float
     ) -> None:
-        """Primitive level for the tightened overshoot gap (0.015).
-
-        WHICH gap ``three_stage`` selects under overshoot (``trailing_stop_pct``
-        vs ``overshoot_trailing_pct``) is exit-generator logic covered by
-        ``three_stage``'s own tests; here we only pin the primitive level math
-        for the tightened gap value with an independent golden.
-        """
+        """Primitive level for the tightened overshoot gap (0.015)."""
         assert pct_trailing_stop_level(extreme, -0.015, side) == pytest.approx(expected)
 
 
@@ -260,7 +209,6 @@ class TestTrailingStopHit:
         )
 
     def test_atr_form_short(self) -> None:
-        # SHORT extreme 90, trail level 90 + 2*1.5 = 93.
         assert (
             trailing_stop_hit(
                 PositionSide.SHORT, 93.0, 90.0, atr=1.5, atr_multiplier=2.0

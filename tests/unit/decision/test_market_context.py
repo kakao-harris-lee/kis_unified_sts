@@ -1,4 +1,3 @@
-# tests/unit/decision/test_market_context.py
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -23,17 +22,11 @@ def _ctx(**overrides):
         "current_spread_ticks": 1.0,
         "macro_overnight": None,
         "scheduled_events": [],
-        # Explicit 08:45 futures open (matches the config default).
         "market_open_hour": 8,
         "market_open_minute": 45,
     }
     base.update(overrides)
     return MarketContext(**base)
-
-
-# ---------------------------------------------------------------------------
-# Core: 08:45 configured open (futures day session)
-# ---------------------------------------------------------------------------
 
 
 def test_market_open_time_returns_kst_0845():
@@ -66,11 +59,6 @@ def test_minutes_since_open_at_1500_is_375():
     assert abs(ctx.minutes_since_open() - 375.0) < 0.01
 
 
-# ---------------------------------------------------------------------------
-# Regression: explicit 09:00 open still works (stock/legacy callers)
-# ---------------------------------------------------------------------------
-
-
 def test_market_open_time_explicit_0900():
     """Explicit 09:00 open fields produce 09:00 KST open."""
     ctx = _ctx(market_open_hour=9, market_open_minute=0)
@@ -85,11 +73,6 @@ def test_minutes_since_open_explicit_0900():
         market_open_minute=0,
     )
     assert abs(ctx.minutes_since_open() - 75.0) < 0.01
-
-
-# ---------------------------------------------------------------------------
-# find_recent_event (unchanged behaviour)
-# ---------------------------------------------------------------------------
 
 
 def test_find_recent_event_within_window():

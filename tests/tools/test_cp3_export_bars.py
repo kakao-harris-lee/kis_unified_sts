@@ -1,27 +1,4 @@
-"""``tools/tos_cp3/export_bars.py`` — the host side of the ``/tos`` bar panel.
-
-Roadmap ``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1, second item. What
-this suite has to hold, because the failure modes are operational rather than
-arithmetic:
-
-* the document lands where the container actually looks
-  (``<TOS_OPERATOR_PROJECTION_DIR>/bars/<session>.json``), and nowhere else;
-* an unset destination **refuses** — a document written somewhere unmounted is
-  indistinguishable, from the page, from no document at all;
-* the write is atomic and leaves no temp file behind, so the reader never sees
-  a half-written document (the invariant ``tos_projection.py``'s reader already
-  depends on);
-* the modes are ``0700``/``0600``, the same owner and mode class as the
-  ``operator_projection.json`` the container already reads through this mount;
-* ``schema_version`` is stamped, so the route can refuse an older document
-  instead of parsing it optimistically;
-* the module imports no ``tos``/``tos_runtime`` — it drives the inspection
-  through the same process boundary every other CP-3 legacy-side tool uses.
-
-The inspection itself is injected, so this suite starts no subprocess and does
-not need a recorded session: what the inspection *computes* is pinned on the
-other side of the firewall, in ``tos/runtime/cp3/tests/``.
-"""
+"""``tools/tos_cp3/export_bars.py`` — the host side of the ``/tos`` bar panel."""
 
 from __future__ import annotations
 
@@ -60,13 +37,7 @@ def _runner_emitting(
 
 
 def _stub_child(monkeypatch: pytest.MonkeyPatch, document: object) -> None:
-    """Make the CLI path run without a process, by replacing ``run`` itself.
-
-    ``main`` takes no ``runner`` (the shell and the operator call it), so the
-    seam for the CLI tests is one level up: ``inspect_session.run`` is replaced
-    with a call that forwards the injected runner. That keeps the real argument
-    plumbing — resolution, destination, exit codes — under test.
-    """
+    """Make the CLI path run without a process, by replacing ``run`` itself."""
     real_run = ins.run
 
     def run(**kwargs: Any) -> ins.InspectRun:
@@ -109,7 +80,7 @@ def _export(
     stderr: str = "",
 ) -> Path:
     """Export with the inspection stubbed, returning the written path."""
-    del monkeypatch  # the runner is injected, not patched
+    del monkeypatch
     return eb.export_bars(
         SESSION,
         out_dir=tmp_path / "projection" if out_dir is None else out_dir,
@@ -120,11 +91,6 @@ def _export(
             stderr=stderr,
         ),
     )
-
-
-# ===========================================================================
-# Where it lands, and with what permissions
-# ===========================================================================
 
 
 def test_the_document_lands_where_the_container_looks(
@@ -140,11 +106,7 @@ def test_the_document_lands_where_the_container_looks(
 def test_the_filename_comes_from_the_document_not_the_argument(
     tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The route asks by the session's own name, so that is what names the file.
-
-    A caller may pass a PATH to a session directory; the document's ``session``
-    is the name the page will ask for.
-    """
+    """The route asks by the session's own name, so that is what names the file."""
     path = _export(
         tmp_path,
         session_tree,
@@ -157,13 +119,7 @@ def test_the_filename_comes_from_the_document_not_the_argument(
 def test_the_modes_match_the_projection_file_the_container_already_reads(
     tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``0700`` directory, ``0600`` document — no new exposure on this mount.
-
-    Readable by the container only because its ``appuser`` is uid 1000, the same
-    numeric uid as ``deploy``, and a bind mount preserves numeric uids. That is
-    measured, not assumed: the existing ``0600 operator_projection.json`` is
-    read through this very mount today.
-    """
+    """``0700`` directory, ``0600`` document — no new exposure on this mount."""
     path = _export(tmp_path, session_tree, monkeypatch)
     assert stat.S_IMODE(path.stat().st_mode) == eb.DOCUMENT_MODE == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == eb.DIR_MODE == 0o700
@@ -192,11 +148,6 @@ def test_a_tilde_or_var_in_the_destination_is_expanded(
     """``.env.paper`` writes an absolute path, but a ``~`` must not become a directory."""
     monkeypatch.setenv(eb.PROJECTION_DIR_ENV, "~/x")
     assert eb.default_out_dir() == Path.home() / "x"
-
-
-# ===========================================================================
-# Atomicity and the stamped version
-# ===========================================================================
 
 
 def test_the_write_is_atomic_and_leaves_no_temp_file(
@@ -232,7 +183,6 @@ def test_the_schema_version_is_stamped_on_the_document(
     path = _export(tmp_path, session_tree, monkeypatch)
     written = json.loads(path.read_text(encoding="utf-8"))
     assert written["schema_version"] == eb.BARS_SCHEMA_VERSION == 1
-    # Everything else is the inspection's own document, verbatim.
     assert written["summary"] == _DOCUMENT["summary"]
     assert written["bars"] == _DOCUMENT["bars"]
 
@@ -243,11 +193,6 @@ def test_the_document_is_newline_terminated_utf8(
     """A text artifact an operator may `tail`, not a stream of bytes."""
     path = _export(tmp_path, session_tree, monkeypatch)
     assert path.read_text(encoding="utf-8").endswith("}\n")
-
-
-# ===========================================================================
-# Refusals
-# ===========================================================================
 
 
 def test_a_refusing_inspection_refuses_the_export_and_carries_its_message(
@@ -300,11 +245,6 @@ def test_an_unwritable_destination_refuses_by_name(
         destination.chmod(0o700)
 
 
-# ===========================================================================
-# The CLI and the firewall
-# ===========================================================================
-
-
 def test_the_cli_reports_the_path_and_exits_zero(
     tmp_path: Path,
     session_tree: Path,
@@ -355,14 +295,7 @@ def test_the_exporter_imports_nothing_from_tos() -> None:
 
 
 def test_the_exported_name_is_one_the_route_will_accept() -> None:
-    """The two sides agree on the filename, or the page asks for a file that exists
-    under a name the route refuses.
-
-    Read as a literal from the route's own source rather than imported: this
-    suite runs in the legacy venv, where ``services.dashboard`` is importable,
-    but the pattern is the contract and a drift in either direction should fail
-    here.
-    """
+    """The two sides agree on the filename, or the page asks for a file that exists"""
     from services.dashboard.routes import tos_bars
 
     for name in (SESSION, "long-20261015", "short-20261110", "stock-r1-20261111"):
@@ -371,19 +304,10 @@ def test_the_exported_name_is_one_the_route_will_accept() -> None:
     assert os.sep not in SESSION
 
 
-# ===========================================================================
-# Review LOWs of #1059
-# ===========================================================================
-
-
 def test_both_directories_end_up_narrow_not_just_the_leaf(
     tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``mkdir(mode=…)`` narrows only the leaf it creates; the parent got the default.
-
-    On a first run both the projection directory and ``bars/`` are created in
-    one call, so the projection directory used to keep whatever the umask left.
-    """
+    """``mkdir(mode=…)`` narrows only the leaf it creates; the parent got the default."""
     path = _export(tmp_path, session_tree, monkeypatch)
     assert stat.S_IMODE(path.parent.stat().st_mode) == eb.DIR_MODE
     assert stat.S_IMODE(path.parent.parent.stat().st_mode) == eb.DIR_MODE
@@ -396,11 +320,7 @@ def test_a_wider_existing_directory_is_repaired(
     monkeypatch: pytest.MonkeyPatch,
     existing: int,
 ) -> None:
-    """A ``bars/`` left world-readable by a restore or a hand-made mkdir is narrowed.
-
-    ``mkdir(exist_ok=True)`` does nothing to an existing directory's mode, so
-    before this the wider mode simply survived and nothing said so.
-    """
+    """A ``bars/`` left world-readable by a restore or a hand-made mkdir is narrowed."""
     projection = tmp_path / "projection"
     (projection / eb.BARS_SUBDIR).mkdir(parents=True)
     (projection / eb.BARS_SUBDIR).chmod(existing)
@@ -413,13 +333,7 @@ def test_a_wider_existing_directory_is_repaired(
 def test_a_narrower_existing_directory_is_left_alone(
     tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The repair only ever NARROWS — it must not grant itself write access.
-
-    A mode-tightening fix that chmod-ed a deliberately read-only destination up
-    to ``0700`` would be doing the opposite of its job. Caught by the
-    pre-existing unwritable-destination test, pinned here on purpose: the write
-    must still fail with the named refusal rather than succeed.
-    """
+    """The repair only ever NARROWS — it must not grant itself write access."""
     destination = tmp_path / "readonly"
     destination.mkdir(mode=0o500)
     try:
@@ -463,12 +377,7 @@ def test_a_session_name_outside_the_route_pattern_refuses_before_writing(
     monkeypatch: pytest.MonkeyPatch,
     name: str,
 ) -> None:
-    """The name is this document's FILENAME and the route's path segment.
-
-    A name outside the pattern would either land somewhere this module did not
-    choose or produce a file the route refuses to serve — a document that exists
-    and can never be read. Both are refused up front, and nothing is written.
-    """
+    """The name is this document's FILENAME and the route's path segment."""
     with pytest.raises(eb.ExportRefusal, match="which is outside"):
         _export(
             tmp_path, session_tree, monkeypatch, document={**_DOCUMENT, "session": name}

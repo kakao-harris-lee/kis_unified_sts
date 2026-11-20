@@ -26,7 +26,7 @@ class FakeOrchestrator:
             return
         exc = task.exception()
         if exc:
-            pass  # would log in real code
+            pass
 
 
 @pytest.fixture
@@ -80,6 +80,5 @@ class TestScheduleNotify:
         orch._schedule_notify("slow msg")
         assert len(orch._pending_notify_tasks) == 1
 
-        # Await all pending (like _cleanup_resources does)
         await asyncio.gather(*orch._pending_notify_tasks, return_exceptions=True)
         assert orch._notify.call_count == 1

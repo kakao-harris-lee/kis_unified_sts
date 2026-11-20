@@ -45,7 +45,7 @@ class TestCircuitBreakerBasic:
         config = CircuitBreakerConfig(failure_threshold=10)
         breaker = CircuitBreaker(
             name="test",
-            failure_threshold=3,  # Should be overridden
+            failure_threshold=3,
             config=config,
         )
         assert breaker.failure_threshold == 10
@@ -74,12 +74,11 @@ class TestCircuitBreakerStateTransitions:
         """Test transition from CLOSED to OPEN when failures reach threshold."""
         breaker = CircuitBreaker(name="test", failure_threshold=3)
 
-        # Record failures up to threshold
         breaker.record_failure()
         assert breaker.state == CircuitState.CLOSED
         breaker.record_failure()
         assert breaker.state == CircuitState.CLOSED
-        breaker.record_failure()  # 3rd failure - should open
+        breaker.record_failure()
 
         assert breaker.state == CircuitState.OPEN
         assert breaker.is_available() is False
@@ -93,28 +92,25 @@ class TestCircuitBreakerStateTransitions:
         breaker.record_failure()
         assert breaker.state == CircuitState.CLOSED
 
-        breaker.record_success()  # Should reset failure count
+        breaker.record_success()
 
-        # Now we need 3 more failures to open
         breaker.record_failure()
         breaker.record_failure()
-        assert breaker.state == CircuitState.CLOSED  # Still closed
+        assert breaker.state == CircuitState.CLOSED
 
     def test_open_to_half_open_after_timeout(self):
         """Test transition from OPEN to HALF_OPEN after reset timeout."""
         breaker = CircuitBreaker(
             name="test",
             failure_threshold=1,
-            reset_timeout=0.1,  # 100ms for fast tests
+            reset_timeout=0.1,
         )
 
         breaker.record_failure()
         assert breaker.state == CircuitState.OPEN
 
-        # Wait for reset timeout
         time.sleep(0.15)
 
-        # State should now be HALF_OPEN
         assert breaker.state == CircuitState.HALF_OPEN
         assert breaker.is_available() is True
 
@@ -127,18 +123,15 @@ class TestCircuitBreakerStateTransitions:
             half_open_max_calls=2,
         )
 
-        # Open the circuit
         breaker.record_failure()
         assert breaker.state == CircuitState.OPEN
 
-        # Wait for reset
         time.sleep(0.1)
         assert breaker.state == CircuitState.HALF_OPEN
 
-        # Record successes
         breaker.record_success()
         assert breaker.state == CircuitState.HALF_OPEN
-        breaker.record_success()  # 2nd success - should close
+        breaker.record_success()
 
         assert breaker.state == CircuitState.CLOSED
 
@@ -150,15 +143,12 @@ class TestCircuitBreakerStateTransitions:
             reset_timeout=0.05,
         )
 
-        # Open the circuit
         breaker.record_failure()
         assert breaker.state == CircuitState.OPEN
 
-        # Wait for reset
         time.sleep(0.1)
         assert breaker.state == CircuitState.HALF_OPEN
 
-        # Failure should reopen
         breaker.record_failure()
         assert breaker.state == CircuitState.OPEN
 
@@ -175,20 +165,17 @@ class TestHalfOpenCapacity:
             half_open_max_calls=2,
         )
 
-        # Open the circuit
         breaker.record_failure()
-        time.sleep(0.1)  # Wait for HALF_OPEN
+        time.sleep(0.1)
 
         assert breaker.state == CircuitState.HALF_OPEN
 
-        # First two calls should be allowed
         assert breaker.is_available() is True
-        breaker.record_success()  # Increments half_open_calls to 1
+        breaker.record_success()
 
         assert breaker.is_available() is True
-        breaker.record_success()  # Increments to 2, closes circuit
+        breaker.record_success()
 
-        # Circuit should now be CLOSED
         assert breaker.state == CircuitState.CLOSED
 
 
@@ -216,7 +203,6 @@ class TestCircuitBreakerReset:
 
         breaker.reset()
 
-        # Now we need 3 failures to open again
         breaker.record_failure()
         breaker.record_failure()
         assert breaker.state == CircuitState.CLOSED
@@ -241,7 +227,7 @@ class TestGetResetTime:
         breaker.record_failure()
 
         reset_time = breaker.get_reset_time()
-        assert 9.0 < reset_time <= 10.0  # Allow some tolerance
+        assert 9.0 < reset_time <= 10.0
 
     def test_reset_time_decreases(self):
         """Test that reset time decreases over time."""
@@ -320,7 +306,7 @@ class TestCompatibilityAliases:
         breaker.record_failure()
         breaker.record_failure()
         breaker.record_failure()
-        breaker.record_failure()  # Opens circuit
+        breaker.record_failure()
 
         assert breaker.can_execute() == breaker.is_available()
         assert breaker.can_execute() is False
@@ -360,7 +346,6 @@ class TestThreadSafety:
         for t in threads:
             t.join()
 
-        # Should have exactly 100 failures recorded
         status = breaker.get_status()
         assert status["failure_count"] == 100
 
@@ -388,7 +373,6 @@ class TestThreadSafety:
 
         assert breaker._lock is None
 
-        # Should still work in single-threaded context
         breaker.record_failure()
         breaker.record_success()
         _ = breaker.state
@@ -449,13 +433,13 @@ class TestEdgeCases:
         breaker = CircuitBreaker(
             name="test",
             failure_threshold=1,
-            reset_timeout=100,  # Long timeout
+            reset_timeout=100,
         )
 
         breaker.record_failure()
         assert breaker.state == CircuitState.OPEN
 
-        breaker.record_success()  # Should have no effect
+        breaker.record_success()
         assert breaker.state == CircuitState.OPEN
 
 
@@ -473,9 +457,9 @@ class TestLogging:
                 reset_timeout=0.01,
             )
 
-            breaker.record_failure()  # Should log OPEN
+            breaker.record_failure()
             time.sleep(0.02)
-            _ = breaker.state  # Should log HALF_OPEN
+            _ = breaker.state
 
         assert "OPENED" in caplog.text
         assert "test-logger" in caplog.text

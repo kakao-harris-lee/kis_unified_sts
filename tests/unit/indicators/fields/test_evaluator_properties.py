@@ -1,8 +1,4 @@
-"""Evaluator properties: no look-ahead, determinism, no silent coercion.
-
-Roadmap §6 names these as what a catalog change must be pinned by: a reference
-golden (``test_catalog_ops.py``), a look-ahead test, and same-input/same-output.
-"""
+"""Evaluator properties: no look-ahead, determinism, no silent coercion."""
 
 from __future__ import annotations
 
@@ -26,8 +22,6 @@ from shared.indicators.fields import (
 
 from .conftest import bar, document, parsed
 
-#: A declaration that exercises every op category at once, so one look-ahead or
-#: determinism failure anywhere shows up here.
 _FIELDS: list[dict[str, Any]] = [
     {"name": "open", "op": "bar.open"},
     {"name": "high", "op": "bar.high"},
@@ -95,8 +89,6 @@ _FIELDS: list[dict[str, Any]] = [
     {"name": "eod", "op": "time_ge", "params": {"at": "15:40"}},
     {"name": "not_eod", "op": "not", "inputs": ["eod"]},
     {"name": "armed", "op": "any", "inputs": ["hi_vol", "turned"]},
-    # The momentum indicators carry their own warmup, so a tenant reaches them
-    # the way it reaches a `gated_*` field: compare, then `permissive`.
     {"name": "rsi", "op": "rsi", "params": {"period": 5}},
     {"name": "wr", "op": "williams_r", "params": {"period": 5}},
     {"name": "rsi_low_raw", "op": "lt", "inputs": ["rsi"], "params": {"const": 30.0}},
@@ -140,16 +132,10 @@ def _spec(
     inputs: tuple[str, ...] = (),
     params: dict[str, Any] | None = None,
 ) -> FieldSpec:
-    """Build a :class:`FieldSpec` without going through the loader.
-
-    Only for the runtime-guard tests below: the loader refuses the declarations
-    they need, and a guard that is unreachable through the loader still has to
-    be proved to work.
-    """
+    """Build a :class:`FieldSpec` without going through the loader."""
     return FieldSpec(name=name, inputs=inputs, params=params or {}, op=op_spec(op))
 
 
-#: ``raw`` is ``None`` on the first bar — the lag has no earlier sample yet.
 _MISSING_CHAIN: tuple[FieldSpec, ...] = (
     _spec("close", "bar.close"),
     _spec("t", "gt", ("close",), {"const": 0.0}),
@@ -255,19 +241,15 @@ class TestPublication:
                 "scale": {"mult": 1000, "round": "toward_zero"},
             },
         ]
-        # close = 559.455 -> half_up 55946; z = (8 - 12) / 559.455 is negative
-        # and truncates TOWARD zero, not down.
         bars = [bar(0, high=12.0, low=8.0, close=559.455)]
         record = evaluate_bars(parsed(fields, publish), bars)[0]
         assert record.published["close_x100"] == 55946
-        assert record.published["z_x1000"] == -7  # -4/559.455 = -0.007149...
+        assert record.published["z_x1000"] == -7
 
 
 class TestRefusalsAtRuntime:
     def test_ratio_z_by_zero_names_the_bar_and_the_divisor(self) -> None:
-        """The legacy contract: ``vwap_extension_z`` raises at ``atr == 0``
-        rather than returning a fabricated extreme. Which bars a producer then
-        OMITS stays the producer's decision (``_inputs_unusable``)."""
+        """The legacy contract: ``vwap_extension_z`` raises at ``atr == 0``"""
         fields = [
             {"name": "close", "op": "bar.close"},
             {"name": "high", "op": "bar.high"},
@@ -294,13 +276,7 @@ class TestRefusalsAtRuntime:
             )
 
     def test_a_missing_value_reaching_all_is_refused_on_the_bar(self) -> None:
-        """The runtime BACKSTOP behind the loader's "may be missing" refusal.
-
-        The loader now refuses this declaration, so it cannot arrive through
-        ``fields.yaml``; the guard is kept and exercised on a hand-built
-        document because "a missing value is not False" has to hold wherever a
-        ``FieldsDocument`` comes from.
-        """
+        """The runtime BACKSTOP behind the loader's "may be missing" refusal."""
         forced = FieldsDocument(
             fields=(*_MISSING_CHAIN, _spec("bad", "all", ("t", "raw"))),
             publish=(PublishSpec(field="bad", name="bad", scale=None),),
@@ -327,9 +303,7 @@ class TestRefusalsAtRuntime:
             evaluate_bars(forced, [bar(0)])
 
     def test_a_missing_published_value_is_refused(self) -> None:
-        """Unreachable through the loader (it refuses a non-definite publish),
-        so the guard is exercised on a hand-built document — the evaluator must
-        never emit a journal line with a hole in it."""
+        """Unreachable through the loader (it refuses a non-definite publish),"""
         loaded = parse_fields_document(
             document(
                 [
@@ -365,25 +339,10 @@ class TestRefusalsAtRuntime:
 
 
 class TestWarm:
-    """``warm`` is the bar the witness reads but never decides on.
-
-    ``MarketContextReplay`` precomputes ATR and the session VWAP over the whole
-    frame and then yields from the 60th bar onward, skipping the frame's first
-    session — so the legacy setup's ``check()``, and therefore its causal
-    ``gated_*`` windows, never see that leading prefix, while its ATR at the
-    first admitted bar is nonetheless the one computed over it. These two tests
-    are the two halves of that sentence.
-    """
+    """``warm`` is the bar the witness reads but never decides on."""
 
     def test_it_advances_the_frame_wide_indicators(self) -> None:
-        """The bar-driven ops after a warmed prefix equal the all-stepped ones.
-
-        ``atr`` and ``vwap`` because the witness precomputes them over the whole
-        frame; ``rsi`` and ``williams_r`` because every bar is a sample of them
-        by definition, so a warmed bar is one of their bars too. A reader who
-        later adds a bar-driven op has to add it here, or its value jumps at the
-        first stepped bar.
-        """
+        """The bar-driven ops after a warmed prefix equal the all-stepped ones."""
         bars = _bars(80)
         stepped = evaluate_bars(parsed(_FIELDS, _PUBLISH), bars)
         warmed = FieldEvaluator(parsed(_FIELDS, _PUBLISH))
@@ -395,48 +354,24 @@ class TestWarm:
             reference = stepped[60 + index]
             for field in ("atr", "vwap", "rsi", "wr"):
                 assert record.values[field] == reference.values[field], field
-            assert record.values["rsi"] is not None  # the prefix warmed it
+            assert record.values["rsi"] is not None
 
     def test_it_does_not_sample_the_causal_windows(self) -> None:
-        """A warmed bar must not enter a ``gated_*`` window.
-
-        The concrete consequence of getting this wrong, measured on a 7-session
-        futures frame: 88 ``hi_vol`` cells differed from the witness, because
-        the declarative windows held samples ``check()`` never took (review of
-        PR #1067, M2).
-        """
+        """A warmed bar must not enter a ``gated_*`` window."""
         bars = _bars(80)
         warmed = FieldEvaluator(parsed(_FIELDS, _PUBLISH))
         for one in bars[:60]:
             warmed.warm(one)
         first_decided = warmed.step(bars[60])
-        # The warmed prefix contributed no sample, so every gated window is
-        # still inside its warmup on the first decided bar.
         assert first_decided.values["vol_ref"] is None
         assert first_decided.values["recent_high"] is None
         assert first_decided.values["prev_close"] is None
-        # The all-stepped driver, by contrast, filled them long ago.
         stepped = evaluate_bars(parsed(_FIELDS, _PUBLISH), bars)
         assert stepped[60].values["vol_ref"] is not None
 
 
 class TestARefusingFieldDoesNotStarveTheBarDrivenWindows:
-    """A field refusing mid-list must not change a LATER momentum field's value.
-
-    The defect this pins (review of PR #1119, HIGH): ``step`` evaluates fields
-    in declaration order and stops at the first ``FieldEvalError``, while the
-    producer catches it, omits the bar and KEEPS the evaluator
-    (``produce_fields.py::produce_bars_declarative``). An ``rsi`` declared after
-    a ``ratio_z`` that refuses on ``atr == 0`` therefore never saw those bars,
-    and its state was wrong from then on — permanently, because Wilder
-    smoothing never forgets.
-
-    The input below is a limit lock: four moving bars, six bars pinned at
-    110/110/110 (so ATR(3) reaches 0 and ``z`` refuses), then three moving ones.
-    Before the fix the last three ``rsi`` values were 52.11 / 82.91 / 28.30 when
-    the field was declared after ``z``, against the correct 12.54 / 80.44 /
-    24.16 it has when declared before it.
-    """
+    """A field refusing mid-list must not change a LATER momentum field's value."""
 
     LOCKED_BARS: list[tuple[float, float, float]] = [
         (102.0, 98.0, 100.0),
@@ -474,8 +409,6 @@ class TestARefusingFieldDoesNotStarveTheBarDrivenWindows:
             for index, (high, low, close) in enumerate(self.LOCKED_BARS)
         ]
 
-    #: Distinguishes a REFUSED bar from a bar whose fields are legitimately
-    #: ``None`` (the warmup, and the flat window inside the lock).
     REFUSED = "refused"
 
     def _series(self, fields: list[dict[str, Any]]) -> list[Any]:
@@ -519,12 +452,7 @@ class TestARefusingFieldDoesNotStarveTheBarDrivenWindows:
         ]
 
     def test_a_refused_bar_still_advances_them(self) -> None:
-        """The mechanism, against the class fed every bar including the refused.
-
-        Not "the two orderings agree" (they could agree on garbage) but "the
-        declared field equals the indicator computed over the UNBROKEN bar
-        stream", which is the property a refusal must not break.
-        """
+        """The mechanism, against the class fed every bar including the refused."""
         fields = [*self._BASE, self._Z, *self._MOMENTUM, *self._TAIL]
         evaluator = FieldEvaluator(parsed(fields, [{"field": "probe"}]))
         reference = WilderRsi(period=2, field="rsi")
@@ -534,22 +462,15 @@ class TestARefusingFieldDoesNotStarveTheBarDrivenWindows:
             try:
                 observed = evaluator.step(one).values["rsi"]
             except FieldEvalError:
-                continue  # the bar is omitted, but its close still counted
+                continue
             assert observed == expected
             compared += 1
-        assert compared == len(self.LOCKED_BARS) - 3  # three bars were refused
+        assert compared == len(self.LOCKED_BARS) - 3
 
 
 class TestRefusalCarriesWhatWasEvaluated:
     def test_a_refused_bar_reports_the_fields_it_had(self) -> None:
-        """So a caller can ask its own gate instead of matching the message.
-
-        ``tools/tos_cp3/produce_fields.py`` has to tell "ATR is zero, which my
-        omission gate calls ``atr_14 <= 0 (z is undefined)``" apart from "this
-        declaration is broken" — and the lineage records the former's wording
-        byte for byte, so reading it off the message text would make a
-        published file depend on an error string.
-        """
+        """So a caller can ask its own gate instead of matching the message."""
         fields = [
             {"name": "close", "op": "bar.close"},
             {"name": "vwap", "op": "session.vwap_typical"},
@@ -567,8 +488,6 @@ class TestRefusalCarriesWhatWasEvaluated:
         assert values["atr"] == 0.0
         assert values["close"] == 10.0
         assert values["vwap"] == 10.0
-        # Only what was reached: ``z`` is the field that refused, ``probe``
-        # comes after it.
         assert "z" not in values
         assert "probe" not in values
 

@@ -1,13 +1,4 @@
-"""CLI entrypoint for the KIS broker-capability probes.
-
-    python -m tools.broker_probes.run --list
-    python -m tools.broker_probes.run P-5 --symbol 101S6000 --confirm
-    python -m tools.broker_probes.run --coverage
-
-Every probe writes a JSON artifact under ``tools/broker_probes/results/``
-(gitignored). See ``docs/runbooks/kis-capability-probes.md`` for the execution
-order, preconditions, and how a result becomes an INSTANCE field value.
-"""
+"""CLI entrypoint for the KIS broker-capability probes."""
 
 from __future__ import annotations
 
@@ -53,10 +44,6 @@ def _print_table() -> None:
             f"{spec.probe_id:<7} {spec.kind:<16} {spec.environment:<10} "
             f"{spec.risk:<7} {mark:<6} {'yes' if spec.requires_confirm else 'no':<8} {spec.title}"
         )
-    # These two lines were true of every probe until P-R5 existed. They are now
-    # stated with the exception spelled out rather than left as a comforting
-    # blanket claim: a reader who trusts the old wording would believe no probe
-    # here can touch a real account.
     real_order_emitting = sorted(
         spec.probe_id
         for spec in PROBES.values()
@@ -125,31 +112,18 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     func = getattr(module, func_name)
-    # Bound the salvage window to this call, so a run recovered on the failure path
-    # below is provably one this probe built rather than a leftover from anything
-    # earlier in the process.
     from tools.broker_probes.common import ProbeRun
 
     ProbeRun.reset_salvage()
     try:
         run = func(args)
     except SafetyViolation as exc:
-        # Never write an artifact for a refused call: there is nothing to record
-        # except the refusal, and an artifact would imply an observation happened.
         print(f"\nSAFETY VIOLATION — refused: {exc}", file=sys.stderr)
         return 3
     except ProbeError as exc:
         print(f"\nPRECONDITION NOT MET: {exc}", file=sys.stderr)
         return 4
     except Exception as exc:  # noqa: BLE001
-        # A failed run is still evidence — a probe that could not complete must
-        # leave a trace, otherwise a silent failure looks like "not yet run".
-        #
-        # The trace has to be the run the probe was actually building. Rebuilding a
-        # blank one drops the credentials, observations and measurements already
-        # collected, which is how the four N-15-20260729T06* artifacts ended up as
-        # an exception string and nothing else — no account fingerprint, no record
-        # of which token cache was in use, no partial timeline.
         failed = ProbeRun.salvage(spec.probe_id) or ProbeRun(
             probe_id=spec.probe_id,
             title=spec.title,

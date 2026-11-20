@@ -74,20 +74,13 @@ async def test_long_exits_at_setup_target():
 
 @pytest.mark.asyncio
 async def test_eod_close_enabled_does_not_raise():
-    """Regression: `_should_eod_close` called the refactored market-time helpers
-    with stale signatures — `is_trading_day_kst(now.date())` (expects a datetime)
-    and `effective_close_time(date, time)` (now takes one arg). With
-    `eod_close_enabled=True`, every exit scan of an open Setup A/C position raised
-    `AttributeError: 'datetime.date' object has no attribute 'tzinfo'`. Exposed
-    only once a futures position actually opened (F200 paper validation)."""
+    """Regression: `_should_eod_close` called the refactored market-time helpers"""
     exit_strategy = SetupTargetExit(SetupTargetExitConfig(eod_close_enabled=True))
-    # price strictly between stop and target → neither fires, so _check_position
-    # reaches the EOD-close branch that used to crash.
     position = _position(side=PositionSide.LONG, stop_price=98.0, take_profit=104.0)
     fired, _ = await exit_strategy.should_exit(
         ExitContext(position=position, market_data={"close": 100.5})
     )
-    assert isinstance(fired, bool)  # no AttributeError
+    assert isinstance(fired, bool)
 
 
 @pytest.mark.asyncio
@@ -129,9 +122,6 @@ async def test_can_use_detected_price_for_legacy_behavior():
 
 
 def test_setup_d_config_uses_setup_target_exit():
-    # The last futures strategy YAML in the tree. L6 deleted the others with
-    # their entry modules (docs/plans/2026-11-07-legacy-removal-plan.md §3);
-    # this one is the CP-3 B3 witness's strategy and stays.
     config = ConfigLoader.load_strategy("futures", "setup_d_vwap_reversion")
 
     assert config["strategy"]["exit"]["type"] == "setup_target_exit"

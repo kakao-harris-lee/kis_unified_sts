@@ -1,64 +1,4 @@
-"""Order-capable probes — 모의투자 ONLY, dry-run unless ``--confirm``.
-
-Probes here: P-2, P-5, P-5b, P-8, P-11, P-EXT, P-FQP, P-NMPR.
-
-Every request in this module goes through :class:`MockTradingClient`, which calls
-``assert_mock_host()`` and ``assert_mock_trading_tr()`` before opening a socket.
-A real-host URL or a non-``V`` trading TR raises :class:`SafetyViolation` — there
-is no flag that turns that off.
-
-Order shape and quantity discipline
------------------------------------
-* Quantity defaults to 1 (the minimum) and is never derived from account equity.
-* Limit prices are placed ``--price-offset-pct`` AWAY from the touch so the order
-  rests unfilled and can be cancelled. P-11 is the single exception: it needs a
-  fill and demands an extra ``--allow-fill`` flag. It is also the one probe that
-  defaults to a 시장가 (market) order — a marketable *limit* was accepted and then
-  never filled on 모의투자 (``P-11-20260730T002715Z.json``), which censored the
-  measurement it exists to take. ``--stock-order-type limit`` restores the old
-  shape for comparison.
-* Every limit price is snapped to a valid tick before it goes on the wire — see
-  :func:`snap_to_tick`. An off-tick price is not a degraded trial, it is no trial
-  at all: artifact ``P-5-20260730T000608Z.json`` lost trial 0 to
-  ``모의투자 주문처리가 안되었습니다(호가단위 오류)`` and reported ``n=0``.
-* Every probe cancels what it created in a ``finally`` block and shouts (with the
-  ODNO) if a cancel fails, so an operator can clean up by hand.
-
-Order-number identity
----------------------
-The accept response and the query row do not encode an ODNO the same way — the
-accept zero-pads (``"0000000762"``), the inquire-ccnl row space-pads without the
-leading zeros (``"        762"``). Every comparison between a submitted order and
-a query row therefore goes through :func:`odno_key` on BOTH sides, and every probe
-that sees both surfaces records the encodings it observed. A raw strip-and-compare
-never matches: artifact ``P-5-20260731T002112Z.json`` is one CENSORED trial and
-``n=0`` produced entirely by that comparison, while the run's own cleanup cancel of
-the same ODNO succeeded.
-
-Request bodies mirror ``shared/execution/executor.py`` (``:386-393`` stock order,
-``:458-471`` futures order, ``:685-699`` cancel/replace, ``:623-636`` inquire) so
-that what is measured is what the runtime actually sends. TR ids come from
-``shared/execution/tr_ids.py::get_tr_ids`` — the audited SoT — not from literals.
-
-The one deliberate departure is P-NMPR's B-arm, which reconstructs the *pre*-fix
-futures body (both [필수] quote fields blank, executor.py before ``76d43ae9``).
-It exists precisely to test a shape the runtime no longer sends; see
-:meth:`MockTradingClient.futures_order_body`.
-
-Call pacing
------------
-Every call this module makes passes through :class:`_CallPacer`, which enforces a
-minimum ``--pace-s`` interval between any two of them. This is not politeness: at
-the mock account's measured ceiling (P-13 — clean 1.0 rps, throttled 2.0 rps) an
-unpaced quote-then-submit pair is already over the line, and a throttled submit
-destroys the trial rather than degrading it. Artifact
-``P-5-20260729T235001Z.json`` is the concrete loss — trial 0 rejected with
-``초당 거래건수를 초과하였습니다``, ``n=0``, ``NOT_MEASURED``.
-
-Pacing changes what the probes must *record*. See :func:`effective_interval_ms`:
-a ``--poll-ms`` or ``--gap-ms`` below the pacing interval does not happen, so the
-recorded granularity is the effective interval, never the requested one.
-"""
+"""Order-capable probes — 모의투자 ONLY, dry-run unless ``--confirm``."""
 
 from __future__ import annotations
 
@@ -123,173 +63,41 @@ _STOCK_DAILY_CCLD_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
 _STOCK_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 
-#: Contract-spec SoT for futures tick sizes. The block is annotated "모든 계약
-#: 상수는 여기서 로드 — 코드에 하드코딩 금지", so no tick literal appears in this
-#: module; :func:`_futures_tick` reads it through the registry instead.
 _EXECUTION_CONFIG = Path(__file__).resolve().parents[2] / "config" / "execution.yaml"
 
-#: Broker-reported 호가단위 in the domestic-stock current-price response.
-#:
-#: TR ``FHKST01010100`` (``v1_국내주식-008``,
-#: ``/uapi/domestic-stock/v1/quotations/inquire-price``), field ``output.aspr_unit``
-#: — official wrapper ``examples_llm/domestic_stock/inquire_price/
-#: chk_inquire_price.py``, ``COLUMN_MAPPING``: ``'aspr_unit': '호가단위'``.
-#:
-#: This is the only stock tick source the probe will accept. The repo carries no
-#: KRX price-band table and this module must not invent one, so if the broker does
-#: not report a unit the stock probe fails loudly (see :func:`_stock_tick`).
 _STOCK_QUOTE_UNIT_FIELD = "aspr_unit"
 
-#: Probe order type -> stock ``ORD_DVSN`` (주문구분) wire code.
-#:
-#: Official source (KIS ``open-trading-api`` ``examples_llm``, read 2026-07-30 via
-#: ``kis-code-assistant-mcp``):
-#: ``domestic_stock/inquire_psbl_order/inquire_psbl_order.py`` — 매수가능조회, TR
-#: ``v1_국내주식-007`` (real ``TTTC8908R`` / mock ``VTTC8908R``). Two docstring
-#: locations in that file enumerate the pair:
-#:
-#: * body, "2) 매수가능수량 확인": "특정 종목 전량매수 시 가능수량을 확인하실 경우
-#:   ORD_DVSN:00(지정가)는 종목증거금율이 반영되지 않습니다. 따라서 "반드시"
-#:   ORD_DVSN:01(시장가)로 지정하여 종목증거금율이 반영된 가능수량을 확인하시기
-#:   바랍니다."
-#: * ``Args``: ``ord_dvsn (str): [필수] 주문구분 (ex. 01 : 시장가)``
-#:
-#: The cross-reference is necessary because ``order_cash`` — 주식주문(현금), TR
-#: ``v1_국내주식-001``, real ``TTTC0012U`` / mock ``VTTC0012U`` for 매수, the TR this
-#: probe actually POSTs to — enumerates NO ``ORD_DVSN`` value: its ``Args`` line is a
-#: bare ``ord_dvsn (str): [필수] 주문구분``. ``shared/execution/executor.py:58-61``
-#: cites the same source for the same reason ("order_cash enumerates no ORD_DVSN
-#: value").
-#:
-#: WARNING — the two asset classes give "01" OPPOSITE meanings: stock ``ORD_DVSN``
-#: "01" is 시장가 (market), while futures ``ORD_DVSN_CD`` "01" is 지정가 (limit) and
-#: 시장가 is "02" (``executor.py:63-72``; the futures code is sent by
-#: :meth:`MockTradingClient.futures_order_body`). Never carry a code across. Like
-#: the runtime's tables this one deliberately has no default entry: an unknown
-#: order type is refused rather than coerced into a code that could turn a resting
-#: limit into a market order.
 _STOCK_ORD_DVSN: dict[str, str] = {
-    "limit": "00",  # 지정가
-    "market": "01",  # 시장가
+    "limit": "00",
+    "market": "01",
 }
 
-#: Mock TR for 주식일별주문체결조회 — the read-only execution inquiry.
-#:
-#: Official source (KIS ``open-trading-api`` ``examples_llm``, read 2026-07-31 via
-#: ``kis-code-assistant-mcp``):
-#: ``domestic_stock/inquire_daily_ccld/inquire_daily_ccld.py`` — 주식일별주문체결조회,
-#: ``[v1_국내주식-005]``. Its ``tr_id`` table maps ``env_dv="demo"`` +
-#: ``pd_dv="inner"`` (3개월 이내) to ``VTTC0081R``, the 실전 counterpart being
-#: ``TTTC0081R``. ``pd_dv="before"`` is a different TR (``VTSC9215R`` / ``CTSC9215R``)
-#: and is deliberately unused: this probe only ever asks about an order it placed
-#: seconds ago, and that wrapper's own docstring warns the 3개월-이전 TR is
-#: DB-lagged intraday.
-#:
-#: A literal rather than a ``get_tr_ids()`` lookup for the same reason
-#: :meth:`MockTradingClient.stock_balance` carries ``VTTC8434R`` as one: the audited
-#: SoT (``shared/execution/tr_ids.py``) covers the order/cancel/inquire TRs the
-#: runtime sends, and this read-only inquiry is not one the runtime uses. Adding it
-#: there would imply runtime adoption that has not happened.
 _STOCK_DAILY_CCLD_TR_MOCK = "VTTC0081R"
 
-#: Mock TR for 주식주문(정정취소) — the stock cancel/amend POST.
-#:
-#: Official source (KIS ``open-trading-api`` ``examples_llm``):
-#: ``domestic_stock/order_rvsecncl/order_rvsecncl.py`` — 주식주문(정정취소),
-#: ``[v1_국내주식-003]``, ``API_URL`` = :data:`_STOCK_CANCEL_PATH`. Its ``tr_id``
-#: branch maps ``env_dv="demo"`` to ``VTTC0013U`` and ``env_dv="real"`` to
-#: ``TTTC0013U``. ``V``-prefixed, so ``assert_mock_trading_tr`` admits it and
-#: would refuse the 실전 twin.
-#:
-#: A literal rather than a ``get_tr_ids()`` lookup, for the reason
-#: :data:`_STOCK_DAILY_CCLD_TR_MOCK` is one: the audited SoT
-#: (``shared/execution/tr_ids.py``) carries the TRs the RUNTIME sends, and the
-#: runtime has no stock cancel path (its only ``order-rvsecncl`` is futures,
-#: ``executor.py:1069``). Adding this there would imply a runtime adoption that
-#: has not happened.
 _STOCK_CANCEL_TR_MOCK = "VTTC0013U"
 
-#: 정정취소구분코드 — ``"02"`` is 취소 (``"01"`` is 정정). Same wrapper's ``Args``:
-#: ``rvse_cncl_dvsn_cd (str): [필수] 정정취소구분코드 (ex. 01:정정,02:취소)``.
-#: Only the cancel value is defined here: this harness has no stock amend leg,
-#: and a code it does not exercise must not sit in the table waiting to be
-#: picked by mistake.
 _STOCK_CANCEL_DVSN_CANCEL = "02"
 
-#: 잔량전부주문여부 ``"Y"`` — cancel the whole remaining quantity. Same wrapper:
-#: ``qty_all_ord_yn (str): [필수] 잔량전부주문여부 (ex. Y:전량, N:일부)``.
-#: ``"Y"`` rather than ``"N"`` + a quantity because a partial cancel would leave
-#: a resting remainder behind on a probe whose cleanup contract is "the account
-#: ends flat"; ``ORD_QTY`` still carries the observed remainder so the request
-#: states what it believes it is cancelling.
 _STOCK_CANCEL_QTY_ALL = "Y"
 
-#: 거래소ID구분코드. ``"KRX"`` per the same wrapper's ``Args`` (``ex. KRX: 한국거래소,
-#: NXT:대체거래소, SOR:SOR``). KRX because the submit this cancel refers to is a
-#: KRX order (``stock_krx_*_mock`` TRs); an ATS/SOR cancel would be a different
-#: order's cancel.
 _STOCK_EXCG_KRX = "KRX"
 
-#: ``ORD_UNPR`` for a 시장가 stock order — the field is present but is not a price.
-#:
-#: ``order_cash`` makes ``ORD_UNPR`` mandatory: it raises
-#: ``ValueError("ord_unpr is required")`` on ``""``, so the key cannot be dropped.
-#: The same docstring states what the broker does when an order carries no price —
-#: "※ ORD_UNPR(주문단가)가 없는 주문은 상한가로 주문금액을 선정하고 이후 체결이되면
-#: 체결금액로 정산됩니다." — it prices the order itself and settles at the fill.
-#: ``"0"`` is the encoding that satisfies both constraints (present, not a limit
-#: price), and is what the runtime already sends for a priceless order:
-#: ``executor.py:393`` ``"ORD_UNPR": str(int(order.price)) if order.price else "0"``.
 _STOCK_ORD_UNPR_MARKET = "0"
 
-#: The two [필수] futures quote fields P-NMPR puts under test, in the order the
-#: arm tuples below use.
 _NMPR_FIELDS = ("NMPR_TYPE_CD", "KRX_NMPR_CNDT_CD")
 
-#: P-NMPR arm -> the ``_NMPR_FIELDS`` pair that arm sends. Single source for both
-#: the live body builder and the dry-run report, so the two cannot drift.
-#: ``explicit`` is what the runtime sends today for ``ORD_DVSN_CD="01"``
-#: (executor.py:104-115); ``legacy_blank`` is the pre-``76d43ae9`` shape.
 _NMPR_ARMS: dict[str, tuple[str, str]] = {
-    "explicit": ("01", "0"),  # 지정가 + 호가조건 없음
+    "explicit": ("01", "0"),
     "legacy_blank": ("", ""),
 }
 
-#: Handshake between this module and the tracked runner template
-#: ``tools/broker_probes/runners/run_p8.sh``. The runner imports this module and
-#: compares the value against the one it was written for; a mismatch means the
-#: runner was COPIED OUT of a different tree, which is the 2026-09-30 mistake
-#: (``docs/plans/2026-09-30-probe-transient-error-policy-plan.md`` §2.2). It is
-#: a VERSION rather than a substring grep of the source because a grep cannot
-#: tell a fix from a mention and breaks on a rename (#825 round-3 review F7).
-#:
-#: ``/1`` is the first contract: P-8 classifies a transport failure and a ledger
-#: throttle as TRANSIENT (one retry, one poll interval later) instead of letting
-#: the exception escape, and prints the anchored :data:`_P8_STOP_PREFIX` /
-#: :data:`_P8_COEXISTENCE_PREFIX` lines the runner reads to tell a transport
-#: stop from a broker rejection. A runner written for ``/1`` paired with an
-#: older probe would find no such lines and stop the series on a stop it cannot
-#: classify; this check turns that into an abort with a reason.
 POLICY_VERSION = "p-8-transient-policy/1"
 
-#: Default minimum interval between any two broker calls, in seconds.
-#:
-#: Measured, not guessed: P-13 (artifact ``P-13-20260729T063120Z``, campaign
-#: ``docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/``) bracketed this
-#: mock account's query class at clean 1.0 rps / throttled 2.0 rps (``EGW00201``).
-#: 1.1 s sits just above the measured clean rate — the slowest rate that is known
-#: to work, rather than the fastest that has not yet been seen to fail.
 DEFAULT_PACE_S = 1.1
 
 
 class _CallPacer(Pacer):
-    """Minimum-interval gate in front of the probe client's only socket.
-
-    The behaviour is :class:`~tools.broker_probes.common.Pacer`'s — ONE copy,
-    shared with P-CA's pacer. ``defer`` comes with it, and the coexistence poll
-    needs it: a transient retry must wait a WHOLE interval from NOW, not the
-    remainder of a gap the failed attempt already armed before it went out.
-    """
+    """Minimum-interval gate in front of the probe client's only socket."""
 
 
 def pace_interval_s(args: argparse.Namespace) -> float:
@@ -298,77 +106,20 @@ def pace_interval_s(args: argparse.Namespace) -> float:
 
 
 def effective_interval_ms(requested_ms: float, args: argparse.Namespace) -> float:
-    """A requested inter-call interval, floored by the pacer, in ms.
-
-    The pacer will not release two calls closer together than ``--pace-s``, so a
-    ``--poll-ms`` or ``--gap-ms`` below it is silently widened. Probes must record
-    THIS value rather than the requested one:
-
-    * a polled sample carries up to one *effective* poll interval of additive
-      error, and runbook §8.3 makes that error part of the approved bound — an
-      understated granularity understates the bound, which is fail-open;
-    * P-2's deduplication bracket is set by the gap that actually reached the
-      wire, so recording the requested gap would mis-bracket the window.
-    """
+    """A requested inter-call interval, floored by the pacer, in ms."""
     return max(float(requested_ms), pace_interval_s(args) * 1000.0)
 
 
-# ---------------------------------------------------------------------------
-# Order-number identity — the two broker surfaces disagree on ODNO padding
-# ---------------------------------------------------------------------------
-
-#: Key returned for an absent ODNO (empty string or ``None``).
-#:
-#: Not a digit string, so it can never equal a canonical key: an order the broker
-#: declined to name cannot be "found" in a query row that is equally unnamed. Two
-#: absent values do collapse onto this one key, which is what set arithmetic over
-#: query rows needs (P-EXT) and is harmless — the guarantee is only that an absent
-#: ODNO never matches a REAL one.
 _ODNO_ABSENT = "absent:no-odno"
 
-#: ``measurements`` key carrying the observed submit-vs-query ODNO encodings.
 _ODNO_FORMAT_KEY = "odno_wire_format"
 
 
 def odno_key(raw: Any) -> str:
-    """Canonical comparison key for a KIS order number (ODNO).
-
-    The accept response and the query row encode the same order number
-    differently. Verbatim, from one 모의투자 order (artifact
-    ``P-5-20260731T002112Z``): ``output.ODNO`` of the futures order accept returned
-    ``"0000000762"``, while the ``odno`` field of the inquire-ccnl row for that
-    very order returned ``"        762"`` — space-padded, leading zeros dropped.
-    Comparing them with ``str(...).strip()`` on each side asks whether
-    ``"762" == "0000000762"``, which is False for every order that has ever
-    existed. That probe recorded a CENSORED trial and ``n=0`` while its own cleanup
-    cancel of the same ODNO succeeded: the query had been returning the order the
-    whole time, and only the comparison was broken.
-
-    Rule: strip surrounding whitespace, then strip leading zeros, keeping a single
-    ``"0"`` if every digit was a zero. BOTH sides of every comparison go through
-    this function — reformatting one side to look like the other would merely move
-    the assumption about which padding is canonical.
-
-    This mirrors the runtime's ``shared/execution/executor.py::_normalize_odno``
-    (``:132-136``), which already canonicalizes both sides of its futures
-    fill-status match. The probes deliberately resolve identity the way the runtime
-    resolves it.
-
-    Raises:
-        ProbeError: ``raw`` is non-empty and not ASCII digits. A non-numeric ODNO
-            is refused rather than coerced or quietly treated as a non-match,
-            because a silent non-match is exactly the failure this function exists
-            to remove — and it would censor every trial of a run rather than one
-            call. ``int()`` comparison is avoided for the same reason: it either
-            raises at an arbitrary call site or, wrapped in the usual
-            ``except ValueError``, converts an unexpected encoding back into a
-            silent non-match.
-    """
+    """Canonical comparison key for a KIS order number (ODNO)."""
     text = str(raw if raw is not None else "").strip()
     if not text:
         return _ODNO_ABSENT
-    # isascii() as well as isdigit(): isdigit() alone admits superscripts and other
-    # Unicode digit forms, which are not order numbers by any reading.
     if not (text.isascii() and text.isdigit()):
         raise ProbeError(
             f"ODNO {text!r} is not numeric. This harness will not guess at an "
@@ -389,8 +140,6 @@ def _odno_encoding(raw: str) -> dict[str, Any]:
     try:
         encoding["canonical_key"] = odno_key(raw)
     except ProbeError as exc:
-        # A format record must never destroy the artifact it belongs to. An
-        # unparseable sample IS the observation worth keeping here.
         encoding["canonical_key_error"] = str(exc)
     return encoding
 
@@ -398,18 +147,7 @@ def _odno_encoding(raw: str) -> dict[str, Any]:
 def record_odno_wire_format(
     run: ProbeRun, submitted: list[str], rows: list[dict[str, Any]]
 ) -> None:
-    """Record how each broker surface encoded an ODNO in THIS run.
-
-    A wire-semantics observation, not a debug aid: the accept response and the
-    query row disagree on padding, and that asymmetry is a property of the broker
-    every client reconciling its own orders has to handle. Samples are kept
-    verbatim, padding intact, so a reviewer can see the disagreement without
-    re-running the probe.
-
-    Idempotent by design, so a probe can call it wherever it happens to hold rows:
-    the first *paired* observation (both surfaces sampled) is kept and never
-    overwritten, while a one-sided record may be upgraded by a later paired call.
-    """
+    """Record how each broker surface encoded an ODNO in THIS run."""
     existing = run.measurements.get(_ODNO_FORMAT_KEY)
     if isinstance(existing, dict) and existing.get("paired"):
         return
@@ -454,54 +192,19 @@ def record_odno_wire_format(
 @dataclass
 class Placed:
     odno: str
-    #: Pacer release instant of the submit — post-sleep, immediately pre-wire.
     sent_at_monotonic: float
     body: dict[str, Any]
-    #: 거래소코드 (``KRX_FWDG_ORD_ORGNO``) from a STOCK accept response, verbatim.
-    #:
-    #: The stock cancel TR makes it mandatory (``order_rvsecncl`` raises
-    #: ``ValueError("krx_fwdg_ord_orgno is required")`` on an empty value), and
-    #: the accept response is where it comes from — ``order_cash``'s own
-    #: ``COLUMN_MAPPING`` is ``{KRX_FWDG_ORD_ORGNO: 거래소코드, ODNO: 주문번호,
-    #: ORD_TMD: 주문시간}``. Kept verbatim for the same reason ``odno`` is: it
-    #: goes straight back on the wire. Empty for a futures submit, which has no
-    #: such field.
     krx_fwdg_ord_orgno: str = ""
 
     @property
     def key(self) -> str:
-        """This order's canonical identity, for matching against a query row.
-
-        ``odno`` stays verbatim because that is what goes back on the wire as
-        ``ORGN_ODNO`` for a cancel or an amend; only comparisons use the key.
-
-        Computed on access rather than at construction so that a non-numeric ODNO
-        raises at the first comparison — by which point the caller has already
-        registered the order for :func:`_cleanup`. Validating inside
-        :meth:`MockTradingClient.submit_futures` would raise between the accept and
-        that registration and orphan a live resting order.
-        """
+        """This order's canonical identity, for matching against a query row."""
         return odno_key(self.odno)
-
-
-# ---------------------------------------------------------------------------
-# Tick discipline — a limit price the broker will accept
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Tick:
-    """A valid price increment plus the evidence that established it.
-
-    ``source`` is carried into every artifact so a reviewer can see where the
-    number came from without re-deriving it. Neither field is ever a literal in
-    this module: a futures tick comes from ``config/execution.yaml``, a stock tick
-    from the broker's own quote response.
-
-    Attributes:
-        size: The minimum price increment, as an exact :class:`~decimal.Decimal`.
-        source: Human-readable provenance, recorded in the artifact.
-    """
+    """A valid price increment plus the evidence that established it."""
 
     size: Decimal
     source: str
@@ -509,17 +212,7 @@ class Tick:
 
 @dataclass(frozen=True)
 class TickPrice:
-    """A limit price snapped to a broker-valid tick.
-
-    Attributes:
-        value: The snapped price as a float — an exact multiple of ``tick.size``.
-        wire: The exact string the request body carries. Built from the snapped
-            Decimal and never from float arithmetic, so a ``0.05`` multiple
-            cannot reach the broker as ``372.15000000000003``.
-        tick: The increment used, with its provenance.
-        unrounded: The price before snapping, for the artifact record.
-        rounding: ``"floor"`` or ``"ceiling"`` — which way the snap moved.
-    """
+    """A limit price snapped to a broker-valid tick."""
 
     value: float
     wire: str
@@ -544,62 +237,19 @@ class TickPrice:
 
 
 def _tick_wire(value: Decimal) -> str:
-    """A snapped price as the clean decimal string a request body will carry.
-
-    ``normalize()`` drops the trailing zero a ``0.05`` snap leaves behind
-    (``372.10`` -> ``372.1``, the same shape as the ``str(price)`` the runtime
-    sends at ``executor.py:471``) but can flip an integral value into scientific
-    notation (``70100`` -> ``7.01E+4``), which no broker parser would take. The
-    format is therefore forced to fixed-point.
-    """
+    """A snapped price as the clean decimal string a request body will carry."""
     return format(value.normalize(), "f")
 
 
 def snap_to_tick(price: float, tick: Tick, *, side: str, marketable: bool) -> TickPrice:
-    """Snap ``price`` to a multiple of ``tick``, always AWAY from the touch.
-
-    The direction is derived from ``side``/``marketable`` rather than passed in by
-    the caller, because getting it backwards is the one failure here with a
-    trading consequence. The resting probes (P-2, P-5, P-8, P-FQP, P-NMPR) depend
-    on the order sitting unfilled, and a snap toward the touch narrows the
-    ``--price-offset-pct`` gap that keeps it there. P-11 is the mirror case: it is
-    deliberately marketable and must not be snapped back out of the market.
-
-    ====  ==========  ========  ==================================
-    side  marketable  rounding  rests / crosses
-    ====  ==========  ========  ==================================
-    BUY   False       floor     below the touch, moved lower
-    BUY   True        ceiling   above the touch, moved higher
-    SELL  False       ceiling   above the touch, moved higher
-    SELL  True        floor     below the touch, moved lower
-    ====  ==========  ========  ==================================
-
-    Args:
-        price: The unrounded, probe-computed limit price.
-        tick: The increment to snap to, with its provenance.
-        side: ``"BUY"`` or ``"SELL"``.
-        marketable: True when the price is deliberately across the touch.
-
-    Returns:
-        The snapped price, its wire string, and the tick provenance.
-
-    Raises:
-        ProbeError: unknown ``side``, a non-positive tick, a snapped price that is
-            not a positive multiple of the tick, or a wire string that does not
-            represent the snapped price exactly.
-    """
+    """Snap ``price`` to a multiple of ``tick``, always AWAY from the touch."""
     if side not in ("BUY", "SELL"):
         raise ProbeError(f"unknown order side {side!r} (expected 'BUY' or 'SELL')")
     if tick.size <= 0:
         raise ProbeError(
             f"tick size must be positive, got {tick.size} from {tick.source}"
         )
-    # A resting BUY sits below the touch and a resting SELL above it; a marketable
-    # order sits on the opposite side of each. Away-from-touch is therefore "down"
-    # for exactly the two combinations where those two facts agree.
     round_down = (side == "BUY") != marketable
-    # Integer-multiple arithmetic in Decimal: `multiple * tick` is exact, whereas
-    # the float form of the same product yields 7443 * 0.05 == 372.15000000000003.
     multiple = (Decimal(str(price)) / tick.size).to_integral_value(
         rounding=ROUND_FLOOR if round_down else ROUND_CEILING
     )
@@ -633,42 +283,13 @@ def build_stock_order_body(
     *,
     order_type: str = "limit",
 ) -> dict[str, str]:
-    """The ``order-cash`` request body — 지정가 or 시장가.
-
-    Mirror of ``executor.py:386-393`` (note ORD_UNPR int-truncation, Q-WIRE-1).
-    For a limit order ``price.wire`` is byte-identical to the runtime's
-    ``str(int(price))``: :func:`_stock_tick` refuses a fractional 호가단위, so a
-    snapped stock price is always a whole number of won and the truncation is a
-    no-op. What the truncation used to do on its own — produce a 1원 granularity
-    that no KRX price band allows — is what made this body ``호가단위 오류`` bait.
-
-    A module-level function rather than only a method because the dry-run has no
-    client and must still be able to show the exact body it would send. For a
-    market order that is the whole body: no quote is needed to build it.
-
-    Args:
-        cano: 종합계좌번호 (account prefix).
-        acnt_prdt_cd: 계좌상품코드 (account suffix).
-        symbol: 종목코드.
-        qty: 주문수량.
-        price: The tick-snapped limit price. Required for ``order_type="limit"``
-            and forbidden for ``"market"``.
-        order_type: ``"limit"`` (지정가) or ``"market"`` (시장가), resolved to a
-            wire code through :data:`_STOCK_ORD_DVSN`.
-
-    Raises:
-        ProbeError: unknown ``order_type``, a limit order with no price, or a
-            market order handed one.
-    """
+    """The ``order-cash`` request body — 지정가 or 시장가."""
     ord_dvsn = _STOCK_ORD_DVSN.get(order_type)
     if ord_dvsn is None:
         raise ProbeError(
             f"unknown stock order type {order_type!r} "
             f"(expected one of {sorted(_STOCK_ORD_DVSN)})"
         )
-    # Both directions are refused, not defaulted. A missing price must never
-    # become a market order by omission, and a market order that quietly carried
-    # a limit price would report a 시장가 fill it never took.
     if order_type == "limit" and price is None:
         raise ProbeError("a 지정가 (limit) stock order needs a tick-snapped price")
     if order_type == "market" and price is not None:
@@ -694,38 +315,7 @@ def build_stock_cancel_body(
     krx_fwdg_ord_orgno: str,
     remaining_qty: int,
 ) -> dict[str, str]:
-    """The ``order-rvsecncl`` 취소 request body for a stock order.
-
-    Spec: ``examples_llm/domestic_stock/order_rvsecncl/order_rvsecncl.py``
-    (주식주문(정정취소), ``[v1_국내주식-003]``). Every field below is one that
-    wrapper declares ``[필수]`` and refuses as empty, which is why none of them
-    is omitted or defaulted here.
-
-    ``ORGN_ODNO`` and ``KRX_FWDG_ORD_ORGNO`` go on the wire **verbatim**, exactly
-    as the accept response returned them. Canonicalizing an identifier before
-    sending it back is a different thing from canonicalizing it for a comparison
-    (:func:`odno_key`): the broker is entitled to require the encoding it issued.
-
-    A module-level function rather than only a client method so a dry run can
-    print the exact body it would send without holding credentials.
-
-    Args:
-        cano: 종합계좌번호.
-        acnt_prdt_cd: 계좌상품코드.
-        orgn_odno: 원주문번호, verbatim from the submit's ``output.ODNO``.
-        krx_fwdg_ord_orgno: 거래소코드, verbatim from the submit's
-            ``output.KRX_FWDG_ORD_ORGNO``.
-        remaining_qty: The 잔여수량 the probe observed. It is sent alongside
-            ``QTY_ALL_ORD_YN="Y"`` so the request states the quantity it
-            believes it is cancelling; the ``"Y"`` is what makes the broker
-            cancel the whole remainder regardless.
-
-    Raises:
-        ProbeError: an empty 원주문번호 or 거래소코드, or a non-positive
-            remaining quantity. All three are refused rather than sent: the
-            wrapper's own ``ValueError`` would come back as an opaque broker
-            rejection, and a cancel for 0 shares is not a cancel.
-    """
+    """The ``order-rvsecncl`` 취소 request body for a stock order."""
     if not str(orgn_odno).strip():
         raise ProbeError(
             "a stock cancel needs the 원주문번호 (ORGN_ODNO) from the accept "
@@ -747,14 +337,9 @@ def build_stock_cancel_body(
         "ACNT_PRDT_CD": acnt_prdt_cd,
         "KRX_FWDG_ORD_ORGNO": str(krx_fwdg_ord_orgno),
         "ORGN_ODNO": str(orgn_odno),
-        # 지정가. The cancelled order was a 지정가 order; ORD_DVSN on a cancel
-        # describes the ORIGINAL order's type (the wrapper's 주문구분).
         "ORD_DVSN": _STOCK_ORD_DVSN["limit"],
         "RVSE_CNCL_DVSN_CD": _STOCK_CANCEL_DVSN_CANCEL,
         "ORD_QTY": str(remaining_qty),
-        # A cancel carries no price. The field is [필수], so it is present and
-        # set to the same "present, not a limit price" encoding a 시장가 order
-        # uses (:data:`_STOCK_ORD_UNPR_MARKET`).
         "ORD_UNPR": _STOCK_ORD_UNPR_MARKET,
         "QTY_ALL_ORD_YN": _STOCK_CANCEL_QTY_ALL,
         "EXCG_ID_DVSN_CD": _STOCK_EXCG_KRX,
@@ -762,15 +347,7 @@ def build_stock_cancel_body(
 
 
 def _futures_tick(symbol: str) -> Tick:
-    """The tick for a futures ``symbol``, from the repo's contract-spec registry.
-
-    ``resolve_contract_spec`` maps by ``symbol_prefix``, so the value follows the
-    ``--symbol`` actually used (``A01``/``101`` -> full contract, ``A05`` -> mini)
-    rather than being fixed to one product.
-
-    Raises:
-        ProbeError: no registered spec matches ``symbol``.
-    """
+    """The tick for a futures ``symbol``, from the repo's contract-spec registry."""
     from shared.instruments.contract_spec import (
         ContractSpecRegistry,
         resolve_contract_spec,
@@ -795,21 +372,7 @@ def _futures_tick(symbol: str) -> Tick:
 
 
 def _stock_tick(output: dict[str, Any], symbol: str) -> Tick:
-    """The 호가단위 the broker itself reported for a stock ``symbol``.
-
-    Read from the quote response the probe already made rather than from a table:
-    the repo holds no KRX price band and inventing one would either waste a rate
-    slot on a 호가단위 오류 rejection or, worse, be silently accepted at the wrong
-    granularity for some other price band.
-
-    The unit must be a whole number of won because the runtime's stock wire field
-    is int-truncated (``ORD_UNPR = str(int(price))``, quirk Q-WIRE-1) — a
-    fractional unit could not survive that, so it is refused rather than truncated.
-
-    Raises:
-        ProbeError: the field is absent, non-numeric, non-positive, or fractional,
-            i.e. no tick unit could be established.
-    """
+    """The 호가단위 the broker itself reported for a stock ``symbol``."""
     raw = output.get(_STOCK_QUOTE_UNIT_FIELD)
     try:
         size = Decimal(str(raw).strip())
@@ -835,18 +398,7 @@ def _stock_tick(output: dict[str, Any], symbol: str) -> Tick:
 
 
 class MockTradingClient:
-    """Minimal, safety-gated KIS 모의투자 trading client for probes.
-
-    Not a replacement for ``OrderExecutor``: it deliberately omits the retry,
-    rate-limit and fill-monitor wrappers because those are part of the behaviour
-    under measurement (draft §5 Q-IDEMP-1/2, Q-RATE-1).
-
-    The one thing it does add is :class:`_CallPacer`. That is not the runtime's
-    rate limiter and measures nothing — it is a fixed floor on the interval
-    between this client's own calls, present because exceeding the account's
-    measured ceiling does not perturb a measurement, it voids it (the submit is
-    rejected and the trial produces no sample at all).
-    """
+    """Minimal, safety-gated KIS 모의투자 trading client for probes."""
 
     def __init__(
         self,
@@ -876,14 +428,12 @@ class MockTradingClient:
     def close(self) -> None:
         self.session.close()
 
-    # -- headers ---------------------------------------------------------
     def _headers(self, tr_id: str) -> dict[str, str]:
         headers = dict(self.auth.get_auth_headers())
         headers["tr_id"] = tr_id
         headers["custtype"] = "P"
         return headers
 
-    # -- the single paced transport --------------------------------------
     def _request(
         self,
         method: str,
@@ -893,24 +443,8 @@ class MockTradingClient:
         params: dict[str, Any] | None = None,
         body: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any], float, str]:
-        """The one place this client opens a socket — and so the one paced site.
-
-        Both public transports funnel through here, which is what makes the pacing
-        unbypassable: a call type added later cannot forget to pace, because there
-        is nowhere else to send a request from.
-
-        Ordering matters and is deliberate:
-
-        1. headers first. ``get_auth_headers`` may itself issue a token request,
-           and a token round-trip must not land between the release instant and
-           the wire. Absorbing it into the pacing wait instead costs nothing —
-           token issuance is a different endpoint class from the one P-13
-           measured, and the pacer still separates *this* client's calls.
-        2. then the pacing gate, which sleeps out whatever remains of the
-           interval.
-        3. then the stamp, then the request — with nothing between them.
-        """
-        assert_mock_host(url)  # last line of defence; the callers gate too
+        """The one place this client opens a socket — and so the one paced site."""
+        assert_mock_host(url)
         headers = self._headers(tr_id)
         self._last_send_monotonic = self.pacer.wait()
         return http_json(
@@ -924,16 +458,7 @@ class MockTradingClient:
         )
 
     def last_send_instant(self) -> float:
-        """Monotonic instant the most recent request was released to the wire.
-
-        This is the correct t0 for every latency a probe derives from a call it
-        made itself. Capturing ``time.monotonic()`` before the call instead would
-        fold the pacing sleep into the measurement and report it as broker
-        latency.
-
-        Raises:
-            ProbeError: no request has been issued yet.
-        """
+        """Monotonic instant the most recent request was released to the wire."""
         if self._last_send_monotonic is None:
             raise ProbeError(
                 "last_send_instant() called before any request was issued — "
@@ -941,7 +466,6 @@ class MockTradingClient:
             )
         return self._last_send_monotonic
 
-    # -- guarded transports ---------------------------------------------
     def trading_call(
         self,
         method: str,
@@ -965,24 +489,7 @@ class MockTradingClient:
         params: dict[str, Any] | None = None,
         tr_cont: str = "",
     ) -> tuple[int, dict[str, Any], float, str, Mapping[str, str]]:
-        """:meth:`trading_call` for a GET whose answer is in the RESPONSE headers.
-
-        Same two gates (host + mock TR) and the same pacer, in the same order as
-        :meth:`_request`; it does not delegate to it only because that method
-        drops the response headers, and ``tr_cont`` — the broker's own
-        "there is more" / "that was the end" — is nowhere else. A continuation
-        walk that guessed instead would either stop early (a holding on page 2
-        read as "not held") or never stop.
-
-        **GET by construction**: there is no method parameter and no body, so
-        this cannot become a second way to send an order. A continuation cursor
-        is a read concept.
-
-        Args:
-            tr_cont: the REQUEST ``tr_cont`` — empty on the first page, ``"N"``
-                to ask for the next one (the runtime's own spelling,
-                ``tos_runtime.recon.witness_kis._TR_CONT_REQUEST_NEXT``).
-        """
+        """:meth:`trading_call` for a GET whose answer is in the RESPONSE headers."""
         url = f"{MOCK_BASE_URL}{path}"
         assert_mock_host(url)
         assert_mock_trading_tr(tr_id)
@@ -1008,7 +515,6 @@ class MockTradingClient:
         _status, parsed, _ms, _text = self._request("GET", url, tr_id, params=params)
         return parsed
 
-    # -- domain helpers --------------------------------------------------
     def futures_last_price(self, symbol: str) -> float:
         data = self.quote_call(
             _FUT_PRICE_PATH,
@@ -1025,15 +531,7 @@ class MockTradingClient:
         )
 
     def stock_quote(self, symbol: str) -> tuple[float, Tick]:
-        """Last price AND the broker's own 호가단위, from one inquire-price call.
-
-        Both come out of the same response deliberately: a second call just for
-        the tick would spend another slot of the measured rate budget (P-13: clean
-        1.0 rps) on a number the first response already carried.
-
-        Raises:
-            ProbeError: no usable price, or no establishable quote unit.
-        """
+        """Last price AND the broker's own 호가단위, from one inquire-price call."""
         data = self.quote_call(
             _STOCK_PRICE_PATH,
             "FHKST01010100",
@@ -1056,38 +554,7 @@ class MockTradingClient:
         *,
         required_fields: str = "explicit",
     ) -> dict[str, str]:
-        """Mirror of ``executor.py:458-471`` (futures order body).
-
-        The A-arm pair ``("01", "0")`` is not chosen here — it is what
-        ``executor.py:104-115`` ``_FUTURES_NMPR_CODES`` maps ``ORD_DVSN_CD="01"``
-        to, and both values come from the official wrapper's own enumeration:
-        ``examples_llm/domestic_futureoption/order/order.py`` (TR
-        ``v1_국내선물-001``, mock ``VTTO1101U``), ``Args`` — ``nmpr_type_cd
-        (str): [필수] 호가유형코드 (ex. 01:지정가, ...)`` and ``krx_nmpr_cndt_cd
-        (str): [필수] 한국거래소호가조건코드 (ex. 0:없음, 3:IOC, 4:FOK)``. That
-        same file raises ``ValueError`` when either is ``""`` — which is what
-        makes the B-arm worth sending.
-
-        Args:
-            price: A tick-snapped price. ``UNIT_PRICE`` carries ``price.wire``,
-                which has the same shape as the runtime's ``str(price)`` but is
-                guaranteed to be an exact tick multiple — an off-tick value is
-                rejected outright with ``호가단위 오류``.
-            required_fields: Which shape to build for the two [필수] quote
-                fields.
-
-                * ``"explicit"`` (default) — the current production shape:
-                  ``NMPR_TYPE_CD``/``KRX_NMPR_CNDT_CD`` derived from
-                  ``ORD_DVSN_CD`` (``executor.py:923`` ``_futures_quote_type_codes``).
-                * ``"legacy_blank"`` — the pre-fix shape that sent both [필수]
-                  fields as ``""``. Kept **only** as the B-arm of P-NMPR: it is
-                  the one thing that can answer whether the broker's implicit
-                  default for a blank actually equals ``01``/``0``. Never make
-                  this the default.
-
-        Raises:
-            ProbeError: unknown ``required_fields`` mode.
-        """
+        """Mirror of ``executor.py:458-471`` (futures order body)."""
         codes = _NMPR_ARMS.get(required_fields)
         if codes is None:
             raise ProbeError(
@@ -1107,8 +574,6 @@ class MockTradingClient:
             "KRX_NMPR_CNDT_CD": krx_nmpr_cndt_cd,
             "CTAC_TLNO": "",
             "FUOP_ITEM_DVSN_CD": "",
-            # 지정가 — executor.py:887 ``_map_futures_order_type`` maps internal
-            # OrderType.LIMIT ("00") to futures ORD_DVSN_CD "01".
             "ORD_DVSN_CD": "01",
         }
 
@@ -1145,29 +610,7 @@ class MockTradingClient:
     def submit_stock_verbose(
         self, body: dict[str, str], *, side: str
     ) -> tuple[Placed | None, int, dict[str, Any], str, float]:
-        """POST ``order-cash`` and keep the HTTP status and the raw body.
-
-        The stock twin of :meth:`submit_futures_verbose`, and verbose for the
-        same reason: ``is_rate_limited`` fires on HTTP 429 OR ``EGW00201``
-        anywhere in the envelope, and a caller handed only the parsed dict
-        cannot see the first — a throttle then arrives as ``placed is None`` and
-        gets reported as a broker rejection.
-
-        ``side`` picks the TR, and the two are different TRs rather than a field:
-        ``stock_krx_buy_mock`` (``VTTC0802U``) and ``stock_krx_sell_mock``
-        (``VTTC0801U``) — ``shared/execution/tr_ids.py``. KRX, not ATS: this
-        harness sends no ATS order, and the cancel TR's ``EXCG_ID_DVSN_CD`` is
-        ``KRX`` to match (:data:`_STOCK_EXCG_KRX`).
-
-        Returns:
-            ``(placed, http_status, parsed, raw_text, elapsed_ms)``. ``placed``
-            is ``None`` unless the call was a 200 with ``rt_cd == "0"`` and a
-            non-empty ``ODNO``; when it is not ``None`` it carries the
-            ``KRX_FWDG_ORD_ORGNO`` the cancel will need.
-
-        Raises:
-            ProbeError: unknown ``side``.
-        """
+        """POST ``order-cash`` and keep the HTTP status and the raw body."""
         tr_key = {"BUY": "stock_krx_buy_mock", "SELL": "stock_krx_sell_mock"}.get(side)
         if tr_key is None:
             raise ProbeError(f"unknown stock order side {side!r} (expected BUY/SELL)")
@@ -1192,19 +635,7 @@ class MockTradingClient:
     def cancel_stock_verbose(
         self, *, orgn_odno: str, krx_fwdg_ord_orgno: str, remaining_qty: int
     ) -> tuple[int, dict[str, Any], str, float, dict[str, str]]:
-        """POST the stock 취소 (``VTTC0013U``), keeping status, body and request.
-
-        The request body is returned as well as the answer because a cancel is
-        the one call in this harness whose *request* is the observation: #948
-        asks what shape the cancel takes on the query surface, and that is only
-        readable next to the ``ORGN_ODNO``/``KRX_FWDG_ORD_ORGNO`` that were
-        actually sent.
-
-        There is no classified twin, for the reason
-        :meth:`inquire_futures_classified` names: a resent order-mutating POST
-        is the duplicate-order hazard, so a transient here is the caller's to
-        record and never to retry blindly.
-        """
+        """POST the stock 취소 (``VTTC0013U``), keeping status, body and request."""
         body = self.stock_cancel_body(
             orgn_odno=orgn_odno,
             krx_fwdg_ord_orgno=krx_fwdg_ord_orgno,
@@ -1219,30 +650,18 @@ class MockTradingClient:
     def submit_futures(
         self, body: dict[str, str]
     ) -> tuple[Placed | None, dict[str, Any], float]:
-        """The parsed submit. Status and raw text are dropped — see
-        :meth:`submit_futures_verbose` for the callers that need them."""
+        """The parsed submit. Status and raw text are dropped — see"""
         placed, _status, parsed, _text, ms = self.submit_futures_verbose(body)
         return placed, parsed, ms
 
     def submit_futures_verbose(
         self, body: dict[str, str]
     ) -> tuple[Placed | None, int, dict[str, Any], str, float]:
-        """:meth:`submit_futures` plus the HTTP status and the raw body.
-
-        Both are needed to classify the answer: ``is_rate_limited`` fires on
-        HTTP 429 OR ``EGW00201`` anywhere in the envelope, and a caller given
-        only the parsed dict cannot see the first. A 429 on the submit used to
-        arrive as ``placed is None`` and be reported as a broker REJECTION —
-        "every remaining trial would be refused the same way" — naming a cause
-        that had not happened (round-2 review F2).
-        """
+        """:meth:`submit_futures` plus the HTTP status and the raw body."""
         tr_id = self.tr_ids["futures_order_day_mock"]
         status, parsed, ms, text = self.trading_call(
             "POST", _FUT_ORDER_PATH, tr_id, body=body
         )
-        # t0 comes from the pacer, not from before the call: the pacing sleep
-        # happens inside _request and would otherwise be measured as broker
-        # latency. P-5 and P-FQP both subtract this from a later observation.
         sent = self.last_send_instant()
         odno = str((parsed.get("output") or {}).get("ODNO") or "").strip()
         placed = (
@@ -1259,35 +678,17 @@ class MockTradingClient:
     def cancel_futures_verbose(
         self, odno: str, qty: int
     ) -> tuple[int, dict[str, Any], str]:
-        """Cancel, keeping the HTTP status and raw body.
-
-        :func:`is_rate_limited` reads all three — the status carries HTTP 429 and
-        the raw text carries ``EGW00201`` when the parsed body does not surface it
-        as ``msg_cd``. Handing it only the parsed dict throws away two of the three
-        signals it was written to check, and a throttle read as an ordinary
-        rejection is the difference between retrying a live order and abandoning it.
-        """
+        """Cancel, keeping the HTTP status and raw body."""
         return self._rvsecncl(odno, qty, dvsn="02", price=None)
 
     def replace_futures(self, odno: str, qty: int, price: TickPrice) -> dict[str, Any]:
-        """Amend — ``RVSE_CNCL_DVSN_CD='01'``. Never exercised by the runtime
-        (draft §3.1 row 8: the literal appears once, value ``"02"`` only).
-
-        The amend price needs the same tick discipline as the original submit: an
-        off-tick amend is rejected exactly like an off-tick submit, and a rejected
-        amend makes P-8 report replace semantics it never observed.
-        """
+        """Amend — ``RVSE_CNCL_DVSN_CD='01'``. Never exercised by the runtime"""
         return self.replace_futures_verbose(odno, qty, price)[1]
 
     def replace_futures_verbose(
         self, odno: str, qty: int, price: TickPrice
     ) -> tuple[int, dict[str, Any], str]:
-        """:meth:`replace_futures` plus the HTTP status and the raw body, for
-        the same reason :meth:`submit_futures_verbose` exists: a rate limit on
-        the amend was invisible to the parsed dict alone, so the trial carried
-        on polling and the series placed the next order — bypassing the "our
-        call rate ⇒ stop, never retry" rule on the one POST where it matters
-        most (round-2 review F2)."""
+        """:meth:`replace_futures` plus the HTTP status and the raw body, for"""
         return self._rvsecncl(odno, qty, dvsn="01", price=price)
 
     def _rvsecncl(
@@ -1327,14 +728,7 @@ class MockTradingClient:
         fk200: str = "",
         nk200: str = "",
     ) -> tuple[int, dict[str, Any], str]:
-        """Mirror of ``executor.py:623-636`` but with usable continuation keys.
-
-        The ONE place this surface is requested. It hands back the HTTP status
-        and the raw text as well as the parsed body, because the transient
-        classifier needs all three: :func:`is_rate_limited` fires on HTTP 429
-        OR ``EGW00201`` anywhere in the envelope, and a caller given only the
-        parsed dict cannot see the first.
-        """
+        """Mirror of ``executor.py:623-636`` but with usable continuation keys."""
         tr_id = self.tr_ids["futures_inquire_day_mock"]
         day = (datetime.now(KST) - timedelta(days=day_offset)).date().strftime("%Y%m%d")
         params = {
@@ -1380,35 +774,12 @@ class MockTradingClient:
         fk200: str = "",
         nk200: str = "",
     ) -> Outcome:
-        """:meth:`inquire_futures`, classified instead of raising.
-
-        The open-order surface is the one P-8 reads over and over — the
-        coexistence poll and the cleanup liveness walk — and it is the surface
-        that proved unstable: the 2026-09-28 trial 2 died here on a
-        ``ConnectionError`` that escaped the probe entirely, while the cleanup
-        cancel issued seconds later succeeded. So this variant answers with an
-        :class:`~tools.broker_probes.common.Outcome` carrying the shared
-        transient classification, and the CALLER decides whether to spend a
-        retry on it (:func:`~tools.broker_probes.common.retry_once`).
-
-        It is a GET, which is what makes retrying it safe. The order-mutating
-        calls (:meth:`submit_futures`, :meth:`replace_futures`,
-        :meth:`cancel_futures`) deliberately have no classified twin: a resent
-        submit is the duplicate-order hazard P-2 exists to measure.
-
-        ``kind`` is ``None`` when the answer arrived intact and the caller has
-        to interpret it (``rt_cd``, rows, continuation keys). ``payload`` is
-        that answer's ``output1`` when it is a list, else ``[]``.
-        """
+        """:meth:`inquire_futures`, classified instead of raising."""
         try:
             status, parsed, text = self._inquire_futures_call(
                 symbol, odno=odno, day_offset=day_offset, fk200=fk200, nk200=nk200
             )
         except transport_transient_types() as exc:
-            # No answer arrived, so there is no body and no HTTP status: 0 is
-            # the "no call completed" marker. The excerpt carries the exception
-            # class, never the request — requests renders the failed URL in
-            # full and that URL carries CANO.
             return Outcome(
                 kind=STATUS_TRANSIENT_TRANSPORT,
                 http_status=0,
@@ -1432,25 +803,7 @@ class MockTradingClient:
     def stock_balance_verbose(
         self, *, fk: str = "", nk: str = ""
     ) -> tuple[int, dict[str, Any], str, float]:
-        """Mirror of ``shared/kis/client.py:920-933`` params, mock TR.
-
-        Verbose — ``(http_status, parsed, raw_text, elapsed_ms)`` — because
-        ``is_rate_limited`` fires on HTTP 429 OR ``EGW00201`` anywhere in the
-        envelope, and a caller handed only the parsed dict cannot see the first.
-        A throttled page then reads as an ordinary ``rt_cd != 0`` rejection,
-        which for a probe whose precondition is "this account is flat" is the
-        difference between "could not establish it" and "the broker said no".
-
-        Args:
-            fk: ``CTX_AREA_FK100`` — the previous page's 연속조회검색조건100.
-            nk: ``CTX_AREA_NK100`` — the previous page's 연속조회키100.
-
-        Both default to ``""`` (first page), so every existing caller keeps the
-        exact params it had. They exist because a ONE-PAGE balance read cannot
-        tell "not held" from "held on a later page" — the defect P-BAL measured
-        and ``probes_ca._read_balance`` walks around. A probe whose safety rests
-        on "this account is flat" has to be able to walk.
-        """
+        """Mirror of ``shared/kis/client.py:920-933`` params, mock TR."""
         tr_id = "VTTC8434R"
         assert_mock_trading_tr(tr_id)
         params = {
@@ -1494,62 +847,7 @@ class MockTradingClient:
         fk: str = "",
         nk: str = "",
     ) -> tuple[int, dict[str, Any], str, float]:
-        """주식일별주문체결조회 — read-only execution inquiry (mock ``VTTC0081R``).
-
-        Verbose — ``(http_status, parsed, raw_text, elapsed_ms)`` — for the
-        reason :meth:`stock_balance_verbose` is: HTTP 429 is invisible in the
-        parsed body, and this is the surface P-SC polls over and over.
-
-        Spec: ``examples_llm/domestic_stock/inquire_daily_ccld/inquire_daily_ccld.py``
-        (주식일별주문체결조회, ``[v1_국내주식-005]``), whose ``API_URL`` is
-        :data:`_STOCK_DAILY_CCLD_PATH` and whose TR table gives
-        :data:`_STOCK_DAILY_CCLD_TR_MOCK`. Row field names and their Korean glosses
-        come from that wrapper's ``chk_`` companion (``COLUMN_MAPPING``); the subset
-        this harness keeps is :data:`_CCLD_ROW_FIELDS`.
-
-        A GET on a ``/trading/`` path, so it goes through :meth:`trading_call` and is
-        gated by ``assert_mock_host`` + ``assert_mock_trading_tr`` exactly like every
-        other call in this client. It reads only — there is no write counterpart here
-        and none may be added: an execution inquiry answers "did it fill", and any
-        mutation would be a different capability with a different safety argument.
-
-        Parameter choices that carry meaning:
-
-        * ``CCLD_DVSN="00"`` (전체) — NOT ``"01"`` (체결). Asking only for filled rows
-          would make an unfilled order indistinguishable from an order the inquiry
-          never returned, which collapses "did not fill" back into "cannot tell" —
-          the very ambiguity this call exists to remove.
-        * ``INQR_DVSN="00"`` (역순 — newest first). 모의 serves at most 15 rows per
-          call ("모의계좌의 경우, 한 번의 호출에 최대 15건까지 확인 가능", same
-          wrapper), so reverse order is what keeps a seconds-old order on the first
-          page. One page is read; no continuation walk is attempted.
-        * ``SLL_BUY_DVSN_CD="00"`` (전체) and ``INQR_DVSN_3="00"`` (전체) — the
-          official example's values. Narrowing is done by ``PDNO`` alone, because a
-          filter this harness has not itself verified returning zero rows is
-          indistinguishable from a non-fill.
-        * ``odno`` defaults to empty and P-11 leaves it so. The parameter exists
-          because the spec has it, but a server-side ODNO filter that encodes the
-          order number differently from the accept response would return nothing and
-          look exactly like a non-fill — the same class of defect ``odno_key()``
-          exists for. Matching is therefore done locally on the returned rows. When
-          supplied, the value goes on the wire verbatim, like ``ORGN_ODNO``.
-
-        Args:
-            symbol: 종목코드, sent as ``PDNO``.
-            odno: Optional server-side 주문번호 filter, verbatim.
-            day_offset: Days back from today (KST) to query; both
-                ``INQR_STRT_DT`` and ``INQR_END_DT`` carry that one date.
-            fk: ``CTX_AREA_FK100`` — the previous page's 연속조회검색조건100.
-            nk: ``CTX_AREA_NK100`` — the previous page's 연속조회키100.
-
-        ``fk``/``nk`` default to ``""`` (first page), so P-11's single-page read
-        is unchanged. They exist because the 15-row 모의 page cap means a single
-        page cannot establish that NO order is open — a statement a probe whose
-        precondition is "flat account" has to be able to make or refuse to make.
-
-        Returns:
-            The parsed response — ``output1`` is the row array, ``output2`` totals.
-        """
+        """주식일별주문체결조회 — read-only execution inquiry (mock ``VTTC0081R``)."""
         tr_id = _STOCK_DAILY_CCLD_TR_MOCK
         assert_mock_trading_tr(tr_id)
         day = (datetime.now(KST) - timedelta(days=day_offset)).date().strftime("%Y%m%d")
@@ -1574,11 +872,6 @@ class MockTradingClient:
             "GET", _STOCK_DAILY_CCLD_PATH, tr_id, params=params
         )
         return status, parsed, text, ms
-
-
-# ---------------------------------------------------------------------------
-# Setup / teardown helpers
-# ---------------------------------------------------------------------------
 
 
 def _setup(
@@ -1609,15 +902,7 @@ def _setup(
 def _resting_price(
     client: MockTradingClient, args: argparse.Namespace
 ) -> tuple[TickPrice, str]:
-    """A tick-valid limit price far enough from the touch that it will not fill.
-
-    The snap is away from the touch, so it can only widen the
-    ``--price-offset-pct`` gap that keeps the order resting, never narrow it.
-
-    Raises:
-        ProbeError: the computed price is non-positive, or no tick could be
-            established for the instrument.
-    """
+    """A tick-valid limit price far enough from the touch that it will not fill."""
     side = "BUY"
     if args.asset == "futures":
         last = client.futures_last_price(args.symbol)
@@ -1630,8 +915,6 @@ def _resting_price(
     return snap_to_tick(price, tick, side=side, marketable=False), side
 
 
-#: How one cleanup cancel ended. Derived from the open-order surface, never from
-#: the broker's rejection sentence — see :func:`_cleanup`.
 _CLEANUP_CANCELLED = "CANCELLED"
 _CLEANUP_NOTHING_TO_CANCEL = "NOTHING_TO_CANCEL_NO_LIVE_ROW"
 _CLEANUP_STILL_LIVE = "REJECTED_AND_STILL_LIVE"
@@ -1639,15 +922,6 @@ _CLEANUP_LIVENESS_UNKNOWN = "REJECTED_LIVENESS_UNDETERMINED"
 _CLEANUP_THROTTLED = "REJECTED_THROTTLE_NOT_CLEARED"
 _CLEANUP_EXCEPTION = "CANCEL_CALL_RAISED"
 
-#: How the liveness lookup behaves for the CLEANUP consumer, as opposed to the
-#: coexistence consumer — see :data:`_P8_COEXISTENCE_LIVENESS_NOTE`.
-#:
-#: The two consumers read the same ``qty>0`` predicate with OPPOSITE safety
-#: polarity, and conflating them is what let a one-page, ``rt_cd``-blind lookup
-#: look acceptable. For ``coexistence_ms``, failing to see a live row understates
-#: the overlap hazard's absence — it can only over-report the hazard, which is
-#: safe. For cleanup it is the reverse: failing to see a live row DOWNGRADES an
-#: error and tells the operator nothing about an order still on the book.
 _CLEANUP_LIVENESS_NOTE = (
     "Cleanup consumes the qty>0 liveness predicate with the OPPOSITE polarity to "
     "coexistence_ms. Here a missing live row silences an error, so a surface that "
@@ -1658,32 +932,15 @@ _CLEANUP_LIVENESS_NOTE = (
     "or unreadable walk, and is never consulted at all for a throttled cancel."
 )
 
-#: Cancel attempts per order before a live order is declared un-cleaned.
-#:
-#: A throttle rejection never reached the matching engine, so the order IS still
-#: resting and the right answer is to try again rather than hand the operator a
-#: manual-cancel instruction for an order the harness could have cancelled itself.
-#: Observed verbatim in ``P-8-20260731T015220Z``: the second cleanup cancel of that
-#: run came back ``초당 거래건수를 초과하였습니다`` and the order was left on the book.
 _CLEANUP_ATTEMPTS = 3
 
-#: Gap between cancel attempts. The client's own pacer already spaces calls; this
-#: is the extra settle time a per-second throttle needs to drain.
 _CLEANUP_RETRY_S = 1.5
 
 
 def _transient_recorder(
     run: ProbeRun | None, retries: Retries | None
 ) -> Callable[[dict[str, Any], str], None]:
-    """Where a transient goes. Built ONCE per walk, never per page.
-
-    Three shapes, because the callers differ: with a counter, the standard
-    ``record_retry`` (observe every transient, count only the retries); with a
-    run but no counter — every order probe's cleanup except P-8's — observe it,
-    since ``measurements.retries`` is P-8's key and adding it to the other
-    probes' artifacts would change a shape nothing asked for; with neither (a
-    direct call in a test), drop it.
-    """
+    """Where a transient goes. Built ONCE per walk, never per page."""
     if run is None:
         return lambda _evidence, _kind: None
     if retries is not None:
@@ -1703,43 +960,7 @@ def _live_odno_keys(
     run: ProbeRun | None = None,
     retries: Retries | None = None,
 ) -> tuple[dict[str, dict[str, Any]] | None, dict[str, Any]]:
-    """Every order the open-order surface shows with ``qty > 0``.
-
-    Returns:
-        ``(live, evidence)``. ``live`` maps each row's CANONICAL key to the
-        ROW, because callers need three different things from it: membership
-        (the canonical key — the submit and query surfaces pad differently),
-        the verbatim ``odno`` for a cancel (it goes back on the wire as
-        ``ORGN_ODNO``), and the rest of the fields to decide whether a row is
-        this trial's at all. It is ``None`` — never an empty mapping —
-        whenever the surface did not positively answer for the WHOLE book.
-        ``evidence`` records how the walk ended and goes into the artifact, so
-        a lookup that established nothing cannot do so silently.
-
-    ``None`` and ``set()`` are opposite findings and must never collapse. An empty
-    set is the broker saying "nothing of yours is live"; ``None`` is "we do not
-    know". Cleanup reads the first as license to downgrade an error and the second
-    as a reason to keep trying, so every way of not knowing has to arrive as
-    ``None``:
-
-    * **``rt_cd != "0"``.** This broker signals an empty result set with a
-      REJECTION shape, not an empty list: ``P-BAL-20260731T114344Z`` recorded
-      ``rt_cd='7'`` + ``msg_cd='KIOK0560'`` ("조회할 내용이 없습니다") on the sibling
-      balance surface, and ``shared/kis/client.py`` guards ``rt_cd != "0"`` in ten
-      places. So a failure response carrying ``output1: []`` — a shape this
-      function used to accept — would have read as "nothing is live" and cleared a
-      resting order's error.
-    * **Truncation.** ``P-5b-20260731T014917Z`` measured THIS surface at
-      ``page_size_observed: 15`` with ``continuation_supported: true``, and its own
-      walk exhausted ten pages still holding a continuation key. A single-page read
-      therefore misses order 16 onward, and "not on page 1" is not "not live". The
-      walk follows the continuation keys exactly as ``probe_p5b`` does and reports
-      ``None`` if it runs out of page budget with keys still advancing.
-    * **Unreadable rows and non-advancing keys.** A row we cannot identify might BE
-      the order under cleanup, and keys that stop advancing mean the walk is not
-      progressing through the book. Both poison the whole answer rather than being
-      skipped.
-    """
+    """Every order the open-order surface shows with ``qty > 0``."""
     live: dict[str, dict[str, Any]] = {}
     evidence: dict[str, Any] = {"pages_walked": 0, "rows_seen": 0}
     cursor = {"fk": "", "nk": ""}
@@ -1756,30 +977,13 @@ def _live_odno_keys(
                 _page_call,
                 on_transient,
                 client.pacer,
-                # One pacing interval — the interval this client already owes
-                # between any two calls. No new constant, and the same "wait a
-                # whole interval, try once" rule the coexistence poll uses.
                 wait_s=client.pacer.interval_s,
                 phase="cleanup_liveness",
             )
         except Exception as exc:  # noqa: BLE001 - a transport failure is not an answer
-            # Still here, and still broad. The classified call turns a TIMEOUT
-            # or a cut connection into an Outcome, but anything else requests
-            # can raise — and anything the client itself raises — must not
-            # escape a cleanup walk running inside probe_p8's ``finally``.
             evidence["outcome"] = f"QUERY_RAISED: {type(exc).__name__}"
             return None, evidence
         if outcome.kind is not None:
-            # Rate-limited, or transient twice over. Either way the surface did
-            # not answer, and for THIS consumer not knowing counts as live —
-            # the opposite polarity to coexistence_ms (see the note above).
-            #
-            # The envelope goes in too. A classified stop used to record only
-            # its status_kind, which lost the rt_cd/msg_cd/msg1 the
-            # rt_cd!=0 branch below has always kept — and an HTTP-200
-            # EGW00201 body lands HERE now, so the fields a reader needs to
-            # tell one throttle from another would have disappeared from the
-            # artifact exactly when the walk failed (review F5).
             evidence["outcome"] = "QUERY_NOT_AN_ANSWER"
             evidence["status_kind"] = outcome.kind
             evidence["rt_cd"] = outcome.parsed.get("rt_cd")
@@ -1794,8 +998,6 @@ def _live_odno_keys(
         evidence["pages_walked"] = page + 1
         rt_cd = rt_cd_of(listing)
         if rt_cd != "0":
-            # Includes the broker's own empty-set notation. "No rows" and "no
-            # answer" are not the same claim and only rt_cd=0 licenses the first.
             evidence["outcome"] = "NOT_A_POSITIVE_ANSWER"
             evidence["rt_cd"] = rt_cd
             evidence["msg_cd"] = listing.get("msg_cd")
@@ -1824,10 +1026,6 @@ def _live_odno_keys(
             evidence["outcome"] = "COMPLETE_WALK"
             return live, evidence
         if not rows:
-            # The broker says "more follows" while handing back an empty page.
-            # That shape has never been observed on this surface (P-5b walked
-            # ten full pages), and a row-count heuristic must not override the
-            # broker's own more-follows signal: not knowing is not knowing.
             evidence["outcome"] = "EMPTY_PAGE_WITH_CONTINUATION_KEY"
             return None, evidence
         if (next_fk, next_nk) == (cursor["fk"], cursor["nk"]):
@@ -1849,10 +1047,6 @@ def _cancel_one(
 ) -> str:
     """Cancel one probe-created order and return its ``_CLEANUP_*`` disposition."""
     try:
-        # Verbatim ODNO, never odno_key(): this value goes back on the wire as
-        # ORGN_ODNO, and the accept response's zero-padded form is what the
-        # broker accepted a cancel for (P-5-20260731T002112Z cleanup, rt_cd=0).
-        # Canonicalization is for COMPARISON only and must not reach a body.
         key: str | None = odno_key(odno)
     except ProbeError:
         key = None
@@ -1896,11 +1090,6 @@ def _cancel_one(
                     ),
                 )
                 return _CLEANUP_NOTHING_TO_CANCEL
-        # A throttled cancel never reached the matching engine, so the order is
-        # still resting BY CONSTRUCTION and its liveness is not in question. Asking
-        # the open-order surface here would be asking the wrong question and could
-        # answer it wrongly — the same UNDETERMINED-not-REJECTED polarity N-15's
-        # held-token sampling uses for a throttled read.
         if attempt < _CLEANUP_ATTEMPTS:
             time.sleep(_CLEANUP_RETRY_S * attempt)
             continue
@@ -1936,31 +1125,7 @@ def _cleanup(
     max_pages: int = 10,
     retries: Retries | None = None,
 ) -> dict[str, str]:
-    """Cancel every order the probe created and classify each outcome.
-
-    Returns:
-        Verbatim ODNO -> ``_CLEANUP_*`` disposition, so a probe can measure its own
-        cleanup. Empty when there was nothing to clean. Duplicate ODNOs are
-        cancelled once: an amend that rests under the SAME number appends it twice,
-        and cancelling twice would both send a pointless second request and let the
-        second outcome overwrite the first in this mapping.
-
-    A rejected cancel is not automatically a failure, and treating it as one cost
-    this campaign its whole P-8 result. An amend that issues a new ODNO consumes
-    the original order's remaining quantity, so the cleanup cancel of the ORIGINAL
-    is rejected — ``모의투자 정정/취소할 수량이 없습니다`` — exactly when the replace
-    worked. All five trials (``P-8-20260731T015220Z`` … ``P-8-20260731T020121Z``)
-    measured the replace and all five were demoted to ``NOT_MEASURED``, because
-    ``ProbeRun.to_dict`` classes any run with a non-empty ``errors`` list as not
-    measured. The probe's success condition was wired to void the probe.
-
-    The disposition comes from the open-order surface, never from the rejection
-    text. Matching on the 문언 would accept the same sentence from an order that
-    really is still resting — the operator would be told nothing while a live order
-    stayed on the book. So liveness that cannot be established counts as live, and
-    only a listing that positively answers *and* omits the order downgrades a
-    rejection from an error to an observation.
-    """
+    """Cancel every order the probe created and classify each outcome."""
     dispositions: dict[str, str] = {}
     if client is None:
         return dispositions
@@ -1983,43 +1148,18 @@ def _cleanup(
     return dispositions
 
 
-#: ``measurements`` key for the book walk that follows an order-state-unknown
-#: stop. Always written on that path, including when it finds nothing — "the
-#: walk ran and the book was clean" and "no walk happened" are different
-#: facts, and only one of them licenses the operator to stop looking.
 _UNACCOUNTED_KEY = "unaccounted_live_orders"
 
-#: Row fields this surface is KNOWN to carry, because the runtime reads them
-#: off it: ``odno``, ``ord_qty``, ``qty``, ``tot_ccld_qty``, ``avg_idx``
-#: (``executor.py``'s inquire-ccnl row parse; ``probes_real_order.classify_fill``
-#: cites the same set). A row's ORDER PRICE and its 매도매수구분 are NOT in
-#: that set — no artifact in this repo records a field name for either on this
-#: surface — so this matcher checks them only when the row happens to carry
-#: one of the names the repo uses elsewhere, and records which criteria it was
-#: actually able to apply. Guessing a field name would be worse than not
-#: checking: the match would silently never succeed, and a guard that matches
-#: nothing is a guard that protects nothing.
 _ROW_PRICE_FIELDS = ("ord_unpr", "ord_idx")
 _ROW_SIDE_FIELD = "sll_buy_dvsn_cd"
 
-#: 매수 — P-8 always places a BUY (``_resting_price``). ``shared/kis/client.py``
-#: reads ``01=매도 / 02=매수`` off a sibling surface.
 _SIDE_BUY = "02"
 
 
 def _row_matches_this_trial(
     row: dict[str, Any], *, symbol: str, qty: int, price: TickPrice
 ) -> tuple[bool, list[str], list[str]]:
-    """Could this open-order row be the order THIS trial placed?
-
-    Returns ``(matches, checked, unavailable)`` — which criteria were applied
-    and which the row did not carry, both of which go into the artifact.
-
-    Conservative by construction: a row that fails any criterion the probe
-    COULD check is not a candidate. The criteria the row does not carry are
-    named rather than assumed, so a reader can see how strong the match
-    actually was.
-    """
+    """Could this open-order row be the order THIS trial placed?"""
     checked: list[str] = []
     unavailable: list[str] = []
     matches = True
@@ -2029,8 +1169,6 @@ def _row_matches_this_trial(
         checked.append("pdno")
         matches = matches and row_pdno == symbol
     else:
-        # The query is already scoped with PDNO=symbol, so the server has
-        # filtered; the row simply did not echo it back.
         unavailable.append("pdno")
 
     raw_qty = str(row.get("ord_qty") or "").strip()
@@ -2067,23 +1205,7 @@ def _row_matches_this_trial(
 
 
 def _cancellable_odno(query_row_value: str) -> str:
-    """The wire form to send as ``ORGN_ODNO`` for a row seen only in a QUERY.
-
-    The two surfaces pad differently, and this is the one place the difference
-    has consequences rather than just needing canonicalisation. Measured, in
-    every P-8 artifact's ``odno_wire_format``: the accept response is
-    ZERO-padded to 10 (``0000000558``), the query row is SPACE-padded to 10
-    (``       558``). What the broker has been observed to accept a cancel for
-    is the accept-response form (``_cancel_one``'s own note, P-5-20260731T002112Z).
-
-    An unaccounted row has no accept response — that is what makes it
-    unaccounted — so the form is RECONSTRUCTED: strip the padding, then
-    re-pad with zeros to the width the row itself used. Both the observed and
-    the sent form go into the artifact, because this is a reconstruction and
-    not an observation. If the reconstruction is wrong the cancel is rejected
-    and ``_cancel_one`` reports ``REJECTED_AND_STILL_LIVE`` with an error —
-    loud, which is the right direction for a guess.
-    """
+    """The wire form to send as ``ORGN_ODNO`` for a row seen only in a QUERY."""
     stripped = query_row_value.strip()
     return stripped.rjust(len(query_row_value), "0")
 
@@ -2100,38 +1222,7 @@ def _cleanup_unaccounted(
     may_cancel: bool,
     retries: Retries | None = None,
 ) -> None:
-    """Account for anything live on ``symbol`` that this trial did not place.
-
-    Runs only after an order-mutating call failed in transport or was
-    ledger-throttled (:data:`_P8_STOP_ORDER_STATE_UNKNOWN`), and only AFTER
-    :func:`_cleanup`, so the ODNOs the probe does know about are already
-    cancelled and what is left is the genuinely unaccounted-for.
-
-    ``known`` is every canonical key the probe recorded, and a key stays
-    "known" even when its own cancel was rejected and it is still live: that
-    row already has a disposition and an error of its own, and counting it
-    twice would hide the row that has neither.
-
-    **It does not cancel on its own authority, and it never touches a row that
-    does not look like this trial's order.** The first version did both, and
-    on a 모의 account the whole campaign shares that is a way to destroy
-    another probe's measurement — P-5, P-11, P-EXT or an operator MTS order
-    resting on the same contract would have been cancelled and the loss
-    attributed to "the order the timed-out call left behind" (round-2 review
-    F5). So:
-
-    * rows that do not match this trial's body are recorded as
-      ``FOREIGN_LIVE_ROWS_PRESENT`` and left alone, always;
-    * matching rows are cancelled only with ``--cancel-unaccounted``, which
-      the runner passes from ``P8_CANCEL_UNACCOUNTED=1``. The default is
-      record and stop, because an orphan the operator is TOLD about is a
-      bounded problem and a cancelled stranger is not.
-
-    Outcomes under :data:`_UNACCOUNTED_KEY`: ``UNDETERMINED`` (the walk did
-    not answer for the whole book — nothing concluded, same fail-closed
-    polarity as :data:`_CLEANUP_LIVENESS_NOTE`), ``NONE_FOUND``,
-    ``FOUND_NOT_CANCELLED`` (recorded, opt-in absent) or ``FOUND`` (cancelled).
-    """
+    """Account for anything live on ``symbol`` that this trial did not place."""
     live, evidence = _live_odno_keys(
         client, symbol, max_pages, run=run, retries=retries
     )
@@ -2169,8 +1260,6 @@ def _cleanup_unaccounted(
             foreign.append(key)
 
     if foreign:
-        # Named and left alone. This is the only outcome for a row that is
-        # live on the same contract but is not this trial's order.
         run.measure(
             "foreign_live_rows_present",
             {
@@ -2252,24 +1341,8 @@ def _require_symbol(args: argparse.Namespace) -> None:
         raise ProbeError("--symbol is required (e.g. 101S6000 futures, 005930 stock)")
 
 
-# ---------------------------------------------------------------------------
-# P-2 — submission idempotency
-# ---------------------------------------------------------------------------
-
-
 def probe_p2(args: argparse.Namespace) -> ProbeRun:
-    """P-2 SUBMISSION_IDEMPOTENCY — does an identical body produce two ODNOs?
-
-    Measures: ``capabilities.submission_idempotency.status`` and
-    ``deduplication_window_ms``. Feeds no Verification-Profile bound directly;
-    it decides whether the runtime's blind-retry paths (draft §5 Q-IDEMP-1/2)
-    are a duplicate-order hazard or a broker-absorbed no-op.
-
-    Method: send byte-identical order bodies ``--gap-ms`` apart, then count
-    distinct ODNOs via inquire-ccnl. Two ODNOs => no dedup (UNSUPPORTED, and the
-    window is undefined — not 0). One ODNO => rerun with a larger gap to bracket
-    the window; report the bracket, never a point estimate.
-    """
+    """P-2 SUBMISSION_IDEMPOTENCY — does an identical body produce two ODNOs?"""
     spec = get("P-2")
     _require_symbol(args)
     run, client = _setup(spec, args)
@@ -2307,15 +1380,10 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
             listing.get("output1") if isinstance(listing.get("output1"), list) else []
         )
         record_odno_wire_format(run, distinct, rows)
-        # Canonical keys on BOTH sides. The accept response zero-pads and the query
-        # row space-pads the same order number, so a raw intersection is empty for
-        # every order and would report NO_DEDUP-with-nothing-confirmed forever.
         observed = sorted(
             {odno_key(r.get("odno")) for r in rows} & {odno_key(o) for o in distinct}
         )
 
-        # The effective gap, not the requested one: the pacer floors the sleep
-        # below, and the dedup bracket is set by the gap that reached the wire.
         run.measure("gap_ms", effective_interval_ms(args.gap_ms, args))
         run.measure("distinct_odno_count", len(distinct))
         run.measure("odno_confirmed_in_query", observed)
@@ -2351,25 +1419,8 @@ def probe_p2(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-# ---------------------------------------------------------------------------
-# P-5 — accept -> visible-in-query convergence
-# ---------------------------------------------------------------------------
-
-
 def probe_p5(args: argparse.Namespace) -> ProbeRun:
-    """P-5 OPEN_ORDER_QUERY — order-accept to query-visible convergence latency.
-
-    Measures: ``capabilities.open_order_query.eventual_consistency_bound_ms``.
-    Feeds: ``B_broker_query_consistency`` (VP-002:752, semantics
-    ``broker_specific``, failure_response ``CONSERVATIVE_UNKNOWN``, rationale
-    "absence within it is not proof of non-existence").
-
-    Method: for each trial, timestamp t0 at the ODNO-bearing accept response,
-    then poll inquire-ccnl every ``--poll-ms`` until the ODNO appears; t1-t0 is
-    the sample. Because the bound is a hard maximum, the candidate is
-    ``max x (1+margin)`` — never a percentile. Polling granularity is an additive
-    error term: it is recorded so the approver can widen the margin accordingly.
-    """
+    """P-5 OPEN_ORDER_QUERY — order-accept to query-visible convergence latency."""
     spec = get("P-5")
     _require_symbol(args)
     run, client = _setup(spec, args)
@@ -2405,9 +1456,6 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
                     else []
                 )
                 record_odno_wire_format(run, [placed.odno], rows)
-                # Canonical keys on both sides — see odno_key(). This comparison is
-                # what P-5-20260731T002112Z got wrong: the row was present from the
-                # first poll and the raw string compare rejected it every time.
                 if any(odno_key(r.get("odno")) == placed.key for r in rows):
                     seen_at = time.monotonic()
                     break
@@ -2428,7 +1476,6 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
                 latency_ms=round(latency_ms, 2),
                 polls=polls,
             )
-            # Cancel immediately so the next trial starts from a clean book.
             client.cancel_futures(placed.odno, args.quantity)
             odnos.remove(placed.odno)
             time.sleep(args.inter_trial_s)
@@ -2457,22 +1504,8 @@ def probe_p5(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-# ---------------------------------------------------------------------------
-# P-5b — pagination / completeness
-# ---------------------------------------------------------------------------
-
-
 def probe_p5b(args: argparse.Namespace) -> ProbeRun:
-    """P-5b OPEN_ORDER_QUERY — continuation-key (CTX_AREA_FK200/NK200) behaviour.
-
-    Measures: ``capabilities.open_order_query.completeness`` / ``pagination``.
-    Resolves quirk Q-OOQ-1 (draft §5:165) — the runtime sends empty continuation
-    keys and ignores the response keys, so it always reads page 1 only. That is
-    the concrete instance of ``ONE_OPEN_ORDER_QUERY_OMISSION``.
-
-    Read-only: it issues no order. It needs enough same-day history to exceed one
-    page, so run it after P-5.
-    """
+    """P-5b OPEN_ORDER_QUERY — continuation-key (CTX_AREA_FK200/NK200) behaviour."""
     spec = get("P-5b")
     _require_symbol(args)
     run, client = _setup(spec, args)
@@ -2500,9 +1533,6 @@ def probe_p5b(args: argparse.Namespace) -> ProbeRun:
                     "rt_cd": listing.get("rt_cd"),
                     "next_fk200_present": bool(next_fk),
                     "next_nk200_present": bool(next_nk),
-                    # Raw row values on purpose: P-5b submits nothing, so these are
-                    # page-boundary evidence rather than identity matches, and the
-                    # broker's own encoding is the thing worth recording.
                     "first_odno": str(rows[0].get("odno", "")).strip() if rows else "",
                     "last_odno": str(rows[-1].get("odno", "")).strip() if rows else "",
                 }
@@ -2540,23 +1570,6 @@ def probe_p5b(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-# ---------------------------------------------------------------------------
-# P-8 — replace / amend
-# ---------------------------------------------------------------------------
-
-
-#: The standing interpretation of the ``qty>0`` predicate for the COEXISTENCE
-#: consumer, written into every artifact from here on.
-#:
-#: The 2026-08-01 review (campaign README §"P-8 liveness 술어 검토") kept the
-#: predicate and fixed its reading instead, on the ground that its bias is the safe
-#: one: mistaking a dead row for a live one OVER-states coexistence, which reads as
-#: "two protective orders can be on the book at once" and defends against double
-#: exposure. That review left one instruction — record the reading in the artifact
-#: the next time the P-8 harness changes. This is that record.
-#:
-#: The argument is scoped to THIS consumer and does not transfer. Cleanup reads the
-#: same predicate with inverted polarity; see :data:`_CLEANUP_LIVENESS_NOTE`.
 _P8_COEXISTENCE_LIVENESS_NOTE = (
     "'live' here means visible on the inquire-ccnl surface with qty>0. That is "
     "survival ON THE QUERY SURFACE and an UPPER approximation of real survival, so "
@@ -2569,7 +1582,6 @@ _P8_COEXISTENCE_LIVENESS_NOTE = (
     "guards, which is what cleanup_liveness_note records."
 )
 
-#: Why the amend-consumption reading is a reading and not a measurement.
 _P8_CONSUMPTION_NOTE = (
     "A fill produces the SAME observation — an original that is not live and "
     "cannot be cancelled — and P-8 does not query the execution surface, so this "
@@ -2581,102 +1593,25 @@ _P8_CONSUMPTION_NOTE = (
 )
 
 
-#: Anchored lines ``probe_p8`` prints for its runner, exactly one of each on
-#: every path the probe can leave by — including the paths it leaves by
-#: failing. "Silence is not a state": the 2026-09-28 runner had to infer what
-#: had happened from an exit code and an error count, and inferred wrong.
-#:
-#: The runner reads ONLY these two lines (``sed -n 's/^P8_STOP=//p'``), never
-#: the artifact JSON, for the same reason ``run_p_ca.sh`` reads ``HELD=`` and
-#: ``REFERENCE_ROW=``: the line is produced by Python that tests can measure,
-#: and the bash that consumes it stays three lines long.
 _P8_STOP_PREFIX = "P8_STOP="
 _P8_COEXISTENCE_PREFIX = "P8_COEXISTENCE="
 
-#: The trial ran to its natural end — ``--visibility-timeout-s`` elapsed, or
-#: coexistence was seen and then ended. The ONLY token that says nothing went
-#: wrong; an amend the broker REJECTED still lands here, because a rejected
-#: amend is a replace-semantics observation and not a reason to stop a series.
 _P8_STOP_NONE = "none"
 
-#: The broker refused the SUBMIT (``rt_cd != '0'``) — 2026-09-11
-#: "모의투자 주문이 불가한 계좌입니다", 2026-09-16 "인증 시점의 계좌번호와 요청
-#: 계좌번호가 일치하지 않습니다". Every trial in the series would be refused the
-#: same way, so the series stops. This is the ONLY stop the "retry 금지" rule
-#: was ever written for.
 _P8_STOP_REJECTED = "rejected"
 
-#: HTTP 429 or ``EGW00201`` — WE called too fast. Stops the series, never
-#: retried, unchanged from before (plan §3): it is an account-protection rule.
 _P8_STOP_RATE_LIMITED = "rate_limited"
 
-#: A transport failure on an ORDER-MUTATING call — the submit or the amend.
-#: The series STOPS, and this is the one place this PR is stricter than the
-#: code it replaces rather than looser.
-#:
-#: The reason is that nothing is known about the order. A ``ReadTimeout`` on
-#: the submit says only that no answer came back; the broker may have accepted
-#: it and be resting it right now under an ODNO this probe never saw. The poll
-#: loop's transport stop is not like that — there the submit and the amend
-#: both answered, every ODNO is known, and ``_cleanup`` can account for all of
-#: them — which is why only the POLL phase gets "retry once, then carry on".
-#:
-#: Letting the series continue here would place another order per trial on top
-#: of an unaccounted resting one. Before stopping, :func:`_cleanup_unaccounted`
-#: walks the whole book and cancels anything live that this trial cannot
-#: account for (review F1).
 _P8_STOP_ORDER_STATE_UNKNOWN = "order_state_unknown"
 
-#: Prefix of ``transient:<kind>`` — two consecutive transport failures, or two
-#: consecutive ``EGW00215`` ledger throttles, on the order-status GET. This
-#: trial produced no coexistence sample, but the BROKER never refused anything:
-#: the 2026-09-28 trial 2 died this way and the cleanup cancel issued seconds
-#: later succeeded. The series continues (subject to the runner's own transient
-#: budget), which is precisely what did not happen on 09-28 — trials 3, 4 and 5
-#: were cancelled by a ``VERDICT`` line that called a ``ConnectionError``
-#: "오류 1건(브로커 거부 포함)".
 _P8_STOP_TRANSIENT = "transient"
 
-#: The coexistence poll never got a single ``rt_cd=0`` answer out of the
-#: open-order surface, so the trial learned nothing about the interval.
-#:
-#: This closes the other half of the same defect. The loop reads ``output1``,
-#: and a REJECTION carries none — so before this change a refusal read as "no
-#: legs are live", which is the loop's own signal that coexistence has ENDED.
-#: :func:`classify_answer` catches 429/``EGW00201``/``EGW00215``, but a plain
-#: ``rt_cd != '0'`` is not any of those: this broker answers an empty result
-#: set with a rejection shape (``rt_cd='7'`` + ``msg_cd='KIOK0560'``,
-#: ``P-BAL-20260731T114344Z``), and ``_live_odno_keys`` already refuses to read
-#: that as "nothing is live" for the cleanup consumer.
-#:
-#: The treatment here is deliberately NOT a stop on the first one. Whether this
-#: surface switches to a rejection shape once the book is empty has never been
-#: measured, and stopping on it would turn a normal end-of-coexistence into an
-#: abort — breaking measurements that work today on an unmeasured hunch. So an
-#: unanswered poll is recorded and SKIPPED: it neither sets nor clears the
-#: coexistence mark, and the loop keeps going. Only a loop in which NOTHING
-#: answered reports this stop, because that one provably observed nothing.
 _P8_STOP_QUERY_UNANSWERED = "query_unanswered"
 
-#: 조회할 내용이 없습니다 — this broker's EMPTY RESULT SET, served as a
-#: rejection rather than as ``rt_cd=0`` with no rows. Measured on the sibling
-#: balance surface as ``rt_cd='7'`` + ``msg_cd='KIOK0560'``
-#: (``P-BAL-20260731T114344Z``), and ``_live_odno_keys`` has always refused to
-#: read it as "nothing is live".
-#:
-#: For the COEXISTENCE consumer it means the opposite thing: an empty book is
-#: the ordinary end of a trial, not an unhealthy surface. Field-exact on
-#: ``msg_cd``, like :func:`is_ledger_throttled` and for the same reason — a
-#: body that merely mentions the code must not buy the quieter treatment.
 _EMPTY_BOOK_MSG_CD = "KIOK0560"
 
-#: Something left the probe that it does not classify — an exception out of a
-#: path with no handler. Fail-closed: the runner stops the series on it,
-#: because a state the probe cannot name is not a state to keep ordering in.
 _P8_STOP_UNKNOWN = "unknown"
 
-#: No ``--confirm``: nothing was sent. The runner always passes ``--confirm``,
-#: so seeing this means the runner and the invocation disagree, and it stops.
 _P8_STOP_DRY_RUN = "dry_run"
 
 _P8_COEXISTENCE_MEASURED = "measured"
@@ -2684,8 +1619,7 @@ _P8_COEXISTENCE_NOT_MEASURED = "not_measured"
 
 
 def _print_p8_verdict(stop: str, measured: bool) -> None:
-    """The two anchored lines. Called from ``probe_p8``'s ``finally``, so they
-    are printed after cleanup and on every exit — a raised exception included."""
+    """The two anchored lines. Called from ``probe_p8``'s ``finally``, so they"""
     print(f"{_P8_STOP_PREFIX}{stop}")
     print(
         f"{_P8_COEXISTENCE_PREFIX}"
@@ -2693,8 +1627,6 @@ def _print_p8_verdict(stop: str, measured: bool) -> None:
     )
 
 
-#: Phase -> why that call gets no second attempt. Stated per phase because
-#: they differ: two are POSTs, one is a GET that is simply not worth repeating.
 _P8_NO_RETRY_REASON: dict[str, str] = {
     "quote": (
         "retrying a price lookup only moves the trial's clock — nothing is "
@@ -2707,24 +1639,7 @@ _P8_NO_RETRY_REASON: dict[str, str] = {
 
 
 def _record_write_transport_stop(run: ProbeRun, phase: str, exc: BaseException) -> str:
-    """Classify a transport failure on a single-shot call, without retrying.
-
-    Three phases use this: ``quote``, ``submit`` and ``amend``. The last two
-    are POSTs, and :func:`retry_once` is for GETs — a resent submit is the
-    duplicate-order hazard P-2 exists to measure, and a resent amend could
-    consume the quantity twice. The quote is a GET, but retrying it would only
-    move the trial's clock: it happens once, before anything is resting, and a
-    broker that cannot answer a price query is not one to start placing orders
-    against.
-
-    All three therefore get the CLASSIFICATION — which is what the runner
-    needs, and what was missing on 2026-09-28 — but never a second attempt.
-
-    Returns the ``P8_STOP`` token: :data:`_P8_STOP_ORDER_STATE_UNKNOWN` for an
-    order-mutating call, whose outcome is unknown and whose series must stop,
-    and ``transient:transport`` for the quote, where nothing is resting and
-    the next trial starts from a clean account.
-    """
+    """Classify a transport failure on a single-shot call, without retrying."""
     excerpt = transport_excerpt(exc)
     run.observe(
         retry_evidence=retry_evidence(
@@ -2739,9 +1654,6 @@ def _record_write_transport_stop(run: ProbeRun, phase: str, exc: BaseException) 
             not_retried_because=REFUSED_SINGLE_SHOT,
         )
     )
-    # Why THIS phase was not retried, not why "a POST" is not: the quote is a
-    # GET, and telling a reader it is an order-mutating call is the same kind
-    # of false sentence as the stop narration this harness just had to fix.
     why = _P8_NO_RETRY_REASON.get(
         phase, "it is a single-shot call with no safe second attempt"
     )
@@ -2765,18 +1677,6 @@ def _record_write_transport_stop(run: ProbeRun, phase: str, exc: BaseException) 
     return _P8_STOP_ORDER_STATE_UNKNOWN
 
 
-#: ``stop_reason`` prefix -> what to say about the CAUSE, and the artifact
-#: record that backs it up.
-#:
-#: Chosen by lookup, never by "it was not the other one": a two-way ternary
-#: here once wrote "the stop is our own call rate (HTTP 429 / EGW00201)" over
-#: a ``query_unanswered`` stop, naming a cause that had not happened.
-#:
-#: Each entry names an observation a reader can go and find, so the pointer
-#: and the record have to be added together — the ``rate_limited`` arm used to
-#: point at ``retry_evidence``, which ``retry_once`` writes only for
-#: TRANSIENTS, so the one stop with no record told the reader to go look at it
-#: (review F5).
 _P8_STOP_NARRATION: dict[str, str] = {
     _P8_STOP_TRANSIENT: (
         "This is NOT a broker rejection: the submit and the amend were both "
@@ -2799,15 +1699,7 @@ _P8_STOP_NARRATION: dict[str, str] = {
 
 
 def _window_note(elapsed: bool, window_s: float) -> str:
-    """What to say about the window, from the FACT and not from the stop.
-
-    A stop reason cannot answer this. ``transient:transport`` usually means
-    the loop stopped short — but it also covers the case ``can_retry`` exists
-    for, where the transient surfaced AFTER the deadline (window 60s, poll at
-    58s, 20s timeout, transient at 78s): there the window was spent in full
-    and the retry was refused precisely because it had been. Saying a window
-    did not elapse when it did is the 2026-09-17 P-CA error (review F4).
-    """
+    """What to say about the window, from the FACT and not from the stop."""
     if elapsed:
         return (
             f"--visibility-timeout-s={window_s}s DID elapse — the window was "
@@ -2822,28 +1714,7 @@ def _window_note(elapsed: bool, window_s: float) -> str:
 def _classify_order_answer(
     run: ProbeRun, phase: str, status: int, parsed: dict[str, Any], text: str
 ) -> str | None:
-    """A ``P8_STOP`` token when the order POST's ANSWER ends the trial, else
-    ``None``.
-
-    The submit and the amend used to skip the classifier entirely, so the two
-    rules this harness codifies were both bypassed on the POSTs (round-2
-    review F2):
-
-    * HTTP 429 / ``EGW00201`` is OUR call rate. On the submit it arrived as
-      ``placed is None`` and was reported as a broker REJECTION — "every
-      remaining trial would be refused the same way", a cause that had not
-      happened. On the amend it was invisible: the trial polled on and the
-      series placed the next order.
-    * ``EGW00215`` is the LEDGER throttle. It is an ANSWER, so strictly the
-      order was not accepted — but "strictly" is doing too much work on the
-      one surface where being wrong leaves a live order, so it takes the
-      :data:`_P8_STOP_ORDER_STATE_UNKNOWN` path and pays for one book walk.
-      The walk is cheap; assuming a throttled POST never reached the book is
-      not.
-
-    Either way the evidence goes in the artifact, keyed by phase, so the
-    narration points at a record that exists.
-    """
+    """A ``P8_STOP`` token when the order POST's ANSWER ends the trial, else"""
     kind = classify_answer(status, parsed, text)
     if kind is None:
         return None
@@ -2877,54 +1748,21 @@ def _poll_coexistence(
     new_odno: str,
     retries: Retries,
 ) -> tuple[float | None, str | None, int, bool]:
-    """Poll the open-order surface for as long as both legs are live.
-
-    Returns ``(coexist_last, stop, answered, window_elapsed)``. ``answered`` is
-    how many polls came back ``rt_cd=0``; a run with none of those observed
-    NOTHING, whatever its ``stop`` says, and the caller must not write a
-    measurement off it. ``window_elapsed`` is whether the deadline had passed
-    by the time the loop left, which a stop reason alone cannot tell: a
-    transient surfacing AFTER the deadline (the case ``can_retry`` exists for)
-    stops the loop with the window fully spent.
-
-    ``stop`` is ``None`` when the loop ran to
-    its natural end — the window elapsed, or coexistence was seen and then
-    ended — which is the ONLY state in which ``coexistence_ms`` means anything.
-    Otherwise it is a ``P8_STOP`` token and the caller records no measurement:
-    a loop cut short saw an unknown part of the interval, and a truncated
-    interval reported as ``coexistence_ms`` would read LOW, i.e. toward "the
-    replace was atomic" — the fail-open direction for
-    ``B_protective_request_complete`` (:data:`_P8_COEXISTENCE_LIVENESS_NOTE`).
-
-    The GET here is the call the 2026-09-28 trial 2 died on. It now goes
-    through the shared transient policy: one retry, one whole poll interval
-    later, and only then a stop (``common.retry_once``). ``can_retry`` refuses
-    the retry once the window has passed, so a verdict never rests on a poll
-    made outside the window it claims to cover.
-    """
+    """Poll the open-order surface for as long as both legs are live."""
     coexist_last: float | None = None
     answered = 0
     unanswered = 0
     not_answered_codes: dict[str, int] = {}
     recorded_codes: set[str] = set()
     deadline = time.monotonic() + args.visibility_timeout_s
-    # The EFFECTIVE interval, not the requested one: the pacer will not release
-    # two calls closer together than --pace-s, so this is the gap the retry
-    # actually has to wait out. Same value the artifact reports as
-    # poll_granularity_ms. No new constant.
     retry_wait_s = effective_interval_ms(args.poll_ms, args) / 1000.0
     on_transient = record_retry(run, retries)
     polls = 0
 
-    # Built ONCE, not per poll: the loop re-reads args and the cursor-free
-    # listing call takes no loop variable, so there is nothing to rebind.
     def _call() -> Outcome:
         return client.inquire_futures_classified(args.symbol)
 
     def _window_still_open() -> bool:
-        # bool(), because `deadline` is derived from argparse.Namespace and is
-        # therefore Any to mypy; without it this returns Any from a function
-        # declared bool.
         return bool(time.monotonic() < deadline)
 
     try:
@@ -2942,15 +1780,6 @@ def _poll_coexistence(
             kind = transient_kind(outcome.kind)
             if kind is not None:
                 if attempts == 1:
-                    # One failure, and the retry was refused — which
-                    # ``can_retry`` only ever does because the window has
-                    # closed. That is the window ENDING, not a link that
-                    # failed twice: the loop would have stopped on the next
-                    # iteration anyway. Calling it a stop voided a window
-                    # that had been spent in full and charged it to the
-                    # runner's link-health budget, which is precisely what
-                    # ``REFUSED_WINDOW_CLOSED`` says must not be added
-                    # together (round-2 review F3).
                     break
                 return (
                     coexist_last,
@@ -2975,18 +1804,9 @@ def _poll_coexistence(
                     not _window_still_open(),
                 )
             if rt_cd_of(outcome.parsed) != "0":
-                # Not an answer, and not the end of coexistence either
-                # (:data:`_P8_STOP_QUERY_UNANSWERED`). Recorded, then skipped:
-                # the mark is neither set nor cleared.
                 unanswered += 1
                 code = str(outcome.parsed.get("msg_cd") or "").strip() or "<no msg_cd>"
                 not_answered_codes[code] = not_answered_codes.get(code, 0) + 1
-                # ONE verbatim record per distinct code, not per poll. With
-                # --pace-s 0 this loop runs tens of thousands of times a
-                # second (measured: 12,265 polls in a 0.3s window), and an
-                # observation per poll would put a list that size into a
-                # committed artifact. The repeats carry no information the
-                # first one does not; the COUNTS are kept in full, below.
                 if code not in recorded_codes:
                     recorded_codes.add(code)
                     run.observe(
@@ -3005,10 +1825,6 @@ def _poll_coexistence(
             answered += 1
             rows = outcome.payload
             record_odno_wire_format(run, [original_odno, new_odno], rows)
-            # Canonical keys on both sides: a raw compare finds neither leg live
-            # and would report zero coexistence — i.e. claim an atomic replace
-            # the probe never observed, which is the fail-open direction for
-            # B_protective_request_complete.
             live = {
                 odno_key(r.get("odno"))
                 for r in rows
@@ -3023,30 +1839,12 @@ def _poll_coexistence(
                 break
             time.sleep(args.poll_ms / 1000.0)
     finally:
-        # On EVERY path, including a stop: how far the loop actually got is the
-        # difference between "the window elapsed and nothing coexisted" and
-        # "one poll happened and then the transport died" — which is exactly
-        # what the 2026-09-28 artifact could only be reconstructed from by
-        # counting odno_wire_format samples afterwards.
         run.measure("coexistence_polls_used", polls)
         run.measure("coexistence_polls_answered", answered)
         run.measure("coexistence_polls_not_answered", unanswered)
         if not_answered_codes:
             run.measure("coexistence_not_answered_codes", dict(not_answered_codes))
     if answered == 0 and unanswered > 0:
-        # Every poll the window had room for was a rejection. coexist_last is
-        # None by construction, and before this change that became
-        # `coexistence_ms: 0.0` on a MEASURED artifact — "the replace was
-        # atomic", observed by nothing.
-        #
-        # But WHICH rejection decides whether the series stops. This broker
-        # answers an EMPTY RESULT SET with a rejection shape, and an empty
-        # book is the ordinary end of a P-8 trial: both legs gone (a fill, or
-        # a resting price too close to the touch). Stopping the series on it
-        # would cancel trials 2..5 over one filled order — the same
-        # over-stopping this PR exists to remove (round-2 review F4). Only an
-        # answer the broker gave for some OTHER reason means the surface is
-        # unhealthy enough to refuse a longer walk down it.
         if set(not_answered_codes) <= {_EMPTY_BOOK_MSG_CD}:
             return coexist_last, None, answered, True
         return coexist_last, _P8_STOP_QUERY_UNANSWERED, answered, True
@@ -3060,23 +1858,7 @@ def _original_not_cancellable(
     amend_accepted: bool,
     new_odno: str,
 ) -> bool | None:
-    """Was the original order un-cancellable after the amend, on verified evidence?
-
-    ``True`` / ``False`` / ``None`` for undetermined — never a bare bool, because
-    "the cleanup could not tell" and "the original survived" are opposite findings
-    for ``B_protective_request_complete`` and collapsing them would invent one.
-
-    ``True`` requires all four of: the amend was accepted, a new ODNO exists, the
-    original's cancel was rejected, and a VERIFIED open-order surface showed the
-    original not live. The last is what ``_CLEANUP_NOTHING_TO_CANCEL`` now means —
-    an ``rt_cd=0`` walk of the whole book, not a single unchecked page.
-
-    This is stronger evidence than ``coexistence_ms``, whose poll loop can only
-    resolve intervals longer than ``poll_granularity_ms`` (1100 ms in the
-    2026-07-31 trials). It still proves neither atomicity nor causation: a
-    coexistence window shorter than the poll granularity remains unobserved
-    (runbook §8.4), and :data:`_P8_CONSUMPTION_NOTE` names the fill confound.
-    """
+    """Was the original order un-cancellable after the amend, on verified evidence?"""
     if not amend_accepted or not new_odno or len(odnos) < 2:
         return None
     disposition = dispositions.get(odnos[0])
@@ -3088,28 +1870,7 @@ def _original_not_cancellable(
 
 
 def probe_p8(args: argparse.Namespace) -> ProbeRun:
-    """P-8 REPLACE_OR_AMEND — ``RVSE_CNCL_DVSN_CD='01'`` semantics.
-
-    Measures: ``capabilities.replace_semantics.mode`` (one of the ReplaceSemantics
-    values) and the old/new coexistence interval.
-    Feeds: ``B_protective_request_complete`` (VP-002:743) — a protective replace
-    that leaves both legs live for an interval is exactly the protection-overlap
-    hazard.
-
-    Method: place a resting order, amend its price, then poll inquire-ccnl and
-    record (a) whether a NEW ODNO was issued, (b) whether the original ODNO
-    remains visible/live, and (c) for how long both are simultaneously live.
-    A non-zero coexistence interval means replacement is NOT atomic and the
-    profile must not declare an atomic replace mode.
-
-    Every exit prints :data:`_P8_STOP_PREFIX` and
-    :data:`_P8_COEXISTENCE_PREFIX`, which is how the runner tells the four
-    reasons a trial can end apart. Before 2026-09-28 it could not: a
-    ``ConnectionError`` mid-poll escaped the probe as ``run.py`` rc 5 and the
-    runner's ``VERDICT`` counted it as "오류 1건(브로커 거부 포함)", cancelling
-    trials 3, 4 and 5 of a five-trial series over a transport blip the cleanup
-    cancel recovered from seconds later.
-    """
+    """P-8 REPLACE_OR_AMEND — ``RVSE_CNCL_DVSN_CD='01'`` semantics."""
     spec = get("P-8")
     _require_symbol(args)
     run, client = _setup(spec, args)
@@ -3121,26 +1882,12 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
         return run
     retries = Retries(run)
     odnos: list[str] = []
-    # Read by the cleanup measurement in ``finally``, so they must exist even on the
-    # early-return path — an undefined name there would replace a real result with a
-    # NameError raised out of the finally block.
     amend_accepted = False
     new_odno_seen = ""
-    # Likewise: the verdict is printed from the same ``finally``. UNKNOWN is the
-    # fail-closed default, so a path that forgets to classify itself — or an
-    # exception with no handler — stops the series rather than continuing it.
     stop = _P8_STOP_UNKNOWN
     measured = False
-    # Bound before the try for the same reason amend_accepted/new_odno_seen
-    # are: the finally reads it, and an undefined name there would replace a
-    # real result with a NameError raised out of the finally block. It stays
-    # None only on the quote-failure path, which never reaches the book walk.
     resting_price: TickPrice | None = None
     try:
-        # The quote is its OWN phase. It is a GET and nothing is resting yet, so
-        # a failure here is a different fact from a failure on the submit — and
-        # a reader of retry_evidence who is told "submit" would look for an
-        # order that was never placed.
         try:
             price, side = _resting_price(client, args)
         except transport_transient_types() as exc:
@@ -3164,8 +1911,6 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             run.error(f"submit rejected rt_cd={raw.get('rt_cd')} msg={raw.get('msg1')}")
             return run
         odnos.append(placed.odno)
-        # Amend further DOWN, i.e. further from the touch: the amended order must
-        # keep resting for the coexistence window to be observable at all.
         new_price = snap_to_tick(
             price.value * 0.99, price.tick, side=side, marketable=False
         )
@@ -3173,9 +1918,6 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             amend_status, amend, amend_text = client.replace_futures_verbose(
                 placed.odno, args.quantity, new_price
             )
-            # Same rule as submit_futures: t0 is the pacer's release instant, so
-            # the pacing sleep before the amend is not counted into
-            # coexistence_ms.
             amended_at = client.last_send_instant()
         except transport_transient_types() as exc:
             stop = _record_write_transport_stop(run, "amend", exc)
@@ -3185,7 +1927,6 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             stop = refused
             return run
         new_odno = str((amend.get("output") or {}).get("ODNO") or "").strip()
-        # Mirrored into function scope for the cleanup measurement in ``finally``.
         amend_accepted = amend.get("rt_cd") == "0"
         new_odno_seen = new_odno
         run.observe(
@@ -3199,11 +1940,6 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
         run.measure("amend_price_tick", new_price.describe())
         if new_odno:
             odnos.append(new_odno)
-        # Established by the amend RESPONSE, not by the poll, so they are
-        # recorded before the loop can stop. The 2026-09-28 trial-2 artifact
-        # lost both to a transport failure that happened after the broker had
-        # already answered them — the amend was accepted (rt_cd=0) and ODNO
-        # 558 had already become 560.
         run.measure("replace_issues_new_odno", bool(new_odno))
         run.measure("replace_rejected", amend.get("rt_cd") != "0")
 
@@ -3219,20 +1955,12 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
         if poll_stop is not None:
             stop = poll_stop
             if coexist_last is not None:
-                # Not thrown away, and not promoted to a measurement either: a
-                # truncated interval is a LOWER bound on something the field is
-                # defined as an UPPER bound on.
                 run.observe(
                     coexistence_seen_before_stop=True,
                     reading="both legs were live on at least one poll before the "
                     "loop stopped; the interval was never bounded, so no "
                     "coexistence_ms is reported",
                 )
-            # One message per stop reason, chosen by LOOKUP. A two-way
-            # ternary here wrote "the stop is our own call rate (HTTP 429 /
-            # EGW00201)" over a query_unanswered stop — a sentence naming a
-            # cause that had not happened, which is the failure mode this
-            # harness keeps paying for.
             detail = _P8_STOP_NARRATION[stop.split(":", 1)[0]]
             run.error(
                 f"POLLING STOPPED (stop_reason={stop}) — no coexistence "
@@ -3250,10 +1978,6 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             )
             return run
 
-        # The loop did not STOP, which is not the same as having measured
-        # something. Three ways to come out of it with nothing (review F2/F3),
-        # and each used to write `coexistence_ms: 0.0` on a MEASURED artifact
-        # — a number the runner then counted toward N>=5 as "atomic replace".
         stop = _P8_STOP_NONE
         nothing_observed = []
         if not amend_accepted:
@@ -3312,11 +2036,6 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             retries=retries,
         )
         if stop == _P8_STOP_ORDER_STATE_UNKNOWN and resting_price is not None:
-            # AFTER _cleanup, so every ODNO the probe does know about is
-            # already cancelled and whatever is still live is the genuinely
-            # unaccounted-for. A known ODNO whose own cancel was refused stays
-            # "known": it has a disposition and an error of its own, and
-            # counting it here would bury the row that has neither.
             known = set()
             for odno in odnos:
                 try:
@@ -3347,49 +2066,16 @@ def probe_p8(args: argparse.Namespace) -> ProbeRun:
             )
             run.measure("amend_consumption_note", _P8_CONSUMPTION_NOTE)
         run.measure("stop_reason", stop)
-        # `and not run.errors`, because ProbeRun.to_dict classes any run with
-        # errors as NOT_MEASURED — and the cleanup that just ran in this same
-        # finally can add one (REJECTED_AND_STILL_LIVE, THROTTLED,
-        # LIVENESS_UNDETERMINED). Printing `measured` off the local flag let
-        # the runner count toward N>=5 a trial whose own artifact says
-        # NOT_MEASURED (round-2 review F1).
         _print_p8_verdict(stop, measured and not run.errors)
         client.close()
     return run
 
 
-# ---------------------------------------------------------------------------
-# P-11 — balance reflection
-# ---------------------------------------------------------------------------
-
-#: ``measurements.fill_case`` verdicts — FOUR states, not two.
-#:
-#: Two of them (``_FILL_NOT_REFLECTED``, ``_FILL_NOT_FILLED``) used to be one
-#: indistinguishable "undetermined", because holdings were the only fill evidence
-#: this harness collected. They are separable now that the execution inquiry is
-#: called, and separating them is the whole point: only one of the two is a broker
-#: consistency finding, and the other is not a measurement failure at all.
-#: ``_FILL_UNDETERMINED`` is now narrower — it means the *inquiry itself* produced
-#: no usable answer, and it is always a statement about what the harness could not
-#: see rather than a measurement.
 _FILL_OBSERVED = "FILLED_AND_REFLECTED"
 _FILL_NOT_REFLECTED = "FILLED_BUT_BALANCE_NOT_REFLECTED_IN_WINDOW"
 _FILL_NOT_FILLED = "NOT_FILLED_NOTHING_TO_MEASURE"
 _FILL_UNDETERMINED = "UNDETERMINED_FILL_EVIDENCE_UNAVAILABLE"
 
-#: The execution-inquiry path P-11 now CALLS to establish fill-vs-lag.
-#:
-#: This module used to merely NAME this path and refuse to add it, on the grounds
-#: that an interpretation aid did not justify more ``/trading/`` surface. Artifact
-#: ``P-11-20260731T015709Z`` overturned that reasoning: it reported
-#: ``fill_case: UNDETERMINED`` with ``baseline_holding_qty == final_holding_qty == 1``
-#: after 95 polls over 120 s — and the order HAD filled. A read-only execution
-#: inquiry run afterwards returned TR ``VTTC0081R``, ODNO ``0000018925``,
-#: ``ord_dvsn_name=시장가``, ``ord_qty=1``, ``tot_ccld_qty=1``, ``rmn_qty=0``,
-#: ``cncl_yn=N`` at 248,500, and the account's cash had moved by exactly the fill
-#: amount. The fill-versus-lag ambiguity is not resolvable from the balance alone,
-#: an operator had to settle it out of band, and the cost of not knowing is a real
-#: 모의 order spent on nothing. So the path is called: read-only, once per run.
 _FILL_EVIDENCE_SOURCE = (
     "주식일별주문체결조회 — /uapi/domestic-stock/v1/trading/inquire-daily-ccld, "
     "[v1_국내주식-005], mock VTTC0081R (real TTTC0081R), read-only GET, one page in "
@@ -3401,37 +2087,27 @@ _FILL_EVIDENCE_SOURCE = (
     "context only."
 )
 
-#: Row fields copied verbatim into the artifact when a matching order is found.
-#:
-#: Names and glosses from the official wrapper's ``COLUMN_MAPPING``
-#: (``examples_llm/domestic_stock/inquire_daily_ccld/chk_inquire_daily_ccld.py``).
 _CCLD_ROW_FIELDS: tuple[str, ...] = (
-    "ord_dt",  # 주문일자
-    "odno",  # 주문번호
-    "orgn_odno",  # 원주문번호
-    "ord_dvsn_name",  # 주문구분명 (e.g. 시장가)
-    "sll_buy_dvsn_cd",  # 매도매수구분코드
-    "pdno",  # 상품번호
-    "ord_qty",  # 주문수량
-    "ord_unpr",  # 주문단가
-    "ord_tmd",  # 주문시각 (HHMMSS)
-    "tot_ccld_qty",  # 총체결수량
-    "tot_ccld_amt",  # 총체결금액
-    "avg_prvs",  # 평균가
-    "rmn_qty",  # 잔여수량
-    "cncl_yn",  # 취소여부
-    "rjct_qty",  # 거부수량
+    "ord_dt",
+    "odno",
+    "orgn_odno",
+    "ord_dvsn_name",
+    "sll_buy_dvsn_cd",
+    "pdno",
+    "ord_qty",
+    "ord_unpr",
+    "ord_tmd",
+    "tot_ccld_qty",
+    "tot_ccld_amt",
+    "avg_prvs",
+    "rmn_qty",
+    "cncl_yn",
+    "rjct_qty",
 )
 
 
 def _ccld_int(row: dict[str, Any], field: str) -> int | None:
-    """One 수량 field of a ccld row as an int, or ``None`` if it is not one.
-
-    ``None`` is a distinct outcome, never 0: an absent or unparseable 총체결수량
-    means the inquiry did not answer the question, whereas 0 means it answered
-    "nothing filled". Collapsing the two would report a non-fill the broker never
-    stated.
-    """
+    """One 수량 field of a ccld row as an int, or ``None`` if it is not one."""
     raw = row.get(field)
     if raw is None or str(raw).strip() == "":
         return None
@@ -3442,15 +2118,7 @@ def _ccld_int(row: dict[str, Any], field: str) -> int | None:
 
 
 def _ccld_row_key(row: dict[str, Any]) -> str | None:
-    """A ccld row's ODNO as a canonical key, or ``None`` when it is not numeric.
-
-    Canonicalized through :func:`odno_key` on this side exactly as the submitted
-    ODNO is on the other — today's row came back zero-padded (``"0000018925"``)
-    where the inquire-ccnl row for a futures order came back space-padded, so
-    neither encoding may be assumed. A non-numeric row is skipped rather than
-    raising: this call is interpretation evidence, and one malformed row must not
-    destroy the artifact of a run that has already placed a real order.
-    """
+    """A ccld row's ODNO as a canonical key, or ``None`` when it is not numeric."""
     try:
         return odno_key(row.get("odno"))
     except ProbeError:
@@ -3458,18 +2126,7 @@ def _ccld_row_key(row: dict[str, Any]) -> str | None:
 
 
 def _fill_evidence(client: MockTradingClient, symbol: str, odno: str) -> dict[str, Any]:
-    """Ask the execution inquiry whether ``odno`` filled. Never raises.
-
-    ``filled`` is tri-state and that is load-bearing: ``True``/``False`` are the
-    broker's answer, ``None`` means there was no answer and the run must fall back
-    to :data:`_FILL_UNDETERMINED` rather than guess. Every failure path names what
-    is missing, because "the inquiry did not say" and "the inquiry said no" have
-    opposite consequences for how a run should be read.
-
-    A failure here degrades the verdict; it must not propagate. The balance
-    evidence and the censoring wording are independent of this call, and the run
-    has already spent a real 모의 order by the time it is made.
-    """
+    """Ask the execution inquiry whether ``odno`` filled. Never raises."""
     record: dict[str, Any] = {
         "source": _FILL_EVIDENCE_SOURCE,
         "queried_symbol": symbol,
@@ -3553,12 +2210,7 @@ def _fill_evidence(client: MockTradingClient, symbol: str, odno: str) -> dict[st
 
 
 def _stock_holding_qty(rows: list[dict[str, Any]], symbol: str) -> int:
-    """Total 보유수량 for ``symbol`` across the balance rows.
-
-    One helper for the baseline and the poll so the two readings cannot drift: they
-    are compared with ``>``, and a difference in how they sum would show up as a
-    reflection that never happened or as one that never appears.
-    """
+    """Total 보유수량 for ``symbol`` across the balance rows."""
     return sum(
         int(float(r.get("hldg_qty") or 0))
         for r in rows
@@ -3567,12 +2219,7 @@ def _stock_holding_qty(rows: list[dict[str, Any]], symbol: str) -> int:
 
 
 def _market_price_record() -> dict[str, Any]:
-    """The ``limit_price_tick`` slot for a 시장가 run: an explicit bypass, not a gap.
-
-    The key is kept so a reviewer comparing artifacts always finds tick
-    provenance where the limit path puts it. An absent key would have to be
-    *interpreted*; ``applicable: False`` states the reason instead.
-    """
+    """The ``limit_price_tick`` slot for a 시장가 run: an explicit bypass, not a gap."""
     return {
         "applicable": False,
         "wire_value": _STOCK_ORD_UNPR_MARKET,
@@ -3606,17 +2253,7 @@ def _fill_case_record(
     poll_interval_ms: float,
     lag_ms: float | None,
 ) -> dict[str, Any]:
-    """State which of the FOUR cases the run represents, from both sources.
-
-    The two sources answer different questions and neither alone is enough. The
-    execution inquiry says whether the order filled; the balance poll says whether
-    this account's holdings surface showed it inside the window. Crossing them is
-    what turns "the window expired" — the only thing artifacts
-    ``P-11-20260730T002715Z`` and ``P-11-20260731T015709Z`` could say — into a
-    statement with a subject: the first of those was a genuine non-fill, the second
-    a confirmed fill the balance poll was blind to, and they had recorded the same
-    verdict.
-    """
+    """State which of the FOUR cases the run represents, from both sources."""
     filled = fill.get("filled")
     common: dict[str, Any] = {
         "symbol": symbol,
@@ -3647,8 +2284,6 @@ def _fill_case_record(
             ),
         }
         if reflected and lag_ms is not None:
-            # The rise is real but unattributed, and the number is kept OUT of
-            # measurements deliberately — see the note.
             record |= {
                 "balance_rise_unattributed_ms": round(lag_ms, 3),
                 "balance_rise_note": (
@@ -3712,18 +2347,7 @@ def _fill_case_record(
 def _resolution_floor_record(
     *, poll_interval_ms: float, reflected_on_poll: int | None, lag_ms: float | None
 ) -> dict[str, Any]:
-    """What the smallest lag this probe can resolve is, and what that costs.
-
-    P-11 observes the balance by polling, and the pacer floors the poll interval at
-    ``--pace-s`` (1.1 s by default), so the smallest reflection lag it can resolve
-    is one effective poll interval. Today's evidence says the balance reflects a
-    시장가 fill essentially immediately, which means P-11's honest output is
-    "reflection <= one effective poll interval" — an UPPER bound. It is not a point
-    value, and it must not reach a ``hard_maximum`` key (runbook §8.3) as though
-    ~1100 ms of broker lag had been measured. The floor is recorded on every live
-    run, including runs that measured nothing, so the ceiling on what this probe can
-    ever say is visible without re-deriving it.
-    """
+    """What the smallest lag this probe can resolve is, and what that costs."""
     first_poll = reflected_on_poll == 1
     record: dict[str, Any] = {
         "poll_interval_ms_effective": poll_interval_ms,
@@ -3765,13 +2389,7 @@ def _resolution_floor_record(
 
 
 def _p11_dry_run(run: ProbeRun, args: argparse.Namespace, order_type: str) -> None:
-    """Report the request P-11 would send, without contacting the broker.
-
-    A 시장가 body needs no quote, so the dry-run can show it byte for byte — which
-    is the point: the defect this probe was fixed for was an unnoticed
-    ``ORD_DVSN``/``ORD_UNPR`` pair. A 지정가 body cannot be shown, because its price
-    comes from a live quote.
-    """
+    """Report the request P-11 would send, without contacting the broker."""
     plan = (
         f"read the inquire-balance baseline FIRST, then a stock {order_type} order "
         f"(ORD_DVSN={_STOCK_ORD_DVSN[order_type]}), then poll inquire-balance every "
@@ -3786,68 +2404,17 @@ def _p11_dry_run(run: ProbeRun, args: argparse.Namespace, order_type: str) -> No
             "  body not shown — a 지정가 price is derived from a live quote."
         )
         return
-    # Re-resolved rather than threaded out of _setup: it is a pure env read, and
-    # every order probe shares that helper's two-value signature.
     creds = resolve_credentials(args.asset, is_real=False)
     body = build_stock_order_body(
         creds.cano, creds.acnt_prdt_cd, args.symbol, args.quantity, order_type="market"
     )
     run.observe(would_send=plan, order_type=order_type, order_body=body)
-    # redact() before printing: the body carries the real account number, and a
-    # dry-run must not put it on an operator's terminal.
     print(f"\n  would send POST {_STOCK_ORDER_PATH}")
     print(f"  {json.dumps(redact(body), ensure_ascii=False)}")
 
 
 def probe_p11(args: argparse.Namespace) -> ProbeRun:
-    """P-11 POSITIONS_BALANCES_MARGIN — fill to balance-reflection lag.
-
-    Measures: ``capabilities.position_balance_margin.consistency_model``.
-    Feeds: ``B_broker_query_consistency`` (VP-002:752) and informs feasibility of
-    ``B_startup_reconciliation`` (VP-002:239, already APPROVED at 60000).
-
-    STOCK ONLY on 모의: futures balance inquiry is unsupported on the mock server
-    (``shared/kis/client.py:1030-1032``), so the futures leg is skipped with that
-    citation rather than silently producing a wrong number.
-
-    This probe intentionally FILLS. It therefore requires ``--allow-fill`` in
-    addition to ``--confirm``.
-
-    Why the order type defaults to 시장가
-    ------------------------------------
-    The measurement is a *fill*-to-reflection lag, so a run that does not fill
-    yields nothing at all. The marketable-limit default did not fill: artifact
-    ``P-11-20260730T002715Z.json`` was ACCEPTED (``rt_cd=0``, ODNO ``0000008686``,
-    ``ORD_DVSN="00"``, ``ORD_UNPR="232500"`` — a limit 10% above the 211,000 touch,
-    correctly tick-snapped) and the holding never moved; an out-of-band balance
-    read ~18 minutes later still showed the unchanged baseline. Being *marketable
-    in price* is evidently not the same as being *filled* on 모의투자, so
-    ``--stock-order-type`` defaults to ``market`` and asks the broker for a fill
-    instead of pricing one. ``--stock-order-type limit`` keeps the old shape
-    reachable for comparison.
-
-    A side effect worth naming: the market path makes no quote call, so it depends
-    on no tick at all. ``--price-offset-pct``, :func:`snap_to_tick` and the
-    ``aspr_unit`` precondition are all limit-path-only.
-
-    Fill versus balance lag
-    -----------------------
-    ``measurements.fill_case`` crosses two independent sources — a read-only
-    execution inquiry (``VTTC0081R``, :data:`_FILL_EVIDENCE_SOURCE`) for whether the
-    order filled, and the balance poll for whether this account's holdings surface
-    showed it inside the window — and reports one of four states. A window that
-    expires is no longer automatically undetermined: with the fill confirmed it is
-    an honest negative about the balance surface, and with the fill refuted it is
-    simply nothing to measure.
-
-    What this probe can and cannot resolve
-    --------------------------------------
-    The poll interval is floored by ``--pace-s``, so the smallest resolvable
-    reflection lag is one effective poll interval and every sample is an UPPER
-    bound. ``measurements.resolution_floor`` records that on every live run, and a
-    reflection seen on the first poll is marked as the detection floor rather than a
-    measured lag — see :func:`_resolution_floor_record`.
-    """
+    """P-11 POSITIONS_BALANCES_MARGIN — fill to balance-reflection lag."""
     spec = get("P-11")
     _require_symbol(args)
     order_type = args.stock_order_type
@@ -3881,9 +2448,6 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         return run
     try:
         if order_type == "market":
-            # No quote: a 시장가 order carries no price, so there is nothing to
-            # price it against and no tick to establish. That also saves a call
-            # out of the measured rate budget (P-13: clean 1.0 rps).
             body = client.stock_order_body(
                 args.symbol, args.quantity, order_type="market"
             )
@@ -3891,10 +2455,6 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
             run.measure("limit_price_tick", _market_price_record())
         else:
             last, tick = client.stock_quote(args.symbol)
-            # Marketable limit: cross the touch by the offset so it fills promptly.
-            # The snap goes UP for the same reason the resting probes snap down —
-            # away from the touch, which here means further INTO the market, never
-            # back out of it.
             price = snap_to_tick(
                 last * (1.0 + args.price_offset_pct / 100.0),
                 tick,
@@ -3911,21 +2471,6 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
                 marketable_price=price.wire,
             )
             run.measure("limit_price_tick", price.describe())
-        # ORDER OF OPERATIONS IS LOAD-BEARING: the holdings baseline is read BEFORE
-        # the submit, and must stay there. A 시장가 order fills in milliseconds, so a
-        # baseline read after the submit already contains the probe's own fill —
-        # `qty > base_qty` can then never become true and the run censors no matter
-        # how large --balance-timeout-s is. That is not hypothetical: artifact
-        # P-11-20260731T015709Z recorded fill_case UNDETERMINED with
-        # baseline_holding_qty == final_holding_qty == 1 after 95 polls over 120 s,
-        # while the order had in fact filled (VTTC0081R: ODNO 0000018925,
-        # tot_ccld_qty=1, rmn_qty=0, cncl_yn=N at 248,500, cash moved to match).
-        # Do not "tidy" this back next to the poll loop it belongs to.
-        #
-        # The cost of reading first is that the baseline is one pacing interval stale
-        # at the submit instant, so external activity in that gap would perturb it.
-        # That is the strictly better trade: a stale baseline can be wrong, whereas a
-        # post-submit baseline is wrong by construction.
         baseline = client.stock_balance()
         base_rows = (
             baseline.get("output1") if isinstance(baseline.get("output1"), list) else []
@@ -3937,8 +2482,6 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         status, parsed, _ms, _text = client.trading_call(
             "POST", _STOCK_ORDER_PATH, tr_id, body=body
         )
-        # Pacer release instant, not a pre-call timestamp: submit_to_balance_ms
-        # must not include the pacing sleep that preceded this submit.
         sent = client.last_send_instant()
         odno = str((parsed.get("output") or {}).get("ODNO") or "").strip()
         run.observe(
@@ -3955,9 +2498,6 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         reflected_on_poll: int | None = None
         polls = 0
         final_qty = base_qty
-        # --balance-timeout-s, not the shared --visibility-timeout-s: this window
-        # has to contain a real balance update, and the pacer floors polling at
-        # --pace-s, so the shared 30s default buys only ~27 polls.
         deadline = time.monotonic() + args.balance_timeout_s
         while time.monotonic() < deadline:
             polls += 1
@@ -3976,9 +2516,6 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
 
         lag_ms = None if reflected_at is None else (reflected_at - sent) * 1000.0
         poll_interval_ms = effective_interval_ms(args.poll_ms, args)
-        # The independent fill check, after the poll loop so it cannot delay it. One
-        # read-only call: it decides which of the four cases this run is, and without
-        # it a flat balance is unattributable (P-11-20260731T015709Z).
         fill = _fill_evidence(client, args.symbol, odno)
         run.measure(
             "fill_case",
@@ -3994,9 +2531,6 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
                 lag_ms=lag_ms,
             ),
         )
-        # Recorded on every live run, measured or not: it is the ceiling on what this
-        # probe can ever report, so it must not be inferable only from runs that
-        # happened to succeed.
         run.measure(
             "resolution_floor",
             _resolution_floor_record(
@@ -4007,9 +2541,6 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
         )
         case = run.measurements["fill_case"]["case"]
         if case == _FILL_NOT_REFLECTED:
-            # Wording preserved verbatim from before the execution inquiry existed:
-            # this is still the "nothing was observed" case, and the fill
-            # confirmation makes it an honest negative rather than a mystery.
             run.error(
                 "balance never reflected the order within the timeout — CENSORED. "
                 "Do not record a bound from a censored trial."
@@ -4029,9 +2560,6 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
                 "an unconfirmed trial."
             )
         elif lag_ms is not None:
-            # _FILL_OBSERVED. The record only assigns it when the balance rose, so a
-            # reflection instant exists; narrowing on it rather than asserting keeps
-            # an impossible combination from crashing a run that placed a real order.
             run.measure(
                 "submit_to_balance_reflection",
                 summarize_latencies(
@@ -4073,31 +2601,8 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-# ---------------------------------------------------------------------------
-# P-EXT — external activity detection
-# ---------------------------------------------------------------------------
-
-
 def probe_pext(args: argparse.Namespace) -> ProbeRun:
-    """P-EXT external_activity — detection latency for an order we did not send.
-
-    Measures: ``external_activity.detection_bound_ms`` /
-    ``containment_bound_ms``.
-    Feeds: ``B_external_activity_detect`` (VP-002:221, ``value_ms: null``,
-    ``hard_maximum``, "for a poll-only broker this is bounded by the poll
-    interval") and constrains ``B_external_activity_contain`` (VP-002:230,
-    already APPROVED at 1000).
-
-    Operator in the loop: place an order on HTS/MTS for the SAME 모의 account and
-    press Enter at the moment of submission. The probe polls inquire-ccnl and
-    timestamps the first observation of an unknown ODNO.
-
-    The measured number is dominated by the poll interval by construction — the
-    system has zero account-event push subscriptions (draft §3.1 row 10: grep for
-    ``H0STCNI|H0IFCNI|체결통보`` over shared/ services/ cli/ returns 0 hits). Record
-    the poll interval next to the value; the bound cannot be tightened below it
-    without a push subscription.
-    """
+    """P-EXT external_activity — detection latency for an order we did not send."""
     spec = get("P-EXT")
     _require_symbol(args)
     run, client = _setup(spec, args)
@@ -4111,10 +2616,6 @@ def probe_pext(args: argparse.Namespace) -> ProbeRun:
         rows = (
             listing.get("output1") if isinstance(listing.get("output1"), list) else []
         )
-        # Canonical keys even though both sides are query rows: if the broker ever
-        # returned the same order with different padding across two polls, a raw set
-        # difference would read it as a NEW external order — a false detection in the
-        # one measurement this probe exists to take.
         known = {odno_key(r.get("odno")) for r in rows}
         run.observe(known_odno_count=len(known))
         print(
@@ -4170,31 +2671,8 @@ def probe_pext(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-# ---------------------------------------------------------------------------
-# P-FQP — final quantity proof / late fill
-# ---------------------------------------------------------------------------
-
-
 def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
-    """P-FQP final_quantity_proof — post-cancel late-event observation window.
-
-    Measures: ``final_quantity_proof.recipes[]`` inputs and
-    ``late_event_window_ms``.
-    Feeds: ``B_final_quantity_proof`` (VP-002:716, "time within which final filled
-    qty + zero remaining can be established ... drives RELEASE_PENDING_PROOF") and
-    ``B_late_fill_observation`` (VP-002:725, "maximum credible interval in which a
-    late fill may still arrive after a claimed terminal state").
-
-    Method: place a resting order, cancel it, then keep polling for
-    ``--late-window-s`` and record every quantity change observed AFTER the cancel
-    ack. Two numbers come out: the time to reach a stable (filled, remaining=0)
-    reading, and the latest post-terminal change seen.
-
-    Honest-negative rule: observing zero late changes does NOT license
-    ``late_event_window_ms: 0``. Absence within a window is not proof of
-    non-existence (VP-002:756). Zero observations => "not established"; the field
-    stays null and the capability stays UNKNOWN.
-    """
+    """P-FQP final_quantity_proof — post-cancel late-event observation window."""
     spec = get("P-FQP")
     _require_symbol(args)
     run, client = _setup(spec, args)
@@ -4237,9 +2715,6 @@ def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
                 else []
             )
             record_odno_wire_format(run, [placed.odno], rows)
-            # Canonical keys on both sides — a raw compare never finds the row, and
-            # a permanently absent row reads as "zero late changes", which is the
-            # honest-negative trap this probe's docstring warns about.
             row = next((r for r in rows if odno_key(r.get("odno")) == placed.key), None)
             if row is not None:
                 filled = int(float(row.get("tot_ccld_qty") or 0))
@@ -4317,28 +2792,7 @@ def probe_pfqp(args: argparse.Namespace) -> ProbeRun:
 
 
 def probe_nmpr_ab(args: argparse.Namespace) -> ProbeRun:
-    """P-NMPR — does a blank [필수] quote field mean the same as ``01``/``0``?
-
-    Origin: N-17 §2 소견 2. Until 2026-07-29 the runtime sent ``NMPR_TYPE_CD``
-    and ``KRX_NMPR_CNDT_CD`` as ``""`` even though the KIS wrapper marks both
-    [필수] and refuses a blank with ``ValueError``. The runtime now derives both
-    from ``ORD_DVSN_CD``. That fix was made in the "preserve observed behaviour"
-    direction, which leaves exactly one question unanswered: **is the broker's
-    implicit default for a blank actually 01/0, or something else?**
-
-    Method: place the same non-marketable resting limit twice — arm A with the
-    explicit codes, arm B with the pre-fix blanks — and compare what the broker
-    does with each. Both arms are cancelled in ``_cleanup``.
-
-    Reading the result honestly:
-
-    * Acceptance parity alone does **not** prove semantic equality. It proves
-      the broker tolerates a blank. Equality would additionally require the
-      query surface to echo the two fields back — if it does not, the answer
-      stays UNKNOWN and this probe has narrowed nothing but the rejection case.
-    * A rejected B-arm is the strong outcome: it proves the pre-fix body was
-      contract-violating and the fix is load-bearing.
-    """
+    """P-NMPR — does a blank [필수] quote field mean the same as ``01``/``0``?"""
     spec = get("P-NMPR")
     _require_symbol(args)
     if args.asset != "futures":
@@ -4405,9 +2859,6 @@ def probe_nmpr_ab(args: argparse.Namespace) -> ProbeRun:
         record_odno_wire_format(
             run, [p.odno for p in (placed_a, placed_b) if p is not None], rows
         )
-        # Canonical keys on both sides. A raw lookup leaves both rows None, which
-        # silently degrades every echo-based verdict below to ECHO_ABSENT — i.e. it
-        # answers "UNKNOWN" from a comparison bug rather than from the broker.
         by_odno = {odno_key(r.get("odno")): r for r in rows}
         row_a = by_odno.get(placed_a.key) if placed_a else None
         row_b = by_odno.get(placed_b.key) if placed_b else None

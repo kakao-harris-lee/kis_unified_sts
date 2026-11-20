@@ -11,7 +11,6 @@ def test_get_recent_candles_returns_ohlcv_dicts():
     engine = StreamingIndicatorEngine()
     symbol = "A01603"
 
-    # Cumulative volumes: 10, 22, 30 → deltas: 10, 12, 8
     engine.on_tick(
         symbol,
         {"close": 100.0, "high": 101.0, "low": 99.5, "volume": 10},
@@ -29,31 +28,23 @@ def test_get_recent_candles_returns_ohlcv_dicts():
     )
 
     candles = engine.get_recent_candles(symbol, limit=5)
-    assert len(candles) == 2  # completed candles only
+    assert len(candles) == 2
     assert set(candles[0].keys()) == {"open", "high", "low", "close", "volume"}
 
 
 def _build_warm_engine(symbol: str = "005930") -> StreamingIndicatorEngine:
-    """Build an engine with 25 candles (warm for bb_period=20).
-
-    Volumes increase linearly (1000, 1010, ..., 1240) so RVOL short > long.
-    staleness_seconds=0 disables the staleness guard (test uses fixed timestamps).
-
-    on_tick() expects cumulative daily volume (like WebSocket feeds), so we
-    send running totals that produce the desired per-candle deltas.
-    """
+    """Build an engine with 25 candles (warm for bb_period=20)."""
     engine = StreamingIndicatorEngine(
         bb_period=20, high_period=5, rvol_short=5, rvol_long=20, staleness_seconds=0
     )
 
-    # Generate 25 candles by ticking across minute boundaries
     base_price = 70000.0
     base_volume = 1000
     cumulative = 0
     for minute in range(25):
         ts = datetime(2026, 2, 17, 9, minute, 30)
         price = base_price + minute * 100
-        cumulative += base_volume + minute * 10  # delta = 1000, 1010, ..., 1240
+        cumulative += base_volume + minute * 10
         engine.on_tick(
             symbol,
             {
@@ -64,7 +55,6 @@ def _build_warm_engine(symbol: str = "005930") -> StreamingIndicatorEngine:
             },
             ts,
         )
-    # One more tick in minute 25 to finalize candle 24
     cumulative += 1300
     engine.on_tick(
         symbol,
@@ -105,7 +95,6 @@ class TestVolumeIndicators:
         engine = _build_warm_engine()
         indicators = engine.get_indicators("005930")
 
-        # Volumes increase linearly (1000..1240), so short-window avg > long-window avg
         assert (
             indicators["rvol"] > 1.0
         ), f"RVOL should be > 1.0 for increasing volumes, got {indicators['rvol']:.4f}"
@@ -136,7 +125,6 @@ class TestVolumeIndicators:
         engine = _build_warm_engine()
         indicators = engine.get_indicators("005930")
 
-        # high_5 should be the max high of last 5 candles
         candles = engine.get_recent_candles("005930", limit=5)
         expected_high = max(c["high"] for c in candles)
         assert indicators["high_5"] == expected_high
@@ -147,7 +135,6 @@ class TestVolumeIndicators:
             bb_period=20, high_period=3, staleness_seconds=0
         )
 
-        # Build 25 candles with increasing prices (cumulative volumes)
         cumulative = 0
         for minute in range(25):
             ts = datetime(2026, 2, 17, 9, minute, 30)
@@ -172,7 +159,6 @@ class TestVolumeIndicators:
         indicators = engine.get_indicators("TEST")
         assert "high_3" in indicators
 
-        # Verify the actual value matches last 3 candles' max high
         candles = engine.get_recent_candles("TEST", limit=3)
         expected_high = max(c["high"] for c in candles)
         assert (
@@ -201,7 +187,6 @@ class TestVolumeIndicators:
         )
         symbol = "SEED_TEST"
 
-        # Seed 25 historical candles
         candles = []
         for i in range(25):
             candles.append(
@@ -218,13 +203,11 @@ class TestVolumeIndicators:
         assert engine.is_warm(symbol)
         indicators = engine.get_indicators(symbol)
 
-        # BB/RSI should work from seeded candles
         assert "bb_lower" in indicators
         assert "rsi" in indicators
         assert "rvol" in indicators
         assert "high_5" in indicators
 
-        # VWAP is 0.0 after seeding (no ticks fed to VWAPCalculator)
         assert (
             indicators["vwap"] == 0.0
         ), "VWAP should be 0.0 for seed-only data (no tick-level feed)"
@@ -257,11 +240,9 @@ class TestVolumeIndicators:
         engine = StreamingIndicatorEngine()
         symbol = "NEGVOL"
 
-        # First tick: negative volume clamped to 0 → cumulative baseline = 0, delta = 0
         engine.on_tick(
             symbol, {"close": 100.0, "volume": -50}, datetime(2026, 1, 1, 9, 0, 0)
         )
-        # Second tick: cumulative 100, prev_cum=0 → delta = 100
         engine.on_tick(
             symbol, {"close": 101.0, "volume": 100}, datetime(2026, 1, 1, 9, 1, 0)
         )
@@ -277,7 +258,6 @@ class TestCumulativeVolumeDelta:
     def test_cumulative_volume_delta_conversion(self):
         """Cumulative daily volume is converted to per-tick delta."""
         engine = StreamingIndicatorEngine(staleness_seconds=0)
-        # Simulate 3 ticks within same minute with cumulative volume
         engine.on_tick(
             "005930",
             {"close": 100, "high": 101, "low": 99, "volume": 1000},
@@ -292,8 +272,7 @@ class TestCumulativeVolumeDelta:
             "005930",
             {"close": 102, "high": 103, "low": 101, "volume": 1200},
             datetime(2026, 2, 20, 9, 30, 4),
-        )  # No new trades
-        # Cross minute boundary to finalize candle
+        )
         engine.on_tick(
             "005930",
             {"close": 103, "high": 104, "low": 102, "volume": 1500},
@@ -301,18 +280,16 @@ class TestCumulativeVolumeDelta:
         )
 
         acc = engine._accumulators["005930"]
-        candle = acc.candles[0]  # Finalized 09:30 candle
-        # Delta: 1000 + (1200-1000) + (1200-1200) = 1000 + 200 + 0 = 1200
+        candle = acc.candles[0]
         assert candle.volume == 1200, f"Expected 1200, got {candle.volume}"
 
     def test_volume_reset_new_day(self):
         """Volume reset (new day) is handled correctly."""
         engine = StreamingIndicatorEngine()
-        engine._last_cumulative_volume["005930"] = 500000  # Yesterday's final
+        engine._last_cumulative_volume["005930"] = 500000
         engine.on_tick(
             "005930", {"close": 100, "volume": 100}, datetime(2026, 2, 21, 9, 0, 0)
         )
-        # volume (100) < prev_cum (500000) → treated as new day, delta = 100
         assert engine._last_cumulative_volume["005930"] == 100
 
     def test_seed_candles_not_affected(self):
@@ -326,7 +303,7 @@ class TestCumulativeVolumeDelta:
             ],
         )
         candles = engine._accumulators["005930"].candles
-        assert candles[0].volume == 5000  # Per-candle, not accumulated
+        assert candles[0].volume == 5000
         assert candles[1].volume == 6000
 
     def test_seed_clears_cumulative_baseline(self):
@@ -374,19 +351,16 @@ class TestCumulativeVolumeDelta:
     def test_volume_is_cumulative_false_skips_delta(self):
         """When volume_is_cumulative=False, volume is used as-is (per-tick)."""
         engine = StreamingIndicatorEngine()
-        # First tick: per-tick volume, no delta conversion
         engine.on_tick(
             "F01",
             {"close": 350, "volume": 50, "volume_is_cumulative": False},
             datetime(2026, 2, 20, 9, 0, 0),
         )
-        # Second tick: also per-tick
         engine.on_tick(
             "F01",
             {"close": 351, "volume": 30, "volume_is_cumulative": False},
             datetime(2026, 2, 20, 9, 0, 2),
         )
-        # Cross minute to finalize
         engine.on_tick(
             "F01",
             {"close": 352, "volume": 20, "volume_is_cumulative": False},
@@ -394,30 +368,24 @@ class TestCumulativeVolumeDelta:
         )
 
         candle = engine._accumulators["F01"].candles[0]
-        # Per-tick: 50 + 30 = 80 (no delta subtraction)
         assert candle.volume == 80, f"Expected 80, got {candle.volume}"
-        # _last_cumulative_volume should NOT be updated for non-cumulative ticks
         assert "F01" not in engine._last_cumulative_volume
 
     def test_set_volume_baseline_prevents_inflation(self):
         """set_volume_baseline() prevents first-tick cumulative from inflating candle."""
         engine = StreamingIndicatorEngine()
-        # Simulate mid-session addition: symbol already has 500K cumulative volume
         engine.set_volume_baseline("005930", 500000)
 
-        # First tick with cumulative 500100 → delta = 100 (not 500100)
         engine.on_tick(
             "005930",
             {"close": 70000, "volume": 500100},
             datetime(2026, 2, 20, 10, 30, 0),
         )
-        # Second tick
         engine.on_tick(
             "005930",
             {"close": 70050, "volume": 500300},
             datetime(2026, 2, 20, 10, 30, 2),
         )
-        # Cross minute to finalize
         engine.on_tick(
             "005930",
             {"close": 70100, "volume": 500500},
@@ -425,7 +393,6 @@ class TestCumulativeVolumeDelta:
         )
 
         candle = engine._accumulators["005930"].candles[0]
-        # Delta: (500100-500000) + (500300-500100) = 100 + 200 = 300
         assert (
             candle.volume == 300
         ), f"Expected 300 (not ~500K inflation), got {candle.volume}"
@@ -439,19 +406,16 @@ class TestCumulativeVolumeDelta:
                 {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 5000},
             ],
         )
-        # seed_candles clears baseline; now set it from current WebSocket cache
         engine.set_volume_baseline("005930", 200000)
 
-        # First real tick: delta = 200050 - 200000 = 50 (not 200050)
         engine.on_tick(
             "005930", {"close": 101, "volume": 200050}, datetime(2026, 2, 20, 9, 5, 0)
         )
-        # Cross minute
         engine.on_tick(
             "005930", {"close": 102, "volume": 200100}, datetime(2026, 2, 20, 9, 6, 0)
         )
 
-        candle = engine._accumulators["005930"].candles[1]  # candle after seeded one
+        candle = engine._accumulators["005930"].candles[1]
         assert candle.volume == 50, f"Expected 50, got {candle.volume}"
 
 
@@ -487,7 +451,6 @@ class TestIndicatorStaleness:
         """get_indicators should return {} when last tick is older than staleness_seconds."""
         engine = self._build_stale_engine(staleness=60.0)
 
-        # 2 minutes after last tick (> 60s threshold)
         now = datetime(2026, 2, 17, 9, 27, 31)
         result = engine.get_indicators("STALE", now=now)
         assert result == {}, f"Expected empty dict for stale data, got {result}"
@@ -496,7 +459,6 @@ class TestIndicatorStaleness:
         """get_indicators should return values when last tick is recent."""
         engine = self._build_stale_engine(staleness=180.0)
 
-        # 10s after last tick (within 180s threshold)
         now = datetime(2026, 2, 17, 9, 25, 40)
         result = engine.get_indicators("STALE", now=now)
         assert "bb_lower" in result
@@ -506,7 +468,6 @@ class TestIndicatorStaleness:
         """staleness_seconds=0 should disable the check entirely."""
         engine = self._build_stale_engine(staleness=0)
 
-        # 3 hours after last tick — but staleness=0 disables the check
         now = datetime(2026, 2, 17, 12, 0, 0)
         result = engine.get_indicators("STALE", now=now)
         assert "bb_lower" in result
@@ -515,9 +476,7 @@ class TestIndicatorStaleness:
         """CandleAccumulator should track last_tick_ts."""
         engine = StreamingIndicatorEngine()
         ts = datetime(2026, 2, 17, 9, 5, 30)
-        engine.on_tick(
-            "TEST", {"close": 100.0, "volume": 100}, ts
-        )  # cumulative=100, delta=100
+        engine.on_tick("TEST", {"close": 100.0, "volume": 100}, ts)
 
         acc = engine._accumulators["TEST"]
         assert acc.last_tick_ts == ts
@@ -537,18 +496,16 @@ class TestRemoveSymbol:
 
     def test_remove_symbol_clears_volume_state(self):
         engine = _build_warm_engine("005930")
-        # Verify VWAP/VolumeAcceleration have data
         indicators = engine.get_indicators("005930")
         assert "vwap" in indicators
 
         engine.remove_symbol("005930")
 
-        # After removal, getting indicators should return empty
         assert engine.get_indicators("005930") == {}
 
     def test_remove_nonexistent_symbol_no_error(self):
         engine = StreamingIndicatorEngine()
-        engine.remove_symbol("NOPE")  # should not raise
+        engine.remove_symbol("NOPE")
 
     def test_remove_then_readd_fresh(self):
         """After removing and re-adding, old stale data should not persist."""
@@ -558,8 +515,6 @@ class TestRemoveSymbol:
 
         engine.remove_symbol("005930")
 
-        # Re-add with different prices (staleness=0, so no time issues)
-        # Cumulative volumes: 2000, 4000, ..., 50000, 52000
         for minute in range(25):
             engine.on_tick(
                 "005930",
@@ -579,7 +534,6 @@ class TestRemoveSymbol:
 
         new_indicators = engine.get_indicators("005930")
         assert "bb_lower" in new_indicators
-        # New BB middle should be around 50000-55000, very different from old ~70000-72000
         assert new_indicators["bb_middle"] < 56000
 
 
@@ -590,9 +544,6 @@ class TestMarketMfiActiveSymbols:
         """Only active symbols should be included in market MFI."""
         engine = _build_warm_engine("005930")
 
-        # Add another warm symbol (cumulative volumes)
-        # Note: "000660" is a different symbol from "005930", so its
-        # cumulative baseline starts at 0 independently.
         cumulative = 0
         for minute in range(25):
             cumulative += 3000 + minute * 10
@@ -613,15 +564,12 @@ class TestMarketMfiActiveSymbols:
             datetime(2026, 2, 17, 9, 25, 30),
         )
 
-        # MFI with all symbols
         mfi_all = engine.get_market_mfi()
         assert mfi_all is not None
 
-        # MFI with only one symbol
         mfi_one = engine.get_market_mfi(active_symbols={"005930"})
         assert mfi_one is not None
 
-        # MFI with no matching symbols
         mfi_none = engine.get_market_mfi(active_symbols={"NONEXIST"})
         assert mfi_none is None
 
@@ -637,7 +585,6 @@ class TestMarketLatestTickTs:
 
     def test_returns_max_across_symbols_utc_aware(self):
         engine = _build_warm_engine("005930")
-        # second symbol with a strictly newer last tick
         engine.on_tick(
             "000660",
             {"close": 200000, "high": 200100, "low": 199900, "volume": 100},
@@ -647,7 +594,7 @@ class TestMarketLatestTickTs:
         ts = engine.get_market_latest_tick_ts()
 
         assert ts is not None
-        assert ts.tzinfo is not None  # naive inputs normalized to UTC-aware
+        assert ts.tzinfo is not None
         assert ts == datetime(2026, 2, 17, 11, 0, 0, tzinfo=UTC)
 
     def test_respects_active_symbols_filter(self):

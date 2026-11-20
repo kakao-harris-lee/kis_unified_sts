@@ -44,17 +44,12 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert paper["TELEGRAM_FUTURES_CHAT_ID"] == "CHANGE_ME_PAPER_TELEGRAM_CHAT_ID"
     assert paper["FUTURES_PIPELINE_MODE"] == "shadow"
     assert paper["FUTURES_ORDER_ROUTER_MODE"] == "paper"
-    # order_router consumes the tick stream by default and opens no KIS WS —
-    # `ws` is the opt-in self-fed path (one futures WS per KIS account).
     assert paper["FUTURES_ORDER_ROUTER_FEED"] == "stream"
     assert paper["FUTURES_TICK_STREAM"] == "raw_data"
     assert paper["FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS"] == "10"
     assert paper["FUTURES_ROUTER_SLIPPAGE_GATE"] == "true"
     assert paper["FUTURES_ORDER_ROUTER_SEED_COUNT"] == "50"
     assert paper["FUTURES_STRATEGY_SYMBOL"] == ""
-    # Empty = every setup whose strategy.enabled is true; the knob exists so an
-    # operator can narrow the DECOUPLED roster without touching the switch
-    # trader-futures shares.
     assert paper["FUTURES_DECISION_ENGINE_SETUPS"] == ""
     assert paper["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
     assert paper["OPENAI_API_KEY"] == ""

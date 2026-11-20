@@ -1,29 +1,4 @@
-"""EV-L3 crash-schedule capture — the outside orchestration's only wiring.
-
-Isomorphic to ``tos/tests/conftest.py`` (the EV-L2 fault-schedule sink), extended to the
-EV-L3 integrated crash/restart stage per the ratified design contract
-``docs/plans/2026-08-06-tos-ev-l3-pilot-design.md`` §6.1: the append-only schedule
-artifact VER-002-001 §9.1 requires ("test identity, baseline, seed, and fault schedule
-SHALL be append-only").
-
-Why a pytest option and not an environment variable: the option is how an outside
-evidence harness hands the run-scoped sink path to the suite, exactly as
-``--l2-fault-timeline`` already does. When the option is absent — which is every run
-today, including CI's ``pytest tests/tos_l3`` and a plain developer one, since the
-harness ``tools/tos_evidence_run.py`` was retired with the evidence corpus
-(docs/plans/2026-11-13-tos-code-halving-plan.md §S3) — **no file is written and nothing
-is skipped**: the crash assertions still execute. The timeline is an evidence artifact,
-never a precondition of the tests.
-
-⚠ This directory is **outside** ``tos/``. The firewall's forward rules (allowlist /
-forbidden stdlib / ``os.environ``) do not apply here — ``subprocess`` is legitimate —
-but the **reverse** rule TOS-FW-R does: ``tools/tos_firewall_check.py``'s
-``_walk_repo_py`` prunes ONLY an explicit set of repo-root-relative VCS/generated
-roots plus the repo-root ``tos/`` directory (each matched by resolved-path identity,
-never by name or at any depth); ``tests/tos_l3`` is none of those roots, so nothing
-here may ``import tos``. That prohibition is not an inconvenience, it is the design's
-structural oracle-independence guarantee (§5.3 / O-3).
-"""
+"""EV-L3 crash-schedule capture — the outside orchestration's only wiring."""
 
 from __future__ import annotations
 
@@ -33,23 +8,13 @@ from typing import Any
 
 import pytest
 
-#: The fixed seed the EV-L3 crash schedule is executed under (design §4 "seed=0"). The
-#: catalog is a deterministic enumeration rather than a sampled one, so the seed is
-#: recorded for reproducibility of the surrounding property assertions and of the run
-#: record itself (VER §9.1), not because the crash points are randomised.
 L3_CRASH_SEED = 0
 
-#: Outcome vocabulary (design §6.1, inherited from the EV-L2 schedule). A single
-#: ``DEVIATION`` forbids a GREEN run.
 OUTCOME_MET = "MET"
 OUTCOME_DEVIATION = "DEVIATION"
 
-#: The journal mode the substrate decision (design §3.2 candidate A) requires, as
-#: sqlite reports it. Compared case-insensitively against the measured value.
 L3_REQUIRED_JOURNAL_MODE = "wal"
 
-#: The exact ordered field set of one crash-timeline row (design §6.2 — the harness's
-#: six gates must each be re-derivable from these fields alone).
 L3_TIMELINE_FIELDS: tuple[str, ...] = (
     "scenario_id",
     "evidence_id",
@@ -84,21 +49,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 class L3CrashTimeline:
-    """Append-only sink for EV-L3 crash rows (design §6.1).
-
-    Each :meth:`record` call appends exactly one JSON object — the file is opened in
-    append mode per row, so a row that has been written is never rewritten and an
-    aborted session still leaves every scenario it reached (VER §9.1 / §2.2: a failed
-    run is preserved, not replaced).
-
-    ``outcome`` is **derived**, never passed in: a row is ``MET`` only when the expected
-    reconstruction is a concrete non-empty string, the observed reconstruction equals
-    it, **and** the two structural boundary facts hold (a real process boundary —
-    distinct positive pids — and a real on-disk store). A missing expectation is
-    therefore structurally a ``DEVIATION`` and can never be silently counted as met
-    (design §0.5-2 / §0.5-4: only falsifiable Expecteds are admissible, and "0 crashes
-    injected" is not "no violations").
-    """
+    """Append-only sink for EV-L3 crash rows (design §6.1)."""
 
     def __init__(self, path: Path | None) -> None:
         """Bind the sink to ``path`` (``None`` => in-memory only)."""
@@ -126,37 +77,7 @@ class L3CrashTimeline:
         expected_reconstruction: str,
         observed_reconstruction: str,
     ) -> dict[str, Any]:
-        """Append one crash row and return it.
-
-        Args:
-            scenario_id: The design §4 catalog id (``L3-01`` … ``L3-08``).
-            evidence_id: The Evidence Register row this crash scenario belongs to.
-            target_component: The integrated components under crash injection.
-            crash_point: Where the deterministic crash landed, named structurally.
-            crash_exit_status: The writer process's **observed** exit status.
-            writer_pid: The crashed writer's OS pid, observed by this orchestrator.
-            reader_pid: The fresh reader's OS pid, observed by this orchestrator.
-            store_real_on_disk: Whether the store file existed on the filesystem after
-                the writer died — measured with :meth:`pathlib.Path.is_file`, never
-                self-reported by the worker.
-            store_bytes: The store file's size after the crash.
-            store_journal_mode: What ``PRAGMA journal_mode`` reports for that file,
-                read through a read-only connection to the file ITSELF after the writer
-                died — the measurement that says the substrate really was WAL (design
-                §3.2 candidate A). Carried on the row because it is the evidence the
-                harness re-derives gate 3 from; the source-level check it replaced could
-                only say what the code might do, and three review rounds each found a
-                way for that to be wrong (review round-3 F9). ``"<unreadable>"`` when
-                the file could not be opened, which is a deviation like any other.
-            expected_reconstruction: The hand-derived §4 anchor, as the canonical
-                five-dimension string. Derived independently of the implementation:
-                nothing outside ``tos/`` can call ``reconstruct_conservative``.
-            observed_reconstruction: The same string built from the fresh reader's
-                stdout verdict.
-
-        Returns:
-            The appended row.
-        """
+        """Append one crash row and return it."""
         boundary_real = writer_pid > 0 and reader_pid > 0 and writer_pid != reader_pid
         met = (
             bool(expected_reconstruction)

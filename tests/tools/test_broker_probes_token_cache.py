@@ -1,13 +1,4 @@
-"""Asset-scoped probe token cache — two mock app keys must not share one file.
-
-``shared/kis/auth.py::token_cache_path`` names the token file
-``.kis_token_{real|mock}`` with no app-key discrimination, so stock and
-futures credentials handed the same cache directory would share one bearer
-token. The 2026-07-31 session ran a stock and a futures mock probe in
-parallel and escaped only by timing (campaign README, latent-risk register).
-``build_auth_config`` is the single construction site for probe auth
-configs, and it must scope the directory by asset.
-"""
+"""Asset-scoped probe token cache — two mock app keys must not share one file."""
 
 from __future__ import annotations
 

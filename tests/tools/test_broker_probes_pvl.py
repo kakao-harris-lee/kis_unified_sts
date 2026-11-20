@@ -1,38 +1,4 @@
-"""Unit tests for P-VL — the GET-only venue-limits probe (``tools/broker_probes``).
-
-Design: ``docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md``
-§4 (legs) / §5 (verdicts) / §8 step 2 (this file is the "hermetic 테스트: 레그별
-레드 증명" item).
-
-Every red proof below is a CONCRETE failing input sitting beside the guard it
-exercises, because a guard whose failing input nobody can write is a guard that
-blocks nothing. The six the design asks for, and what each one is made of:
-
-1. **band mismatch** — a stage-2 (15%) band against the stage-1 (8%) arithmetic.
-   REPORTED, never raised: a 2단계 band outside the 08:45-09:00 no-escalation
-   window is a legitimate market state, not a harness defect.
-2. **non-integral ``ord_psbl_qty``** — ``"1.5"`` contracts. RAISES: quantities
-   here are CONTRACTS and a fractional one cannot be rounded into a real order.
-3. **``rt_cd != 0`` on L1** — RAISES: every later leg reads its prices from that
-   response, so the refusal is the whole observation.
-4. **tick mismatch** — ``futs_prpr="420.53"`` is not a multiple of the 0.02 tick
-   ``config/execution.yaml`` registers for the mini contract. RAISES via
-   ``_corroborate_tick``: the registry is contradicted by the venue's own quotes.
-5. **real host refused** — the client handed ``REAL_BASE_URL``. RAISES before the
-   session is touched, so a refused call opens no socket.
-6. **``rt_cd != 0`` on L5** — RECORDED without raising: whether the GET surface
-   validates a price above the band is exactly the open question, so a refusal
-   there is an observation, not a failure.
-
-No test here opens a socket: the transport is a scripted fake and the auth
-manager is a stub.
-
-The green fixture's numbers are chosen so the arithmetic is checkable by hand:
-기준가격 420.00, so the stage-1 band is 420 × 1.08 = 453.6 (상한) and
-420 × 0.92 = 386.4 (하한), both already exact multiples of 0.05 AND of the 0.02
-tick the mini leaf registers — the only way one quote set can satisfy both the
-제56조 arithmetic and the tick corroboration at once.
-"""
+"""Unit tests for P-VL — the GET-only venue-limits probe (``tools/broker_probes``)."""
 
 from __future__ import annotations
 
@@ -59,31 +25,19 @@ from tools.broker_probes.registry import coverage_report, get
 
 KST = pvl.KST
 
-_ACCOUNT = "1234567803"  # 8-digit CANO + product code 03 (futures)
+_ACCOUNT = "1234567803"
 _APP_KEY = "pvl-test-app-key"
 _APP_SECRET = "pvl-test-app-secret"
 
-#: A 미니코스피200 leaf — the product the resident paper session actually runs
-#: (today's resident leaf). Its registered 호가가격단위 is 0.02, NOT the 0.05 of
-#: the full-size contract that the deployed paper policy still carries.
 _SYMBOL = "A05610"
 
-#: The tick ``config/execution.yaml::futures_contract_spec.kospi200_mini``
-#: registers for :data:`_SYMBOL`. Spelled out here so the hand-checkable band
-#: arithmetic below is read against the right unit.
 _MINI_TICK = Decimal("0.02")
 
-#: 기준가격 for every fixture. See the module docstring for why 420.00.
 _SDPR = "420.00"
 _STAGE1_UPPER = "453.6"
 _STAGE1_LOWER = "386.4"
 _STAGE2_UPPER = "483.0"
 _STAGE2_LOWER = "357.0"
-
-
-# ---------------------------------------------------------------------------
-# doubles
-# ---------------------------------------------------------------------------
 
 
 class _FakeResponse:
@@ -160,17 +114,9 @@ class _FakeAuth:
         return {"authorization": "Bearer test", "appkey": _APP_KEY}
 
 
-# ---------------------------------------------------------------------------
-# fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def futures_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Export exactly the env vars ``resolve_credentials('futures')`` reads.
-
-    The legacy fallbacks are dropped so a host ``.env`` cannot leak in.
-    """
+    """Export exactly the env vars ``resolve_credentials('futures')`` reads."""
     for name in ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_TOKEN_CACHE_DIR"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("KIS_FUTURES_APP_KEY", _APP_KEY)
@@ -197,18 +143,10 @@ def wire(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 @pytest.fixture
 def escalation_window(monkeypatch: pytest.MonkeyPatch):
-    """Force a sample INSIDE or OUTSIDE the 08:45-09:00 no-escalation window.
-
-    L2's verdict is three-way and the third branch depends on which of the
-    design's two samples is being taken. Leaving that to the wall clock would
-    make every band test pass or fail by the hour, which is the time-fragile
-    shape this repo bans. The real :func:`kst_sample_window` still runs, and
-    still reads the session from the calendar — only the rule window moves.
-    """
+    """Force a sample INSIDE or OUTSIDE the 08:45-09:00 no-escalation window."""
 
     def _set(*, determined: bool) -> None:
         monkeypatch.setattr(pvl, "_NO_ESCALATION_START", time(0, 0))
-        # An empty window contains no instant; a whole-day one contains every.
         monkeypatch.setattr(
             pvl, "_NO_ESCALATION_END", time(23, 59, 59) if determined else time(0, 0)
         )
@@ -221,8 +159,8 @@ def _args(**overrides: object) -> argparse.Namespace:
         "probe_id": "P-VL",
         "symbol": _SYMBOL,
         "asset": "futures",
-        "confirm": True,  # P-VL is requires_confirm=True (P-16 polarity)
-        "pace_s": 0.0,  # these tests assert values, not intervals
+        "confirm": True,
+        "pace_s": 0.0,
         "token_cache_dir": None,
         "out_dir": None,
         "note": "",
@@ -287,15 +225,7 @@ def _psbl_body(
 
 @pytest.fixture
 def policy_tick(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """Serve a chosen ``tick_size`` as the deployed paper policy.
-
-    Below-bar (c): two tests asserted ``tick_registry_matches_policy`` against
-    the LIVE policy file, so they would both go red the day the operator fixes
-    ``tick_size`` to 2 — a test suite that breaks when the defect it describes
-    is repaired. The comparison logic is what deserves pinning; the deployed
-    value gets ONE dated test of its own
-    (:func:`test_the_deployed_policy_still_says_five_as_of_2026_10_08`).
-    """
+    """Serve a chosen ``tick_size`` as the deployed paper policy."""
 
     def _set(scaled_tick: int | None) -> Path:
         policy = tmp_path / "venue_constraint_policy.yaml"
@@ -311,12 +241,7 @@ def policy_tick(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
 
 def _execution_yaml(product: str, *, tick: str, prefix: str) -> str:
-    """A one-spec ``futures_contract_spec`` document for the tmp-registry tests.
-
-    ``product`` is the spec NAME, which the probe cross-checks against its own
-    별표 table, so these tests can exercise both the agreeing and the drifted
-    pairing from one builder.
-    """
+    """A one-spec ``futures_contract_spec`` document for the tmp-registry tests."""
     return (
         "futures_contract_spec:\n"
         f"  {product}:\n"
@@ -347,11 +272,6 @@ def _client(session: Any, *, base_url: str = MOCK_BASE_URL) -> pvl.MockQueryClie
     )
 
 
-# ---------------------------------------------------------------------------
-# registry metadata
-# ---------------------------------------------------------------------------
-
-
 def test_registry_entry_is_a_get_only_mock_query() -> None:
     spec = get("P-VL")
 
@@ -364,17 +284,11 @@ def test_registry_entry_is_a_get_only_mock_query() -> None:
 
 
 def test_registry_is_confirm_gated_like_every_other_networked_probe() -> None:
-    """``--confirm`` gates broker contact even for a read-only probe.
-
-    P-16 and P-13 are both read-only MOCK queries and both set this. A networked
-    probe without it would be the only hole in runbook safety control #4, so the
-    flag is asserted beside the register's own statement that the module is
-    read-only and imports no order path.
-    """
+    """``--confirm`` gates broker contact even for a read-only probe."""
     spec = get("P-VL")
 
     assert spec.requires_confirm is True
-    assert get("P-16").requires_confirm is True  # the polarity being followed
+    assert get("P-16").requires_confirm is True
     prerequisites = " ".join(spec.prerequisites)
     assert "READ-ONLY" in prerequisites
     assert "GET 전용" in prerequisites
@@ -437,25 +351,27 @@ def test_run_py_knows_where_the_probe_s_cli_args_live() -> None:
 
 
 def test_pace_default_is_p13s_measured_clean_rate() -> None:
-    """1.1 s, and the constant is LOCAL on purpose.
-
-    ``probes_order.DEFAULT_PACE_S`` holds the same number, but importing that
-    module would put order-submitting code in this probe's graph — the hole
-    ``test_module_does_not_import_order_capable_modules`` exists to close.
-    ``probes_balance`` and ``probes_ca`` keep their own copies for the same
-    reason, and the docstring on this one says so.
-    """
+    """1.1 s, and the constant is LOCAL on purpose."""
     parser = argparse.ArgumentParser()
     pvl.add_venue_limits_args(parser)
 
     assert parser.get_default("pace_s") == pvl.DEFAULT_PACE_S == 1.1
-    module_text = Path(pvl.__file__).read_text(encoding="utf-8")
-    assert "probes_order.DEFAULT_PACE_S" in module_text  # the reason, in writing
-
-
-# ---------------------------------------------------------------------------
-# structural read-only property — this module's own AST, not its prose
-# ---------------------------------------------------------------------------
+    tree = _module_ast()
+    assigned = {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    imported = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert "DEFAULT_PACE_S" in assigned
+    assert "DEFAULT_PACE_S" not in imported
 
 
 def _module_ast() -> ast.Module:
@@ -509,13 +425,7 @@ def _imported_modules(module: Any) -> set[str]:
 
 
 def test_module_does_not_import_order_capable_modules() -> None:
-    """The canary ``test_broker_probes_ca.py`` carries, applied to this module.
-
-    ``probes_real_order`` is the only order-emitting module in the harness and it
-    imports ``probes_order`` at module level, so ONE import of either would put
-    both order paths in this read-only module's graph. The two pure helpers this
-    probe reuses live in ``_tick_math`` precisely so that import is unnecessary.
-    """
+    """The canary ``test_broker_probes_ca.py`` carries, applied to this module."""
     banned = ("probes_order", "probes_real_order")
 
     assert not [
@@ -525,12 +435,7 @@ def test_module_does_not_import_order_capable_modules() -> None:
 
 @pytest.mark.parametrize("raw", ["NaN", "nan", "Infinity", "-Infinity", "inf"])
 def test_a_non_finite_broker_field_reads_as_unestablished(raw: str) -> None:
-    """Below-bar (g): ``Decimal("NaN")`` PARSES, and then poisons the arithmetic.
-
-    A NaN reaching ``corroborate_tick`` makes ``value % tick`` raise
-    ``InvalidOperation`` far from the field that caused it. "The broker did not
-    give us this number" is exactly the documented contract for these.
-    """
+    """Below-bar (g): ``Decimal("NaN")`` PARSES, and then poisons the arithmetic."""
     assert _tick_math.decimal_field({"futs_prpr": raw}, "futs_prpr") is None
 
 
@@ -547,22 +452,13 @@ def test_a_non_finite_quote_is_reported_as_an_unusable_field(
 
 
 def test_the_tick_protocol_is_not_runtime_checkable() -> None:
-    """Below-bar (g): a data-only Protocol cannot be used with isinstance.
-
-    Keeping the decorator advertised a check that raises ``TypeError`` for
-    anyone who tries it.
-    """
+    """Below-bar (g): a data-only Protocol cannot be used with isinstance."""
     with pytest.raises(TypeError):
         isinstance(object(), _tick_math.TickLike)
 
 
 def test_the_relocated_helper_module_is_stdlib_only() -> None:
-    """``_tick_math`` is the shared dependency, so its own graph must stay empty.
-
-    One ``tools.broker_probes`` or ``shared`` import here would be inherited by
-    every GET-only module that reuses it and would silently reopen the hole the
-    relocation closed.
-    """
+    """``_tick_math`` is the shared dependency, so its own graph must stay empty."""
     imported = _imported_modules(_tick_math)
 
     assert not [
@@ -574,12 +470,7 @@ def test_the_relocated_helper_module_is_stdlib_only() -> None:
 
 
 def test_probes_real_order_still_exposes_the_relocated_helpers() -> None:
-    """The relocation was an address change, not a rename for callers.
-
-    ``probes_real_order._corroborate_tick`` is reached by name from
-    ``tests/tools/test_broker_probes_real_order.py``, and every call site inside
-    that module uses the private names. Re-export keeps both working.
-    """
+    """The relocation was an address change, not a rename for callers."""
     from tools.broker_probes import probes_real_order as pro
 
     assert pro._corroborate_tick is _tick_math.corroborate_tick
@@ -594,11 +485,6 @@ def test_allowlist_is_two_read_only_inquiries_and_nothing_else() -> None:
     for entry in pvl.ALLOWLIST:
         assert "/order" not in entry.path
         assert entry.path.endswith(("inquire-price", "inquire-psbl-order"))
-
-
-# ---------------------------------------------------------------------------
-# RED PROOF 5 — the real host is refused before any contact
-# ---------------------------------------------------------------------------
 
 
 def test_client_refuses_the_real_host_before_touching_the_session() -> None:
@@ -633,15 +519,7 @@ def test_client_refuses_an_allowlisted_tr_on_the_wrong_path() -> None:
 def test_a_real_trading_tr_added_to_the_allowlist_is_still_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The second guard's concrete failing input: a widened allowlist.
-
-    ``assert_mock_trading_tr`` cannot fire through the allowlist as it ships —
-    the only ``/trading/`` pair is the demo TR. The input that does reach it is
-    the edit most likely to happen: someone adds the real TR to
-    :data:`~tools.broker_probes.probes_venue_limits.ALLOWLIST`. Without this
-    layer that edit alone would send a real trading TR at the mock host; with
-    it, the call is still refused.
-    """
+    """The second guard's concrete failing input: a widened allowlist."""
     monkeypatch.setattr(
         pvl,
         "ALLOWLIST",
@@ -652,11 +530,6 @@ def test_a_real_trading_tr_added_to_the_allowlist_is_still_refused(
 
     with pytest.raises(SafetyViolation, match="not a mock TR"):
         client.get(path=pvl._PSBL_PATH, tr_id="TTTO5105R", params={})
-
-
-# ---------------------------------------------------------------------------
-# pure arithmetic — Decimal, exact, no float anywhere
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -687,12 +560,8 @@ def test_ceil_to_tick_is_exact(value: str, tick: str, expected: str) -> None:
 
 
 def test_tick_arithmetic_never_inherits_the_float_artifact() -> None:
-    """``7443 * 0.05`` is ``372.15000000000003`` in binary floating point.
-
-    The campaign already lost one order to that number (artifact
-    ``P-5-20260730T000608Z``, 호가단위 오류). Nothing here may reproduce it.
-    """
-    assert str(7443 * 0.05) == "372.15000000000003"  # the hazard, made explicit
+    """``7443 * 0.05`` is ``372.15000000000003`` in binary floating point."""
+    assert str(7443 * 0.05) == "372.15000000000003"
 
     assert pvl.floor_to_tick(Decimal("372.17"), Decimal("0.05")) == Decimal("372.15")
     assert pvl.ceil_to_tick(Decimal("372.11"), Decimal("0.05")) == Decimal("372.15")
@@ -731,7 +600,7 @@ def test_band_stage_matches_identifies_which_stage_reproduced_the_band() -> None
 
     assert report["any_match"] is True
     assert report["matching_stages"] == [2]
-    assert len(report["candidates"]) == 3  # one per 별표 14 stage
+    assert len(report["candidates"]) == 3
     assert [c["ratio"] for c in report["candidates"]] == ["0.08", "0.15", "0.20"]
 
 
@@ -752,11 +621,6 @@ def test_band_stage_matches_reports_no_match_without_claiming_a_cause() -> None:
 def test_band_expectation_refuses_a_non_positive_basis_price() -> None:
     with pytest.raises(ProbeError, match="기준가격 must be positive"):
         pvl.band_expectation(Decimal("0"), ratio=Decimal("0.08"), tick=_MINI_TICK)
-
-
-# ---------------------------------------------------------------------------
-# the 08:45-09:00 no-escalation window (시행세칙 제56조의2제2항)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -782,11 +646,8 @@ def test_sample_window_records_the_kst_wall_clock_and_the_session() -> None:
     assert record["sampled_at_kst"].startswith("2026-10-08T08:50")
     assert record["inside_continuous_session"] is True
     assert "제56조의2제2항" in record["no_escalation_source"]
-    # (f) both amendment dates, not one 절's date pinned on the other.
     assert "2025-05-29" in record["no_escalation_source"]
     assert "2026-06-11" in record["no_escalation_source"]
-    # (b) the window is READ from the calendar, so the citation names the file
-    # and the phase it came from rather than a line number beside a literal.
     assert "calendar.yaml::sessions.krx-index-futures" in (
         record["continuous_session_source"]
     )
@@ -796,12 +657,7 @@ def test_sample_window_records_the_kst_wall_clock_and_the_session() -> None:
 def test_the_continuous_window_comes_from_the_calendar_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Below-bar (b): point the loader at another calendar; the window follows.
-
-    This is the test a literal 08:45-15:45 could not pass. CLAUDE.md puts
-    schedules in YAML and the artifact already cited the calendar, so the module
-    may not keep its own copy of the times.
-    """
+    """Below-bar (b): point the loader at another calendar; the window follows."""
     other = tmp_path / "calendar.yaml"
     other.write_text(
         "sessions:\n"
@@ -835,21 +691,10 @@ def test_a_sample_outside_the_continuous_session_is_marked_as_such() -> None:
     assert record["inside_continuous_session"] is False
 
 
-# ---------------------------------------------------------------------------
-# GREEN — the whole probe, five legs, offline
-# ---------------------------------------------------------------------------
-
-
 def test_green_run_records_every_leg_and_passes_l1_l2_l3(
     futures_env: None, wire: Any, escalation_window: Any
 ) -> None:
-    """The all-PASS run, taken INSIDE the no-escalation window.
-
-    L2 PASS is only available there: outside it a stage-1 match does not
-    discriminate and earns no verdict (see
-    ``test_a_stage1_MATCH_outside_the_window_still_carries_no_verdict``). A test
-    that asserted PASS without pinning the window was asserting the wall clock.
-    """
+    """The all-PASS run, taken INSIDE the no-escalation window."""
     escalation_window(determined=True)
     session = wire(_FakeSession(_price_body(), _green_psbl()))
 
@@ -863,7 +708,6 @@ def test_green_run_records_every_leg_and_passes_l1_l2_l3(
         "L4": "OBSERVATION_ONLY_NO_VERDICT",
         "L5": "OBSERVATION_ONLY_NO_VERDICT",
     }
-    # 1 quote + 3 주문가능 — exactly the five legs, no extra call.
     assert [call["tr_id"] for call in session.calls] == [
         "FHMIF10000000",
         "VTTO5105R",
@@ -890,16 +734,11 @@ def test_green_run_records_the_five_l1_fields_and_the_tick_corroboration(
         "futs_llam",
     }
     assert measurements["l1_quote_fields"]["unusable"] == []
-    # Design §4.1 lists the Date header among L1's measurements.
     assert measurements["l1_quote_fields"]["broker_date_header"].startswith("Wed, 08")
     assert measurements["l1_tick_corroboration"]["corroborated"] is True
     assert measurements["l1_tick_corroboration"]["non_multiples"] == []
-    # 420.00 (기준가) vs 419.80 (전일종가) differ, so this sample distinguishes
-    # 제55조제1항제2호's settlement-price basis from the previous close.
     basis = measurements["l1_basis_price_distinguishable"]
     assert basis["differ"] is True
-    # A05610 is an October leaf, so 제55조제1항 단서 does not apply and the
-    # stronger reading is available.
     assert basis["quarterly_mini_leaf"] is False
     assert basis["distinguishes_settlement_from_close"] is True
 
@@ -917,12 +756,7 @@ def test_green_run_records_the_five_l1_fields_and_the_tick_corroboration(
 def test_a_quarterly_mini_leaf_cannot_claim_the_settlement_reading(
     futures_env: None, wire: Any, symbol: str, quarterly: bool
 ) -> None:
-    """Below-bar (e): 제55조제1항 단서 borrows the 코스피200선물's 기준가격.
-
-    On a 분기월 mini leaf the two fields can differ because the basis came from
-    ANOTHER product, so a difference does not distinguish 정산가 from 종가. The
-    probe used to claim it did.
-    """
+    """Below-bar (e): 제55조제1항 단서 borrows the 코스피200선물's 기준가격."""
     wire(_FakeSession(_price_body(), _green_psbl()))
 
     basis = pvl.probe_pvl(_args(symbol=symbol)).measurements[
@@ -963,7 +797,6 @@ def test_green_run_sends_the_official_psbl_parameter_set(
         assert call["params"]["SLL_BUY_DVSN_CD"] == "02"
         assert call["params"]["ORD_DVSN_CD"] == "01"
         assert call["params"]["ACNT_PRDT_CD"] == "03"
-    # L3 at the touch, L4 at the lower limit, L5 one tick above the upper limit.
     assert [c["params"]["UNIT_PRICE"] for c in psbl] == ["420.50", "386.4", "453.62"]
 
 
@@ -978,12 +811,8 @@ def test_green_run_states_what_it_cannot_establish(
     assert "예수금" in cannot["kis_quantity_limit"]
     assert "별표 17의2" in cannot["kis_quantity_limit"]
     assert "제61조제3항" in cannot["kis_quantity_limit"]
-    # No contract count is spelled here on purpose: WHICH number applies depends
-    # on --symbol's product family, so the row lives in resolved_instrument and
-    # this text points at it rather than hardcoding the full-size 2,000.
     assert "CONTEXT" in cannot["kis_quantity_limit"]
     assert "2,000" not in cannot["kis_quantity_limit"]
-    # The leg's own parameters are the third cause design v2 §4.3 requires.
     assert (
         pvl._ORD_PSBL_QTY_PARAMETER_DEPENDENCE_CITATION in cannot["kis_quantity_limit"]
     )
@@ -996,15 +825,7 @@ def test_green_run_states_what_it_cannot_establish(
 
 
 def test_the_parameter_dependence_citation_still_points_at_real_text() -> None:
-    """The citation is checked against the cited file, not trusted.
-
-    The first draft of this module cited ``probes_real_order.py:1651-1658`` and
-    **this PR staled it**: relocating two helpers out of that file moved the
-    block 34 lines up, so the range came to name a closing paren and the next
-    ``def``. A line range cannot survive an edit above it, so the citation is
-    symbol-anchored and this test locates the quoted sentence INSIDE the named
-    function. If anyone moves it out, the anchor fails here instead of rotting.
-    """
+    """The citation is checked against the cited file, not trusted."""
     import ast
 
     from tools.broker_probes import probes_real_order as pro
@@ -1032,21 +853,12 @@ def test_the_parameter_dependence_citation_still_points_at_real_text() -> None:
         "_preflight_instrument_state; update the citation in "
         "probes_venue_limits.py and the runbook"
     )
-    # And it really is the ``interpretation`` value, not prose that happens to
-    # contain the words.
     block = source[: source.index(sentence)]
     assert block.rindex('"interpretation": (') > block.rindex("run.measure(")
 
 
 def test_the_byeolpyo_citations_point_at_the_rows_they_claim() -> None:
-    """The 별표 line ranges are checked against the committed evidence texts.
-
-    Same defect class as the verifier's blocker, one file over: a line-pinned
-    citation that nobody resolves. These ranges became checkable when the
-    evidence landed on main (#879), so they get checked rather than trusted —
-    and the mini and full rows must resolve to DIFFERENT text, which is the
-    specific confusion design v2 §2.1 records v1 making.
-    """
+    """The 별표 line ranges are checked against the committed evidence texts."""
     import re
 
     repo_root = Path(pvl.__file__).resolve().parents[2]
@@ -1064,7 +876,6 @@ def test_the_byeolpyo_citations_point_at_the_rows_they_claim() -> None:
         ), f"{path}:{start}-{end} does not contain {row['product']!r}"
         assert f"{row['regular_session_contracts']:,}" in cited
         assert f"{row['night_session_contracts']:,}" in cited
-        # The parenthesised 유동성관리상품 values live in the same row.
         assert f"({row['liquidity_managed_regular_contracts']:,})" in cited
         seen[prefix] = cited
 
@@ -1081,7 +892,7 @@ def test_the_price_limit_stage_citation_points_at_byeolpyo_14() -> None:
         repo_root / pvl._EVIDENCE_DIR / "byeolpyo14_price_limit_ratios.txt"
     ).read_text(encoding="utf-8")
     lines = cited.splitlines()
-    window = "\n".join(lines[18:25])  # the :19-25 the module cites
+    window = "\n".join(lines[18:25])
 
     assert "주가지수선물거래" in window
     for stage, ratio in pvl.KRX_PRICE_LIMIT_STAGES:
@@ -1090,13 +901,7 @@ def test_the_price_limit_stage_citation_points_at_byeolpyo_14() -> None:
 
 
 def test_no_live_line_pinned_citation_of_that_file_survives_in_the_probe() -> None:
-    """A line-number citation of a file this PR edits will go stale again.
-
-    ``probes_real_order.py::symbol`` is fine; ``probes_real_order.py:1651`` is
-    not. Exactly one line-pinned mention is allowed — the comment recording why
-    the anchor became symbolic — and it must be a comment, not live text a
-    reader would follow.
-    """
+    """A line-number citation of a file this PR edits will go stale again."""
     import re
 
     module_text = Path(pvl.__file__).read_text(encoding="utf-8")
@@ -1106,23 +911,16 @@ def test_no_live_line_pinned_citation_of_that_file_survives_in_the_probe() -> No
         if re.search(r"probes_real_order\.py:\d", line)
     ]
 
-    assert len(pinned) == 1, f"expected only the history note, got: {pinned}"
-    assert pinned[0].startswith("#"), (
-        "the one permitted line-pinned mention must be a comment about the "
-        f"staleness, not live text: {pinned[0]!r}"
+    assert pinned == [], (
+        "a line-pinned citation of probes_real_order.py is live text a reader "
+        f"would follow into a line that has already moved: {pinned}"
     )
-    assert "staled" in module_text
 
 
 def test_the_artifact_does_not_claim_a_prior_ord_psbl_qty_observation(
     futures_env: None, wire: Any
 ) -> None:
-    """Finding 2: the fabricated P-R5-PRE reading must be gone everywhere.
-
-    The 2026-08-03 run aborted on the deposit leg before 주문가능 ran, so no
-    artifact in this repo says what a zero 주문가능수량 means. The earlier text
-    cited it for exactly that.
-    """
+    """Finding 2: the fabricated P-R5-PRE reading must be gone everywhere."""
     wire(_FakeSession(_price_body(), _green_psbl()))
 
     cannot = pvl.probe_pvl(_args()).measurements["cannot_establish"]
@@ -1137,12 +935,7 @@ def test_the_artifact_does_not_claim_a_prior_ord_psbl_qty_observation(
 def test_green_run_proposes_the_compound_token_design_v2_asks_for(
     futures_env: None, wire: Any, escalation_window: Any
 ) -> None:
-    """Design v2 §5: a self-describing compound token, never a one-word status.
-
-    ``PARTIAL`` is the word the design refuses by name, and it appears in the
-    profile only as a key suffix. Inside the window, so the band axis can
-    legitimately read ``OBSERVED_ON_MOCK``.
-    """
+    """Design v2 §5: a self-describing compound token, never a one-word status."""
     escalation_window(determined=True)
     wire(_FakeSession(_price_body(), _green_psbl()))
 
@@ -1184,17 +977,12 @@ def test_green_run_proposes_the_compound_token_design_v2_asks_for(
 def test_the_token_is_derived_so_a_failed_leg_cannot_claim_an_observed_axis(
     verdicts: dict[str, str], band_segment: str
 ) -> None:
-    """The concrete failing input finding 3 asked for: an L2 that did not pass.
-
-    If the token were a literal, an L2 FAIL would still ship
-    ``BAND_SEMANTICS_OBSERVED_ON_MOCK``. It is derived, so it cannot.
-    """
+    """The concrete failing input finding 3 asked for: an L2 that did not pass."""
     token = pvl.disposition_token(verdicts)
 
     assert token.split("__")[0] == band_segment
     if band_segment != "BAND_SEMANTICS_OBSERVED_ON_MOCK":
         assert "BAND_SEMANTICS_OBSERVED_ON_MOCK" not in token
-    # The quantity axis is never observable by this probe, in any outcome.
     assert token.endswith("__QUANTITY_CAP_RULE_VALUE_BROKER_UNCONFIRMED")
 
 
@@ -1208,12 +996,7 @@ def test_the_tick_axis_claims_corroboration_only_when_l1_passed() -> None:
 def test_green_run_records_the_registry_policy_tick_disagreement(
     futures_env: None, wire: Any, policy_tick: Any
 ) -> None:
-    """The mini leaf's 0.02 against the paper policy's 5 (= 0.05).
-
-    The probe surfaces the drift and resolves nothing: the registry tick governs
-    the arithmetic because it is keyed on this symbol's own product, and the
-    policy value sits beside it so a reader sees they disagree.
-    """
+    """The mini leaf's 0.02 against the paper policy's 5 (= 0.05)."""
     policy_tick(5)
     wire(_FakeSession(_price_body(), _green_psbl()))
 
@@ -1230,12 +1013,7 @@ def test_green_run_records_the_registry_policy_tick_disagreement(
 def test_a_policy_fixed_to_the_mini_tick_reports_agreement(
     futures_env: None, wire: Any, policy_tick: Any
 ) -> None:
-    """The other side of the comparison, so it is the LOGIC that is pinned.
-
-    When the operator lands ``tick_size: 2`` the probe must report agreement, not
-    keep asserting the drift. Without this test the suite would only know how to
-    describe today's defect.
-    """
+    """The other side of the comparison, so it is the LOGIC that is pinned."""
     policy_tick(2)
     wire(_FakeSession(_price_body(), _green_psbl()))
 
@@ -1259,12 +1037,7 @@ def test_a_policy_without_a_tick_reports_no_comparison(
 
 
 def test_the_deployed_policy_still_says_five_as_of_2026_10_08() -> None:
-    """The ONE test that reads the live file. Dated on purpose.
-
-    If the operator lands the §6 wave's ``tick_size: 2``, this is the single
-    test that should go red, and its failure is the reminder to re-date the
-    claim — not a signal that the probe broke.
-    """
+    """The ONE test that reads the live file. Dated on purpose."""
     record = pvl._policy_tick_record()
 
     assert record["tick_size_scaled_int"] == 5, (
@@ -1277,12 +1050,7 @@ def test_the_deployed_policy_still_says_five_as_of_2026_10_08() -> None:
 def test_the_artifact_records_an_app_key_fingerprint_not_the_key(
     futures_env: None, wire: Any
 ) -> None:
-    """PR #881 finding 10: the shared-key precondition must be re-checkable.
-
-    Design §4.2 makes "is this the resident paper session's key?" a
-    precondition, and PR #881 could only answer it from a host file and a line
-    number. The fingerprint puts the comparison in the evidence.
-    """
+    """PR #881 finding 10: the shared-key precondition must be re-checkable."""
     wire(_FakeSession(_price_body(), _green_psbl()))
 
     run = pvl.probe_pvl(_args())
@@ -1291,32 +1059,22 @@ def test_the_artifact_records_an_app_key_fingerprint_not_the_key(
     assert len(fingerprint) == 12
     assert all(c in "0123456789abcdef" for c in fingerprint)
     assert _APP_KEY not in fingerprint
-    # Same width and shape as the account correlator, so they read alike.
     assert len(run.credentials["account_fingerprint"]) == 12
     payload = json.dumps(run.to_dict(get("P-VL")), ensure_ascii=False, default=str)
     assert _APP_KEY not in payload
 
 
 def test_secret_fingerprint_pins_its_method_with_a_known_vector() -> None:
-    """A fixed input/output pair, so the METHOD cannot drift unnoticed.
-
-    PR #881 attested an app-key fingerprint computed by an ad-hoc one-liner that
-    kept the surrounding single quotes of a dotenv value, producing a digest of
-    ``'<key>'`` rather than of the key. Without a pinned vector, "the method is
-    the same" is an assumption. With one, a reader can recompute it by hand:
-    ``sha256(b"pvl-test-app-key").hexdigest()[:12]``.
-    """
+    """A fixed input/output pair, so the METHOD cannot drift unnoticed."""
     import hashlib
 
     from tools.broker_probes.common import secret_fingerprint
 
     assert secret_fingerprint("pvl-test-app-key") == "01f44d8ccabb"
-    # And the digest really is plain SHA-256 of the exact bytes, truncated to 12.
     assert (
         secret_fingerprint("pvl-test-app-key")
         == hashlib.sha256(b"pvl-test-app-key").hexdigest()[:12]
     )
-    # A quoted value is a DIFFERENT input — the #881 confusion, made explicit.
     assert secret_fingerprint("'pvl-test-app-key'") != "01f44d8ccabb"
 
 
@@ -1346,12 +1104,7 @@ def test_artifact_leaks_no_secret_and_no_full_account_number(
 def test_l2_does_its_arithmetic_at_the_registry_tick(
     futures_env: None, wire: Any
 ) -> None:
-    """Not the paper policy's 0.05, and not a literal.
-
-    420 × 1.08 = 453.6 and 420 × 0.92 = 386.4 are already exact multiples of
-    both units, which is what makes the green fixture usable for either family —
-    so the assertion is on the tick the report SAYS it used, not on the band.
-    """
+    """Not the paper policy's 0.05, and not a literal."""
     wire(_FakeSession(_price_body(), _green_psbl()))
 
     report = pvl.probe_pvl(_args()).measurements["l2_band_rule_arithmetic"]
@@ -1359,11 +1112,6 @@ def test_l2_does_its_arithmetic_at_the_registry_tick(
     assert report["tick_points"] == str(_MINI_TICK)
     assert "kospi200_mini" in report["tick_provenance"]
     assert all(c["tick_points"] == str(_MINI_TICK) for c in report["candidates"])
-
-
-# ---------------------------------------------------------------------------
-# --confirm gate (runbook safety control #4)
-# ---------------------------------------------------------------------------
 
 
 def test_without_confirm_nothing_is_sent(futures_env: None, wire: Any) -> None:
@@ -1386,8 +1134,6 @@ def test_the_dry_run_says_what_it_would_send(futures_env: None, wire: Any) -> No
     run = pvl.probe_pvl(_args(confirm=False))
 
     would = next(o for o in run.observations if "would_send" in o)
-    # Finding 6: the count is DERIVED, so prose and call list cannot disagree.
-    # L2 is offline, which is why it is 4 and not 5.
     assert pvl.GET_CALL_COUNT == 4
     assert f"{pvl.GET_CALL_COUNT} read-only GETs" in would["would_send"]
     assert would["get_call_count"] == pvl.GET_CALL_COUNT
@@ -1423,43 +1169,25 @@ def test_the_dry_run_never_reads_the_account_number(
     assert "account_product_code_is_futures_03" not in run.measurements
 
 
-# ---------------------------------------------------------------------------
-# RED PROOF 3 — rt_cd != 0 on L1 raises
-# ---------------------------------------------------------------------------
-
-
 def test_l1_rt_cd_not_zero_is_recorded_and_still_writes_an_artifact(
     futures_env: None, wire: Any
 ) -> None:
-    """Finding 4's red proof. An L1 refusal is a RESULT, not a lost run.
-
-    Before this, the three L1 guards raised a bare ``ProbeError``, which
-    ``run.py`` turns into exit 4 with NO artifact — so a single ``rt_cd≠0`` in
-    the 08:50±3분 window (what P-CA hit four times on 09-30) discarded the
-    credentials, the sample window and every L1 measurement already collected.
-    """
+    """Finding 4's red proof. An L1 refusal is a RESULT, not a lost run."""
     session = wire(_FakeSession(_price_body(rt_cd="1"), []))
 
     run = pvl.probe_pvl(_args())
 
-    # Returned, not raised — so run.py writes the artifact on the normal path.
     assert run.measurements["leg_verdicts"]["L1"] == "FAIL"
     assert run.measurements["l1_abort"]["code"] == "ABORT_L1_QUOTE_REFUSED"
     assert run.errors and "rt_cd='1'" in run.errors[0]
     assert run.to_dict()["provenance_class"] == "NOT_MEASURED"
-    # The evidence collected before the guard fired survives.
     assert "l1_sample_window" in run.measurements
     assert run.credentials["account_fingerprint"]
-    # And no later leg was attempted.
     assert [c["tr_id"] for c in session.calls] == ["FHMIF10000000"]
 
 
 def test_the_abort_is_a_probe_error_subclass_so_run_py_still_knows_it() -> None:
-    """``VenueLimitAbort`` must stay catchable as a ``ProbeError``.
-
-    ``probe_pvl`` catches it, but anything that escapes the probe should still
-    land on run.py's precondition path rather than its generic handler.
-    """
+    """``VenueLimitAbort`` must stay catchable as a ``ProbeError``."""
     assert issubclass(pvl.VenueLimitAbort, ProbeError)
     abort = pvl.VenueLimitAbort(pvl.ABORT_L1_REFUSED, "because")
     assert abort.code == pvl.ABORT_L1_REFUSED
@@ -1469,12 +1197,7 @@ def test_the_abort_is_a_probe_error_subclass_so_run_py_still_knows_it() -> None:
 def test_l1_off_tick_quote_is_recorded_via_corroborate_tick(
     futures_env: None, wire: Any
 ) -> None:
-    """``420.53`` is not a multiple of the 0.02 tick the mini leaf registers.
-
-    ``corroborate_tick`` is the imported pure function doing the check; the
-    probe turns its ``corroborated: False`` into an abort, because no band
-    arithmetic may be done against a tick the venue's own quotes deny.
-    """
+    """``420.53`` is not a multiple of the 0.02 tick the mini leaf registers."""
     session = wire(_FakeSession(_price_body(futs_prpr="420.53"), []))
 
     run = pvl.probe_pvl(_args())
@@ -1523,20 +1246,10 @@ def test_an_l1_abort_still_derives_a_disposition_token(
     assert "TICK_UNCORROBORATED" in disposition["proposed"]
 
 
-# ---------------------------------------------------------------------------
-# RED PROOF 1 — band mismatch is REPORTED, not raised
-# ---------------------------------------------------------------------------
-
-
 def test_stage2_band_inside_the_no_escalation_window_is_a_fail(
     futures_env: None, wire: Any, escalation_window: Any
 ) -> None:
-    """420 × 1.15 = 483.0 / × 0.85 = 357.0 — a 2단계 band in sample ①.
-
-    Inside 08:45-09:00 only stage 1 can be in force (시행세칙 제56조의2제2항), so
-    a 2단계 band there contradicts the rule and IS a failure. Still recorded, not
-    raised: the probe cannot choose the escalation it finds.
-    """
+    """420 × 1.15 = 483.0 / × 0.85 = 357.0 — a 2단계 band in sample ①."""
     escalation_window(determined=True)
     wire(
         _FakeSession(
@@ -1559,40 +1272,22 @@ def test_stage2_band_inside_the_no_escalation_window_is_a_fail(
 def test_a_stage1_MATCH_outside_the_window_still_carries_no_verdict(
     futures_env: None, wire: Any, escalation_window: Any
 ) -> None:
-    """The branch the old verdict order could not reach. PR #881 finding 1.
-
-    ``if matched`` came before the window test, so a stage-1 reproduction
-    outside the no-escalation window was scored ``PASS`` — contradicting all
-    three governing texts at once (design v2 §5 「①샘플에서」, runbook §5.9's leg
-    table, and ``disposition_token``'s own docstring). No test covered this
-    combination, which is why the disagreement shipped.
-
-    The concrete input is the ordinary green quote set, which DOES match stage 1
-    at the registry tick, taken outside the window. Nothing about the band is
-    wrong; what was wrong was calling a non-discriminating observation a PASS.
-    """
+    """The branch the old verdict order could not reach. PR #881 finding 1."""
     escalation_window(determined=False)
     wire(_FakeSession(_price_body(), _green_psbl()))
 
     run = pvl.probe_pvl(_args())
 
     report = run.measurements["l2_band_rule_arithmetic"]
-    # The match is still RECORDED as a fact ...
     assert report["declared_expectation_matches"] is True
     assert report["matching_stages"] == [1]
-    # ... but it earns no verdict outside the window.
     assert run.measurements["leg_verdicts"]["L2"] == "OBSERVATION_ONLY_NO_VERDICT"
     assert report["verdict"] == "OBSERVATION_ONLY_NO_VERDICT"
-    # And therefore the band axis cannot claim observation.
     token = run.measurements["p02_disposition_proposal"]["proposed"]
     assert token.startswith("BAND_SEMANTICS_L2_STAGE_RECORDED_ONLY__")
     assert "BAND_SEMANTICS_OBSERVED_ON_MOCK" not in token
-    # A no-verdict leg is not an error, so the run stays MEASURED.
     assert run.errors == []
     assert run.to_dict()["provenance_class"] == "MEASURED"
-    # M3: the rationale must be present for THIS case too. It used to be gated
-    # on `not matched`, so the outside-window + MATCH leg — the one this whole
-    # reorder exists for — shipped no explanation anywhere in the artifact.
     record = run.measurements["l2_band_disposition_record"]
     assert record["verdict"] == "OBSERVATION_ONLY_NO_VERDICT"
     assert record["declared_expectation_matched"] is True
@@ -1603,14 +1298,7 @@ def test_a_stage1_MATCH_outside_the_window_still_carries_no_verdict(
 def test_the_pr881_artifacts_would_now_be_read_as_stage_recorded_only(
     futures_env: None, wire: Any, escalation_window: Any
 ) -> None:
-    """Replays PR #881's exact quote set under the corrected order.
-
-    ``A05610`` at 10:06 KST: 기준가 1073.32, band 1159.18/987.46 — a clean stage-1
-    match at tick 0.02, taken OUTSIDE the window. The artifacts recorded
-    ``L2=PASS``; under the written rule the same observation is
-    ``OBSERVATION_ONLY_NO_VERDICT``. The artifacts are records and are not
-    rewritten; this test pins how they must be READ.
-    """
+    """Replays PR #881's exact quote set under the corrected order."""
     escalation_window(determined=False)
     wire(
         _FakeSession(
@@ -1639,13 +1327,7 @@ def test_the_pr881_artifacts_would_now_be_read_as_stage_recorded_only(
 def test_stage2_band_outside_the_window_carries_no_verdict(
     futures_env: None, wire: Any, escalation_window: Any
 ) -> None:
-    """The same band in the design's sample ② is a legitimate market state.
-
-    This is finding 5's concrete input: the 09:20+ sample the design itself
-    prescribes. Scoring it FAIL called a lawful 2단계 band a defect, while
-    ``_leg_l2``'s own docstring said the opposite. Design v2 §4.2 asks for
-    「그날의 확대 사실을 기록만」, so the stage is recorded and no verdict is given.
-    """
+    """The same band in the design's sample ② is a legitimate market state."""
     escalation_window(determined=False)
     wire(
         _FakeSession(
@@ -1663,7 +1345,6 @@ def test_stage2_band_outside_the_window_carries_no_verdict(
     record = run.measurements["l2_band_disposition_record"]
     assert record["verdict"] == "OBSERVATION_ONLY_NO_VERDICT"
     assert "legitimate market state" in record["why_this_verdict"]
-    # No verdict means no error, so the run stays MEASURED.
     assert run.errors == []
     assert run.to_dict()["provenance_class"] == "MEASURED"
 
@@ -1687,11 +1368,7 @@ def test_a_band_no_stage_reproduces_is_still_only_reported(
 def test_an_l2_fail_is_also_recorded_as_an_error(
     futures_env: None, wire: Any, escalation_window: Any
 ) -> None:
-    """Below-bar (a): a FAIL verdict must not ship ``errors: []``.
-
-    The runbook reads an empty errors list as a complete run, so a FAIL that
-    left it empty made that reading false. P-CA records refusals the same way.
-    """
+    """Below-bar (a): a FAIL verdict must not ship ``errors: []``."""
     escalation_window(determined=True)
     wire(
         _FakeSession(
@@ -1705,11 +1382,6 @@ def test_an_l2_fail_is_also_recorded_as_an_error(
     assert run.errors, "an L2 FAIL must be recorded in errors"
     assert "L2 FAIL" in run.errors[0]
     assert run.to_dict()["provenance_class"] == "NOT_MEASURED"
-
-
-# ---------------------------------------------------------------------------
-# RED PROOF 2 — a non-integral ord_psbl_qty raises
-# ---------------------------------------------------------------------------
 
 
 def test_l3_non_integral_ord_psbl_qty_raises(futures_env: None, wire: Any) -> None:
@@ -1759,12 +1431,7 @@ def test_l4_and_l5_do_not_apply_the_integral_guard(
 def test_a_non_integral_tot_psbl_qty_does_not_kill_l4_and_l5(
     futures_env: None, wire: Any
 ) -> None:
-    """Below-bar (d): the field with no verdict must not abort the run.
-
-    ``ord_psbl_qty`` is what L3's verdict reads, so it stays fatal. Design §5
-    gives ``tot_psbl_qty`` no verdict at all, and raising on it traded the L4 and
-    L5 observations for a field nothing judges.
-    """
+    """Below-bar (d): the field with no verdict must not abort the run."""
     wire(
         _FakeSession(
             _price_body(),
@@ -1775,10 +1442,9 @@ def test_a_non_integral_tot_psbl_qty_does_not_kill_l4_and_l5(
     run = pvl.probe_pvl(_args())
 
     l3 = run.measurements["l3_psbl_at_touch"]
-    assert l3["tot_psbl_qty"] == "2.5"  # transcribed
-    assert "tot_psbl_qty_int" not in l3  # not parsed
+    assert l3["tot_psbl_qty"] == "2.5"
+    assert "tot_psbl_qty_int" not in l3
     assert "not an integer" in l3["tot_psbl_qty_unreadable"]
-    # L3's own verdict still stands on ord_psbl_qty, and L4/L5 still ran.
     assert run.measurements["leg_verdicts"]["L3"] == "PASS"
     assert run.measurements["leg_verdicts"]["L4"] == "OBSERVATION_ONLY_NO_VERDICT"
     assert run.measurements["leg_verdicts"]["L5"] == "OBSERVATION_ONLY_NO_VERDICT"
@@ -1858,8 +1524,6 @@ def test_l3_refusal_is_recorded_and_never_read_as_zero_available(
     assert record["msg_cd"] == "EGW00215"
     assert "NOT 'zero available'" in record["recorded_not_interpreted"]
     assert "P-CA" in record["recorded_not_interpreted"]
-    # The transcript keeps the broker's own empty string; the DERIVED
-    # integer is absent, because nothing was parsed from a refused answer.
     assert run.measurements["l3_psbl_at_touch"]["ord_psbl_qty"] == ""
     assert "ord_psbl_qty_int" not in run.measurements["l3_psbl_at_touch"]
 
@@ -1885,20 +1549,10 @@ def test_l3_zero_quantity_is_a_fail_distinct_from_a_refusal(
     assert run.measurements["l3_zero_quantity_record"]["ord_psbl_qty"] == 0
 
 
-# ---------------------------------------------------------------------------
-# RED PROOF 6 — rt_cd != 0 on L5 is recorded without raising
-# ---------------------------------------------------------------------------
-
-
 def test_l5_rt_cd_not_zero_is_recorded_verbatim_without_raising(
     futures_env: None, wire: Any
 ) -> None:
-    """A price one tick above 상한가 refused at the GET surface.
-
-    Whether the broker validates the band on this inquiry is precisely the open
-    question, so the refusal is an observation. Raising would convert the
-    probe's own subject matter into a failure.
-    """
+    """A price one tick above 상한가 refused at the GET surface."""
     wire(
         _FakeSession(
             _price_body(),
@@ -1941,11 +1595,6 @@ def test_l5_price_is_one_registry_tick_above_the_upper_limit(
     assert session.calls[-1]["params"]["UNIT_PRICE"] == "453.62"
 
 
-# ---------------------------------------------------------------------------
-# CLI preconditions
-# ---------------------------------------------------------------------------
-
-
 def test_symbol_is_required_and_has_no_literal_default(
     futures_env: None, wire: Any
 ) -> None:
@@ -1959,12 +1608,7 @@ def test_symbol_is_required_and_has_no_literal_default(
 def test_asset_stock_is_refused_rather_than_silently_ignored(
     futures_env: None, wire: Any
 ) -> None:
-    """``--asset`` is a COMMON flag, so ``--asset stock`` parses fine.
-
-    Every TR in this probe is 선물옵션 and the credentials resolve as futures
-    unconditionally. Honouring the futures account under a stock flag would put
-    a wrong ``args.asset`` in the artifact beside futures measurements.
-    """
+    """``--asset`` is a COMMON flag, so ``--asset stock`` parses fine."""
     session = wire(_FakeSession(_price_body(), _green_psbl()))
 
     with pytest.raises(ProbeError, match="not available for P-VL"):
@@ -1984,13 +1628,7 @@ def test_a_negative_pace_is_refused(futures_env: None, wire: Any) -> None:
 def test_a_non_kospi200_symbol_is_refused_before_any_contact(
     futures_env: None, wire: Any, symbol: str
 ) -> None:
-    """Fail-closed on an unknown family.
-
-    ``005930`` is a stock code, ``A06610`` is a neighbouring futures prefix, and
-    ``10`` is a truncated one. None of them belong to 주가지수선물거래, so
-    measuring them against this probe's 별표 rows would be wrong with no sign
-    that it happened. The empty string is caught earlier, by the --symbol check.
-    """
+    """Fail-closed on an unknown family."""
     session = wire(_FakeSession(_price_body(), _green_psbl()))
 
     with pytest.raises(ProbeError):
@@ -2012,13 +1650,7 @@ def test_the_refusal_message_names_the_accepted_prefixes() -> None:
 def test_the_tick_is_read_from_the_config_file_not_hardcoded(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Point the loader at a different spec; the resolved tick must follow it.
-
-    This is the test a literal 0.02 or a read of the paper policy's 5 could not
-    pass. It is also the reachable failing input for the "no contract spec"
-    refusal: every accepted prefix is registered today, so the only way that
-    branch fires is a ``config/execution.yaml`` that dropped one.
-    """
+    """Point the loader at a different spec; the resolved tick must follow it."""
     other = tmp_path / "execution.yaml"
     other.write_text(
         _execution_yaml("kospi200_mini", tick="0.25", prefix="A05"), encoding="utf-8"
@@ -2035,13 +1667,7 @@ def test_the_tick_is_read_from_the_config_file_not_hardcoded(
 def test_a_non_positive_registered_tick_is_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A zero tick cannot be corroborated against, so it is refused loudly.
-
-    Reachable input: a ``config/execution.yaml`` whose spec declares
-    ``tick_size_points: 0``. Without this the zero would flow into
-    ``corroborate_tick``, where ``value % 0`` raises an opaque
-    ``DecimalException`` instead of naming the config as the cause.
-    """
+    """A zero tick cannot be corroborated against, so it is refused loudly."""
     broken = tmp_path / "execution.yaml"
     broken.write_text(
         _execution_yaml("kospi200_mini", tick="0", prefix="A05"), encoding="utf-8"
@@ -2055,12 +1681,7 @@ def test_a_non_positive_registered_tick_is_refused(
 def test_a_prefix_bound_to_another_product_is_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Finding 8's red proof: move ``A05`` off ``kospi200_mini``.
-
-    The 별표 row and the tick come from two different files. Before the
-    cross-check, this input produced an artifact carrying the mini 10,000 row
-    beside the full-size 0.05 tick, silently. Now it refuses, naming both.
-    """
+    """Finding 8's red proof: move ``A05`` off ``kospi200_mini``."""
     drifted = tmp_path / "execution.yaml"
     drifted.write_text(
         _execution_yaml("kospi200_full", tick="0.05", prefix="A05"), encoding="utf-8"
@@ -2071,19 +1692,15 @@ def test_a_prefix_bound_to_another_product_is_refused(
         pvl.resolve_instrument(_SYMBOL)
 
     message = str(excinfo.value)
-    assert "kospi200_mini" in message  # what this module's 별표 table says
-    assert "kospi200_full" in message  # what execution.yaml resolved
+    assert "kospi200_mini" in message
+    assert "kospi200_full" in message
     assert "별표" in message
 
 
 def test_a_prefix_absent_from_the_resolved_specs_prefix_list_is_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The other half of the pairing: the spec must claim THIS prefix.
-
-    A registry whose ``kospi200_mini`` matches ``A05`` only through a broader
-    rule would resolve the right product for the wrong reason.
-    """
+    """The other half of the pairing: the spec must claim THIS prefix."""
     loose = tmp_path / "execution.yaml"
     loose.write_text(
         _execution_yaml("kospi200_mini", tick="0.02", prefix="A"), encoding="utf-8"
@@ -2109,12 +1726,7 @@ def test_an_accepted_prefix_with_no_registered_spec_is_refused(
 def test_the_full_size_family_resolves_its_own_tick_and_rulebook_row(
     futures_env: None, wire: Any, policy_tick: Any
 ) -> None:
-    """``A01609`` is 코스피200선물거래: tick 0.05, 별표 17의2 regular 2,000.
-
-    Both families are accepted. The point of resolving per symbol is that the
-    mini row (10,000) and the full row (2,000) are different numbers, and a
-    probe that assumed one would mislabel the other.
-    """
+    """``A01609`` is 코스피200선물거래: tick 0.05, 별표 17의2 regular 2,000."""
     policy_tick(5)
     wire(_FakeSession(_price_body(), _green_psbl()))
 
@@ -2123,7 +1735,6 @@ def test_the_full_size_family_resolves_its_own_tick_and_rulebook_row(
     assert record["matched_prefix"] == "A01"
     assert record["resolved_product"] == "kospi200_full"
     assert record["registry_tick_points"] == "0.05"
-    # With a 5 policy it is the full-size leaf that agrees.
     assert record["tick_registry_matches_policy"] is True
     row = record["krx_quantity_limit_row"]
     assert row["product"] == "코스피200선물거래"
@@ -2134,11 +1745,7 @@ def test_the_full_size_family_resolves_its_own_tick_and_rulebook_row(
 def test_the_mini_family_gets_the_mini_rulebook_row(
     futures_env: None, wire: Any
 ) -> None:
-    """``A05610`` is 미니코스피200선물거래: 별표 17의2 regular 10,000.
-
-    This is the row that governs the resident paper leaf. Reading the full-size
-    2,000 onto it was the specific misreading this record exists to prevent.
-    """
+    """``A05610`` is 미니코스피200선물거래: 별표 17의2 regular 10,000."""
     wire(_FakeSession(_price_body(), _green_psbl()))
 
     record = pvl.probe_pvl(_args()).measurements["resolved_instrument"]
@@ -2155,12 +1762,7 @@ def test_the_mini_family_gets_the_mini_rulebook_row(
 
 
 def test_one_table_keys_the_prefixes_the_probe_accepts() -> None:
-    """Finding 8's structural fix: ONE table, so there is nothing to drift.
-
-    The prefix gate, the 별표 row and the 호가가격단위's 호 all read the same
-    dict, so a prefix cannot be accepted without a row or carry a row for
-    another product's article.
-    """
+    """Finding 8's structural fix: ONE table, so there is nothing to drift."""
     assert set(pvl.ACCEPTED_PREFIXES) == {"A05", "101", "A01"}
     assert set(pvl.KRX_PREFIX_TABLE) == set(pvl.ACCEPTED_PREFIXES)
     for prefix in pvl.ACCEPTED_PREFIXES:
@@ -2168,17 +1770,11 @@ def test_one_table_keys_the_prefixes_the_probe_accepts() -> None:
         assert row["registry_product"] in {"kospi200_mini", "kospi200_full"}
         assert row["tick_article"]
         assert row["evidence"]
-    # A01 is the live front-month code for the SAME product as 101.
     assert pvl.KRX_PREFIX_TABLE["A01"] is pvl.KRX_PREFIX_TABLE["101"]
 
 
 def test_rulebook_rows_cite_the_committed_evidence_texts() -> None:
-    """Each row points into the parsed 별표 text, at the line range for ITS row.
-
-    Design v2 §2.1 is explicit that v1's 2,000 was the full-size row read onto a
-    mini product. A citation that did not distinguish the two line ranges would
-    leave that mistake just as easy to repeat.
-    """
+    """Each row points into the parsed 별표 text, at the line range for ITS row."""
     mini = pvl.KRX_PREFIX_TABLE["A05"]
     full = pvl.KRX_PREFIX_TABLE["101"]
     evidence_dir = "docs/broker-profiles/evidence/2026-10-08-krx-venue-limits/"
@@ -2192,12 +1788,7 @@ def test_rulebook_rows_cite_the_committed_evidence_texts() -> None:
 
 
 def test_liquidity_managed_variants_are_recorded_not_folded_in() -> None:
-    """별표 17의2's parenthesised numbers are a DIFFERENT condition.
-
-    10,000 applies unless the product is designated 유동성관리상품, in which case
-    the limit is 1,000. The probe does not observe that designation, so folding
-    the two into one number would state more than it knows.
-    """
+    """별표 17의2's parenthesised numbers are a DIFFERENT condition."""
     mini = pvl.KRX_PREFIX_TABLE["A05"]
     full = pvl.KRX_PREFIX_TABLE["101"]
 
@@ -2221,12 +1812,7 @@ def test_the_tick_article_is_the_ho_that_governs_that_product(
 def test_the_instrument_record_names_the_tick_article_and_the_drift_consequence(
     futures_env: None, wire: Any
 ) -> None:
-    """A False ``tick_registry_matches_policy`` must not read as cosmetic.
-
-    Design v2 §2.0 names what it costs later: once a band arrives, a 0.05 policy
-    tick would judge a mini leaf's normal 0.02-grid quotes INADMISSIBLE. The
-    record says so, and still leaves the disposition to the operator.
-    """
+    """A False ``tick_registry_matches_policy`` must not read as cosmetic."""
     wire(_FakeSession(_price_body(), _green_psbl()))
 
     record = pvl.probe_pvl(_args()).measurements["resolved_instrument"]
@@ -2237,11 +1823,7 @@ def test_the_instrument_record_names_the_tick_article_and_the_drift_consequence(
 
 
 def test_the_basis_price_rule_records_the_article_55_4_adjustment() -> None:
-    """제55조제4항 snaps 기준가격 to the nearest 호가가격단위 before the band.
-
-    L2 floors and ceils FROM that basis, so a reader checking the arithmetic by
-    hand needs to know the basis is already on-grid.
-    """
+    """제55조제4항 snaps 기준가격 to the nearest 호가가격단위 before the band."""
     record = pvl.band_expectation(
         Decimal(_SDPR), ratio=Decimal("0.08"), tick=_MINI_TICK
     )

@@ -1,21 +1,4 @@
-"""`sts tos inspect` — the legacy-side driver: path resolution and child argv.
-
-Roadmap ``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1. The driver
-(:mod:`tools.tos_cp3.inspect_session`) may not import ``tos`` — the reverse
-firewall (TOS-FW-R) — so the inspection itself runs as a child process and its
-output table is pinned on the other side of that boundary, in
-``tos/runtime/cp3/tests/test_cp3_inspect_session.py``, where the real DSL
-evaluator and the real strategy loader are importable.
-
-What is left for this suite is exactly what this module owns, and it is tested
-**without starting a process**: the run callable is injected, so every test here
-asserts the resolved paths, the child's argv and ``PYTHONPATH``, and each
-refusal that must happen BEFORE a child is ever launched.
-
-No session fixture is copied from a real state directory: the four paths a
-session is resolved to are created in ``tmp_path`` with the names the runner
-writes (``tools/tos_cp3/runners/run_tenant_session.sh``).
-"""
+"""`sts tos inspect` — the legacy-side driver: path resolution and child argv."""
 
 from __future__ import annotations
 
@@ -68,11 +51,6 @@ def _resolve(state: Path, session: str = SESSION, **kwargs: object) -> ins.Sessi
     )
 
 
-# ===========================================================================
-# Resolution
-# ===========================================================================
-
-
 def test_a_session_name_resolves_to_its_four_paths(tmp_path: Path) -> None:
     """A bare name becomes journal + strategy + bindings + durable-set leaf."""
     state = _session_tree(tmp_path)
@@ -99,12 +77,7 @@ def test_a_path_resolves_without_the_state_root(tmp_path: Path) -> None:
 def test_the_data_dir_is_derived_from_the_manifest_not_the_session_name(
     tmp_path: Path,
 ) -> None:
-    """``<state>/<tree_id>-data/<instrument>`` — both parts come from the manifest.
-
-    The session directory is named ``stock-r1-…`` while the tree is
-    ``cp3-setup-d-stock-005930``, so a derivation from the session name would
-    point at a directory that does not exist.
-    """
+    """``<state>/<tree_id>-data/<instrument>`` — both parts come from the manifest."""
     state = _session_tree(tmp_path)
     assert TREE_ID not in SESSION
     assert _resolve(state).data_dir == state / f"{TREE_ID}-data" / INSTRUMENT
@@ -196,11 +169,6 @@ def test_a_missing_durable_set_leaf_refuses_with_the_two_ways_out(
         _resolve(state)
 
 
-# ===========================================================================
-# The child invocation
-# ===========================================================================
-
-
 def test_build_argv_is_the_child_module_with_every_resolved_path(
     tmp_path: Path,
 ) -> None:
@@ -280,11 +248,7 @@ def test_run_passes_the_argv_and_pythonpath_to_the_injected_runner(
 
 
 def test_run_refuses_before_launching_anything(tmp_path: Path) -> None:
-    """A resolution refusal is exit 2, on stderr, and the runner is never called.
-
-    ``stdout`` stays EMPTY so a ``--json`` caller piping it never reads a
-    refusal sentence where a document should be (review of #1057, LOW-2).
-    """
+    """A resolution refusal is exit 2, on stderr, and the runner is never called."""
 
     def runner(argv: Sequence[str], env: Mapping[str, str]) -> ins.InspectRun:
         raise AssertionError("the child must not be launched on a refusal")
@@ -298,11 +262,7 @@ def test_run_refuses_before_launching_anything(tmp_path: Path) -> None:
 
 
 def test_a_childs_stderr_never_lands_in_stdout(tmp_path: Path) -> None:
-    """A successful run's stdout is the document alone, warnings aside.
-
-    Merging the streams (the first cut) made a ``--json`` run unparseable the
-    moment anything in the child wrote a line to stderr.
-    """
+    """A successful run's stdout is the document alone, warnings aside."""
     state = _session_tree(tmp_path)
 
     def runner(argv: Sequence[str], env: Mapping[str, str]) -> ins.InspectRun:
@@ -333,18 +293,8 @@ def test_run_reads_the_sessions_subdir_from_the_status_board_config(
     assert str(state / SESSIONS_SUBDIR / SESSION / "journal.jsonl") in outcome.stdout
 
 
-# ===========================================================================
-# The firewall, restated where a reader of this suite sees it
-# ===========================================================================
-
-
 def test_the_driver_imports_nothing_from_tos() -> None:
-    """``tools/tos_firewall_check.py`` is the gate; this is a fast local echo.
-
-    The whole reason this module shells out instead of calling the evaluator is
-    that it may not import it, so a ``from tos…`` line added here must fail in
-    the unit suite too — not only in the ``tos-firewall`` CI job.
-    """
+    """``tools/tos_firewall_check.py`` is the gate; this is a fast local echo."""
     source = (ins.REPO_ROOT / "tools" / "tos_cp3" / "inspect_session.py").read_text(
         encoding="utf-8"
     )

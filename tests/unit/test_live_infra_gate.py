@@ -1,19 +1,4 @@
-"""Tests for the live-infra gate: ``tests/support/live_infra.py`` + the hooks
-in ``tests/conftest.py`` that use it.
-
-The subject is the distinction the old per-module helper collapsed: "these
-tests are not allowed to touch infrastructure" and "these tests are allowed to
-and cannot". Both used to produce the same silent skip with the same wrong
-reason ("Redis not available"), which is how the CI ``performance`` job
-measured 13 of its 25 benchmarks for four months while reporting green — its
-Redis service container was up the whole time and the flag was simply unset
-(#768 / #796 / #679).
-
-The gate lives in ONE place. An earlier draft of this change raised at import
-time inside two test modules, which aborted collection for the entire session
-(``Interrupted: 2 errors during collection``, zero tests run) and left the
-other seven live-infra modules unchecked.
-"""
+"""Tests for the live-infra gate: ``tests/support/live_infra.py`` + the hooks"""
 
 from __future__ import annotations
 
@@ -62,13 +47,7 @@ class TestLiveInfraEnabled:
 
 class TestOneMessage:
     def test_the_skip_reason_names_the_flag_rather_than_guessing_at_redis(self):
-        """The old reason asserted a fact it had not checked.
-
-        "Redis not available (start with: docker-compose up -d redis)" was
-        printed whenever the flag was unset, including on a runner whose Redis
-        service container was healthy. A reader acting on it would restart a
-        Redis that was already up and see no change.
-        """
+        """The old reason asserted a fact it had not checked."""
         reason = skip_reason()
         assert LIVE_INFRA_ENV in reason
         assert "not available" not in reason
@@ -83,7 +62,6 @@ class TestOneMessage:
 
 class TestRedisFailure:
     def test_an_unreachable_redis_is_described_not_swallowed(self):
-        # tests/unit/conftest.py's hermetic guard makes the real client raise.
         failure = redis_failure()
         assert failure is not None
         assert "ConnectionError" in failure
@@ -99,12 +77,7 @@ class TestRedisFailure:
         assert redis_failure() is None
 
     def test_a_non_connection_error_is_still_a_failure(self, monkeypatch):
-        """A bad REDIS_CONNECT_TIMEOUT_SECONDS raises ValueError, not a redis error.
-
-        Catching only ``redis.ConnectionError``/``TimeoutError``/``OSError`` —
-        what the old per-module helper did — would let this one propagate as a
-        collection crash with no explanation, or be read as "available".
-        """
+        """A bad REDIS_CONNECT_TIMEOUT_SECONDS raises ValueError, not a redis error."""
 
         def _boom(cls):
             raise ValueError("Invalid REDIS_CONNECT_TIMEOUT_SECONDS='abc'")
@@ -125,16 +98,10 @@ class TestUnreachableMessage:
         assert LIVE_INFRA_ENV in message
         assert "localhost:6379/1" in message
         assert "Connection refused" in message
-        # Without this the next reader "fixes" the failure by restoring a skip.
         assert "not a reason to skip" in message
 
     def test_it_points_at_the_env_vars_that_are_actually_read(self):
-        """REDIS_URL is not one of them, and the workflows used to set only it.
-
-        ``RedisClient._create_client`` reads REDIS_HOST / REDIS_PORT /
-        REDIS_DB. A reader who sets REDIS_URL and sees no change needs the
-        message to say so.
-        """
+        """REDIS_URL is not one of them, and the workflows used to set only it."""
         assert "REDIS_URL is not" in redis_unreachable_message("x")
 
 
@@ -142,11 +109,7 @@ class TestRuntestSetupGate:
     """The gate itself: fail the gated items, run everything else."""
 
     def test_a_live_infra_item_fails_when_redis_is_down(self, monkeypatch, unprobed):
-        """The concrete input: the CI flag is on and the service container died.
-
-        Skipping would leave the baseline's Redis benchmarks unmeasured and
-        the job green — the exact shape of the defect being fixed.
-        """
+        """The concrete input: the CI flag is on and the service container died."""
         monkeypatch.setenv(LIVE_INFRA_ENV, "1")
 
         def _boom(cls):
@@ -166,7 +129,7 @@ class TestRuntestSetupGate:
             raise redis.exceptions.ConnectionError("Connection refused")
 
         monkeypatch.setattr(RedisClient, "get_client", classmethod(_boom))
-        root_conftest.pytest_runtest_setup(_Item("unit"))  # does not raise
+        root_conftest.pytest_runtest_setup(_Item("unit"))
 
     def test_it_is_a_no_op_when_the_opt_in_is_absent(self, monkeypatch, unprobed):
         """A developer with no Redis must still be able to run the whole suite."""
@@ -177,7 +140,6 @@ class TestRuntestSetupGate:
             root_conftest, "redis_failure", lambda: called.append(1) or "down"
         )
         root_conftest.pytest_runtest_setup(_Item("live_infra"))
-        # Not even probed: the collection hook already skipped the item.
         assert called == []
 
     def test_it_passes_when_redis_answers(self, monkeypatch, unprobed):
