@@ -31,6 +31,8 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 _ODNO = "0000004470"
 _FOREIGN_ODNO = "0000009999"
+#: 평균 체결가 as the broker prints it: whole KRW, NOT the tree's ×100 price scale.
+_FILL_PRICE = "193300"
 
 
 def _deploy(config_dir, custody_root, server, monkeypatch) -> None:
@@ -115,9 +117,15 @@ def _row(
     cancelled: str = "N",
     rjct: str = "0",
     orgn_odno: str = "0000000000",
+    avg_prvs: str | None = None,
+    tot_ccld_amt: str | None = None,
 ) -> dict[str, str]:
-    """One ``VTTC0081R`` ``output1`` row, in the measured wire shape (all strings)."""
-    return {
+    """One ``VTTC0081R`` ``output1`` row, in the measured wire shape (all strings).
+
+    The two price fields are optional on purpose: a caller that omits them reproduces the row
+    shape every e2e here used before ``FILL_OBSERVED`` carried a price.
+    """
+    row = {
         "ord_dt": date,
         "odno": odno,
         "orgn_odno": orgn_odno,
@@ -128,6 +136,11 @@ def _row(
         "cncl_yn": cancelled,
         "rjct_qty": rjct,
     }
+    if avg_prvs is not None:
+        row["avg_prvs"] = avg_prvs
+    if tot_ccld_amt is not None:
+        row["tot_ccld_amt"] = tot_ccld_amt
+    return row
 
 
 class _Unset:
@@ -244,12 +257,27 @@ def test_partial_then_full_fill_releases_once_with_connected_evidence(
         server,
         config_dir,
         date,
-        [_row(date=date, ord_qty=qty, filled=qty, remaining=Decimal(0))],
+        [
+            _row(
+                date=date,
+                ord_qty=qty,
+                filled=qty,
+                remaining=Decimal(0),
+                avg_prvs=_FILL_PRICE,
+                tot_ccld_amt=format(qty * Decimal(_FILL_PRICE), "f"),
+            )
+        ],
     )
     report = observer.poll_once()
     assert [(k, d) for _a, k, d in report.emitted] == [
         (EgressResultKind.FULL_FILL, ResultDisposition.APPLIED)
     ]
+    # The broker's own 평균 체결가 / 총 체결금액 reach evidence in WHOLE KRW, unscaled by the
+    # tree's `_runtime.price_scale`; the partial-fill row above printed neither, so it says so.
+    assert [
+        (r["avg_execution_price"], r["executed_amount"])
+        for r in _rows(runtime, "FILL_OBSERVED")
+    ] == [(None, None), (_FILL_PRICE, format(qty * Decimal(_FILL_PRICE), "f"))]
 
     attempt_id = _ack(runtime)["attempt_id"]
     (proof,) = _rows(runtime, "POSTTRADE_FINALITY_PROOF")
