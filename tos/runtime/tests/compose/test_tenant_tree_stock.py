@@ -69,6 +69,7 @@ _DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
         }
     ),
     "broker_scopes.yaml": frozenset({"active_scope", "scopes.2.profile_evidence_ok"}),
+    "engine.yaml": frozenset(),
     "coordinator_preconditions.yaml": frozenset({"nonlive_broker_consuming.admitted"}),
     "authority.yaml": frozenset(
         {"containment_bound_ms", "standing_approval_max_uses_per_action"}

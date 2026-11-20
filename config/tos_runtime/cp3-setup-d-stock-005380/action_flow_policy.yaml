@@ -1,11 +1,8 @@
-# =============================================================================
 # Action Flow Policy — paper / KRX index futures (KOSPI200)
-# =============================================================================
 # INSTANCE of tos-spec/src/part-1-foundation/verification/ACTION-FLOW-POLICY-template.yaml
 # (placement + activation per DR-0002 §2.1/§2.2, extended by DR-0003 §2.1;
 # observed-vs-declared split per DR-0003 §2.3). Loaded by
 # tos_runtime.riskstate.load_action_flow_policy.
-#
 # APPROVAL PROVENANCE: docs/plans/2026-09-16-tos-risk-state-service-plan.md
 # §6 ②, adopted by the operator on 2026-09-16 (「1. 채택」).
 #   * flow dimension afg.ORDER, hard/runtime/envelope/decision limits all 1 —
@@ -33,14 +30,6 @@
 #     is UNKNOWN today — the duplicate-redelivery and failover-replay axes
 #     have no durable per-root-cause observation (plan §7) until the
 #     inbox-schema counter wave lands.
-#
-# OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"): account_scope
-# (same value as venue_constraint_policy.yaml), then
-# `tos-runtime print-policy-digests --config-dir <dir>` (kind ACTION_FLOW_POLICY).
-# The printed line is a RECORD only since plan S2-a
-# (2026-11-13): `safety_activation.yaml` is deleted, so there is no `members:` list
-# to transcribe the digest into. Boot still records it in `*_POLICY_BOUND` evidence.
-# =============================================================================
 
 artifact_type: ACTION_FLOW_POLICY
 schema_version: "1.0-DRAFT"

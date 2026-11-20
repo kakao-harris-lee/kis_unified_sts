@@ -1,35 +1,11 @@
-# =============================================================================
 # broker_scopes.yaml — TOS paper 배포 승인값 (W-A / A-2)
-# =============================================================================
 # 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
 #            docs/plans/2026-09-18-tos-config-value-proposal.md §4.1
-#
 # 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
 #   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
 #   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
 #   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
 #   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
-#
-# 원본 템플릿: tos/runtime/config/broker_scopes.example.yaml — **본문을 손으로
-#   다시 타이핑하지 않고 그대로 복사했다.** 이 웨이브가 바꾼 것은 example 의
-#   유일한 named-TBD 필드인 `active_scope` **한 줄뿐**이다(아래 표시).
-#   `instance_path` 의 `../../../` 깊이는 두 디렉터리(`tos/runtime/config/` ·
-#   `config/tos_runtime/paper/`)가 저장소 루트로부터 같은 깊이라 그대로 유효하다.
-# 로더: tos_runtime.brokercap.scopes.load_broker_scopes (brokercap/scopes.py:765)
-# 호출부: compose/_wiring.py:962 (무조건)
-#
-# ⚠ **제안표 §4.1 의 ⚠ 행 — 여기는 운영자가 눈으로 볼 자리다.**
-#   `active_scope: SYNTHETIC_FUTURES_ORDER`
-#   example 의 네 스코프 중 **브로커에 전혀 닿지 않는 유일한 것**이다.
-#   * `REAL_ORDER`(`authorization_class: REAL_ORDER`)는 CLAUDE.md 비협상 규칙상
-#     **영구 차단** — 실전 선물 계좌는 절대 미펀딩이고 실주문 경로는 정책 차단이다.
-#   * `MOCK_STOCK_ORDER`(`endpoint_class: BROKER_ORDER`)와 `REAL_READ`(GET)는
-#     **외부 호출이 생기므로 로컬 첫 부팅의 범위가 아니다**(A-5 부팅 대상 =
-#     로컬 헤르메틱 데이터 디렉터리, 운영자 결정 2026-09-23).
-#   부팅을 증명하는 데 필요한 **최소 권한**이 SYNTHETIC_FUTURES_ORDER 다.
-#   MOCK 전송을 켜려면 이 값 + `coordinator_preconditions.yaml` 의
-#   `nonlive_broker_consuming.admitted` 를 **별도 승인으로** 함께 바꾼다.
-# =============================================================================
 
 # Broker Scope table (tos_runtime.compose.brokercap.scopes) — TOS Phase 4
 # plan §2 decisions 1-2
