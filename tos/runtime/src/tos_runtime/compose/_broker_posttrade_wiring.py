@@ -173,17 +173,39 @@ class DeferredKisWitness:
             raise WitnessUnavailable("required prefetched snapshot does not match")
         return self._loop_observe(scope)
 
-    def loop_deadline_ms_for(self, scope: WitnessScope) -> int | None:
-        """The loop-side walk deadline for ``scope``: one page start per receipt date (#1115 N1).
+    def _loop_page_dates(self, scope: WitnessScope) -> int:
+        """How many ORDER PAGES the witness will walk for ``scope`` — today included (#1136).
 
-        ``loop_witness_deadline_ms`` was measured for a ONE-date scope (the balance page plus one
+        ``KisStockBrokerWitness.observe`` reads ``(today, *sorted(set(order_dates) - {today}))``
+        (``recon/witness_kis.py``): today is always one of the pages, whether or not the scope
+        names it. Counting only ``order_dates`` therefore undercounted by one on exactly the leaf
+        #1115 was written for — receipts on 11-17/18/19 reconciled on 11-20, before that day has
+        a receipt of its own, walk FOUR order pages plus the balance, and the deadline that
+        counted three (7000 ms) cut the last page off at 8000 ms on every pass.
+
+        The date comes from this witness's own ``trading_date_now``, which is what the inner
+        witness's ``KstDateSource`` reads when ``observe`` resolves ``today`` — one reader, one
+        answer, so the count cannot disagree with the walk it is predicting. No trusted date
+        means the read is about to fail at that same source, so nothing is added here.
+        """
+        today = self._trading_date_now()
+        dates = set(scope.order_dates)
+        if today is not None:
+            dates.add(today)
+        return len(dates)
+
+    def _loop_deadline_for_page_dates(self, page_dates: int) -> int | None:
+        """The loop-side walk deadline for a walk of ``page_dates`` order pages (#1115 N1).
+
+        ``loop_witness_deadline_ms`` was measured for a ONE-page walk (the balance page plus one
         order page, one app-key pacing interval apart). The release reconciliation reads EVERY
-        receipt date in its scope (``release_consumer._scope_receipt_dates``), so an N-date scope
-        needs N+1 paced GETs and its last page does not start until N intervals in — with a fixed
-        3000 ms deadline a 2-date scope already fails, every time, so the loop fallback was
-        ``WitnessUnavailable`` by construction on any leaf that outlived one trading date.
+        receipt date in its scope (``release_consumer._scope_receipt_dates``) and today besides,
+        so an N-page walk needs N+1 paced GETs and its last page does not start until N intervals
+        in — with a fixed 3000 ms deadline a 2-page walk already fails, every time, so the loop
+        fallback was ``WitnessUnavailable`` by construction on any leaf that outlived one trading
+        date.
 
-        So each date past the first adds one pacing interval, up to
+        So each page past the first adds one pacing interval, up to
         ``loop_witness_deadline_max_ms`` — the cap is what keeps the session-loop stall bounded,
         and past it the behaviour is the old one (no verdict, fail-closed, recovered by the FETCH
         worker's reprojection). Without the cap or the pacing interval the base is used unchanged.
@@ -193,11 +215,14 @@ class DeferredKisWitness:
         cap = self._loop_deadline_max_ms
         if base is None or per_date is None or cap is None:
             return base
-        dates = len(frozenset(scope.order_dates))
-        return min(cap, base + max(0, dates - 1) * per_date)
+        return min(cap, base + max(0, page_dates - 1) * per_date)
+
+    def loop_deadline_ms_for(self, scope: WitnessScope) -> int | None:
+        """:meth:`_loop_deadline_for_page_dates` over the pages ``scope`` actually walks."""
+        return self._loop_deadline_for_page_dates(self._loop_page_dates(scope))
 
     def _refuse_a_walk_the_deadline_cannot_finish(
-        self, scope: WitnessScope, deadline_ms: int
+        self, page_dates: int, deadline_ms: int
     ) -> None:
         """Refuse BEFORE the first GET when the walk provably cannot finish (review-1132 r1).
 
@@ -215,25 +240,28 @@ class DeferredKisWitness:
         per_date = self._loop_deadline_per_date_ms
         if per_date is None or self._loop_deadline_max_ms is None:
             return
-        dates = len(frozenset(scope.order_dates))
-        last_page_starts_at = dates * per_date
+        last_page_starts_at = page_dates * per_date
         if deadline_ms > last_page_starts_at:
             return
         raise WitnessUnavailable(
-            f"loop-side walk refused before its first GET: {dates} receipt date(s) need "
-            f"{dates + 1} paced GETs and the last starts at {last_page_starts_at} ms, past this "
-            f"scope's deadline {deadline_ms} ms (cap {self._loop_deadline_max_ms} ms, pacing "
-            f"{per_date} ms) — the read could only end unavailable, so the loop does not wait "
-            "for it; held, and the prefetching worker still covers this scope"
+            f"loop-side walk refused before its first GET: {page_dates} order page(s) — the "
+            f"scope's receipt dates and today — need {page_dates + 1} paced GETs and the last "
+            f"starts at {last_page_starts_at} ms, past this scope's deadline {deadline_ms} ms "
+            f"(cap {self._loop_deadline_max_ms} ms, pacing {per_date} ms) — the read could only "
+            "end unavailable, so the loop does not wait for it; held, and the prefetching "
+            "worker still covers this scope"
         )
 
     def _loop_observe(self, scope: WitnessScope) -> WitnessSnapshot:
         """A live read no prefetched snapshot served — on the caller's (loop) thread, bounded."""
         witness = self._ready() if self.loop_inner is None else self.loop_inner
-        deadline_ms = self.loop_deadline_ms_for(scope)
+        # One date read for the whole decision: the deadline and the refusal must agree about
+        # which pages this walk has, and two reads could straddle a KST date rollover (#1136).
+        page_dates = self._loop_page_dates(scope)
+        deadline_ms = self._loop_deadline_for_page_dates(page_dates)
         if deadline_ms is None:
             return witness.observe(scope)
-        self._refuse_a_walk_the_deadline_cannot_finish(scope, deadline_ms)
+        self._refuse_a_walk_the_deadline_cannot_finish(page_dates, deadline_ms)
         deadline_ns = self._monotonic_ns() + deadline_ms * 1_000_000
         return witness.observe(
             scope, deadline_expired=lambda: self._monotonic_ns() >= deadline_ns

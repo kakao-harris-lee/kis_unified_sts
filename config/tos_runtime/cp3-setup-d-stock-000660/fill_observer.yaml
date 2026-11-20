@@ -67,25 +67,32 @@ witness_request_timeout_s: 5.0
 # further page starts (WitnessUnavailable, fail-closed).
 #
 # The deadline is **per scope**, because the walk is: the release reconciliation reads the
-# balance page plus ONE ORDER PAGE PER RECEIPT DATE in its scope
-# (release_consumer::_scope_receipt_dates), every request on the app key is paced
-# kis_mock_transport.yaml::min_send_interval_ms (2000) apart, and so an N-date scope's last page
-# does not START until N x 2000. `loop_witness_deadline_ms` below is the ONE-DATE value (3000
-# lets the balance page at 0 and the order page at 2000 both start); each date past the first
-# adds one pacing interval, up to `loop_witness_deadline_max_ms`.
+# balance page plus ONE ORDER PAGE PER DATE — the scope's receipt dates
+# (release_consumer::_scope_receipt_dates) **and today**, which the witness always reads
+# (`recon/witness_kis.py::observe` walks `(today, *older_dates)`) — every request on the app key
+# is paced kis_mock_transport.yaml::min_send_interval_ms (2000) apart, and so an N-page walk's
+# last page does not START until N x 2000. `loop_witness_deadline_ms` below is the ONE-PAGE
+# value (3000 lets the balance page at 0 and the order page at 2000 both start); each page past
+# the first adds one pacing interval, up to `loop_witness_deadline_max_ms`.
 #
-# ⚠ **A fixed 3000 could not read a 2-date scope at all** (#1115 N1): its second order page
+# ⚠ **A fixed 3000 could not read a 2-page walk at all** (#1115 N1): its second order page
 # starts at 4000 and the deadline refused it, so on any leaf that outlived one trading date —
-# the 11-17..11-19 leaf carried three — the loop fallback was WitnessUnavailable by construction
-# and the release held until the FETCH worker reprojected it (60 s cadence). Scaled: 3000 /
-# 5000 / 7000 / 9000 for 1 / 2 / 3 / 4 dates.
+# the 11-17..11-19 leaf carried three receipt dates — the loop fallback was WitnessUnavailable by
+# construction and the release held until the FETCH worker reprojected it (60 s cadence).
+# Scaled: 3000 / 5000 / 7000 / 9000 for 1 / 2 / 3 / 4 pages.
+#
+# ⚠ **Today counts even when the scope does not name it** (#1136). Counting the scope alone
+# undercounted by one on the very leaf above read ONE DAY LATER: receipts 11-17/18/19 reconciled
+# on 11-20, before 11-20 has a receipt, walk FOUR pages (today first), not three — 7000 ms
+# against a last page starting at 8000 ms, cut off on every pass. One older date is the same
+# shape (2 pages, 4000 ms against a 3000 ms deadline).
 #
 # 9000 (the cap) is the operator's stall budget, not a broker fact. Worst-case session-loop stall
 # ≈ this deadline + one pacer wait (≤ min_send_interval_ms 2000) + one GET in flight
-# (loop_witness_request_timeout_s 2 s) — i.e. ~7 s at one date and ~13 s at the cap, against
+# (loop_witness_request_timeout_s 2 s) — i.e. ~7 s at one page and ~13 s at the cap, against
 # ~28 s unbounded with 5 s GETs (review-1114 M2). The 2026-11-14 comment that called ~7 s the
 # worst case counted only one pacer wait for the whole walk and only one date (#1115 N2); the
-# bound is the one written here. A scope with MORE dates than the cap admits (5+) is
+# bound is the one written here. A walk with MORE pages than the cap admits (5+) is
 # `WitnessUnavailable` as it was before, but now it is refused BEFORE the first GET: the last
 # page's pacer grant lands past the deadline whatever the broker does, so the verdict was certain
 # and the loop does not spend the ~13 s arriving at it (review-1132 r1). The release holds exactly

@@ -466,8 +466,14 @@ def test_the_loop_deadline_is_wired_to_the_app_keys_pacing_interval(
             order_dates=dates,
         )
 
-    assert witness.loop_deadline_ms_for(_scope("1")) == base
-    assert witness.loop_deadline_ms_for(_scope("1", "2", "3")) == base + 2 * pacing
+    # The composed witness counts THIS runtime's trading date as a page (#1136), so the
+    # one-page case is the scope that names it and nothing else.
+    today = observer.today()
+    assert today is not None
+    assert witness.loop_deadline_ms_for(_scope(today)) == base
+    assert witness.loop_deadline_ms_for(_scope(today, "1", "2")) == base + 2 * pacing
+    # A scope WITHOUT today still walks today, so it is one page more than it names.
+    assert witness.loop_deadline_ms_for(_scope("1", "2")) == base + 2 * pacing
     # And the app-key pacing is also what the observer reserves for the holdings refresh (#1107).
     assert observer.app_key_min_send_interval_ms == pacing
     _close(runtime)
