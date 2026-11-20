@@ -343,6 +343,25 @@ uncertain_send_reconcile: true
 # caught up yet would let the next OPEN send a SECOND order for the same position. Two reads
 # this far apart cost two paced GETs in otherwise idle FETCHes.
 uncertain_send_settle_ms: 30000
+# How far BEFORE our own send start a broker 주문시각 (`ord_tmd`) may still be this send's own
+# order, in seconds. The identity parts above (instrument, sealed quantity, side code, an
+# unclaimed (ODNO, date)) say nothing about WHEN an order was placed, so ONE earlier order of
+# the same shape on the same day — a manual MOCK flatten, or an order an archived leaf placed
+# before this one booted — was a lone candidate and got bound to our uncertain send: an order
+# we never sent recorded as our ACK, with the reservation tied to its ODNO (issue #1127). The
+# broker stamps `ord_tmd` when it ACCEPTS an order, so a row OUR POST created cannot be
+# stamped before that POST started (TRANSPORT_SEND's own `send_started_time`); this value is
+# the slack allowed on that floor.
+# 5: 1 s for the field's own resolution (`ord_tmd` is HHMMSS, so a stamp inside our own send
+# second can read as one second before it) plus 4 s for skew between this host's clock and
+# KIS's, which neither side publishes a bound on. Both orders this rule is aimed at sat
+# MINUTES earlier (the 11-20 leaves booted at 12:48 onto a 09:30 history), so 5 s refuses them
+# with room to spare while never refusing one of ours.
+# ⚠ A row with NO `ord_tmd`, and a send with no recorded start time, are UNPROVABLE rather
+# than eligible: neither can bind, and neither lets the empty-history release complete — an
+# order that might be ours is never given back as never-accepted. Raising this value only
+# widens how far back a foreign order may be adopted; it cannot rescue an unstamped row.
+uncertain_send_ord_tmd_tolerance_s: 5
 # 주식일별주문체결조회 가 찍는 매도매수구분코드(``sll_buy_dvsn_cd``)를 seal 의 매매방향
 # 토큰에 맞춘다. 반대 방향 행은 이 전송의 후보가 아니다 — 같은 날 같은 수량의 수동 매도
 # (2026-11-19 사고의 그 주문)를 OPEN 의 미확정 전송에 잘못 묶지 않게 한다. 코드가 없는

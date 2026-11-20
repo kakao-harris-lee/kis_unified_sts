@@ -43,6 +43,9 @@ class FillObserverConfig:
     broker_flat_release_settle_ms: int | None = None
     uncertain_send_reconcile: bool = False
     uncertain_send_settle_ms: int | None = None
+    #: How far before our own send start a broker 주문시각 may still be this send's own order
+    #: (issue #1127). Config, not a constant: it is a tolerance on two clocks we do not own.
+    uncertain_send_ord_tmd_tolerance_s: int | None = None
     #: ``outbound_side`` token -> the ``sll_buy_dvsn_cd`` the broker prints for it. Config, not
     #: a constant: a side is a policy-carried token in this runtime, never one it authors.
     uncertain_send_side_codes: dict[str, str] = field(default_factory=dict)
@@ -173,6 +176,9 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         uncertain_send_settle_ms=_optional_positive_int(
             raw, "uncertain_send_settle_ms", path
         ),
+        uncertain_send_ord_tmd_tolerance_s=_optional_positive_int(
+            raw, "uncertain_send_ord_tmd_tolerance_s", path
+        ),
         uncertain_send_side_codes=side_codes,
     )
 
@@ -207,6 +213,13 @@ def _uncertain_send(raw: dict[str, Any], path: Path) -> tuple[bool, dict[str, st
         raise FillObserverConfigError(
             f"{path}: uncertain_send_reconcile needs uncertain_send_settle_ms (the window "
             "an empty broker order history must stay empty before it proves a non-send)"
+        )
+    if enabled and "uncertain_send_ord_tmd_tolerance_s" not in raw:
+        raise FillObserverConfigError(
+            f"{path}: uncertain_send_reconcile needs "
+            "uncertain_send_ord_tmd_tolerance_s (how far before our own send start a broker "
+            "주문시각 may still be ours — without it an EARLIER order of the same shape "
+            "binds to this send, issue #1127)"
         )
     return enabled, _side_codes(raw, path, required=enabled)
 

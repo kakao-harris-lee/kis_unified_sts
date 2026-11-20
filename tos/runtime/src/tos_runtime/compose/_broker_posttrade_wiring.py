@@ -605,6 +605,7 @@ def _uncertain_send_reconciler(
         config is None
         or not config.uncertain_send_reconcile
         or config.uncertain_send_settle_ms is None
+        or config.uncertain_send_ord_tmd_tolerance_s is None
     ):
         return None
     instrument_key = runtime.context_resolver.instrument_key
@@ -618,6 +619,7 @@ def _uncertain_send_reconciler(
         account=instrument_key.account,
         instrument=instrument_key.instrument,
         settle_ms=config.uncertain_send_settle_ms,
+        ord_tmd_tolerance_s=config.uncertain_send_ord_tmd_tolerance_s,
         side_codes=config.uncertain_send_side_codes,
         record=_record,
     )

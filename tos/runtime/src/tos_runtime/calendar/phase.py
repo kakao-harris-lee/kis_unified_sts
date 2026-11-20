@@ -11,6 +11,7 @@ from tos_runtime.calendar.model import MaturityFact, PhaseFact
 
 __all__ = [
     "session_phase_at",
+    "local_time_at",
     "maturity_at",
     "effective_phase_at",
     "recent_trading_dates",
@@ -34,6 +35,19 @@ def _to_local(instant_unix_ms: int, tz: zoneinfo.ZoneInfo) -> datetime.datetime:
 
 def _to_unix_ms(instant_local: datetime.datetime) -> int:
     return int(instant_local.timestamp() * 1000)
+
+
+def local_time_at(instant_unix_ms: int, cfg: CalendarConfig) -> str:
+    """The calendar timezone's wall time (``HHMMSS``) at ``instant_unix_ms`` (issue #1127).
+
+    The one comparable frame for a broker stamp the broker prints in its own local time: KIS
+    prints 주문시각 as ``HHMMSS`` with no zone, and this calendar's ``tz_id`` is the zone that
+    is (``config/tos_runtime/*/calendar.yaml`` — Asia/Seoul here, config, never a constant).
+    It is a wall time, not a trading date: unlike :func:`trading_date_at` it answers outside a
+    session window too, because a send's own start instant is a fact regardless of phase.
+    """
+    tz = zoneinfo.ZoneInfo(cfg.tz_id)
+    return _to_local(instant_unix_ms, tz).strftime("%H%M%S")
 
 
 def _active_window_at(

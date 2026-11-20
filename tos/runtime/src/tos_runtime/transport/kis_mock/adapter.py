@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from tos.canonical import CanonicalDecimal
@@ -35,8 +36,35 @@ __all__ = [
     "KisMockTransport",
     "SealLookup",
     "SendRefused",
+    "SendStamp",
     "TokenStale",
 ]
+
+
+@dataclass(frozen=True)
+class SendStamp:
+    """What a send is stamped with AT SEND START, before any network call (issue #1127).
+
+    ``trading_date`` is the broker day the ODNO sequence of this send belongs to;
+    ``started_time`` is the calendar timezone's wall time (``HHMMSS``) the POST started at —
+    the frame KIS prints 주문시각 (``ord_tmd``) in. The uncertain-send reconciliation needs
+    both: the date says which daily history to read, and the time is the floor a row of OURS
+    cannot be stamped below. Either is ``None`` when no reader was injected or the trusted
+    clock had no reading, and that reconciliation is fail-closed on a missing one.
+    """
+
+    trading_date: str | None = None
+    started_time: str | None = None
+
+
+def _read_stamp(reader: Callable[[], str | None] | None) -> str | None:
+    """One stamp reader's answer, or ``None``. Never raises: the ACK must reach the inbox."""
+    if reader is None:
+        return None
+    try:
+        return reader()
+    except Exception:  # noqa: BLE001 - the ACK must reach the inbox regardless
+        return None
 
 
 class KisMockAdapterError(Exception):
@@ -80,6 +108,7 @@ class KisMockTransport:
         app_key_scope: str | None = None,
         app_secret_scope: str | None = None,
         trading_date_now: Callable[[], str | None] | None = None,
+        send_time_now: Callable[[], str | None] | None = None,
         credential_session: KisCredentialSession | None = None,
     ) -> None:
         """Wire this transport's dependencies (all injected — no ambient state)."""
@@ -89,6 +118,7 @@ class KisMockTransport:
         self._seal_lookup = seal_lookup
         self._evidence = evidence_sink
         self._trading_date_now = trading_date_now
+        self._send_time_now = send_time_now
         if credential_session is None:
             if custody is None or app_key_scope is None or app_secret_scope is None:
                 raise KisMockAdapterError(
@@ -127,9 +157,8 @@ class KisMockTransport:
         seal, tr_id, body_bytes = self._prepare_send(attempt)
         if self._config.mode == "dry_run":
             return self._dry_run_result(attempt.attempt_id, seal, tr_id, body_bytes)
-        trading_date = self._stamp_trading_date()
         return self._perform_live_send(
-            attempt.attempt_id, seal, tr_id, body_bytes, trading_date=trading_date
+            attempt.attempt_id, seal, tr_id, body_bytes, stamp=self._stamp_send()
         )
 
     def _prepare_send(self, attempt: AttemptRequest) -> tuple[SendSeal, str, bytes]:
@@ -197,15 +226,13 @@ class KisMockTransport:
         tr_id: str,
         body_bytes: bytes,
         *,
-        trading_date: str | None,
+        stamp: SendStamp,
     ) -> EgressResultPayload:
         """decision 2/6 — exactly one POST, paced by the app key's pacer, with typed-fault"""
         try:
             access_token = self._ensure_token_string()
         except KisPacingRefused as exc:
-            return self._pacing_refused(
-                attempt_id, seal, exc, trading_date=trading_date
-            )
+            return self._pacing_refused(attempt_id, seal, exc, stamp=stamp)
         try:
             with self._credential_session.app_credentials() as credentials:
                 t0 = self._monotonic.now_ms()
@@ -218,9 +245,7 @@ class KisMockTransport:
                     path=self._config.order_path,
                 )
         except KisPacingRefused as exc:
-            return self._pacing_refused(
-                attempt_id, seal, exc, trading_date=trading_date
-            )
+            return self._pacing_refused(attempt_id, seal, exc, stamp=stamp)
         except KisMockTimeoutError:
             return self._finish(
                 attempt_id=attempt_id,
@@ -230,7 +255,7 @@ class KisMockTransport:
                 t0=t0,
                 extra={"reason": "socket_timeout"},
                 status=None,
-                trading_date=trading_date,
+                stamp=stamp,
             )
         except KisMockConnectionError:
             return self._finish(
@@ -241,7 +266,7 @@ class KisMockTransport:
                 t0=t0,
                 extra={"reason": "connection_error"},
                 status=None,
-                trading_date=trading_date,
+                stamp=stamp,
             )
         kind, broker_execution_id, extra = self._map_response(response)
         return self._finish(
@@ -252,7 +277,7 @@ class KisMockTransport:
             t0=t0,
             extra=extra,
             status=response.status,
-            trading_date=trading_date,
+            stamp=stamp,
         )
 
     def _pacing_refused(
@@ -261,7 +286,7 @@ class KisMockTransport:
         seal: SendSeal,
         exc: KisPacingRefused,
         *,
-        trading_date: str | None,
+        stamp: SendStamp,
     ) -> EgressResultPayload:
         """The app key's pacer refused this attempt's slot: nothing was sent, so ``REJECT``"""
         return self._finish(
@@ -277,7 +302,7 @@ class KisMockTransport:
                 "detail": str(exc),
             },
             status=None,
-            trading_date=trading_date,
+            stamp=stamp,
         )
 
     def _tr_id_for_side(self, side: str) -> str:
@@ -326,7 +351,7 @@ class KisMockTransport:
         t0: int,
         extra: Mapping[str, Any],
         status: int | None,
-        trading_date: str | None,
+        stamp: SendStamp,
     ) -> EgressResultPayload:
         latency_ms = self._monotonic.now_ms() - t0
         self._evidence(
@@ -338,10 +363,13 @@ class KisMockTransport:
                 "status": status,
                 "latency_ms": latency_ms,
                 # Observation only, and recorded for EVERY kind — unlike the receipt's own
-                # ``trading_date``, which an unnumbered result may not carry. It is what the
+                # ``trading_date``, which an unnumbered result may not carry. They are what the
                 # uncertain-send reconciliation asks the broker's daily order history about:
-                # without it, a send whose answer named no ODNO names no date either.
-                "trading_date": trading_date,
+                # without the date, a send whose answer named no ODNO names no date either;
+                # without the time, no row on that date is provably ours rather than an
+                # earlier order of the same shape (issue #1127).
+                "trading_date": stamp.trading_date,
+                "send_started_time": stamp.started_time,
                 **extra,
             },
         )
@@ -351,14 +379,20 @@ class KisMockTransport:
             kind=kind,
             broker_execution_id=broker_execution_id,
             reference=seal.reference,
-            trading_date=(trading_date if broker_execution_id is not None else None),
+            trading_date=(
+                stamp.trading_date if broker_execution_id is not None else None
+            ),
         )
 
-    def _stamp_trading_date(self) -> str | None:
-        """The injected trading date, or ``None``. Called at send start, so a failure here must"""
-        if self._trading_date_now is None:
-            return None
-        try:
-            return self._trading_date_now()
-        except Exception:  # noqa: BLE001 - the ACK must reach the inbox regardless
-            return None
+    def _stamp_send(self) -> SendStamp:
+        """The injected date and local time at send start, each ``None`` when unreadable.
+
+        The date is read FIRST on purpose: in production it is the reader
+        ``compose._session_wiring.build_egress_trading_date_reader`` wrapped, which evaluates
+        the trusted time service before answering, so the time read that follows sees the
+        clock that evaluation refreshed rather than a stale one.
+        """
+        return SendStamp(
+            trading_date=_read_stamp(self._trading_date_now),
+            started_time=_read_stamp(self._send_time_now),
+        )

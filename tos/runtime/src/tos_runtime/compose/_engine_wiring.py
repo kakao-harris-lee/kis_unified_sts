@@ -334,6 +334,7 @@ def wire_engine_and_driver(
     transport_config: KisMockTransportConfig | None,
     credential_sessions: KisCredentialSessions,
     trading_date_now: Callable[[], str | None] | None = None,
+    send_time_now: Callable[[], str | None] | None = None,
     venue_ledger: SyntheticVenueLedger | None = None,
 ) -> WiredEngine:
     """The gateway + ``EngineCore`` + durable inbox/driver wiring — split out of ``_wiring.py``'s"""
@@ -368,6 +369,7 @@ def wire_engine_and_driver(
         evidence_store=evidence_store,
         runtime_identity=identity,
         trading_date_now=trading_date_now,
+        send_time_now=send_time_now,
         credential_sessions=credential_sessions,
         venue_ledger=venue_ledger,
     )
