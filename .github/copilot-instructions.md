@@ -170,10 +170,13 @@ Config YAML supports `${VAR_NAME}` / `${VAR_NAME:default}` syntax for secrets.
 ## Comment convention
 
 A «why» that must survive is **one `# SAFETY:` line**. `tools/strip_prose.py`
-strips explanatory prose from `tools/` and `tests/`; its `KEEP_MARKERS` keeps any
-comment containing `safety:` (#1139). Write the reason a guard, an interlock or a
-counter-intuitive value exists next to it as a single `# SAFETY:` comment, not as
-a paragraph the next strip pass deletes.
+strips prose from the tos trees, `tools/` and `tests/`, keeping only each
+docstring's first line; its `KEEP_MARKERS` preserves any comment containing
+`safety:` (#1139). Write the reason a guard, an interlock or a counter-intuitive
+value exists as one `# SAFETY:` line at the line it guards, not as a paragraph
+the next strip pass deletes. The `config/tos_runtime/` tenant YAML uses the same
+one-line form (#1140). `shared/`, `scripts/`, `services/` and `cli/` are refused
+by the tool outright — the frozen Setup D witness lives there.
 
 ## Removed in L7 — do not look for these
 

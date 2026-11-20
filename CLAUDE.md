@@ -222,10 +222,15 @@ Execution authority today is the TOS kernel, where a strategy is Tenant Content
 - **Do not reinvent the wheel.** A bespoke parser/tokenizer/checker is the
   last resort, not the first move; prefer proven tooling and existing modules.
 - **A «why» that must survive is one `# SAFETY:` line.** `tools/strip_prose.py`
-  removes explanatory prose from `tools/` and `tests/`; its `KEEP_MARKERS` keeps
-  any comment containing `safety:` (merged in #1139). Write the reason a guard,
-  an interlock or a counter-intuitive value exists as a single `# SAFETY:`
-  comment next to it, not as a paragraph that the next strip pass deletes.
+  mechanically strips prose from the tos trees, `tools/` and `tests/`, keeping
+  only each docstring's first line; its `KEEP_MARKERS` preserves any comment
+  containing `safety:`, matched case-insensitively (#1139). Write the reason a
+  guard, an interlock or a counter-intuitive value exists as **one** `# SAFETY:`
+  line at the line it guards, naming the wrong outcome a reader would otherwise
+  cause — not as a paragraph the next strip pass deletes. The same one-line form
+  is what the hand-stripped `config/tos_runtime/` tenant YAML keeps (#1140).
+  `shared/`, `scripts/`, `services/` and `cli/` are refused by the tool outright,
+  because the frozen Setup D witness lives there.
 - **Phase-0 판정 장치는 퇴역했다 (2026-11-12,
   `docs/plans/2026-11-12-phase0-retirement-plan.md`).** 완료 계약서, 그 인덱스
   도구(`tos_contract_index.py`), 완료/계약 검사기(`tos_completion_status.py` ·

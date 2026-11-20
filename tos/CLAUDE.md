@@ -109,5 +109,8 @@ python tools/tos_size_budget.py --check
   체크를 기다린다. 내용은 `tools/tos_redigest.py --check` 다. 같은 이유로
   `ruff` 와 `tos-firewall` 잡 이름도 고정이다.
 - 지워지면 안 되는 «왜» 는 한 줄 `# SAFETY:` 주석으로 적는다 —
-  `tools/strip_prose.py` 의 `KEEP_MARKERS` 가 `safety:` 를 담은 주석을 보존한다
-  (#1139). 산문 단락으로 적으면 다음 strip 패스가 지운다.
+  `tools/strip_prose.py` 는 tos 트리·`tools/`·`tests/` 에서 docstring 첫 줄만
+  남기고 산문을 걷어내지만, `KEEP_MARKERS` 가 `safety:` 를 담은 주석은
+  대소문자 무관하게 보존한다 (#1139). 그 줄이 막는 지점에, 읽는 사람이
+  저지를 잘못된 결과를 적는다. 산문 단락으로 적으면 다음 패스가 지운다.
+  `config/tos_runtime/` tenant YAML 도 같은 한 줄 형식을 쓴다 (#1140).
