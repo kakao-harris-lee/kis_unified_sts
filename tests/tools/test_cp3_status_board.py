@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from tools.tos_cp3 import session_day as sd
@@ -1379,6 +1380,11 @@ def test_committed_clean_day_config_is_the_relaxed_target():
     assert scfg.window_days == 40
     assert scfg.clean_run_rcs == frozenset({0})
     assert [t.label for t in scfg.trees] == ["long"]
+    # 2026-11-20: 연도 커버리지 선언은 설정에도 값에도 없다. 다시 들어오면 2027-01-01
+    # 부터 이 절은 수 대신 「선언된 해 밖」 오류만 찍는다.
+    shipped = yaml.safe_load(sb.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    assert "calendar_covered_years" not in shipped["clean_streak"]
+    assert not hasattr(scfg, "calendar_covered_years")
     for tree in scfg.trees:
         assert tree.calendar_yaml.exists(), tree.calendar_yaml
         holidays = sb.load_tree_calendar(tree.calendar_yaml).holidays
@@ -1393,7 +1399,6 @@ def test_committed_clean_day_config_is_the_relaxed_target():
         ({"window_days": 3}, "window_days=3"),
         ({"trees": []}, "trees 가 비었다"),
         ({"clean_run_rcs": []}, "clean_run_rcs 가 비었다"),
-        ({"calendar_covered_years": []}, "calendar_covered_years 가 비었다"),
         ({"target_days": 0}, "target_days=0"),
         (
             {"trees": [{"label": "long"}]},
@@ -1417,7 +1422,6 @@ def test_streak_config_bad_shapes_are_refused(
         "target_days": 5,
         "window_days": 40,
         "clean_run_rcs": [0],
-        "calendar_covered_years": [2026],
         "trees": [{"label": "long", "calendar_yaml": "a.yaml"}],
     }
     raw.update(mutate)
@@ -1582,21 +1586,31 @@ def test_a_calendar_that_cannot_be_read_is_a_warning_not_a_guess(
     )
 
 
-def test_a_date_outside_the_declared_years_stops_the_walk_without_guessing(
-    streak_state: Path, tmp_path: Path
-):
-    """선언된 해를 벗어나면 그 날이 거래일인지 모른다 — 센 수는 하한으로 남긴다."""
-    config = tmp_path / "board.yaml"
-    config.write_text(
-        sb.DEFAULT_CONFIG_PATH.read_text(encoding="utf-8").replace(
-            "calendar_covered_years: [2026]", "calendar_covered_years: [2027]"
-        ),
-        encoding="utf-8",
-    )
-    cfg = replace(sb.load_config(config), state_dir=streak_state)
-    long = _streak(_board(cfg, D1012), "long")
-    assert (long["days"], long["broke_on"]) == (0, None)
-    assert "covers [2027]; 2026-10-12 is outside it" in long["error"]
+def test_a_board_date_in_a_year_without_listed_holidays_still_counts(tmp_path: Path):
+    """2027 절벽 제거 (운영자 지시 2026-11-20 — 「캘린더 관리가 리스크가 안 되어도 돼」).
+
+    바뀌기 전: 이 walk 은 선언된 해 밖의 날짜를 만나면 센 수를 0 으로 두고 오류 문자열을
+    올렸다. tenant 달력에 2027 휴장일이 0 건이므로 2027-01-01 부터는 누적 절이 **언제나**
+    오류였다. 달력은 이제 아는 휴장일만 담고, 적히지 않은 평일은 어느 해든 거래일이다.
+
+    같은 창이 **적힌** 휴장일(2026-12-31 KRX 연말)은 그대로 건너뛴다 — 세지도 깨뜨리지도
+    않는다. 건너뛰지 않았다면 세션 없는 그 날이 ``broke_on`` 으로 올라온다.
+    """
+    state = tmp_path / "newyear"
+    (state / "cp3-sessions").mkdir(parents=True)
+    for day in (
+        dt.date(2027, 1, 5),
+        dt.date(2027, 1, 4),
+        dt.date(2027, 1, 1),  # 신정 — 적히지 않은 평일이라 거래일로 읽힌다
+        dt.date(2026, 12, 30),
+        dt.date(2026, 12, 29),
+    ):
+        _mk_session(state, "long", day)
+    cfg = replace(sb.load_config(), state_dir=state)
+    long = _streak(_board(cfg, dt.date(2027, 1, 5), today=dt.date(2027, 1, 11)), "long")
+    assert long["error"] is None
+    assert (long["days"], long["start"], long["met"]) == (5, "2026-12-29", True)
+    assert (long["broke_on"], long["broke_reason"]) == (None, None)
 
 
 def test_the_clean_day_section_is_rendered_with_its_window(streak_cfg: sb.BoardConfig):

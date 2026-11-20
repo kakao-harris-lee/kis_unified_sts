@@ -333,7 +333,6 @@ def _config_file(tmp_path: Path, **overrides: Any) -> Path:
         "schema_version": 1,
         "session": {
             "calendar_path": "config/tos_runtime/paper/calendar.yaml",
-            "covered_years": [2026],
             "window": {"start": "09:00", "end": "15:20"},
         },
         "limits": {
@@ -539,11 +538,57 @@ def test_refuses_a_declared_holiday(tmp_path: Path) -> None:
         assert_session_window(load_config(_config_file(tmp_path)), christmas)
 
 
-def test_refuses_a_year_the_calendar_does_not_cover(tmp_path: Path) -> None:
-    """A holiday set that does not cover the year would call every weekday open."""
-    later = datetime(2027, 11, 2, 10, 0, tzinfo=probes_stock_cancel.KST)
-    with pytest.raises(ProbeError, match="outside it"):
-        assert_session_window(load_config(_config_file(tmp_path)), later)
+def test_a_weekday_in_a_year_without_listed_holidays_is_admitted(
+    tmp_path: Path,
+) -> None:
+    """The 2027 cliff, gone (operator directive 2026-11-20).
+
+    Before this change the probe refused every date whose year the config did
+    not declare, and the tenant calendar lists 2026 holidays only — so from
+    2027-01-01 P-SC could not run at all. The calendar is known-holidays-only
+    now: an unlisted weekday is a trading day whatever its year.
+    """
+    later = datetime(2027, 11, 2, 10, 0, tzinfo=probes_stock_cancel.KST)  # Tuesday
+    record = assert_session_window(load_config(_config_file(tmp_path)), later)
+    assert record["trading_day"] is True
+
+
+def test_a_listed_holiday_in_a_later_year_is_still_refused(tmp_path: Path) -> None:
+    """What still blocks an order: a weekend, and a day the calendar lists closed.
+
+    The refusal is the probe's precondition for sending MOCK orders, so it is
+    checked against a calendar that DOES list the day — 2027-11-19 written into
+    a copy of the tenant file — not only against 2026 dates.
+    """
+    calendar = tmp_path / "calendar.yaml"
+    source = probes_stock_cancel._REPO_ROOT / "config/tos_runtime/paper/calendar.yaml"
+    calendar.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "holidays:\n", 'holidays:\n  - "2027-11-19"\n', 1
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(
+        _config_file(tmp_path, **{"session.calendar_path": str(calendar)})
+    )
+    listed = datetime(2027, 11, 19, 10, 0, tzinfo=probes_stock_cancel.KST)  # Friday
+    with pytest.raises(ProbeError, match="not a KRX trading day"):
+        assert_session_window(cfg, listed)
+    saturday = datetime(2027, 11, 20, 10, 0, tzinfo=probes_stock_cancel.KST)
+    with pytest.raises(ProbeError, match="not a KRX trading day"):
+        assert_session_window(cfg, saturday)
+
+
+def test_the_shipped_config_declares_no_covered_years() -> None:
+    """2026-11-20: the key is gone from the file and from the loaded value."""
+    raw = yaml.safe_load(
+        (
+            probes_stock_cancel._REPO_ROOT
+            / "config/broker_probes/stock_cancel_probe.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert "covered_years" not in raw["session"]
+    assert not hasattr(load_config().session, "covered_years")
 
 
 def test_outside_hours_sends_nothing(

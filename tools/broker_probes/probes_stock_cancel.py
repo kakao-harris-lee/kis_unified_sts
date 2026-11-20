@@ -105,7 +105,6 @@ class SessionLimits:
     """When the probe may run at all."""
 
     calendar_path: Path
-    covered_years: tuple[int, ...]
     start: clock_time
     end: clock_time
 
@@ -181,7 +180,6 @@ class Config:
             "schema_version": SCHEMA_VERSION,
             "session": {
                 "calendar_path": _repo_relative(self.session.calendar_path),
-                "covered_years": list(self.session.covered_years),
                 "window_kst": f"{self.session.start:%H:%M}-{self.session.end:%H:%M}",
             },
             "limits": {
@@ -287,10 +285,6 @@ def load_config(path: Path | str | None = None) -> Config:
     )
     if not calendar_path.is_file():
         raise ProbeError(f"session.calendar_path does not exist: {calendar_path}")
-    years_raw = _require(session_block, "covered_years", "session")
-    if not isinstance(years_raw, list) or not years_raw:
-        raise ProbeError("session.covered_years must be a non-empty list of years")
-    covered_years = tuple(int(y) for y in years_raw)
     start = _req_hhmm(window_block, "start", "session.window")
     end = _req_hhmm(window_block, "end", "session.window")
     if start >= end:
@@ -367,7 +361,6 @@ def load_config(path: Path | str | None = None) -> Config:
         path=target,
         session=SessionLimits(
             calendar_path=calendar_path,
-            covered_years=covered_years,
             start=start,
             end=end,
         ),
@@ -442,14 +435,10 @@ def assert_session_window(cfg: Config, now: datetime) -> dict[str, Any]:
 
     kst = now.astimezone(KST)
     holidays = _holidays(cfg)
-    try:
-        sd.assert_covers(
-            kst.date(),
-            covered_years=cfg.session.covered_years,
-            where=cfg.session.calendar_path,
-        )
-    except sd.SessionDayError as exc:
-        raise ProbeError(str(exc)) from exc
+    # SAFETY: 연도 커버리지 거부는 2026-11-20 에 없어졌다(운영자 지시 — 「캘린더 관리가
+    # 리스크가 안 되어도 돼」 · #1147 이 생산자에서 먼저 걷었다). 주문을 막는 거부는
+    # 그대로다 — 주말이거나 달력에 적힌 휴장일이면 아래에서 거부한다. 달라진 것은
+    # 적히지 않은 평일이 어느 해든 거래일로 읽히는 것뿐이다.
     if not sd.is_trading_day(kst.date(), holidays):
         raise ProbeError(
             f"{kst:%Y-%m-%d} (KST) is not a KRX trading day per "
