@@ -1,10 +1,4 @@
-# =============================================================================
 # risk.yaml — paper: Adverse Scenario Set coordinates + Action Amplification Envelope
-# =============================================================================
-# Loaded by tos_runtime.risk.aggregate.load_adverse_scenario_set /
-# load_required_scenario_kinds and tos_runtime.compose._currentness_wiring
-# (_load_action_flow_envelope). Shape = tos/runtime/config/risk.example.yaml.
-#
 # APPROVAL PROVENANCE (config/tos_runtime/README.md rule):
 #   docs/plans/2026-09-12-tos-operator-value-proposals.md §3 (rows :44-51),
 #   adopted by the operator on 2026-09-16 via
@@ -28,7 +22,6 @@
 #     service produces a ProjectedCell for; any other kind listed as required
 #     would be honestly, permanently UNKNOWN.
 #   * evidence_package_ref null — no evidence package exists for this set yet.
-# =============================================================================
 
 scenario_set_id: "paper-adverse-set-1"
 scenario_set_generation: 1

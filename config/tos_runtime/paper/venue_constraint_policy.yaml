@@ -1,9 +1,6 @@
-# =============================================================================
 # Venue Constraint Policy — paper / KRX index futures (KOSPI200)
-# =============================================================================
 # INSTANCE of tos-spec/src/part-1-foundation/verification/VENUE-CONSTRAINT-POLICY-template.yaml
 # (placement + activation per tos-spec/src/decision-records/DR-0002 §2.1/§2.2).
-#
 # APPROVAL PROVENANCE (config/tos_runtime/README.md rule — a value without a
 # citation does not belong here):
 #   * values: docs/plans/2026-09-15-tos-venue-constraint-service-plan.md §6 ②
@@ -50,22 +47,6 @@
 #   * admitting session phase = the ONE token config/tos_runtime/paper/
 #     calendar.yaml declares for krx-index-futures (`CONTINUOUS`, 08:45-15:45
 #     KST); `CLOSED`/`EXPIRED` admit nothing.
-#
-# OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"):
-#   1. scope.accounts  — the paper account number (never committed here).
-#   2. scope.instruments — the CURRENT front-month contract code (ADR-002-019
-#      §11 binds the contract month; a roll is a NEW policy generation).
-#   3. run `tos-runtime print-policy-digests --config-dir <dir>` and keep the
-#      printed VENUE_CONSTRAINT_POLICY digest as a record. Plan S2-a (2026-11-13)
-#      deleted `safety_activation.yaml`, so there is no `members:` entry to copy it
-#      into any more; boot records it in `*_POLICY_BOUND` evidence.
-#      canonical_digest below may stay TBD (derived) or be
-#      set to that exact value.
-#
-# The rule-list keys below are template DATA (preserved, never interpreted by
-# the runtime — DR-0002 §2.1); the runtime reads kernel-typed content from
-# `_model_view` and runtime-only facts from `_runtime`.
-# =============================================================================
 
 artifact_type: VENUE_CONSTRAINT_POLICY
 schema_version: "1.0-DRAFT"

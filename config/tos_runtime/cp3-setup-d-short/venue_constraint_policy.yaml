@@ -1,39 +1,6 @@
-# =============================================================================
 # Venue Constraint Policy — CP-3 tenant (Setup D / SHORT) / KRX index futures
-#                           (KOSPI200 **mini** `A056xx`)
-# =============================================================================
 # INSTANCE of tos-spec/src/part-1-foundation/verification/VENUE-CONSTRAINT-POLICY-template.yaml
 # (placement + activation per tos-spec/src/decision-records/DR-0002 §2.1/§2.2).
-#
-# ⚠ TENANT TREE — 상주 `config/tos_runtime/paper/` 의 같은 파일에서 갈라져 나왔다.
-#   **런타임이 읽는 값 차이는 `_model_view.shape_constraints` 의 두 곳**
-#   — `max_quantity`(null → 10000)와 `tick_size`(5 → 2, 정정 2026-10-09), 둘 다 아래에
-#   출처가 있다 — 이고, 그 밖에 **`policy_id` 가 tenant 전용으로 바뀌었다**
-#   (아래). 나머지 차이는 그 값의 출처·단서를 적는 주석, 같은 사실을
-#   적는 template DATA 산문(`approved_sources` · `price_band_tick_and_lot_rules` ·
-#   `residual_risks` — 런타임이 해석하지 않는다, DR-0002 §2.1), 그리고 `approved_by`·
-#   `effective_from` 이다. 트리 전체의 범위·무엇이 증명됐고 무엇이 아닌가는 이 트리의
-#   `README.md` 에 있다.
-#   ⚠ **`policy_id` 를 tenant 전용 이름으로 바꿨다** — `vcp-paper-krx-index-futures` →
-#   `vcp-paper-cp3-setup-d-short-krx-index-futures`. 이유: 상주 문서와 **내용이 다르므로
-#   `canonical_digest` 도 다른데** 같은 `policy_id`·`policy_generation` 을 들고 있으면
-#   활성화 기록의 `(kind, member_id, generation)` 만으로 두 문서를 구별할 수 없다. 세대는
-#   **1 그대로** 둔다 — 이것은 상주 정책의 다음 세대가 아니라 **다른 배포의 정책**이다.
-#   같은 규칙을 적용해 `critical_input_policy.yaml` 과 `order_construction_policy.yaml` 의
-#   id 도 **tenant 전용**이다(`ocp-paper-cp3-setup-d-short-krx-index-futures`) — 후자는 이
-#   트리의 DIRECTION 축이 SHORT 라 내용이 갈렸고, 그 축은 `canonical_digest` 가 추적하지
-#   않으므로 **`policy_id` 가 LONG OCP 와 SHORT OCP 를 구별하는 유일한 것**이다(digest 는
-#   `1d0ecc72…` 로 LONG 과 같다 — 2026-11-04 #1025 로 `policy_generation` 이 3→4 가 되어
-#   상주 `c90444b9…` 와는 갈렸다). 반대로
-#   `aggregate_risk_policy.yaml` · `action_flow_policy.yaml`(바이트 동일)의 id 는
-#   **바꾸지 않았다**: 같은 id·세대·digest 는 「같은 문서」라는 참인 진술이고, 거기서
-#   이름을 가르면 같은 것을 둘로 보이게 만든다. 즉 기준은 트리가 아니라 **내용이
-#   갈렸는가**다.
-#   ⚠ 이 트리는 **아직 활성화되지 않았다** — `safety_activation.yaml::members` 는 `null`
-#   이고 digest 도입은 부팅 경로(kickoff §5 3 ④)의 일이다. 그래서 이 rename 은 어떤
-#   활성화 기록도 무효화하지 않았고, digest 리터럴을 지어내지도 않았다(digest 는 좌표가
-#   들어간 뒤 호스트에서 도출된다 — 렌더가 `members:` 에 쓴다).
-#
 # APPROVAL PROVENANCE (config/tos_runtime/README.md rule — a value without a
 # citation does not belong here):
 #   * values: docs/plans/2026-09-15-tos-venue-constraint-service-plan.md §6 ②
@@ -116,22 +83,6 @@
 #   * admitting session phase = the ONE token this tree's own
 #     calendar.yaml declares for krx-index-futures (`CONTINUOUS`, 08:45-15:45
 #     KST); `CLOSED`/`EXPIRED` admit nothing.
-#
-# OPERATOR-FILL BEFORE ACTIVATION (the loader refuses "TBD"):
-#   1. scope.accounts  — the paper account number (never committed here).
-#   2. scope.instruments — the CURRENT front-month contract code (ADR-002-019
-#      §11 binds the contract month; a roll is a NEW policy generation).
-#   3. run `tos-runtime print-policy-digests --config-dir <dir>` and keep the
-#      printed VENUE_CONSTRAINT_POLICY digest as a record. Plan S2-a (2026-11-13)
-#      deleted `safety_activation.yaml`, so there is no `members:` entry to copy it
-#      into any more; boot records it in `*_POLICY_BOUND` evidence.
-#      canonical_digest below may stay TBD (derived) or be
-#      set to that exact value.
-#
-# The rule-list keys below are template DATA (preserved, never interpreted by
-# the runtime — DR-0002 §2.1); the runtime reads kernel-typed content from
-# `_model_view` and runtime-only facts from `_runtime`.
-# =============================================================================
 
 artifact_type: VENUE_CONSTRAINT_POLICY
 schema_version: "1.0-DRAFT"
