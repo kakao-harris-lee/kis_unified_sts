@@ -381,7 +381,7 @@ in git history (`git log -- CLAUDE.md`).
 - Project snapshot: `docs/PROJECT_STATUS.md`
 - Documentation index: `docs/INDEX.md`
 - Plan index: `docs/plans/INDEX.md`
-- Superpowers plan archive/index: `docs/superpowers/plans/INDEX.md`
+- Superpowers 설계 스펙: `docs/superpowers/specs/` (계획 색인은 2026-11-20 에 삭제)
 - Port policy: `docs/ports.md`
 - Runbook index: `README.md` § Runbooks
 - 2026-11-13 에 레거시 런타임 시절의 런북·루트 문서와 2026-07~08 RFC 설계

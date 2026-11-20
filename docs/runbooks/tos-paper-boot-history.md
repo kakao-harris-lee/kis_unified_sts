@@ -77,7 +77,7 @@ sqlite3 "$DATA/evidence.sqlite3" "SELECT COUNT(*) FROM entries WHERE kind='TIME_
 **기대치는 열림·닫힘 모두 ≥ 1 행/분** 이다. 하트비트 55 s 가 닫힌 세션의 평가 주기 60 s 보다
 **짧기 때문에** 닫힘에서는 평가마다 한 행(=1 행/분)이고, 열림에서는 55 s 마다 한 행이다.
 두 값이 같으면(둘 다 60000) 하트비트가 한 번씩 빗나가 건강한 세션에도 약 120 초 구멍이
-생기므로, 그 부등식은 `tests/compose/test_deploy_approved_values.py` 가 고정한다.
+생기므로, 그 부등식은 `tos/runtime/tests/compose/test_deploy_approved_values.py` 가 고정한다.
 
 따라서 **2분 넘게 돌렸는데 전혀 늘지 않으면** §5 ④ 의 「평가가 멈춘」 결함 형태다 — 이 문턱은
 위 부등식 덕분에 이제 거짓 양성이 없다(건강한 세션은 2분 안에 반드시 1행 이상 늘린다).

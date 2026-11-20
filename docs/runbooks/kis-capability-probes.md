@@ -2,7 +2,10 @@
 
 > **2026-11-14 은퇴 안내**: 이 런북이 인용하는 끝난 기록 — T2 캠페인 증거
 > (`docs/broker-profiles/evidence/2026-07-29-p02-t2-campaign/`) · N-19 명세 대조
-> (`docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`) — 는 지웠다. 내용은 git
+> (`docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md`) — 는 지웠다. 같은 날 P0-2
+> 계획 문서군(실행 계획 · 프로브 정본 draft · 설계 #10 · 인간 게이트 레지스터 ·
+> 비거래 프로브 정의 · D5/D6 결정 기록)도 함께 지웠으므로, 아래 「근거」 줄과
+> 부록 C 의 `docs/plans/...` 경로는 **git 이력을 가리키는 인용**이다. 내용은 git
 > 이력에 있다 (`git log --diff-filter=D -- docs/`). 절차 자체는 그대로 유효하다.
 
 > **문서 성격**: 운영 런북(비규범). 이 문서도, 프로브 실행도 **어떤 게이트도 닫지
@@ -1365,7 +1368,7 @@ pykis·mojito 등 2차 커뮤니티 원천은 **값 확정 근거로 쓰지 않�
 | 13 | **야간 세션 TR 계열** | 모의에 야간 TR **부재**(order/cancel/inquire 3계열 모두 `*_night_real`만) — MOCK→REAL 외삽 금지의 구체 근거 | Q-MIC-1 확정 | `tr_ids.py:40-50` |
 | 14 | **SOX 해외지수 TR id·경로** | 로드맵 `:395`가 `HHDFC55020100`을 **후보로만** 언급 — 검증된 TR id 아님. 확정 후 `probes_real.py::ALLOWLIST` 추가 → N-18b 재실행 | N-18b 스킵 사유 | N-18 |
 | 15 | **ATS(넥스트레이드) 주문 경로** | TR 4종 + `order-ats` 엔드포인트 존재하나 `ats_routing.enabled: false`로 실사용 증거 없음 | Q-MIC-2 | `tr_ids.py:35-38` |
-| 16 | **잔고 조회 TR 정본** | `config/kis/tr_ids.yaml`에 잔고 TR **0건** — 실사용 TR은 `client.py` 인라인, `CTFN6118R`은 문서만. `futures-legal-review.md:38` 감사 항목이 구조적으로 충족 불가 | SoT 결손 | N-16 |
+| 16 | **잔고 조회 TR 정본** | `config/kis/tr_ids.yaml`에 잔고 TR **0건** — 실사용 TR은 `client.py` 인라인, `CTFN6118R`은 문서만. `futures-legal-review.md` §3 의 「잔고 조회」 감사 항목이 구조적으로 충족 불가 | SoT 결손 | N-16 |
 
 각 항목의 결론은 **출처 URL + 접근 일자**와 함께 기록한다. 확인 실패는
 "미확인"으로 남기며, **추정값으로 채우지 않는다.**

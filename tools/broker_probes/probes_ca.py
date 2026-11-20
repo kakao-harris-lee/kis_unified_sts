@@ -95,12 +95,14 @@ ALLOWLIST: tuple[ReadOnlyCall, ...] = (
         _STOCK_BALANCE_PATH,
         "P-CA real stock balance snapshot — hldg_qty (quantity leg) / "
         "dnca_tot_amt (cash leg) baseline + poll. TR/path from "
-        "shared/kis/client.py:919,935 (P-BAL precedent).",
+        "shared/kis/client.py:919,935 (P-BAL precedent; that module was "
+        "removed 2026-11-13 — read it in git history).",
     ),
     ReadOnlyCall(
         _STOCK_TR_MOCK,
         _STOCK_BALANCE_PATH,
-        "P-CA mock stock balance snapshot — same path, mock TR (client.py:919).",
+        "P-CA mock stock balance snapshot — same path, mock TR "
+        "(client.py:919, in git history since 2026-11-13).",
     ),
 ) + tuple(
     ReadOnlyCall(
@@ -222,7 +224,8 @@ def _parse_trial(args: argparse.Namespace) -> _Trial:
     if asset == "futures":
         raise ProbeError(
             "선물 제외 — 정의서 §5.2 prerequisite 4 (모의 선물잔고 미지원 "
-            "shared/kis/client.py:1031 NOTE·가드 :1047, 실선물 무증거금·무보유 "
+            "shared/kis/client.py:1031 NOTE·가드 :1047 — 2026-11-13 삭제, "
+            "git 이력 참조, 실선물 무증거금·무보유 "
             f"— CLAUDE.md Non-Negotiable Rules): --asset {asset!r}는 허용되지 않는다"
         )
     if asset != "stock":

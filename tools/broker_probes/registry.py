@@ -365,7 +365,8 @@ PROBES: dict[str, ProbeSpec] = {
         prerequisites=(
             "an intentional FILL is required — pass --allow-fill explicitly",
             "STOCK asset only on mock: futures balance is unsupported on 모의 "
-            "(shared/kis/client.py:1030-1032)",
+            "(shared/kis/client.py:1030-1032 — module removed 2026-11-13, "
+            "read it in git history)",
         ),
         entrypoint="tools.broker_probes.probes_order:probe_p11",
     ),

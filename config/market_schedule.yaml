@@ -20,16 +20,16 @@ market_schedule:
   # 선물 거래 시간
   futures:
     regular:
-      # KRX KOSPI200 선물 정규장 개장 시간 (08:45 KST).
-      # Futures 08:45 Regular Session Gate 통과 후 변경됨 (2026-06-28).
-      # docs/runbooks/market-structure-policy.md 참조.
+      # KRX KOSPI200 선물 정규장 개장 시간 (08:45 KST). 2026-06-28 전환 —
+      # docs/runbooks/market-structure-policy.md 「현재 정책」 표의
+      # 「선물 정규장」 행.
       open: "08:45"
       close: "15:45"
     # 야간 거래 (KOSPI200 선물 야간세션 18:00-05:00)
     # Phase 5 정책: 명시적으로 비활성. 활성화하려면 enabled를 true로 바꾸고
     # docs/runbooks/market-structure-policy.md의 Futures Night Session Gate를
-    # 다시 검토할 것. shared/execution/executor.py가 야간세션 시각에 주문이
-    # 들어오면 enabled=false인 경우 fail-closed로 거부한다.
+    # 다시 검토할 것. shared/strategy/market_time.py가 이 값을 읽고, 읽기에
+    # 실패하면 비활성으로 취급한다 (fail-closed).
     night:
       enabled: false
       open: "18:00"

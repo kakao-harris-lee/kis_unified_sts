@@ -92,8 +92,7 @@ entry_reentry_guard:
   # have cut both reversal wins (10:40 +20, 14:28 +39) → net worse than nothing;
   # a 3-min cooldown skips only the sub-3-min impulsive re-chases (all losers
   # that day) and keeps the reversals (+10 vs −8 actual). Keep stop_loss <= ~3
-  # min; >4 min starts cutting fast reversals. See
-  # docs/superpowers/specs/2026-07-08-reentry-guard-fix.md.
+  # min; >4 min starts cutting fast reversals.
   futures:
     default_cooldown_seconds: 600  # 10 min for ordinary exits (target/session)
     reason_cooldown_seconds:
