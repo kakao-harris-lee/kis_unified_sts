@@ -70,6 +70,11 @@ class KisMockTransportConfig:
     token_reissue_min_interval_s: int
     request_timeout_s: float
     allow_plaintext_for_tests: bool
+    # The file every tenant process sharing this app key reads its token from (#1124), and
+    # how long before real expiry a cached token is due for reissue. Absent = no sharing:
+    # this process issues and holds its own token, as every tenant did before 2026-11-20.
+    token_cache_path: str | None = None
+    token_cache_refresh_margin_s: int | None = None
 
 
 def _require_present(raw: Any, field: str, path: Path) -> Any:
@@ -291,6 +296,37 @@ def _require_positive_float(raw: Any, field: str, path: Path) -> float:
     return value
 
 
+def _load_token_cache(raw: Any, path: Path) -> tuple[str | None, int | None]:
+    """The optional shared-token-cache pair. Both keys together, or neither (a path with no"""
+    has_path = isinstance(raw, dict) and "token_cache_path" in raw
+    has_margin = isinstance(raw, dict) and "token_cache_refresh_margin_s" in raw
+    if not has_path and not has_margin:
+        return None, None
+    if has_path != has_margin:
+        raise KisMockTransportConfigError(
+            f"{path}: 'token_cache_path' and 'token_cache_refresh_margin_s' are one setting "
+            "— a cache path with no refresh margin (or the reverse) would leave the margin "
+            "to this loader to invent; declare both or neither"
+        )
+    raw_path = _require_str(raw, "token_cache_path", path)
+    try:
+        cache_path = Path(raw_path).expanduser()
+    except RuntimeError as exc:  # no home directory to expand '~' against
+        raise KisMockTransportConfigError(
+            f"{path}: token_cache_path={raw_path!r} starts with '~' and this process has no "
+            "home directory to expand it against — name the absolute path"
+        ) from exc
+    if not cache_path.is_absolute():
+        raise KisMockTransportConfigError(
+            f"{path}: token_cache_path={raw_path!r} is not absolute — every process sharing "
+            "this app key must name the SAME file, and a relative path names a different "
+            "one per working directory"
+        )
+    return str(cache_path), _require_positive_int(
+        raw, "token_cache_refresh_margin_s", path
+    )
+
+
 def load_kis_mock_transport_config(
     path: Path,
     *,
@@ -344,6 +380,7 @@ def load_kis_mock_transport_config(
         raw, "token_reissue_min_interval_s", path
     )
     request_timeout_s = _require_positive_float(raw, "request_timeout_s", path)
+    token_cache_path, token_cache_refresh_margin_s = _load_token_cache(raw, path)
 
     return KisMockTransportConfig(
         mode=mode,  # type: ignore[arg-type]  # narrowed by the membership check above
@@ -360,4 +397,6 @@ def load_kis_mock_transport_config(
         token_reissue_min_interval_s=token_reissue_min_interval_s,
         request_timeout_s=request_timeout_s,
         allow_plaintext_for_tests=allow_plaintext_for_tests,
+        token_cache_path=token_cache_path,
+        token_cache_refresh_margin_s=token_cache_refresh_margin_s,
     )

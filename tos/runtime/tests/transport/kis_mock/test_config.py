@@ -459,3 +459,69 @@ def test_a_non_positive_price_scale_refuses(tmp_path: Path, scale: int) -> None:
 
 def test_price_scale_is_loaded(tmp_path: Path) -> None:
     assert _load(_write(tmp_path, _valid_raw())).price_scale == 100
+
+
+def test_a_config_without_a_token_cache_shares_nothing(tmp_path: Path) -> None:
+    """#1124: the key pair is optional, and absent means the pre-11-20 per-process token."""
+    config = _load(_write(tmp_path, _valid_raw()))
+    assert config.token_cache_path is None
+    assert config.token_cache_refresh_margin_s is None
+
+
+def test_a_token_cache_path_and_margin_load(tmp_path: Path) -> None:
+    raw = _valid_raw()
+    raw["token_cache_path"] = "/var/lib/tos/kis-mock-token/stock-mock.json"
+    raw["token_cache_refresh_margin_s"] = 600
+    config = _load(_write(tmp_path, raw))
+    assert config.token_cache_path == "/var/lib/tos/kis-mock-token/stock-mock.json"
+    assert config.token_cache_refresh_margin_s == 600
+
+
+def test_a_tilde_token_cache_path_is_expanded(tmp_path: Path) -> None:
+    raw = _valid_raw()
+    raw["token_cache_path"] = "~/.local/state/tos/kis-mock-token/stock-mock.json"
+    raw["token_cache_refresh_margin_s"] = 600
+    loaded = _load(_write(tmp_path, raw)).token_cache_path
+    assert loaded is not None and Path(loaded).is_absolute()
+    assert loaded.endswith("/.local/state/tos/kis-mock-token/stock-mock.json")
+
+
+def test_a_relative_token_cache_path_refuses(tmp_path: Path) -> None:
+    """A relative path names a different file per working directory — the one thing a
+    cache shared between processes must not do."""
+    raw = _valid_raw()
+    raw["token_cache_path"] = "state/stock-mock.json"
+    raw["token_cache_refresh_margin_s"] = 600
+    with pytest.raises(KisMockTransportConfigError, match="not absolute"):
+        _load(_write(tmp_path, raw))
+
+
+@pytest.mark.parametrize(
+    "present", ["token_cache_path", "token_cache_refresh_margin_s"]
+)
+def test_half_a_token_cache_setting_refuses(tmp_path: Path, present: str) -> None:
+    raw = _valid_raw()
+    raw[present] = (
+        600 if present == "token_cache_refresh_margin_s" else "/var/lib/t.json"
+    )
+    with pytest.raises(KisMockTransportConfigError, match="one setting"):
+        _load(_write(tmp_path, raw))
+
+
+@pytest.mark.parametrize("margin", [0, -1])
+def test_a_non_positive_refresh_margin_refuses(tmp_path: Path, margin: int) -> None:
+    raw = _valid_raw()
+    raw["token_cache_path"] = "/var/lib/tos/stock-mock.json"
+    raw["token_cache_refresh_margin_s"] = margin
+    with pytest.raises(KisMockTransportConfigError, match="must be positive"):
+        _load(_write(tmp_path, raw))
+
+
+@pytest.mark.parametrize("field", ["token_cache_path", "token_cache_refresh_margin_s"])
+def test_a_null_token_cache_field_refuses(tmp_path: Path, field: str) -> None:
+    raw = _valid_raw()
+    raw["token_cache_path"] = "/var/lib/tos/stock-mock.json"
+    raw["token_cache_refresh_margin_s"] = 600
+    raw[field] = None
+    with pytest.raises(KisMockTransportConfigError, match="named-TBD"):
+        _load(_write(tmp_path, raw))

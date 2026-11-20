@@ -14,6 +14,7 @@ from tos_runtime.transport.kis_mock.token import (
     KisTokenLifecycle,
     TokenIssuingClient,
 )
+from tos_runtime.transport.kis_mock.token_cache import SharedTokenCache
 
 __all__ = [
     "KisAppCredentials",
@@ -85,6 +86,7 @@ class KisCredentialSession:
         token_reissue_min_interval_s: int,
         evidence_sink: EvidenceRecorder,
         pacing: KisPacing,
+        token_cache: SharedTokenCache | None = None,
     ) -> None:
         """Wire the session (every argument but ``pacing`` is forwarded to the one"""
         self._custody = custody
@@ -101,6 +103,7 @@ class KisCredentialSession:
             token_reissue_min_interval_s=token_reissue_min_interval_s,
             evidence_sink=evidence_sink,
             pacer=self._pacer,
+            token_cache=token_cache,
         )
 
     def ensure_token_string(self) -> str:
@@ -134,10 +137,14 @@ class KisCredentialSessions:
         custody: CredentialCustody,
         monotonic: MonotonicSource,
         evidence_sink: EvidenceRecorder,
+        token_cache: SharedTokenCache | None = None,
     ) -> None:
         self._custody = custody
         self._monotonic = monotonic
         self._evidence_sink = evidence_sink
+        # One cache for every session this boot builds: it is keyed by app key, and the
+        # processes that share an app key are what it exists to serialize (#1124).
+        self._token_cache = token_cache
         self._sessions: dict[
             tuple[str, str], tuple[_SessionTerms, KisCredentialSession]
         ] = {}
@@ -182,6 +189,7 @@ class KisCredentialSessions:
             token_reissue_min_interval_s=token_reissue_min_interval_s,
             evidence_sink=self._evidence_sink,
             pacing=pacing,
+            token_cache=self._token_cache,
         )
         self._sessions[key] = (terms, session)
         return session

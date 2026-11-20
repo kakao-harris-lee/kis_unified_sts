@@ -51,6 +51,11 @@ DATA="$ST/cp3-setup-d-stock-$SYMBOL-data"
 OPS="$ST/cp3-setup-d-stock${HOST_SUFFIX}-ops"
 C="$ST/cp3-setup-d-stock${HOST_SUFFIX}-custody"
 TRANSPORT="$OPS/kis_mock_transport.yaml"
+# 토큰 캐시는 **tenant 별이 아니라 앱 키별**이다 — 모든 주식 tenant 가 같은 파일을 가리킨다.
+# KIS 는 앱 키 하나에 분당 토큰 한 장만 내주는데 tenant 셋은 프로세스 셋이라, 11-20 12:50 에
+# 005930 이 매번 TokenResponseError 를 받고 브로커 사실 None → SEND_REFUSED 로 하루를 보냈다.
+# custody 와 달리 공유가 맞다: 공유하는 것은 승인이 아니라 그 앱 키의 토큰 한 장이다.
+TOKEN_CACHE="$ST/kis-mock-token/stock-mock.json"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 say() { echo "  $*"; }
@@ -77,6 +82,7 @@ say "custody 파일 (600): read.principal evidence.key evidence.key.1 replay.par
 say "custody 파일 (600): kis_mock.app_key kis_mock.app_secret (.env.mock 의 모의 주식 키에서)"
 say "custody.manifest.yaml (600): 위 5개 scope"
 say "$TRANSPORT (600): mode: live · VTS 호스트 · price_scale 100 · ACNT_PRDT_CD=계좌 뒤 2자리"
+say "토큰 캐시 디렉터리 (700): $(dirname "$TOKEN_CACHE") — 앱 키를 공유하는 모든 주식 tenant 공용"
 say "데이터 잎 $DATA/$SYMBOL 은 만들지 않는다 — 첫 거래일 run(genesis)이 만든다"
 
 if [[ $APPLY -eq 0 ]]; then echo; echo "DRY-RUN — 아무것도 쓰지 않았다. 실행하려면 --apply"; exit 0; fi
@@ -122,15 +128,27 @@ static_body_fields:
 price_scale: 100
 min_send_interval_ms: 2000              # 앱 키의 모든 요청 간격 (#970 — 주문·토큰·조회 공용)
 app_key_request_wait_budget_ms: 4000    # 슬롯 대기 상한 = 2 × 간격 (루프·FETCH 두 스레드, #970)
-token_reissue_min_interval_s: 60   # 미실측 제안값 (N-15) — 런북 §4
+# 실패 뒤 재발급 대기. 60 이 아니라 65 다 (#1124): 11-20 에 폴링 주기(~60s)와 이 값이 같아
+# 재시도가 쿨다운 0.4s 안쪽(59.6s)에 떨어져 번번이 TokenStale 로 버려졌고, 실제로 나간
+# 시도는 120s 에 한 번뿐이었다. 65 면 나가는 시도는 반드시 KIS 의 분당 창을 넘긴 뒤다.
+token_reissue_min_interval_s: 65
+# 앱 키를 공유하는 tenant 프로세스들이 토큰 한 장을 함께 쓰는 파일 (#1124).
+# flock 아래에서만 읽고 쓰며, 항목 키는 앱 키의 sha256 이다 — 앱 키 자체는 들어가지 않는다.
+token_cache_path: "$TOKEN_CACHE"
+# 만료 이 초 전부터 재발급 대상으로 본다. 10분: 토큰 수명(86400s)의 0.7% 이고, 한 번의
+# 재발급 실패 + 쿨다운(65s)을 몇 번 더 견딜 수 있는 여유다. 그 사이 재발급이 거부되면
+# 아직 유효한 캐시 토큰을 그대로 쓴다(런타임 token.py 의 fallback).
+token_cache_refresh_margin_s: 600
 request_timeout_s: 10
 allow_plaintext_for_tests: false
 YAML
 chmod 600 "$TRANSPORT"
+install -d -m 700 "$(dirname "$TOKEN_CACHE")"
 
 # ── 4. 확인 (값은 찍지 않는다) ─────────────────────────────────────────────
 echo; echo "완료. 확인:"
-stat -c '  %a %n' "$DATA" "$OPS" "$C" "$C/approvals" "$TRANSPORT" "$C"/kis_mock.app_* "$C/custody.manifest.yaml"
+stat -c '  %a %n' "$DATA" "$OPS" "$C" "$C/approvals" "$TRANSPORT" "$C"/kis_mock.app_* "$C/custody.manifest.yaml" \
+  "$(dirname "$TOKEN_CACHE")"
 for f in kis_mock.app_key kis_mock.app_secret; do
   [[ -s "$C/$f" ]] && ! grep -q '"' "$C/$f" && say "$f: 비어 있지 않음 · 따옴표 없음" || die "$f 이상"
 done

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.time.sources import MonotonicSource
@@ -13,6 +14,7 @@ from tos_runtime.transport.kis_mock.credential_session import (
 )
 from tos_runtime.transport.kis_mock.pacer import KisPacing
 from tos_runtime.transport.kis_mock.token import EvidenceRecorder, TokenIssuingClient
+from tos_runtime.transport.kis_mock.token_cache import SharedTokenCache
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfig
 
 __all__ = [
@@ -24,6 +26,7 @@ __all__ = [
     "kis_mock_credential_session",
     "kis_quote_pacing",
     "kis_transport_pacing",
+    "kis_shared_token_cache",
 ]
 
 
@@ -83,15 +86,38 @@ def kis_quote_pacing(config: KisQuoteTransportConfig) -> KisPacing:
     )
 
 
+def kis_shared_token_cache(
+    config: KisMockTransportConfig | None,
+) -> SharedTokenCache | None:
+    """The cross-process token cache ``kis_mock_transport.yaml`` declares, or ``None``."""
+    if config is None or config.token_cache_path is None:
+        return None
+    assert config.token_cache_refresh_margin_s is not None  # the loader pairs the two
+    return SharedTokenCache(
+        path=Path(config.token_cache_path),
+        refresh_margin_s=config.token_cache_refresh_margin_s,
+        # The longest a peer process may legitimately hold the lock: its own slot wait on
+        # this app key plus one token POST. Derived from the two values that bound it, so
+        # a slower endpoint does not silently turn into a refusal here.
+        lock_wait_s=(
+            config.request_timeout_s + config.app_key_request_wait_budget_ms / 1000.0
+        ),
+    )
+
+
 def build_kis_credential_sessions(
     *,
     custody: CredentialCustody,
     monotonic: MonotonicSource,
     evidence_sink: EvidenceRecorder,
+    token_cache: SharedTokenCache | None = None,
 ) -> KisCredentialSessions:
     """This boot's one-session-per-KIS-app-key registry (module docstring)."""
     return KisCredentialSessions(
-        custody=custody, monotonic=monotonic, evidence_sink=evidence_sink
+        custody=custody,
+        monotonic=monotonic,
+        evidence_sink=evidence_sink,
+        token_cache=token_cache,
     )
 
 
