@@ -65,7 +65,7 @@ class _Transmit:
     """First call: ``first`` (the gateway, or a scripted gateway shape); later calls accept."""
 
     def __init__(self, first: Callable[[AttemptRequest], SendHandoff]) -> None:
-        self._first = first
+        self._first: Callable[[AttemptRequest], SendHandoff] | None = first
         self.accepted: list[str] = []
 
     def __call__(self, attempt: AttemptRequest) -> SendHandoff:
@@ -387,7 +387,7 @@ def test_a_crash_after_the_rcl_release_finishes_only_the_engine_half(
     )
     driver.enqueue_and_run(fx.decision_tick_event(seq=1))
     original = core.ledger.discard_unsent
-    core.ledger.discard_unsent = lambda _ref: False  # type: ignore[method-assign]
+    core.ledger.discard_unsent = lambda ref: False  # type: ignore[method-assign]  # noqa: ARG005
     assert release.run() is False
     assert _state(rcl_log) is CapacityState.RELEASED
     core.ledger.discard_unsent = original  # type: ignore[method-assign]
