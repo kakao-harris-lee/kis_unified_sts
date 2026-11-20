@@ -284,6 +284,10 @@ class BrokerPosttrade:
     release_consumer: FinalityConsumerPort | None = None
     held_position_bridge: HeldPositionBridge | None = None
     trading_date_now: Callable[[], str | None] = lambda: None
+    #: ``kis_mock_transport.yaml::min_send_interval_ms`` (the app-key pacer's spacing), carried
+    #: here because the observer's idle reads must reserve one such slot for the next holdings
+    #: refresh (#1107 L1) and ``attach_fill_observer`` has no transport config of its own.
+    app_key_min_send_interval_ms: int | None = None
 
 
 def _refuse_snapshot_age_below_two_intervals(
@@ -409,6 +413,7 @@ def build_broker_posttrade(
         witness=witness,
         observer_config=observer_config,
         trading_date_now=trading_date_now,
+        app_key_min_send_interval_ms=transport_config.min_send_interval_ms,
     )
 
 
@@ -474,6 +479,7 @@ def attach_fill_observer(
         account=instrument_key.account,
         instrument=instrument_key.instrument,
         snapshots=posttrade.witness,
+        app_key_min_send_interval_ms=posttrade.app_key_min_send_interval_ms,
         held_position_tip=None if bridge is None else bridge.tip_tuple,
         held_position_eligible=(
             None

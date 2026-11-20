@@ -175,6 +175,12 @@ class KisMockFillObserver:
     account: str
     instrument: str
     snapshots: SnapshotPrefetcher | None = None
+    #: ``kis_mock_transport.yaml::min_send_interval_ms`` — the app-key pacer's spacing, NOT a
+    #: value of this file's config. Compose passes it so an idle read (the #1096 ack-date scan,
+    #: the 11-20 uncertain-send read) can leave the next holdings refresh its own paced GET
+    #: (#1107 L1, :func:`~tos_runtime.posttrade.fill_observer_plan
+    #: .idle_read_delays_the_held_refresh`). ``None`` keeps the pre-#1107 behaviour.
+    app_key_min_send_interval_ms: int | None = None
     held_position_tip: Callable[[], tuple[int, int | None] | None] | None = None
     held_position_eligible: Callable[[], bool] | None = None
     mark_held_position_pending: Callable[[WitnessScope | None], int | None] | None = (

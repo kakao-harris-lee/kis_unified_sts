@@ -292,6 +292,72 @@ def test_a_pass_whose_holdings_refresh_is_due_does_not_also_scan(
     assert broker.read_dates == [_WINDOW[0]]
 
 
+def _holdings_polling(observer: KisMockFillObserver, *, eligible: bool) -> None:
+    """Wire the held-position poll the way compose does, with the app-key pacing it reserves."""
+    observer.app_key_min_send_interval_ms = 2_000
+    observer.config = replace(observer.config, poll_deadline_ms=4_000)
+    observer.publish_held_position_snapshot = lambda _snapshot: None
+    observer.mark_held_position_pending = lambda _scope: 1
+    observer.held_position_tip = lambda: (0, 0)
+    observer.held_position_eligible = lambda: eligible
+
+
+def test_a_scan_waits_for_the_reserve_the_next_holdings_refresh_needs(
+    undated: SqliteEvidenceStore,
+) -> None:
+    """review-1105 L1 (#1107): a scan GET is not preemptible, so it must not start when the next
+
+    holdings refresh is close enough that one paced GET plus this FETCH's deadline would push the
+    refresh past the proof's expiry (held_position_max_age_ms carries ~800 ms over its period).
+    """
+    broker = _Broker({_ACK_DATE: (_row(ord_dt=_ACK_DATE),)})
+    observer = _observer(undated, broker)
+    _holdings_polling(observer, eligible=True)
+    observer.config = replace(
+        observer.config,
+        held_position_poll_interval_ms=5_000,
+        held_position_max_age_ms=50_000,
+    )
+    # Polled just now: the next refresh is due in ~5 s, inside the 2000 + 4000 reserve.
+    observer._last_held_position_poll_ms = observer.monotonic.now_ms()
+
+    assert observer.poll_once().polled is False
+    assert broker.read_dates == []
+    assert _rows(undated, FILL_OBSERVER_ACK_DATE_RECOVERY_KIND) == []
+
+    # A period with room for the reserve: the very next pass starts the window.
+    observer.config = replace(observer.config, held_position_poll_interval_ms=60_000)
+    assert observer.poll_once().polled is False
+    assert broker.read_dates == [_WINDOW[0]]
+
+    # And the reserve gates each CONTINUATION date too, not just the window's first.
+    observer.config = replace(observer.config, held_position_poll_interval_ms=5_000)
+    observer._last_held_position_poll_ms = observer.monotonic.now_ms()
+    assert observer.poll_once().polled is False
+    assert broker.read_dates == [_WINDOW[0]]
+
+
+def test_a_tenant_that_has_never_polled_holdings_is_not_held_back(
+    undated: SqliteEvidenceStore,
+) -> None:
+    """#1107: with no CLOSE-observation purpose granted there is no proof to invalidate — the
+
+    first one has no predecessor whose validity window the scan could open a hole in.
+    """
+    broker = _Broker({_ACK_DATE: (_row(ord_dt=_ACK_DATE),)})
+    observer = _observer(undated, broker)
+    _holdings_polling(observer, eligible=False)
+    observer.config = replace(
+        observer.config,
+        held_position_poll_interval_ms=5_000,
+        held_position_max_age_ms=50_000,
+    )
+    assert observer._last_held_position_poll_ms is None
+
+    assert observer.poll_once().polled is False
+    assert broker.read_dates == [_WINDOW[0]]
+
+
 def test_a_recovered_date_survives_the_next_boot(
     undated: SqliteEvidenceStore,
 ) -> None:
