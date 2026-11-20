@@ -284,6 +284,7 @@ class UnsentDiscardReason(StrEnum):
     """Why a never-sent provisional reservation was discarded (2026-11-01 unsent-reservation-"""
 
     UNSENT_FLOW_NON_EXECUTION = "UNSENT_FLOW_NON_EXECUTION"
+    SEND_REFUSED_BEFORE_TRANSPORT = "SEND_REFUSED_BEFORE_TRANSPORT"
 
 
 RESERVATION_DISCARDED_UNSENT_KIND = "RESERVATION_DISCARDED_UNSENT"

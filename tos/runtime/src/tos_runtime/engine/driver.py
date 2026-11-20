@@ -481,6 +481,11 @@ class EngineDriver:
         """Enqueue a synthetic ``EGRESS_RESULT(kind=TIMEOUT)`` for every scope past its bound."""
         now_ms = self._time.now_ms()
         for key, attempt_id in self._timeouts.due(now_ms=now_ms):
+            held = self._core.ledger.outstanding(key)
+            if held is None or held.attempt_id != attempt_id:
+                # The projection no longer holds this attempt (e.g. a send the gateway
+                # refused before transport was discarded): a TIMEOUT could not apply.
+                continue
             payload = EgressResultPayload(
                 instrument_key=key, attempt_id=attempt_id, kind=EgressResultKind.TIMEOUT
             )

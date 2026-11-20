@@ -34,7 +34,9 @@ from tos_runtime.rcl.reservation_identity import permit_reservation_id
 __all__ = [
     "CAPACITY_RELEASE_INTENT_KIND",
     "HALT_STEPS_BEFORE_THE_SEND_BOUNDARY",
+    "REFUSED_BEFORE_TRANSPORT_CAUSE",
     "SEND_EVIDENCE_KINDS",
+    "TRANSPORT_ENTRY_EVIDENCE_KINDS",
     "UNSENT_RELEASE_CAUSE",
     "UNSENT_RELEASE_COMMAND_PREFIX",
     "UnsentReleaseCandidate",
@@ -63,6 +65,30 @@ SEND_EVIDENCE_KINDS: tuple[str, ...] = (
 )
 
 UNSENT_RELEASE_CAUSE = UnsentDiscardReason.UNSENT_FLOW_NON_EXECUTION.value
+
+REFUSED_BEFORE_TRANSPORT_CAUSE = UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT.value
+
+# Every row the gateway or a transport writes once an attempt is sealed, claimed, or sent.
+# The gateway writes SEND_SEALED / SEND_STARTED / NETWORK_CALL_ENTERED in that order BEFORE
+# ``send_once`` is entered, so none of them existing means the transport was never called.
+TRANSPORT_ENTRY_EVIDENCE_KINDS: tuple[str, ...] = (
+    "SEND_SEALED",
+    "SEND_STARTED",
+    "POTENTIALLY_LIVE_OBSERVED",
+    "NETWORK_CALL_ENTERED",
+    "EGRESS_RESULT_RECORDED",
+    "UNCERTAIN_SEND",
+    "TRANSPORT_SEND",
+    "TRANSPORT_DRY_RUN",
+    "TRANSPORT_SEND_REFUSED_NO_SEAL",
+    "TRANSPORT_BINDING_MISMATCH",
+    "EGRESS_RESULT_CONSUMED",
+    "RESULT_UNMATCHED",
+)
+
+_SEND_REFUSED_KIND = "SEND_REFUSED"
+_SEND_HANDED_OFF_KIND = "SEND_HANDED_OFF"
+_PRE_CLAIM_REFUSAL_STEP = CommitmentStep.SEND_BOUNDARY_VERIFICATION.value
 
 _DISCARDABLE_CAPACITY_STATES: frozenset[CapacityState] = frozenset(
     {CapacityState.COMMITTED_UNBOUND, CapacityState.ATTEMPT_BOUND}
@@ -100,6 +126,7 @@ class UnsentReleaseCandidate:
     attempt_id: str | None
     halt_step: str
     consumed_evidence_seq: int
+    reason: UnsentDiscardReason = UnsentDiscardReason.UNSENT_FLOW_NON_EXECUTION
 
 
 @dataclass(frozen=True)
@@ -150,7 +177,16 @@ def _verdict(
         conn, event_id=event_id, lo=commit_seq, hi=consumed_seq
     )
     if halt_step is None:
-        return settled
+        return _settled(
+            _refused_before_transport(
+                conn,
+                event_id=event_id,
+                permit_identity=permit_identity,
+                receipt=receipt,
+                lo=commit_seq,
+                hi=consumed_seq,
+            )
+        )
     if _handling_was_interrupted(conn, event_id=event_id, receipt=receipt):
         return settled
     if _send_evidence_between(conn, lo=commit_seq, hi=consumed_seq):
@@ -172,6 +208,90 @@ def _verdict(
             consumed_evidence_seq=consumed_seq,
         )
     )
+
+
+def _refused_before_transport(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    permit_identity: str,
+    receipt: dict[str, object],
+    lo: int,
+    hi: int,
+) -> UnsentReleaseCandidate | None:
+    """A handed-off flow whose attempt the gateway refused before any transport call (11-20)."""
+    fingerprint = receipt.get("flow_fingerprint")
+    if not isinstance(fingerprint, dict) or fingerprint.get("handed_off") is not True:
+        return None
+    if fingerprint.get("halt_step") is not None or receipt.get("halt_reason"):
+        return None
+    attempt_id = fingerprint.get("attempt_id")
+    if not isinstance(attempt_id, str) or not attempt_id:
+        return None
+    if _attempt_id(conn, event_id=event_id, lo=lo, hi=hi) != attempt_id:
+        return None
+    if _handling_was_interrupted(conn, event_id=event_id, receipt=receipt):
+        return None
+    if not _only_pre_claim_refusals(conn, attempt_id=attempt_id, lo=lo, hi=hi):
+        return None
+    if _transport_evidence(conn, attempt_id=attempt_id, lo=lo, hi=hi):
+        return None
+    handed = [
+        _payload(payload_json).get("attempt_id")
+        for (payload_json,) in conn.execute(
+            "SELECT payload_json FROM entries WHERE kind = ? AND seq > ? AND seq < ?",
+            (_SEND_HANDED_OFF_KIND, lo, hi),
+        )
+    ]
+    if handed != [attempt_id]:
+        return None
+    proposal_id = _proposal_id(receipt)
+    if proposal_id is None:
+        return None
+    return UnsentReleaseCandidate(
+        event_id=event_id,
+        proposal_id=proposal_id,
+        permit_identity=permit_identity,
+        attempt_id=attempt_id,
+        halt_step=_PRE_CLAIM_REFUSAL_STEP,
+        consumed_evidence_seq=hi,
+        reason=UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT,
+    )
+
+
+def _only_pre_claim_refusals(
+    conn: sqlite3.Connection, *, attempt_id: str, lo: int, hi: int
+) -> bool:
+    """At least one ``SEND_REFUSED`` in the flow, every one for this attempt, at step 15, before
+    the seal and the single-use claim, and preserving no capacity obligation."""
+    refusals = [
+        _payload(payload_json)
+        for (payload_json,) in conn.execute(
+            "SELECT payload_json FROM entries WHERE kind = ? AND seq > ? AND seq < ?",
+            (_SEND_REFUSED_KIND, lo, hi),
+        )
+    ]
+    return bool(refusals) and all(
+        refusal.get("attempt_id") == attempt_id
+        and refusal.get("step") == _PRE_CLAIM_REFUSAL_STEP
+        and refusal.get("preserved_worst_credible_capacity") is None
+        and refusal.get("preserved_obligation_magnitude_unknown") is False
+        for refusal in refusals
+    )
+
+
+def _transport_evidence(
+    conn: sqlite3.Connection, *, attempt_id: str, lo: int, hi: int
+) -> bool:
+    """Any :data:`TRANSPORT_ENTRY_EVIDENCE_KINDS` row inside the flow, or naming the attempt."""
+    placeholders = ",".join("?" for _ in TRANSPORT_ENTRY_EVIDENCE_KINDS)
+    for seq, payload_json in conn.execute(
+        f"SELECT seq, payload_json FROM entries WHERE kind IN ({placeholders})",
+        TRANSPORT_ENTRY_EVIDENCE_KINDS,
+    ):
+        if lo < int(seq) < hi or _payload(payload_json).get("attempt_id") == attempt_id:
+            return True
+    return False
 
 
 def _settled(candidate: UnsentReleaseCandidate | None) -> UnsentReleaseVerdict:
@@ -354,7 +474,7 @@ class UnsentReleasePass:
         if state is None:
             return False
         if state is not CapacityState.RELEASED and not self._commit_rcl_release(
-            reservation_id, from_state=state
+            reservation_id, from_state=state, cause=candidate.reason.value
         ):
             return False
         return self._discard_and_record(candidate, reservation_id=reservation_id)
@@ -394,12 +514,19 @@ class UnsentReleasePass:
             held.instrument_key == self.instrument_key
             and held.proposal_id == candidate.proposal_id
             and held.attempt_id == candidate.attempt_id
-            and self._ledger_still_admits_a_discard(held)
+            and self._ledger_still_admits_a_discard(held, candidate.reason)
         )
 
     @staticmethod
-    def _ledger_still_admits_a_discard(held: ProvisionalReservation) -> bool:
+    def _ledger_still_admits_a_discard(
+        held: ProvisionalReservation, reason: UnsentDiscardReason
+    ) -> bool:
         """review-1023 LOW-1 — the kernel's own two axes, read BEFORE the irreversible RCL write."""
+        if reason is UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT:
+            return (
+                held.knowledge is EgressKnowledge.SENT_UNCONFIRMED
+                and held.capacity_state is CapacityState.POTENTIALLY_LIVE
+            )
         return (
             held.knowledge is EgressKnowledge.NOT_SENT
             and held.capacity_state in _DISCARDABLE_CAPACITY_STATES
@@ -412,7 +539,11 @@ class UnsentReleasePass:
             return None
 
     def _commit_rcl_release(
-        self, reservation_id: str, *, from_state: CapacityState
+        self,
+        reservation_id: str,
+        *,
+        from_state: CapacityState,
+        cause: str = UNSENT_RELEASE_CAUSE,
     ) -> bool:
         """``from_state -> RELEASED`` under ``FINAL_QUANTITY_PROOF`` with a zero committed vector."""
         try:
@@ -439,7 +570,7 @@ class UnsentReleasePass:
                     {
                         "reservation_id": reservation_id,
                         "to_state": CapacityState.RELEASED.value,
-                        "cause": UNSENT_RELEASE_CAUSE,
+                        "cause": cause,
                     }
                 ),
                 expected_seq=-1 if view.last_seq is None else view.last_seq,
@@ -453,14 +584,16 @@ class UnsentReleasePass:
         self, candidate: UnsentReleaseCandidate, *, reservation_id: str
     ) -> bool:
         """The engine half: discard, then record it — the row ONLY on a ``True``."""
+        refused = candidate.reason is UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT
         ref = UnsentDiscardRef(
             proposal_id=candidate.proposal_id,
-            reason=UnsentDiscardReason.UNSENT_FLOW_NON_EXECUTION,
+            reason=candidate.reason,
+            attempt_id=candidate.attempt_id if refused else None,
         )
         if not self.ledger.discard_unsent(ref):
             return False
         self.evidence_store.append(
-            ref.model_dump(mode="json"),
+            ref.model_dump(mode="json", exclude_none=True),
             kind=RESERVATION_DISCARDED_UNSENT_KIND,
             record_class=RESERVATION_DISCARDED_UNSENT_KIND,
         )
@@ -470,7 +603,7 @@ class UnsentReleasePass:
                 "reservation_id": reservation_id,
                 "proof_id": None,
                 "destination": CapacityState.RELEASED.value,
-                "cause": UNSENT_RELEASE_CAUSE,
+                "cause": candidate.reason.value,
                 "event_id": candidate.event_id,
                 "halt_step": candidate.halt_step,
                 "consumed_evidence_seq": candidate.consumed_evidence_seq,
