@@ -22,9 +22,13 @@
 # 이고 DSL 조건은 `z_x1000 <= -1800` (LONG 쪽 한 변)이다. DSL 에 abs() 가
 # 없으므로(DSL-G1) 양변 중 **방향에 맞는 한 변**만 비교한다 — SHORT 배포는
 # `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다(결정 4: 방향마다 따로 렌더).
-# 이 등식은 테스트로 고정돼 있다:
-#   tos/runtime/cp3/tests/test_cp3_strategy_content.py
-#   ::test_z_entry_binding_is_trunc_extreme_atr_mult_times_1000
+# 이 등식은 **배포 사본 쪽에서** 테스트로 고정돼 있다:
+#   tests/tools/test_cp3_tenant_z_entry_binding.py
+#   ::test_binding_is_trunc_of_its_own_tree_fields_const_times_1000
+# ⚠ 그 테스트는 `config/tos_runtime/<tree>/` 를 읽는다 — **이 B1b 사본의 값을 읽는
+# 테스트는 없다.** 이 파일을 읽던 `tos/runtime/cp3/tests/test_cp3_strategy_content.py
+# ::test_z_entry_binding_is_trunc_extreme_atr_mult_times_1000` 은 #1076 에서 삭제됐고
+# (git 이력), 런타임이 적재하는 것은 배포 트리 쪽 사본이다.
 #
 # ⚠ quantization 은 truncate_toward_zero 이므로 -1800 은 **보수적**이다:
 # 레거시가 z = -1.7999 를 진입으로 보지 않는 것과 같이, x1000 정수 -1799 는

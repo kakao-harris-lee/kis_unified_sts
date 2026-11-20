@@ -5,8 +5,12 @@
 #
 # **이 파일은 LONG 사본의 거울이다.** 원본은 `config/tos_runtime/cp3-setup-d-long/
 # strategies/setup_d_long.strategy.yaml` 이고(그 원본의 콘텐츠 원본은 B1b 실행기 쪽
-# `tos/runtime/cp3/strategies/setup_d_long.strategy.yaml` 이며, 그 파일이 **운영 로더**로
-# 적재·승인되는 것은 `tos/runtime/cp3/tests/test_cp3_strategy_content.py` 가 증명한다).
+# `tos/runtime/cp3/strategies/setup_d_long.strategy.yaml` 이다). ⚠ 그 B1b 사본의 로더
+# 적재·승인을 증명했던 `tos/runtime/cp3/tests/test_cp3_strategy_content.py` 는 #1076 에서
+# 삭제됐다(git 이력) — 지금 로더를 타는 것이 증명된 것은 **렌더된 이 배포 사본**이고
+# (`tests/unit/scripts/test_render_tenant_trees.py
+# ::test_the_rendered_tenant_strategy_loads_through_the_production_loader`), 그 테스트는
+# 커밋된 트리의 `"TBD"` 거부와 렌더된 트리의 적재를 함께 고정한다.
 # 두 배포 파일의 차이는 **방향 결속 자리뿐**이고, 그 목록은 이 트리의 `README.md` §3 과
 # `tos/runtime/tests/compose/test_tenant_tree_short.py` 의 대칭 테스트가 적는다.
 #

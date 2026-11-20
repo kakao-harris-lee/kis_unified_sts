@@ -849,9 +849,9 @@ def test_the_alias_form_parses_exactly_like_three_literals(
 
     The rendered file (anchor + two aliases) is compared against a version of itself with every
     alias written out as the literal value. Byte-different, parse-identical — which is also why
-    the B1b ↔ deployed drift guard
-    (``tos/runtime/cp3/tests/test_cp3_short_strategy_content.py``) accepts the alias form
-    unchanged: it compares ``yaml.safe_load`` output, not text.
+    the B1b <-> deployed drift guard
+    (``tos/runtime/cp3/tests/test_cp3_short_strategy_content.py``, deleted in #1076 — git
+    history) accepted the alias form unchanged: it compared ``yaml.safe_load`` output, not text.
     """
     _direction, strategy = _TENANT_TREES[tree]
     aliased_text = (rendered[tree] / strategy).read_text(encoding="utf-8")
