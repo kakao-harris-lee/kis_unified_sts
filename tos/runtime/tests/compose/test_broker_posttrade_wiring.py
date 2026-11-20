@@ -366,6 +366,39 @@ def test_the_loop_deadline_admits_one_paced_page_per_receipt_date() -> None:
     assert witness.loop_deadline_ms_for(_multi_date_scope("1", "1")) == 3_000
 
 
+def test_a_walk_the_cap_cannot_finish_is_refused_before_its_first_get() -> None:
+    """review-1132 r1 MEDIUM: past the cap the read can only end unavailable, so the session
+
+    loop must not spend ~13 s (cap + a pacer wait + a GET in flight) arriving at that.
+    """
+    clock = _StepClock()
+    witness = DeferredKisWitness(
+        lambda: "20261119",
+        loop_deadline_ms=3_000,
+        loop_deadline_max_ms=9_000,
+        loop_deadline_per_date_ms=2_000,
+        monotonic_ns=clock,
+    )
+    loop = _DeadlineWitness()
+    witness.loop_inner = loop  # type: ignore[assignment]
+
+    # Four dates: five paced GETs, the last granted at 8000 < the 9000 the cap allows — read.
+    witness.observe(_multi_date_scope("1", "2", "3", "4"))
+    assert len(loop.deadlines) == 1
+
+    # Five: the last would be granted at 10000, past the cap. No GET is attempted at all.
+    with pytest.raises(WitnessUnavailable, match="refused before its first GET"):
+        witness.observe(_multi_date_scope("1", "2", "3", "4", "5"))
+    assert len(loop.deadlines) == 1
+    assert clock.ms == 0
+
+    # Without the pacing interval the page starts are unknowable, so nothing is refused up front.
+    unscaled = DeferredKisWitness(lambda: "20261119", loop_deadline_ms=3_000)
+    unscaled.loop_inner = loop  # type: ignore[assignment]
+    unscaled.observe(_multi_date_scope("1", "2", "3", "4", "5"))
+    assert len(loop.deadlines) == 2
+
+
 def test_without_a_cap_or_a_pacing_interval_the_base_deadline_is_used_unchanged() -> (
     None
 ):

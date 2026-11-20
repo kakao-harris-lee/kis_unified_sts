@@ -85,9 +85,12 @@ witness_request_timeout_s: 5.0
 # (loop_witness_request_timeout_s 2 s) — i.e. ~7 s at one date and ~13 s at the cap, against
 # ~28 s unbounded with 5 s GETs (review-1114 M2). The 2026-11-14 comment that called ~7 s the
 # worst case counted only one pacer wait for the whole walk and only one date (#1115 N2); the
-# bound is the one written here. A scope with MORE dates than the cap admits (5+) keeps the old
-# behaviour: no verdict, fail-closed, recovered by the FETCH worker's reprojection. Raise the cap
-# only against a measured stall — the loop is also the thing that produces decisions.
+# bound is the one written here. A scope with MORE dates than the cap admits (5+) is
+# `WitnessUnavailable` as it was before, but now it is refused BEFORE the first GET: the last
+# page's pacer grant lands past the deadline whatever the broker does, so the verdict was certain
+# and the loop does not spend the ~13 s arriving at it (review-1132 r1). The release holds exactly
+# as it would have and the FETCH worker's reprojection still resolves it. Raise the cap only
+# against a measured stall — the loop is also the thing that produces decisions.
 loop_witness_request_timeout_s: 2.0
 loop_witness_deadline_ms: 3000
 loop_witness_deadline_max_ms: 9000

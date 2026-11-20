@@ -37,6 +37,7 @@ from tos_runtime.posttrade.fill_observer import (
     FillObserverConfig,
     KisMockFillObserver,
 )
+from tos_runtime.posttrade.fill_observer_plan import idle_read_delays_the_held_refresh
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow
 from tos_runtime.time.sources import ProcessMonotonicSource
@@ -335,6 +336,47 @@ def test_a_scan_waits_for_the_reserve_the_next_holdings_refresh_needs(
     observer._last_held_position_poll_ms = observer.monotonic.now_ms()
     assert observer.poll_once().polled is False
     assert broker.read_dates == [_WINDOW[0]]
+
+
+def test_losing_the_close_observation_purpose_does_not_freeze_the_idle_reads(
+    undated: SqliteEvidenceStore,
+) -> None:
+    """review-1132 r1 HIGH: a reserve owed to a refresh that is never coming blocks forever.
+
+    ``_last_held_position_poll_ms`` advances only on a pass that PLANNED a holdings refresh, and
+    planning one needs the RCL's CLOSE-observation purpose. When that purpose goes away (the
+    CLOSE went out and is uncertain, the reservation was released, a second one appeared) the
+    watermark freezes: ``interval - (now - last)`` keeps shrinking past zero, and a guard that
+    only did the arithmetic would report "too close" for the rest of the process — silencing the
+    ack-date scan AND the uncertain-send read, the two paths that exist to unstick such a tenant.
+    """
+    broker = _Broker({_ACK_DATE: (_row(ord_dt=_ACK_DATE),)})
+    observer = _observer(undated, broker)
+    _holdings_polling(observer, eligible=True)
+    observer.config = replace(
+        observer.config,
+        held_position_poll_interval_ms=36_000,
+        held_position_max_age_ms=44_000,
+    )
+    observer._last_held_position_poll_ms = observer.monotonic.now_ms() - 33_000
+
+    # Still eligible and the refresh is ~3 s out: the reserve holds, as it should.
+    assert observer.poll_once().polled is False
+    assert broker.read_dates == []
+
+    # The purpose is gone — no refresh is coming, so nothing is owed the reserve.
+    observer.held_position_eligible = lambda: False
+    assert observer.poll_once().polled is False
+    assert broker.read_dates == [_WINDOW[0]]
+
+    # The frozen watermark itself: past its own interval, the arithmetic no longer blocks
+    # even while the tenant is eligible again (that pass plans the refresh instead).
+    observer.held_position_eligible = lambda: True
+    observer._last_held_position_poll_ms = observer.monotonic.now_ms() - 40_000
+    assert (
+        idle_read_delays_the_held_refresh(observer, observer.monotonic.now_ms())
+        is False
+    )
 
 
 def test_a_tenant_that_has_never_polled_holdings_is_not_held_back(

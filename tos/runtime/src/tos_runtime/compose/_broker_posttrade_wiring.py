@@ -196,12 +196,44 @@ class DeferredKisWitness:
         dates = len(frozenset(scope.order_dates))
         return min(cap, base + max(0, dates - 1) * per_date)
 
+    def _refuse_a_walk_the_deadline_cannot_finish(
+        self, scope: WitnessScope, deadline_ms: int
+    ) -> None:
+        """Refuse BEFORE the first GET when the walk provably cannot finish (review-1132 r1).
+
+        Past what the cap admits the outcome is ``WitnessUnavailable`` either way — the last
+        order page's pacer grant lands after the deadline, so the walk is cut off. Spending the
+        whole cap plus a pacer wait and a GET in flight (~13 s at the committed numbers) on the
+        SESSION LOOP to arrive at a result that was certain before the first request is the one
+        cost worth avoiding: that thread is also the one that produces decisions. The release
+        holds exactly as it would have, and the FETCH worker's reprojection is still the path
+        that resolves it.
+
+        Only the scaled mode can say this. Without the pacing interval the page starts are not
+        knowable here, so nothing is refused up front and the read runs as it always did.
+        """
+        per_date = self._loop_deadline_per_date_ms
+        if per_date is None or self._loop_deadline_max_ms is None:
+            return
+        dates = len(frozenset(scope.order_dates))
+        last_page_starts_at = dates * per_date
+        if deadline_ms > last_page_starts_at:
+            return
+        raise WitnessUnavailable(
+            f"loop-side walk refused before its first GET: {dates} receipt date(s) need "
+            f"{dates + 1} paced GETs and the last starts at {last_page_starts_at} ms, past this "
+            f"scope's deadline {deadline_ms} ms (cap {self._loop_deadline_max_ms} ms, pacing "
+            f"{per_date} ms) — the read could only end unavailable, so the loop does not wait "
+            "for it; held, and the prefetching worker still covers this scope"
+        )
+
     def _loop_observe(self, scope: WitnessScope) -> WitnessSnapshot:
         """A live read no prefetched snapshot served — on the caller's (loop) thread, bounded."""
         witness = self._ready() if self.loop_inner is None else self.loop_inner
         deadline_ms = self.loop_deadline_ms_for(scope)
         if deadline_ms is None:
             return witness.observe(scope)
+        self._refuse_a_walk_the_deadline_cannot_finish(scope, deadline_ms)
         deadline_ns = self._monotonic_ns() + deadline_ms * 1_000_000
         return witness.observe(
             scope, deadline_expired=lambda: self._monotonic_ns() >= deadline_ns

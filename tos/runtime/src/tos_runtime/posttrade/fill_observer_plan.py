@@ -122,6 +122,19 @@ def idle_read_delays_the_held_refresh(source: _PlanSource, now: int) -> bool:
     holdings (``_last_held_position_poll_ms is None`` — the RCL has granted no CLOSE-observation
     purpose yet) likewise has no proof to invalidate: its FIRST proof has no predecessor whose
     validity window must overlap, so an idle read may precede it.
+
+    ⚠ **The reserve is only owed to a refresh that is actually coming** (review-1132 r1 HIGH).
+    ``_last_held_position_poll_ms`` advances only on a pass that PLANNED a refresh, and planning
+    one needs :func:`_held_position_is_eligible` — exactly one ``POSITION_CONSUMED`` reservation
+    in the RCL. The moment that stops holding (the CLOSE went out and is uncertain, the
+    reservation was released, a second one appeared) the watermark freezes, ``remaining`` goes
+    negative, and a guard that only did the arithmetic would answer "too close" forever: with
+    interval 36000 / deadline 4000 / pacing 2000, a tenant that polled at t=0 and lost
+    eligibility would plan no ack-date scan and no uncertain-send read for the rest of the
+    process — the two recovery paths that exist to unstick exactly that kind of tenant. So a
+    watermark that is already past its interval (no refresh is pending) and an ineligible tenant
+    (no refresh is coming) both answer False. The eligibility read is last: the cheap arithmetic
+    rules out every wide-open window first, so the RCL is consulted only in the tight one.
     """
     reserve = source.app_key_min_send_interval_ms
     interval = source.config.held_position_poll_interval_ms
@@ -134,7 +147,12 @@ def idle_read_delays_the_held_refresh(source: _PlanSource, now: int) -> bool:
         or source.mark_held_position_pending is None
     ):
         return False
-    return interval - (now - last) < reserve + source.config.poll_deadline_ms
+    remaining = interval - (now - last)
+    if remaining <= 0:
+        return False
+    if remaining >= reserve + source.config.poll_deadline_ms:
+        return False
+    return _held_position_is_eligible(source)
 
 
 def _ack_date_scope(source: _PlanSource, date: str) -> tuple[str, WitnessScope]:
