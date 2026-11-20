@@ -92,6 +92,8 @@
 ### S4 — 산문 걷어내기 (마지막, 등급 B)
 
 - 범위: `tos/src` · `tos/runtime/src` · `tools/tos_cp3` · `tools/tos_*.py` · 세 테스트 트리. `shared/` 는 건드리지 않는다.
+  2026-11-20 2차 패스에서 범위를 `tools/` 전체(=`tools/broker_probes` 추가)와 `tests/` 전체로 넓혔다 —
+  도구의 `DEFAULT_SCOPE` 가 그 범위다. `shared`·`scripts`·`services`·`cli` 거부는 그대로다.
 - 규칙: docstring 은 **첫 줄만** 남긴다. 주석만 있는 줄은 지운다(`noqa`·`type:`·`pragma`·`fmt:`·`direct-core-call:`·shebang 만 남김).
   AST/토큰 기반 도구 `tools/strip_prose.py` 로 기계적으로 — 다시 돌려도 같은 결과(멱등).
 - 같은 PR 에서: `black` · `tos_redigest --write`(네 `release.yaml`) · 크기 예산 예외 재측정(대부분 삭제) ·
@@ -99,6 +101,7 @@
 - 열린 PR 은 main 을 병합할 때 충돌 파일을 자기 쪽으로 받고 `strip_prose.py` 를 다시 돌린다.
 - 남길 «왜» 는 짧은 한 줄 주석으로 다시 적는다 — 예: «bool 이어야 한다(int 1 은 EQ 에서 다르다)» 같이 틀리면 돈이
   나가는 비직관적 제약만. 계획·리뷰·사고 경위 인용은 git 이력으로 충분하다.
+  2026-11-20: 그 한 줄은 `# SAFETY:` 로 적는다 — 도구의 `KEEP_MARKERS` 가 지키므로 다음 패스에도 살아남는다.
 
 ## 4. 목표 (측정으로만)
 

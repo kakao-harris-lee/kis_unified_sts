@@ -1,10 +1,4 @@
-"""Read-only 모의투자 probes and the offline structural probe.
-
-Probes here: P-1 (offline, no network) and P-16 (read-only quotations sampling).
-
-Neither can mutate an order: P-1 opens no socket at all, and P-16 only issues
-GETs against ``/quotations/`` paths on the mock host.
-"""
+"""Read-only 모의투자 probes and the offline structural probe."""
 
 from __future__ import annotations
 
@@ -34,10 +28,6 @@ KST = ZoneInfo("Asia/Seoul")
 _STOCK_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
 
-#: Request-field inventory as it is actually sent by the runtime. Transcribed
-#: from ``shared/execution/executor.py`` with the line each block occupies, so a
-#: reviewer can re-verify without running anything. This is a code observation,
-#: not a broker specification — the authoritative field list is N-17's job.
 _CODE_OBSERVED_REQUEST_FIELDS = {
     "stock_order_cash (executor.py:315-322)": [
         "CANO",
@@ -79,31 +69,8 @@ _CODE_OBSERVED_REQUEST_FIELDS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# P-1 — order identity (offline structural probe)
-# ---------------------------------------------------------------------------
-
-
 def probe_p1(args: argparse.Namespace) -> ProbeRun:
-    """P-1 ORDER_IDENTITY — is there a client-supplied order-id field?
-
-    Measures: ``capabilities.client_generated_order_id.status``
-    (UNKNOWN -> UNSUPPORTED or VERIFIED).
-
-    This probe issues NO request. Behavioural probing cannot answer the question:
-    absence of an echo proves nothing about the field's existence in the spec.
-    What it can do honestly is two things:
-
-    1. record the exact request-field inventory the runtime sends today
-       (:data:`_CODE_OBSERVED_REQUEST_FIELDS`), and
-    2. re-verify by grep that no client-identifier field appears in any order
-       body in the repo — an anti-phantom check for the *absence* claim in the
-       draft memo §3.1 row 1.
-
-    The authoritative determination is N-17 (official-spec cross-check). Until
-    N-17 lands, the honest status is UNKNOWN, not UNSUPPORTED: our not sending a
-    field is not evidence that the broker offers none.
-    """
+    """P-1 ORDER_IDENTITY — is there a client-supplied order-id field?"""
     spec = get("P-1")
     run = ProbeRun(
         probe_id=spec.probe_id,
@@ -120,7 +87,6 @@ def probe_p1(args: argparse.Namespace) -> ProbeRun:
         raise ProbeError(f"expected {executor} to exist")
     text = executor.read_text(encoding="utf-8")
 
-    # Anti-phantom: verify the ABSENCE claim by grep, not by assertion.
     candidates = ["ORD_ID", "CLNT_ORD", "CLIENT_ORDER", "CLORDID", "USER_ORD", "MY_ORD"]
     found = {
         token: len(re.findall(token, text, flags=re.IGNORECASE)) for token in candidates
@@ -152,32 +118,8 @@ def probe_p1(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-# ---------------------------------------------------------------------------
-# P-16 — broker time
-# ---------------------------------------------------------------------------
-
-
 def probe_p16(args: argparse.Namespace) -> ProbeRun:
-    """P-16 BROKER_TIME — broker clock vs local KST skew.
-
-    Measures: ``capabilities.broker_time.timezone`` / ``precision`` / skew bound.
-
-    Context (draft §3.1 row 16): ``grep server_time|broker_time`` over
-    ``shared/kis/`` returns 0 hits — the runtime uses the local clock everywhere
-    (``executor.py:546``, ``:449``, ``:452``). If the broker does not expose a
-    server timestamp at all, that itself is the finding and BROKER_TIME stays
-    UNKNOWN.
-
-    Method: repeated read-only quotations calls; for each, capture the HTTP
-    ``Date`` header and any timestamp-looking body field, and compute the signed
-    skew against the local KST clock taken at request midpoint.
-
-    Statistic: the bound is ``max |skew|`` plus margin, but the SIGN distribution
-    is reported separately — a consistently one-sided skew is a different hazard
-    from symmetric jitter and must not be collapsed into an absolute value.
-    Network round-trip is an unavoidable additive error; half the round-trip is
-    recorded per sample so the approver can discount it.
-    """
+    """P-16 BROKER_TIME — broker clock vs local KST skew."""
     spec = get("P-16")
     if not args.symbol:
         raise ProbeError("--symbol is required (a benign quotations target)")

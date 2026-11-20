@@ -1,77 +1,4 @@
-"""REAL-MONEY order-emitting probe — the ONLY module here that can place a live order.
-
-⚠⚠⚠ THIS MODULE SUBMITS ORDERS TO A REAL BROKERAGE ACCOUNT WITH REAL CAPITAL AT
-RISK. ⚠⚠⚠ Every other order-capable probe in this package is 모의투자-only by
-construction (``tools/broker_probes/probes_order.py`` — ``assert_mock_host`` +
-``assert_mock_trading_tr`` before any socket), and the real-token probes are
-GET-only by construction (``tools/broker_probes/probes_real.py`` — a three-way
-allowlist and *no POST helper anywhere in the module*). This module is neither.
-
-Why it exists in its own file
------------------------------
-``probes_real.py``'s structural safety property is the *absence* of an order path:
-"There is no POST helper in this module. ``_get`` is the only transport."
-(:12). That property is a committed canary — ``tests/tools/
-test_broker_probes_real_order.py::test_get_only_real_module_still_has_no_order_path``
-fails if it erodes. Adding an order path there would destroy it for every future
-reader of that file. The dangerous capability therefore lives here, alone, named
-in the filename, and guarded independently.
-
-Why it exists at all
---------------------
-``config/execution.yaml::futures_fill_check_timeout_seconds`` is ``1.0`` s, while
-the MOCK environment measured accept→query-visible latency at p50 **2632.9 ms**
-(P-5, ``P-5-20260731T014143Z``, n=100, errors 0, censored 0). If the real
-environment behaves like mock, that fill check is structurally unable to observe
-the median fill. The mock number must NOT be fitted to — wave-3b recorded the
-timeout change as explicitly NOT IN SCOPE precisely because "it must be
-calibrated against a REAL-environment measurement". This probe takes that
-measurement, and nothing here approves anything: every number is
-``candidate_only`` and the Bounds-Approver judges sample adequacy.
-
-Two stages, and stage 2 is unreachable unless stage 1 passed
-------------------------------------------------------------
-**Stage 1 — ``P-R5-PRE``. GET-only, zero risk, runs alone.** Establishes whether
-stage 2 is even legitimate and records everything needed to judge the risk:
-account identity fingerprint (SHA-256, masked — never the raw number) matched
-against an operator-supplied expectation, real host + real *trading* TR actually
-answering (the campaign learned the real domain serves mock appkeys on QUOTE TRs
-and rejects trading TRs with ``EGW02004``, so quote success does not prove
-trading credentials), order-available amount, current positions, pre-existing
-open orders, the market session state, the touch price, the daily price band and
-the tick. It aborts — with an artifact, never silently — on any of the refusal
-conditions enumerated in :func:`probe_real_preflight`.
-
-**Stage 2 — ``P-R5``. Real money.** Requires ALL of: ``--confirm``, the
-un-abbreviable long-form flag :data:`REAL_ORDER_CONFIRM_FLAG`, a fresh
-successful stage-1 artifact passed by path *whose assertions stage 2 re-takes
-live rather than trusting*, an explicit ``--max-notional-krw`` it computes
-against, hard caps on ``--samples``, ``--quantity`` and cumulative notional, and
-the smallest registered contract (asserted from
-``config/execution.yaml::futures_contract_spec``, never assumed).
-
-Fill avoidance is a hard requirement, not a preference
-------------------------------------------------------
-A fill is a **safety event, not a data point**. Each trial places one RESTING
-limit order priced away from the touch, cancels it immediately after the
-measurement, verifies the cancel, and aborts the whole run rather than placing
-another order if a cancel fails or any fill (even partial) is seen.
-
-Reused, deliberately, from the mock harness
--------------------------------------------
-:func:`~tools.broker_probes.probes_order.odno_key` (harness defect #3 — the
-accept response zero-pads and the query row space-pads the same order number),
-:class:`~tools.broker_probes.probes_order._CallPacer` and
-:func:`~tools.broker_probes.probes_order.effective_interval_ms` (harness defect
-#1 — an unpaced quote-then-submit pair already exceeds the measured clean rate,
-and a requested poll interval below the pace never happened),
-:func:`~tools.broker_probes.probes_order.snap_to_tick` and
-:func:`~tools.broker_probes.probes_order.summarize_latencies`. These are the
-campaign's canonical implementations; re-deriving them here would make the real
-measurement non-comparable with P-5, which is the entire point of taking it.
-:class:`~tools.broker_probes.probes_order.MockTradingClient` is NOT imported —
-it asserts the mock host and could not serve this probe anyway.
-"""
+"""REAL-MONEY order-emitting probe — the ONLY module here that can place a live order."""
 
 from __future__ import annotations
 
@@ -135,70 +62,25 @@ KST = ZoneInfo("Asia/Seoul")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MARKET_SCHEDULE_CONFIG = _REPO_ROOT / "config" / "market_schedule.yaml"
 
-# ---------------------------------------------------------------------------
-# Endpoints. Paths and TR ids are cited, never invented.
-# ---------------------------------------------------------------------------
 
-#: 선물옵션 주문 / 정정취소주문 / 주문체결내역조회 — the same three paths the
-#: runtime uses (``shared/execution/executor.py`` futures order body, cancel and
-#: ``_inquire_futures_fill_status``), so what is measured is what the runtime
-#: sends. TR ids come from the audited SoT ``shared/execution/tr_ids.py``
-#: (``futures_*_day_real``), never from a literal here.
 _ORDER_PATH = "/uapi/domestic-futureoption/v1/trading/order"
 _CANCEL_PATH = "/uapi/domestic-futureoption/v1/trading/order-rvsecncl"
 _INQUIRE_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-ccnl"
 
-#: 선물옵션 시세 [v1_국내선물-006] — the touch, the daily price band and the
-#: circuit-breaker band. Official wrapper
-#: ``examples_llm/domestic_futureoption/inquire_price/inquire_price.py``
-#: (read 2026-07-31 via ``kis-code-assistant-mcp``); TR ``FHMIF10000000`` for
-#: both real and demo per that file's own ``env_dv`` table.
 _PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
 _PRICE_TR = "FHMIF10000000"
 
-#: 선물옵션 총자산현황 [v1_국내선물-014], TR ``CTRP6550R``. Official wrapper
-#: ``examples_llm/domestic_futureoption/inquire_deposit/inquire_deposit.py``
-#: (params: ``CANO`` + ``ACNT_PRDT_CD`` only). Its ``chk_`` companion's
-#: ``COLUMN_MAPPING`` names the two fields this probe reads:
-#: ``ord_psbl_cash`` = 주문가능현금, ``ord_psbl_tota`` = 주문가능총액.
-#:
-#: A literal rather than a ``get_tr_ids()`` lookup for the same reason
-#: ``probes_order._STOCK_DAILY_CCLD_TR_MOCK`` is one: the audited SoT covers the
-#: order/cancel/inquire TRs the runtime *sends*, and this inquiry is not one of
-#: them. Adding it there would imply a runtime adoption that has not happened.
 _DEPOSIT_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-deposit"
 _DEPOSIT_TR = "CTRP6550R"
 
-#: 선물옵션 잔고현황 [v1_국내선물-004], real TR ``CTFO6118R`` (demo ``VTFO6118R``,
-#: unused here). Same wrapper family; ``output1`` rows carry ``cblc_qty``
-#: (잔고수량) and ``lqd_psbl_qty`` (청산가능수량), ``output2`` the account
-#: summary. ``shared/kis/client.py:1048`` already sends this exact TR on this
-#: exact path, so the shape is corroborated inside this repo.
 _BALANCE_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-balance"
 _BALANCE_TR = "CTFO6118R"
 
-#: 선물옵션 주문가능 [v1_국내선물-005], real TR ``TTTO5105R``. Official wrapper
-#: ``examples_llm/domestic_futureoption/inquire_psbl_order/inquire_psbl_order.py``;
-#: required params ``CANO``/``ACNT_PRDT_CD``/``PDNO``/``SLL_BUY_DVSN_CD``/
-#: ``UNIT_PRICE``/``ORD_DVSN_CD``. ``output.ord_psbl_qty`` = 주문가능수량 —
-#: an order-available QUANTITY at a specific price, which is the number that
-#: actually decides whether one contract can be sent.
 _PSBL_ORDER_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-psbl-order"
 _PSBL_ORDER_TR = "TTTO5105R"
 
-#: 선물옵션 주문체결내역조회, real day TR. A LITERAL here because
-#: :data:`PREFLIGHT_ALLOWLIST` is a module-level constant and must not import
-#: shared config at module scope — but a literal that could silently diverge from
-#: the audited SoT is exactly the kind of drift this campaign refuses, so
-#: :func:`assert_inquire_tr_matches_sot` cross-checks it against
-#: ``shared/execution/tr_ids.py::get_tr_ids()['futures_inquire_day_real']`` at
-#: run time and fails loudly on a mismatch. Stage 2 sends the SoT value, never
-#: this constant.
 _INQUIRE_TR_REAL = "TTTO5201R"
 
-#: Complete stage-1 allowlist. Stage 1's only transport is a GET gated on this
-#: tuple, so an order mutation is structurally unreachable from the preflight
-#: even if a path or TR is passed in from the command line.
 PREFLIGHT_ALLOWLIST: tuple[ReadOnlyCall, ...] = (
     ReadOnlyCall(
         _DEPOSIT_TR,
@@ -236,13 +118,7 @@ PREFLIGHT_ALLOWLIST: tuple[ReadOnlyCall, ...] = (
 
 
 def assert_inquire_tr_matches_sot() -> str:
-    """Cross-check :data:`_INQUIRE_TR_REAL` against the audited TR-id SoT.
-
-    Returns the SoT value, which is what stage 2 actually sends. Raises if the
-    two disagree: an allowlist entry that no longer matches the TR the runtime
-    would use is a silent-divergence defect, and this probe's whole claim is
-    that it measures what the runtime measures.
-    """
+    """Cross-check :data:`_INQUIRE_TR_REAL` against the audited TR-id SoT."""
     from shared.execution.tr_ids import get_tr_ids
 
     sot = get_tr_ids()["futures_inquire_day_real"]
@@ -256,70 +132,29 @@ def assert_inquire_tr_matches_sot() -> str:
     return sot
 
 
-# ---------------------------------------------------------------------------
-# Hard caps — ceilings the CLI cannot raise. A flag may only ask for less.
-# ---------------------------------------------------------------------------
-
-#: The long-form stage-2 authorisation flag. Spelled out in full because a
-#: shortened form must never arm real orders: :func:`add_real_order_args` sets
-#: ``parser.allow_abbrev = False`` so argparse cannot accept a prefix of it.
 REAL_ORDER_CONFIRM_FLAG = "--i-understand-this-places-real-orders"
 _CONFIRM_DEST = "i_understand_this_places_real_orders"
 
-#: One contract, always. Not a default — a ceiling. The exposure of a trial is
-#: ``multiplier x price x quantity`` and there is no measurement question this
-#: probe answers better with two contracts than with one.
 HARD_MAX_QUANTITY = 1
 
-#: Ceiling on ``--samples``. P-5 ran n=100 on 모의투자; a real-money run buys its
-#: samples with real exposure, so the count is deliberately small and the
-#: resulting bound is deliberately labelled a small-sample candidate.
 HARD_MAX_SAMPLES = 10
 
-#: Default ``--samples`` for this probe, overriding the shared harness default of
-#: 30. The shared default was chosen for mock probes where a sample is free; here
-#: it exceeds :data:`HARD_MAX_SAMPLES` outright, so leaving it would make the
-#: default invocation abort — fail-closed, but a confusing way to greet an
-#: operator. :func:`add_real_order_args` lowers it.
 DEFAULT_REAL_SAMPLES = 3
 
-#: Ceiling on ``--order-class-ramp-attempts``. The ramp exists to yield ONE real
-#: order-class observation, not a rate curve.
 HARD_MAX_RAMP_ATTEMPTS = 4
 
-#: Ceiling on ``--cancel-retry-attempts``. Beyond this the run aborts and reports
-#: the resting order id; retrying forever is how an order gets forgotten.
 HARD_MAX_CANCEL_RETRIES = 5
 
-#: Ceiling on ``--stage1-max-age-s``. A stale preflight is worse than none: it
-#: attests to an account state that has had time to change.
 HARD_MAX_STAGE1_AGE_S = 3600.0
 
-#: Ceiling on ``--max-pages`` for the end-of-run continuation walk.
 HARD_MAX_PAGES = 10
 
-#: Resting offset default for the REAL environment, overriding the mock
-#: harness's 10 %. KOSPI200 futures trade inside a staged daily price band, so a
-#: limit 10 % from the touch can fall OUTSIDE it and be rejected outright — the
-#: order would be spent on a rejection rather than a measurement. 5 % sits inside
-#: the first band while still requiring an implausible intraday move to fill.
 DEFAULT_REAL_RESTING_OFFSET_PCT = 5.0
 
-#: Independent floor the computed price must clear, checked separately from the
-#: offset that produced it. Deliberately a different number from
-#: :data:`DEFAULT_REAL_RESTING_OFFSET_PCT`: if the offset is lowered on the
-#: command line, this assertion still refuses. A check derived from the same
-#: knob it is checking would be a tautology.
 DEFAULT_MIN_TOUCH_DISTANCE_PCT = 3.0
 
-#: Minimum session time that must remain when a run starts. The exchange will
-#: not accept a cancel after the close, so a run that could be interrupted by it
-#: is refused rather than started.
 DEFAULT_MIN_SESSION_REMAINING_S = 1800.0
 
-# ---------------------------------------------------------------------------
-# Verdicts. Every abort has a name, and the name goes in the artifact.
-# ---------------------------------------------------------------------------
 
 VERDICT_PREFLIGHT_READY = "READY_FOR_STAGE_2"
 VERDICT_COMPLETED = "COMPLETED"
@@ -352,15 +187,7 @@ ABORT_SUBMIT_REJECTED = "ABORT_SUBMIT_REJECTED"
 
 
 class RealOrderAbort(ProbeError):
-    """A guard stopped the run. The abort IS the result, so it gets an artifact.
-
-    Distinct from :class:`~tools.broker_probes.common.SafetyViolation`, which is
-    reserved for harness misuse (a missing authorisation flag, a mock host, a
-    mock TR on the real path). A ``SafetyViolation`` means no observation
-    happened and ``run.py`` deliberately writes no artifact; a ``RealOrderAbort``
-    means something about the account, the market or the computed order was
-    observed and must be recorded.
-    """
+    """A guard stopped the run. The abort IS the result, so it gets an artifact."""
 
     def __init__(self, verdict: str, message: str) -> None:
         super().__init__(f"{verdict}: {message}")
@@ -368,20 +195,8 @@ class RealOrderAbort(ProbeError):
         self.detail = message
 
 
-# ---------------------------------------------------------------------------
-# Structural guards — SafetyViolation only. These mean the harness is misused.
-# ---------------------------------------------------------------------------
-
-
 def assert_real_host(url: str) -> None:
-    """Reject any URL that is not the KIS REAL (실전) REST host.
-
-    The mirror image of ``common.assert_mock_host``, and it exists for a
-    measurement reason as well as a safety one: this probe's whole value is that
-    its numbers come from the real environment. A call that silently went to
-    ``openapivts`` would produce a MOCK number wearing a ``REAL_PROD`` label,
-    which is worse than no number at all.
-    """
+    """Reject any URL that is not the KIS REAL (실전) REST host."""
     host = urlparse(url).hostname or ""
     if host != REAL_HOST:
         raise SafetyViolation(
@@ -392,14 +207,7 @@ def assert_real_host(url: str) -> None:
 
 
 def assert_real_trading_tr(tr_id: str) -> None:
-    """Reject a trading TR that is not a real (non-``V``-prefixed) TR.
-
-    Convention from ``config/kis/tr_ids.yaml`` / ``shared/execution/tr_ids.py``:
-    mock trading TRs are ``V``-prefixed (``VTTO1101U``), real ones are ``T``/
-    ``S``/``C``-prefixed (``TTTO1101U``, ``STTN1101U``, ``CTFO6118R``). A mock TR
-    sent to the real host is rejected by the broker, and that rejection would be
-    recorded as a real-environment observation.
-    """
+    """Reject a trading TR that is not a real (non-``V``-prefixed) TR."""
     tr = (tr_id or "").strip().upper()
     if not tr:
         raise SafetyViolation("empty tr_id passed to a real trading call")
@@ -412,15 +220,9 @@ def assert_real_trading_tr(tr_id: str) -> None:
 
 
 def assert_real_order_confirmation(args: argparse.Namespace) -> None:
-    """Refuse live mode without the long-form authorisation flag.
-
-    Two independent things must both be true — the campaign-wide ``--confirm``
-    and this probe's own :data:`REAL_ORDER_CONFIRM_FLAG`. ``--confirm`` alone is
-    what every mock probe needs, so a muscle-memory invocation lands in dry-run
-    here instead of on a real account.
-    """
+    """Refuse live mode without the long-form authorisation flag."""
     if not getattr(args, "confirm", False):
-        return  # dry-run: nothing is sent, so nothing needs authorising
+        return
     if getattr(args, _CONFIRM_DEST, False) is not True:
         raise SafetyViolation(
             "REFUSED: live mode on a REAL brokerage account requires the "
@@ -429,24 +231,6 @@ def assert_real_order_confirmation(args: argparse.Namespace) -> None:
             "of it will do. Re-read docs/runbooks/kis-capability-probes.md "
             "§5.7 before passing it."
         )
-
-
-# ---------------------------------------------------------------------------
-# Field parsing — absent/unparseable is NEVER folded into zero
-# ---------------------------------------------------------------------------
-
-# ``_decimal_field`` and ``_corroborate_tick`` used to live here. They were pure
-# already, and a GET-only probe needs them — but reaching them meant importing
-# THIS module, the only one here that can place a REAL-money order, which also
-# imports ``probes_order`` (itself order-emitting on 모의) at module level —
-# so one import would have put BOTH order paths into a read-only module's
-# graph, which the canaries at
-# ``test_broker_probes_real_order.py::test_get_only_real_module_does_not_import_the_real_order_module``
-# and ``test_broker_probes_ca.py::test_module_does_not_import_order_capable_modules``
-# exist to forbid. They now live in the stdlib-only ``_tick_math`` and are
-# re-exported here under their original private names, so every call site in
-# this file and the existing test that reaches ``pro._corroborate_tick`` are
-# unchanged. Address moved; behaviour did not.
 
 
 def _int_field(container: Any, key: str) -> int | None:
@@ -478,20 +262,8 @@ def _reject(parsed: Any) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Account / market / instrument guards — RealOrderAbort, so an artifact survives
-# ---------------------------------------------------------------------------
-
-
 def assert_account_fingerprint(actual: str, expected: str) -> None:
-    """Refuse unless the wired account is the one the operator named.
-
-    The expectation arrives as a flag, not from a config file, so a mis-wired
-    credential (the campaign's own wave-3 finding — four different app-key pairs
-    on one host, three of them mock) cannot place an order on an unintended
-    account. Only the SHA-256 fingerprint is compared and only the fingerprint
-    is recorded; the raw account number never enters an artifact.
-    """
+    """Refuse unless the wired account is the one the operator named."""
     expected_clean = (expected or "").strip().lower()
     if not expected_clean:
         raise RealOrderAbort(
@@ -511,14 +283,7 @@ def assert_account_fingerprint(actual: str, expected: str) -> None:
 
 
 def market_session_state(now: datetime) -> dict[str, Any]:
-    """The futures day-session state, read from config (never hardcoded hours).
-
-    Both the window and the holiday list come from
-    ``config/market_schedule.yaml`` (``market_schedule.futures.regular`` and the
-    top-level ``holidays``). Fail-closed: any read or parse failure yields
-    ``open=False`` with the reason, because a probe that cannot establish the
-    session must not place an order inside it.
-    """
+    """The futures day-session state, read from config (never hardcoded hours)."""
     state: dict[str, Any] = {
         "now_kst": now.strftime("%Y-%m-%d %H:%M:%S"),
         "source": "config/market_schedule.yaml::market_schedule.futures.regular",
@@ -560,15 +325,7 @@ def market_session_state(now: datetime) -> dict[str, Any]:
 
 
 def assert_market_open(now: datetime, *, min_remaining_s: float) -> dict[str, Any]:
-    """Refuse outside the futures day session, and refuse near the close.
-
-    The close guard is not conservatism for its own sake: the exchange will not
-    accept a cancel after it, so a run that could be interrupted by the close is
-    a run that could leave a resting order behind. There is deliberately no
-    override flag — ``probes_real.py``'s ``--ignore-session-window`` exists
-    because a read-only call outside a window merely produces a weaker
-    observation, whereas an order outside one produces exposure.
-    """
+    """Refuse outside the futures day session, and refuse near the close."""
     state = market_session_state(now)
     if not state["open"]:
         raise RealOrderAbort(ABORT_MARKET_CLOSED, str(state["reason"]))
@@ -584,14 +341,7 @@ def assert_market_open(now: datetime, *, min_remaining_s: float) -> dict[str, An
 
 
 def assert_order_available(deposit_output: Any, parsed: Any) -> dict[str, Any]:
-    """Refuse unless the broker reports a positive order-available amount.
-
-    Reads ``ord_psbl_cash`` (주문가능현금) and ``ord_psbl_tota`` (주문가능총액)
-    from ``CTRP6550R``. Unreadable and zero are the same refusal by design: the
-    campaign's own account census shows an account can answer a query and still
-    be unfunded, and a probe that could not read the amount has not established
-    that it is positive.
-    """
+    """Refuse unless the broker reports a positive order-available amount."""
     if not _ok(parsed):
         raise RealOrderAbort(
             ABORT_ACCOUNT_STATE_UNREADABLE,
@@ -626,14 +376,7 @@ def assert_order_available(deposit_output: Any, parsed: Any) -> dict[str, Any]:
 
 
 def assert_flat_account(parsed: Any) -> dict[str, Any]:
-    """Refuse unless the account holds no futures position at all.
-
-    A pre-existing position makes every later observation unattributable: a
-    quantity change could be this probe's fill or someone else's, and the fill
-    guard exists precisely to stop the run on the first sign of one. An
-    unanswered balance query is refused for the same reason an unreadable
-    deposit is — absence of evidence is not evidence of flatness.
-    """
+    """Refuse unless the account holds no futures position at all."""
     if not _ok(parsed):
         raise RealOrderAbort(
             ABORT_ACCOUNT_STATE_UNREADABLE,
@@ -675,16 +418,7 @@ def assert_flat_account(parsed: Any) -> dict[str, Any]:
 
 
 def assert_no_preexisting_open_orders(parsed: Any, symbol: str) -> dict[str, Any]:
-    """Refuse if the account already has orders in today's order/fill listing.
-
-    Beyond the enumerated preconditions, and deliberately: a foreign resting
-    order on the same account is a second order source. Its fill would land in
-    the same query surface this probe reads, and the campaign already learned
-    that a query row's ``qty > 0`` is NOT a reliable "still cancellable"
-    predicate (2026-07-31 semantics #2 — five of six such rows refused a
-    cancel). So the refusal is on the presence of rows at all, and the operator
-    resolves them by hand.
-    """
+    """Refuse if the account already has orders in today's order/fill listing."""
     if not _ok(parsed):
         raise RealOrderAbort(
             ABORT_ACCOUNT_STATE_UNREADABLE,
@@ -713,19 +447,7 @@ def assert_no_preexisting_open_orders(parsed: Any, symbol: str) -> dict[str, Any
 
 
 def resolve_smallest_contract(symbol: str) -> tuple[Any, Tick, dict[str, Any]]:
-    """Resolve ``symbol``'s contract spec and refuse anything but the smallest.
-
-    The multiplier is READ, never assumed. The campaign established that the mini
-    contract's multiplier is 1/5 of the full one, and this function records the
-    observed ratio rather than asserting the fraction: if
-    ``config/execution.yaml::futures_contract_spec`` ever registers a third
-    product, the guard still resolves "smallest" correctly and the recorded ratio
-    tells a reader what it actually was.
-
-    Raises:
-        RealOrderAbort: no spec matches ``symbol``, or the matched spec is not
-            the smallest-multiplier product in the registry.
-    """
+    """Resolve ``symbol``'s contract spec and refuse anything but the smallest."""
     from shared.instruments.contract_spec import (
         ContractSpecRegistry,
         resolve_contract_spec,
@@ -780,11 +502,6 @@ def resolve_smallest_contract(symbol: str) -> tuple[Any, Tick, dict[str, Any]]:
     return spec, tick, record
 
 
-# ---------------------------------------------------------------------------
-# The resting order plan — computed once, re-asserted at every send
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class RestingPlan:
     """One tick-valid, band-valid, cap-valid resting order, with its evidence."""
@@ -826,12 +543,7 @@ class RestingPlan:
 def notional_krw(
     *, touch: float, price: TickPrice, multiplier: int, quantity: int
 ) -> Decimal:
-    """Conservative KRW exposure of one order: the greater price leg is used.
-
-    A resting BUY fills at its own limit, which is BELOW the touch, so the touch
-    overstates the exposure — deliberately. A cap that binds on the larger of the
-    two numbers can only refuse too eagerly, never too late.
-    """
+    """Conservative KRW exposure of one order: the greater price leg is used."""
     reference = max(Decimal(str(touch)), Decimal(price.wire))
     return reference * Decimal(int(multiplier)) * Decimal(int(quantity))
 
@@ -848,25 +560,7 @@ def plan_resting_order(
     offset_pct: float,
     min_distance_pct: float,
 ) -> RestingPlan:
-    """Compute a resting BUY limit and assert every property before it can be sent.
-
-    Order of business, all of which must hold:
-
-    1. the touch is a positive number the broker actually reported;
-    2. the daily price band is readable (an unreadable band aborts — a limit
-       outside the band is rejected outright and spends a real order on nothing);
-    3. the price is snapped AWAY from the touch to an exact tick multiple
-       (``snap_to_tick`` derives the direction from side/marketable, so it can
-       only widen the resting gap);
-    4. the snapped price clears ``min_distance_pct`` — checked against a number
-       that is NOT the offset which produced it, so lowering the offset does not
-       silently lower the floor;
-    5. the snapped price lies inside the daily band.
-
-    Raises:
-        RealOrderAbort: any of the above fails. Nothing has been sent at this
-            point, and the abort names which property failed.
-    """
+    """Compute a resting BUY limit and assert every property before it can be sent."""
     side = "BUY"
     if touch <= 0:
         raise RealOrderAbort(
@@ -928,12 +622,7 @@ def assert_resting_plan_price(
     band_high: Decimal,
     min_distance_pct: float,
 ) -> None:
-    """The three price assertions, factored out so the send path can re-take them.
-
-    Re-checking at send time is not belt-and-braces theatre: a plan is computed
-    once and reused across trials while the touch moves, and these are the
-    assertions whose failure has a trading consequence.
-    """
+    """The three price assertions, factored out so the send path can re-take them."""
     exact = Decimal(price.wire)
     if exact % tick.size != 0:
         raise RealOrderAbort(
@@ -961,13 +650,7 @@ def assert_resting_plan_price(
 
 @dataclass
 class RunBudget:
-    """The single gate every order in this run passes through.
-
-    Holds the caps AND the running totals, so "is this order allowed" is one
-    question with one answer. :meth:`authorize` is called from inside the submit
-    path, which is what makes the caps unbypassable: there is no other way to
-    reach the wire.
-    """
+    """The single gate every order in this run passes through."""
 
     max_samples: int
     max_notional_krw: Decimal
@@ -1029,22 +712,7 @@ def build_real_futures_order_body(
     acnt_prdt_cd: str,
     plan: RestingPlan,
 ) -> dict[str, str]:
-    """The ONLY order-body builder that targets a real account.
-
-    Byte-for-byte the shape ``shared/execution/executor.py`` sends for a futures
-    limit order, so what is measured is what the runtime does:
-    ``ORD_DVSN_CD="01"`` is 지정가 (executor's ``_map_futures_order_type`` maps
-    internal LIMIT to it), and the two [필수] quote fields carry the explicit
-    ``("01", "0")`` pair that ``_FUTURES_NMPR_CODES`` derives from it — the
-    values the official wrapper's own enumeration gives (``nmpr_type_cd``
-    ``01:지정가``, ``krx_nmpr_cndt_cd`` ``0:없음``). P-NMPR established on
-    모의투자 that a blank behaves as ``01``; that finding does NOT transfer to
-    실전, so the explicit form is the only one this module ever sends.
-
-    ``UNIT_PRICE`` carries ``plan.price.wire``, an exact tick multiple rendered
-    as fixed-point — never a float repr, which is how a ``0.05`` multiple reaches
-    a broker as ``372.15000000000003`` and comes back as 호가단위 오류.
-    """
+    """The ONLY order-body builder that targets a real account."""
     return {
         "ORD_PRCS_DVSN_CD": "02",
         "CANO": cano,
@@ -1061,19 +729,8 @@ def build_real_futures_order_body(
     }
 
 
-# ---------------------------------------------------------------------------
-# Clients
-# ---------------------------------------------------------------------------
-
-
 class PreflightClient:
-    """Stage 1's transport. GET-only, allowlisted, paced. No order path exists.
-
-    Structurally identical in spirit to ``probes_real.py``: one transport, gated
-    by :func:`~tools.broker_probes.common.assert_read_only_call` against
-    :data:`PREFLIGHT_ALLOWLIST`, which contains no order path and no order TR.
-    Stage 1 cannot place an order even if the command line asks it to.
-    """
+    """Stage 1's transport. GET-only, allowlisted, paced. No order path exists."""
 
     def __init__(self, creds: Any, auth_manager: Any, *, pace_s: float) -> None:
         import requests
@@ -1103,13 +760,7 @@ class PreflightClient:
 
 
 class RealOrderClient:
-    """Stage 2's transport. Can POST an order to a real account.
-
-    Everything funnels through :meth:`_request`, which is the single paced socket
-    site and re-asserts the real host on every call. :meth:`submit_resting`
-    re-takes the plan's price assertions and calls :meth:`RunBudget.authorize`
-    *before* building a body, so no send path can skip the caps.
-    """
+    """Stage 2's transport. Can POST an order to a real account."""
 
     def __init__(
         self,
@@ -1138,7 +789,6 @@ class RealOrderClient:
     def close(self) -> None:
         self.session.close()
 
-    # -- transport -------------------------------------------------------
     def _request(
         self,
         method: str,
@@ -1148,15 +798,7 @@ class RealOrderClient:
         params: dict[str, Any] | None = None,
         body: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any], float, str]:
-        """The one socket site: host-asserted, header-first, then paced, then sent.
-
-        Ordering is the mock harness's and is deliberate — ``get_auth_headers``
-        may itself issue a token request, so it happens BEFORE the pacing gate
-        and is absorbed into the wait rather than landing between the release
-        instant and the wire. The release instant is the only honest ``t0``: a
-        timestamp taken before the gate would charge the pacing sleep to the
-        broker and inflate every accept→visible sample by roughly ``--pace-s``.
-        """
+        """The one socket site: host-asserted, header-first, then paced, then sent."""
         assert_real_host(url)
         headers = dict(self.auth.get_auth_headers())
         headers["tr_id"] = tr_id
@@ -1199,7 +841,6 @@ class RealOrderClient:
         _status, parsed, _ms, _text = self._request("GET", url, tr_id, params=params)
         return parsed
 
-    # -- domain ----------------------------------------------------------
     def quote(self, symbol: str) -> dict[str, Any]:
         return self.quote_call(
             _PRICE_PATH,
@@ -1210,16 +851,7 @@ class RealOrderClient:
     def submit_resting(
         self, plan: RestingPlan
     ) -> tuple[str | None, dict[str, Any], int]:
-        """Authorise, re-assert, build, send. In that order, with no shortcut.
-
-        Returns ``(odno, parsed, http_status)``. ``odno`` is the VERBATIM accept
-        form — the zero-padded string the broker will accept back as
-        ``ORGN_ODNO`` for a cancel — and is ``None`` unless the order was
-        accepted. Canonicalisation via ``odno_key`` is for COMPARISON only and
-        must never reach a request body (harness defect #3). The HTTP status is
-        returned because the throttle signal has a transport arm (429) as well
-        as a body arm (``EGW00201``).
-        """
+        """Authorise, re-assert, build, send. In that order, with no shortcut."""
         assert_resting_plan_price(
             price=plan.price,
             touch=plan.touch,
@@ -1305,29 +937,13 @@ class RealOrderClient:
         return parsed
 
 
-# ---------------------------------------------------------------------------
-# Fill detection — three states, and two of them abort
-# ---------------------------------------------------------------------------
-
 FILL_NONE = "NO_FILL"
 FILL_PARTIAL_OR_FULL = "FILLED"
 FILL_UNKNOWN = "UNKNOWN"
 
 
 def classify_fill(row: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Read a fill state off one inquire-ccnl row. Never guesses.
-
-    Field names are the runtime's own (``executor.py``'s row parse):
-    ``tot_ccld_qty`` total filled, ``qty`` remaining, ``ord_qty`` ordered,
-    ``avg_idx`` average fill index.
-
-    ``UNKNOWN`` is returned when the filled-quantity field is absent or
-    unparseable on a row that IS ours. That is a distinct outcome from
-    ``NO_FILL``, and the caller aborts on it: on a real-money probe, "we could
-    not tell whether it filled" must not resolve to "it did not fill". This
-    mirrors the three-state ``FillQueryOutcome`` the runtime adopted for exactly
-    this ambiguity.
-    """
+    """Read a fill state off one inquire-ccnl row. Never guesses."""
     filled = _int_field(row, "tot_ccld_qty")
     record = {
         "tot_ccld_qty": filled,
@@ -1344,11 +960,7 @@ def classify_fill(row: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 def assert_no_fill(row: dict[str, Any], *, context: str) -> dict[str, Any]:
-    """Abort the run on a fill, or on an unreadable fill state.
-
-    A fill is a safety event, not a data point: the account now holds a position
-    the probe did not intend and cannot flatten on its own.
-    """
+    """Abort the run on a fill, or on an unreadable fill state."""
     state, record = classify_fill(row)
     if state == FILL_PARTIAL_OR_FULL:
         raise RealOrderAbort(
@@ -1365,11 +977,6 @@ def assert_no_fill(row: dict[str, Any], *, context: str) -> dict[str, Any]:
             "report the row verbatim.",
         )
     return record
-
-
-# ---------------------------------------------------------------------------
-# Stage 1 — PREFLIGHT. GET only.
-# ---------------------------------------------------------------------------
 
 
 def _preflight_setup(
@@ -1439,37 +1046,11 @@ def _preflight_market_and_instrument(
 
 
 def probe_real_preflight(args: argparse.Namespace) -> ProbeRun:
-    """P-R5-PRE — GET-only preflight for the real-money order probe. ZERO risk.
-
-    Establishes, and records for the reviewer:
-
-    * the account identity fingerprint (SHA-256, masked) matched against
-      ``--expect-account-fingerprint``;
-    * that the real host answers a real TRADING TR under this credential — the
-      campaign's wave-3 finding is that the real domain answers mock app-keys on
-      QUOTE TRs and rejects trading TRs with ``EGW02004``, so a successful quote
-      proves nothing about trading credentials;
-    * the order-available amount and every current position;
-    * the market session state, the touch, the broker-reported daily price band,
-      the resolved contract multiplier and the tick;
-    * the order-available QUANTITY at the exact resting price stage 2 would use.
-
-    Aborts — with an artifact, never an empty file — if the order-available
-    amount is zero or unreadable, any position exists, any order already exists
-    in today's listing, the fingerprint does not match, the market is closed (or
-    too close to the close), or the instrument/tick/band cannot be resolved.
-
-    The verdict is in ``measurements.preflight_verdict``. Only the exact string
-    :data:`VERDICT_PREFLIGHT_READY` authorises stage 2, and stage 2 re-takes
-    every assertion live rather than trusting this file.
-    """
+    """P-R5-PRE — GET-only preflight for the real-money order probe. ZERO risk."""
     spec = get("P-R5-PRE")
     if not args.symbol:
         raise ProbeError("--symbol is required (e.g. A05609 for the mini contract)")
     run, client, creds = _preflight_setup(spec, args)
-    # One exit, so the scope note in the `finally` cannot be skipped by an early
-    # return. A dry-run artifact that omitted it would be an artifact without the
-    # both-ways inheritance prohibition on it.
     try:
         if client is None:
             run.observe(
@@ -1691,22 +1272,10 @@ def _plan_from_quote(
     )
 
 
-# ---------------------------------------------------------------------------
-# Stage-1 artifact validation — read it, then distrust it
-# ---------------------------------------------------------------------------
-
-
 def load_stage1_artifact(
     path_text: str, *, max_age_s: float, expect_fingerprint: str, symbol: str
 ) -> dict[str, Any]:
-    """Load and validate a stage-1 artifact. Passing is necessary, not sufficient.
-
-    Every assertion checked here is re-taken live by stage 2 against the broker.
-    The file's role is to prove that a human ran a preflight, saw a READY
-    verdict, and chose to proceed — it is NOT the evidence that the account is
-    still flat and funded. That evidence expires, which is why the age check is
-    capped by :data:`HARD_MAX_STAGE1_AGE_S`.
-    """
+    """Load and validate a stage-1 artifact. Passing is necessary, not sufficient."""
     if not str(path_text or "").strip():
         raise RealOrderAbort(
             ABORT_STAGE1_MISSING,
@@ -1805,11 +1374,6 @@ def _artifact_age_s(payload: dict[str, Any]) -> float | None:
     return max(0.0, (datetime.now(UTC) - finished).total_seconds())
 
 
-# ---------------------------------------------------------------------------
-# Stage 2 — ORDER. Real money.
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class _TrialOutcome:
     latency_ms: float | None = None
@@ -1820,14 +1384,7 @@ class _TrialOutcome:
 
 
 def _build_budget(args: argparse.Namespace) -> RunBudget:
-    """Turn the CLI caps into the run's single authorisation gate.
-
-    ``--max-notional-krw`` has no default on purpose: a defaulted cap is a cap
-    nobody chose. The cumulative cap defaults to the per-order cap times the
-    number of orders the run is allowed to send, which is the largest turnover
-    the other caps already permit — it is a second, independent ceiling only
-    when the operator sets it lower.
-    """
+    """Turn the CLI caps into the run's single authorisation gate."""
     if args.samples > HARD_MAX_SAMPLES:
         raise RealOrderAbort(
             ABORT_SAMPLE_CAP,
@@ -1873,26 +1430,7 @@ def _build_budget(args: argparse.Namespace) -> RunBudget:
 
 
 def probe_real_order(args: argparse.Namespace) -> ProbeRun:
-    """P-R5 — REAL-MONEY accept→query-visible latency. Places real orders.
-
-    Measures the same quantity as mock P-5, the same way, so the two are
-    comparable: ``t0`` is the pacer release instant of the ODNO-bearing accept,
-    ``t1`` is the first poll in which ``inquire-ccnl`` returns a row whose
-    canonicalised ODNO matches. The bound key it feeds
-    (``B_broker_query_consistency``) is a ``hard_maximum``, so the candidate is
-    ``max x (1 + margin)`` and never a percentile, and the poll granularity is
-    recorded as the EFFECTIVE interval because the pacer floors ``--poll-ms``.
-
-    Folds in two secondary observations so one authorised run answers three
-    questions: a short bounded SUBMIT-class pacing ramp (the campaign measured
-    only the QUERY class, and separately observed the order class throttling
-    even at 1.1 s), and one continuation walk of the open-order query so the
-    real page size is observed once.
-
-    Every number produced here is ``candidate_only`` and belongs to the REAL
-    environment alone. It does not transfer to 모의투자 and the mock numbers do
-    not transfer here — the inheritance prohibition runs both ways.
-    """
+    """P-R5 — REAL-MONEY accept→query-visible latency. Places real orders."""
     spec = get("P-R5")
     if not args.symbol:
         raise ProbeError("--symbol is required (e.g. A05609 for the mini contract)")
@@ -1956,9 +1494,6 @@ def probe_real_order(args: argparse.Namespace) -> ProbeRun:
         if client is not None:
             _final_sweep(client, run, args, unresolved)
             client.close()
-        # In the `finally` so the dry-run's early return cannot skip it: every
-        # artifact this module produces carries the both-ways inheritance
-        # prohibition, including the ones that observed nothing.
         _record_scope(run)
     return run
 
@@ -2037,12 +1572,7 @@ def _plan_for_trial(
     tick: Tick,
     multiplier: int,
 ) -> RestingPlan:
-    """One quote, then one plan. The quote is paced like everything else.
-
-    Re-quoting per trial rather than reusing the first plan is deliberate: the
-    touch moves, and the distance assertion has to be true against the touch
-    that is live when the order goes out, not the one from ten minutes ago.
-    """
+    """One quote, then one plan. The quote is paced like everything else."""
     quote = client.quote(args.symbol)
     return _plan_from_quote(run, args, quote, tick, multiplier)
 
@@ -2114,18 +1644,7 @@ def _cancel_and_verify(
     trial: int,
     unresolved: list[str],
 ) -> None:
-    """Cancel, retry within a bounded budget, verify, and abort the run if it fails.
-
-    The campaign's hardest-won cleanup lesson is here twice over.
-    ``P-8-20260731T015220Z`` left order ``0000003144`` possibly resting because
-    the cancel was throttled and there was no retry; and the 2026-07-31 semantics
-    note established that a query row's ``qty > 0`` is NOT a "still cancellable"
-    predicate — the only authority on cancellability is the broker's own cancel
-    response. So the retry is bounded, the verification reads the fill field of
-    the row rather than its remaining quantity, and exhausting the budget stops
-    the WHOLE run with the ODNO in the message. It never continues placing
-    orders while one may be resting.
-    """
+    """Cancel, retry within a bounded budget, verify, and abort the run if it fails."""
     attempts = min(int(args.cancel_retry_attempts), HARD_MAX_CANCEL_RETRIES)
     last = ""
     for attempt in range(1, attempts + 1):
@@ -2182,24 +1701,7 @@ def _order_class_ramp(
     multiplier: int,
     unresolved: list[str],
 ) -> None:
-    """A short, bounded SUBMIT-class pacing ramp. Stops at the first throttle.
-
-    Why it is here: the campaign measured the QUERY class only (P-13), and
-    separately observed the order/cancel class throttling even at 1.1 s pacing
-    (2026-07-31 semantics #3). Extrapolating the query number to the order class
-    was explicitly prohibited, so the order class needs its own observation.
-
-    What is ramped, and what is not: only the interval before a SUBMIT. Every
-    cancel goes out at the full ``--pace-s`` with the same bounded retry, because
-    a throttled cancel is exactly how an order gets left resting. This run
-    therefore observes the SUBMIT class and says nothing about the CANCEL class —
-    and per the same rule that forbids query→order extrapolation, the submit
-    number must not be carried to cancel.
-
-    Every ramp order obeys every trial guard: it is planned from a fresh quote,
-    it passes the distance/tick/band assertions and the budget, and a fill or a
-    failed cancel aborts the whole run.
-    """
+    """A short, bounded SUBMIT-class pacing ramp. Stops at the first throttle."""
     attempts = int(args.order_class_ramp_attempts)
     if attempts <= 0:
         run.skip(
@@ -2221,9 +1723,6 @@ def _order_class_ramp(
         plan = _plan_for_trial(run, args, client, tick, multiplier)
         time.sleep(interval_s)
         odno, parsed, status = client.submit_resting(plan)
-        # Two independent fingerprints, OR-ed: the shared helper covers HTTP 429
-        # and the EGW00201 code, and _is_throttle adds the Korean message the
-        # campaign observed verbatim, for the case where msg_cd is absent.
         rate_limited = is_rate_limited(
             status, parsed, str(parsed.get("msg1", ""))
         ) or _is_throttle(parsed)
@@ -2271,12 +1770,7 @@ def _order_class_ramp(
 
 
 def _is_throttle(parsed: Any) -> bool:
-    """The broker's throttle fingerprint, as the runtime already recognises it.
-
-    ``EGW00201`` is the code ``shared/kis/client.py`` applies a backoff penalty
-    on, and the campaign observed it verbatim as HTTP 500 + ``rt_cd:"1"`` +
-    ``초당 거래건수를 초과하였습니다``.
-    """
+    """The broker's throttle fingerprint, as the runtime already recognises it."""
     if not isinstance(parsed, dict):
         return False
     blob = f"{parsed.get('msg_cd', '')} {parsed.get('msg1', '')}"
@@ -2286,14 +1780,7 @@ def _is_throttle(parsed: Any) -> bool:
 def _page_size_walk(
     run: ProbeRun, args: argparse.Namespace, client: RealOrderClient
 ) -> None:
-    """One GET-only continuation walk, so the REAL page size is observed once.
-
-    Same honesty rule as everywhere else: if OUR ``--max-pages`` terminated the
-    walk, the total row count is UNESTABLISHED and is recorded as such. Mock
-    measured 15 rows per page (``P-5b-20260731T014917Z``) against an official
-    spec that says 100; that disagreement is a mock observation and this walk
-    does not inherit it.
-    """
+    """One GET-only continuation walk, so the REAL page size is observed once."""
     max_pages = min(int(args.max_pages), HARD_MAX_PAGES)
     pages: list[dict[str, Any]] = []
     fk200 = nk200 = ""
@@ -2417,30 +1904,11 @@ def _record_scope(run: ProbeRun) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
 def add_real_order_args(parser: argparse.ArgumentParser) -> None:
-    """Flags for the two real-money stages.
-
-    ``allow_abbrev`` is turned OFF here. argparse accepts any unambiguous prefix
-    of a long option by default, so with it on ``--i-understand`` would arm real
-    orders. The authorisation flag has to be typed in full, and disabling
-    abbreviation for this parser is what makes that structural rather than a
-    convention.
-    """
+    """Flags for the two real-money stages."""
     parser.allow_abbrev = False
-    # KOSPI200 futures trade inside a staged daily price band, so the mock
-    # harness's 10 % resting offset can land OUTSIDE it and be rejected. The
-    # default is lowered rather than a second knob added, so there is still
-    # exactly one offset flag and it means the same thing everywhere.
     parser.set_defaults(
         price_offset_pct=DEFAULT_REAL_RESTING_OFFSET_PCT,
-        # The shared default is 30, which is above HARD_MAX_SAMPLES: on a
-        # real-money probe a sample is not free, and a default nobody can run is
-        # a worse greeting than a small one.
         samples=DEFAULT_REAL_SAMPLES,
     )
     parser.add_argument(

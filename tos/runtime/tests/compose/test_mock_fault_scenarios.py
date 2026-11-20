@@ -1,28 +1,4 @@
-"""Off-hours fault injection for the stock MOCK tenant: does it get back to trading? (11-20).
-
-Every scenario here is one shape of the 2026-11-20 live incident, replayed against the
-:mod:`._kis_faults` broker double instead of waiting for the next market day. Each drives a
-whole session — OPEN -> fill -> CLOSE -> fill -> release -> a SECOND OPEN admitted — with one
-scripted broker fault inside it, and asserts the tenant reaches that second OPEN.
-
-The incident (2026-11-20; tenants 005930 / 000660 / 005380 share one KIS app key): all three
-asked for the mock token inside the same minute (KIS issues one per minute per app key), or a
-balance GET (VTTC8434R) answered ``rt_cd != 0`` under the same key's rate limit. Either way
-item 12's broker facts came back ``None``
-(``tos_runtime.transport.kis_mock.broker_facts``), step 15 refused the send, and the
-reservation the refused OPEN had taken was stranded — so every later OPEN that day was denied
-``open_over_outstanding_reservation``. PR #1122 releases a send refused before transport,
-which is what turns each refusal below into a recovery instead of a dead session.
-
-Two of them are the order POST itself going blind — a timeout, and an HTTP 500. Both leave the
-same stuck state, which :func:`_assert_quarantined_unknown` pins, and both leave it only until
-the broker's own order history is read for the send's trading date
-(:mod:`tos_runtime.posttrade.uncertain_send`): one unclaimed matching row binds the attempt, an
-empty history twice over a settle window releases it, and anything less certain holds. A
-matching row the broker stamped BEFORE our send started is a third thing — somebody else's
-order, scenario (g), issue #1127 — and binding it would have recorded an ACK for an order this
-tenant never sent.
-"""
+"""Off-hours fault injection for the stock MOCK tenant: does it get back to trading? (11-20)."""
 
 from __future__ import annotations
 
@@ -65,58 +41,20 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 _TRANSPORT_CONFIG_NAME = "kis_mock_transport.yaml"
 _DISCARD_KIND = "RESERVATION_DISCARDED_UNSENT"
 
-#: Every order this harness sends gets its own broker order number. Reusing one inside a
-#: trading date makes the broker's own daily-ccld history ambiguous, which the fill observer
-#: fail-closes on (``ambiguous_rows``) — a harness bug that reads like a product bug.
 _ODNO_PREFIX = "000000510"
 
-#: Orders the tenant under test never placed, on its own symbol and trading date: an earlier,
-#: archived leaf's round trips and an operator's manual flatten. A different prefix from
-#: :data:`_ODNO_PREFIX` so no foreign order can collide with one the tenant sends — scenario
-#: (f) asserts the release treats them as foreign, and a collision would make it vacuous.
 _FOREIGN_ODNO_PREFIX = "000000190"
 
-#: 주문시각 (``ord_tmd``, HHMMSS) the broker stamps on each side. The foreign orders are the
-#: morning's; the tenant's own start after the 12:48 reboot. Only a strictly earlier broker
-#: stamp makes an orphan provably not ours, so the gap here is the thing scenario (f) actually
-#: tests — not the ODNO prefixes. Both bases straddle this harness's fixed wall clock
-#: (``fx.DEFAULT_WALL_CLOCK_UNIX_MS`` = 10:00:00 KST, which is what every send here is stamped
-#: with): the tenant's own orders must be stamped at or after its send start or the
-#: uncertain-send reconciliation cannot prove them its own (issue #1127), and the foreign ones
-#: must be before it.
 _FOREIGN_ORD_TMD_BASE = 93000
 _OWN_ORD_TMD_BASE = 124800
 
-#: The compressed waiting bounds this harness writes. An off-hours run must not spend the
-#: shipped ones, and this suite's virtual clock (``riskfx._PacedClock``) only moves when the
-#: KIS app-key pacer grants a slot — so every bound below is spent in pacer grants, not in
-#: seconds. Compressing the pacing interval is what keeps a whole session inside
-#: ``risk.yaml::max_elapsed_monotonic`` (60 s in this fixture, 30 s on the live tenant): at
-#: the shipped 1100 ms a session's broker calls spend 60+ virtual seconds between one event's
-#: proposal and its send, and step 7 then answers UNKNOWN on amplification. No fault here
-#: depends on the interval's size — only on the order of the calls.
 _MIN_SEND_INTERVAL_MS = 20
-#: Real milliseconds, not virtual: this is the lock-wait budget two threads (the session loop
-#: and the observer's FETCH worker) share. Keep it generous or a slow host reads as throttled.
 _APP_KEY_WAIT_BUDGET_MS = 2_000
-#: The shipped tree holds a FAILED broker-facts observation for ``max_age_ms`` 30 s and
-#: refuses a token reissue for 60 s; both are why a live tenant recovers on a later bar rather
-#: than on the next tick. The floor is the paced read window — the observation is stamped at
-#: the first of its two GETs — so this stays well above 2 x the interval above.
 _FACTS_MAX_AGE_MS = 1_000
 _TOKEN_REISSUE_MIN_INTERVAL_S = 1
-#: One "next bar" for this harness, on the virtual clock: past both bounds above. Moving the
-#: monotonic clock FORWARD cannot trip the time service's process-suspension bound, which only
-#: fires when the wall clock outruns the monotonic one.
 _NEXT_BAR_ADVANCE_MS = 1_200
-#: The per-request timeouts this harness writes, and the delay a ``TIMEOUT`` fault answers
-#: with. A timed-out call therefore costs ~0.4 s of real time, not the shipped 5 s.
 _REQUEST_TIMEOUT_S = 0.4
 _TIMEOUT_DELAY_S = 1.2
-#: The settle window the uncertain-send reconciliation spends before an EMPTY broker order
-#: history proves a non-send. Compressed from the shipped 30 s for the same reason as every
-#: bound above; what it bounds — two empty reads this far apart, the first this long after the
-#: send was first seen — is pinned exactly in ``tests/posttrade/test_uncertain_send.py``.
 _UNCERTAIN_SETTLE_MS = 100
 
 
@@ -161,10 +99,6 @@ class _Tenant:
     published: list[Any]
     rows: list[dict[str, str]] = field(default_factory=list)
     odno_serial: int = 0
-    #: The base 주문시각 the broker stamps on this tenant's OWN orders. Stamped by default
-    #: because the real VTTC0081R always prints one, and since issue #1127 a row with no
-    #: placement time can never be bound to an uncertain send — an unstamped own order would
-    #: make scenario (d)'s recovery test vacuous rather than passing.
     ord_tmd_base: int | None = _OWN_ORD_TMD_BASE
 
     def next_odno(self) -> str:
@@ -174,11 +108,7 @@ class _Tenant:
 
     @property
     def own_ord_tmd(self) -> str | None:
-        """The broker's 주문시각 for this tenant's own orders, from :attr:`ord_tmd_base`.
-
-        A scenario that sets the base to ``None`` gets rows with no placement time — what an
-        order the broker printed no 주문시각 for looks like.
-        """
+        """The broker's 주문시각 for this tenant's own orders, from :attr:`ord_tmd_base`."""
         if self.ord_tmd_base is None:
             return None
         return f"{self.ord_tmd_base + self.odno_serial:06d}"
@@ -188,8 +118,6 @@ class _Tenant:
         observer = self.runtime.fill_observer
         assert observer is not None
         return observer
-
-    # ------------------------------------------------------------------ broker state
 
     def broker_holds(self, quantity: Decimal) -> None:
         """Re-script what the broker holds and what its daily-ccld walk reports."""
@@ -212,8 +140,6 @@ class _Tenant:
     def next_bar(self) -> None:
         """Move past the compressed waiting bounds — a failed fact is held until they pass."""
         self.clock.advance(_NEXT_BAR_ADVANCE_MS)
-
-    # ------------------------------------------------------------------ driving
 
     def order_posts(self) -> int:
         return len(self.server.requests_for(ORDER_PATH))
@@ -254,8 +180,6 @@ class _Tenant:
             self.runtime,
             len(_rows(self.runtime, riskfx.FILL_OBSERVER_RELEASE_SNAPSHOT_KIND)),
         )
-
-    # ------------------------------------------------------------------ whole round trips
 
     def open_fills(self, *, seq: int) -> Decimal:
         """One OPEN proposed, approved, sent, ACKed, and filled at the broker."""
@@ -417,11 +341,7 @@ def _assert_refused_before_transport(
 
 
 def _assert_quarantined_unknown(tenant: _Tenant, *, transport_kind: str) -> None:
-    """The stuck state an order POST with no usable answer leaves — scenarios (d) and (e).
-
-    No release path exists for it: the result carries no ``broker_execution_id``, so the fill
-    observer never tracks the attempt and never reads the broker's own order history for it.
-    """
+    """The stuck state an order POST with no usable answer leaves — scenarios (d) and (e)."""
     runtime = tenant.runtime
     (send,) = _rows(runtime, "TRANSPORT_SEND")
     assert send["kind"] == transport_kind, send
@@ -458,9 +378,6 @@ def _assert_recovers_to_trading(tenant: _Tenant, *, first_seq: int) -> None:
     assert CapacityState.POSITION_CONSUMED in _reservation_states(tenant).values()
 
 
-# --------------------------------------------------------------------------- scenarios
-
-
 def test_a_token_error_on_the_first_proposal_then_ok_on_the_next_bar(
     config_dir_with_risk_state: Path,
     data_dir: Path,
@@ -468,9 +385,7 @@ def test_a_token_error_on_the_first_proposal_then_ok_on_the_next_bar(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """2026-11-20: three tenants asked one app key for a token inside the same minute, KIS
-    answered EGW00133 to the losers, item 12's facts came back None, and step 15 refused the
-    OPEN. Reproduced as one token refusal on the session's first proposal."""
+    """2026-11-20: three tenants asked one app key for a token inside the same minute, KIS"""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -497,10 +412,7 @@ def test_b_a_balance_rt_cd_not_ok_mid_session_after_two_round_trips(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """2026-11-20, tenant 000660: the item-12 balance GET (VTTC8434R) answered ``rt_cd != 0``
-    — the shared app key's rate limit — mid-session, so ``account_facts_current`` went false
-    and that tenant's next send was refused. Reproduced after two completed round trips.
-    """
+    """2026-11-20, tenant 000660: the item-12 balance GET (VTTC8434R) answered ``rt_cd != 0``"""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -532,10 +444,7 @@ def test_c_http_500_on_the_balance_get_for_a_close_then_the_close_is_retried(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """2026-11-20: a 모의 REST 500 on the item-12 balance read is the other measured way the
-    facts go unreadable when the shared key is squeezed. A CLOSE refused that way must give
-    its capacity back and be retried on the next bar, or the position stays open to the bell.
-    """
+    """2026-11-20: a 모의 REST 500 on the item-12 balance read is the other measured way the"""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -567,15 +476,7 @@ def test_c_http_500_on_the_balance_get_for_a_close_then_the_close_is_retried(
 def _seed_prior_same_day_orders(
     tenant: _Tenant, *, count: int, quantity: Decimal = Decimal(1)
 ) -> tuple[str, ...]:
-    """Put ``count`` orders this tenant never placed into the broker's own daily-ccld history.
-
-    They are on its account, its symbol and its trading date, they are fully filled, and they
-    net flat — the 2026-11-20 shape, where an archived leaf's morning round trips plus an
-    operator's manual market SELL were still in 주식일별주문체결조회 when a fresh leaf booted
-    at 12:48 against a flat account. Each is stamped 주문시각 in the morning, before this
-    harness's own send start; ``quantity`` is what makes one of them look like a send of
-    THIS tenant's (scenario (g), issue #1127).
-    """
+    """Put ``count`` orders this tenant never placed into the broker's own daily-ccld history."""
     odnos = tuple(f"{_FOREIGN_ODNO_PREFIX}{serial}" for serial in range(1, count + 1))
     for serial, odno in enumerate(odnos, start=1):
         tenant.rows.append(
@@ -599,15 +500,7 @@ def test_f_a_fresh_leaf_releases_over_orders_it_never_placed(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """2026-11-20, tenants 000660 / 005930: leaves archived mid-day and rebooted at 12:48 onto
-    a flat account could not release the OPEN they then filled. 주식일별주문체결조회 is keyed by
-    (account, symbol, date), not by leaf, so the morning's orders and a manual flatten came
-    back as witness orders the fresh leaf owned nothing of; each was an ORPHAN_BROKER_ORDER
-    whose veto made gate 3 answer NOT_CORROBORATED (~30 times on 000660, ~32 on 005930). The
-    capacity never came back, the engine never projected the fill, and every CLOSE was then
-    refused at CANDIDATE_COMMAND_CONSTRUCTION with "no held position was observed". 005380,
-    the one symbol with no earlier order that day, released on the same code at the same boot.
-    """
+    """2026-11-20, tenants 000660 / 005930: leaves archived mid-day and rebooted at 12:48 onto"""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -701,11 +594,7 @@ def test_d_an_order_post_that_timed_out_is_never_duplicated(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """The worst 11-20-shaped fault: the order POST times out and the broker DID fill it.
-    What must hold — and does — is that the tenant sends nothing more while the attempt is
-    unknown, and no later OPEN is admitted over it (RFC-005 §11: a timeout is neither a
-    rejection nor safe to retry). This is the state BEFORE the broker is asked; what asking it
-    then does is ``test_d_recovery_...``."""
+    """The worst 11-20-shaped fault: the order POST times out and the broker DID fill it."""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -713,7 +602,6 @@ def test_d_an_order_post_that_timed_out_is_never_duplicated(
         quantity, odno = _open_that_times_out(tenant, seq=1)
         posts = tenant.order_posts()
 
-        # The broker filled the order the tenant never heard about.
         tenant.broker_filled(odno, quantity)
         tenant.broker_holds(quantity)
 
@@ -739,9 +627,7 @@ def test_d_recovery_an_order_post_that_timed_out_was_filled_at_the_broker(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """Same fault as the test above, driven to the completion condition: the tenant reconciles
-    the timed-out attempt against the broker's order history (which shows it FILLED), adopts
-    the position, closes it, and trades again — without ever sending a second order."""
+    """Same fault as the test above, driven to the completion condition: the tenant reconciles"""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -771,7 +657,6 @@ def test_d_recovery_an_order_post_that_timed_out_was_filled_at_the_broker(
             _rows(tenant.runtime, _DISCARD_KIND) == []
         ), "a filled send must never be released as never-accepted"
 
-        # The adopted position closes, and the scope trades again on the next bar.
         assert tenant.close_fills(seq=2, held=quantity) == quantity
         assert set(_reservation_states(tenant).values()) == {
             CapacityState.RELEASED
@@ -789,10 +674,7 @@ def test_d_ambiguous_two_broker_orders_this_send_could_own_stay_held(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """The fail-closed half of the same reconciliation: when TWO orders on the send's own
-    trading date carry this instrument and this sealed quantity, nothing identifies which one
-    the timed-out POST created. The tenant binds neither and releases nothing — it stays stuck,
-    which is an operator matter, not a guess the runtime may make."""
+    """The fail-closed half of the same reconciliation: when TWO orders on the send's own"""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -825,23 +707,13 @@ def test_g_an_earlier_order_of_the_same_shape_is_not_bound_to_a_timed_out_send(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """Issue #1127: the two 11-20 shapes together — an order POST that went blind, on a day
-    whose 주식일별주문체결조회 already held ONE order of the same symbol, quantity and side
-    that this tenant never placed (a manual MOCK flatten, or an archived leaf's).
-
-    The identity rule alone saw exactly one candidate and bound it: an order we never sent
-    recorded as our ACK, with the reservation tied to a stranger's ODNO. The broker's own
-    주문시각 puts it before our POST started, so it is refused, the date reads empty for this
-    send, and the attempt settles as never-accepted — the capacity comes back and the tenant
-    trades again, which is what the reconciliation exists for.
-    """
+    """Issue #1127: the two 11-20 shapes together — an order POST that went blind, on a day"""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
     try:
         quantity, _odno = _open_that_times_out(tenant, seq=1)
         posts = tenant.order_posts()
-        # The POST was never accepted; what the broker's history holds is the EARLIER order.
         (foreign,) = _seed_prior_same_day_orders(tenant, count=1, quantity=quantity)
         tenant.next_bar()
 
@@ -867,13 +739,7 @@ def test_e_an_order_post_that_answered_http_500_is_never_duplicated(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """A 모의 REST 500 on the order POST itself. A 500 does not prove the order was refused,
-    so the tenant treats it as UNKNOWN and sends nothing more — the safe half, and it holds.
-
-    Here the order-history read fails too (the squeezed app key answers 500 to that GET as
-    well), which is the third branch of the reconciliation: a read it could not complete proves
-    nothing either way, so the hold stands and the next poll asks again.
-    """
+    """A 모의 REST 500 on the order POST itself. A 500 does not prove the order was refused,"""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -881,7 +747,6 @@ def test_e_an_order_post_that_answered_http_500_is_never_duplicated(
         _open_that_answers_500(tenant, seq=1)
         posts = tenant.order_posts()
 
-        # The broker holds nothing — and cannot be asked whether it took the order.
         tenant.broker_holds(Decimal(0))
         tenant.broker.script(Call.DAILY_CCLD, *([FaultKind.HTTP_500] * 60))
         tenant.next_bar()
@@ -904,10 +769,7 @@ def test_e_recovery_an_order_post_that_answered_http_500_was_never_filled(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """Same fault as the test above, driven to the completion condition: an order the broker
-    never accepted is provable from its own order history — empty twice, a settle window apart
-    — and the reservation goes back through the never-sent release pass under its own cause.
-    """
+    """Same fault as the test above, driven to the completion condition: an order the broker"""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )

@@ -74,12 +74,12 @@ class TestSafePctChange:
     def test_positive_change(self):
         """Test positive percentage change."""
         result = safe_pct_change(100, 110)
-        assert abs(result - 0.10) < 0.001  # 10% increase
+        assert abs(result - 0.10) < 0.001
 
     def test_negative_change(self):
         """Test negative percentage change."""
         result = safe_pct_change(100, 90)
-        assert abs(result - (-0.10)) < 0.001  # 10% decrease
+        assert abs(result - (-0.10)) < 0.001
 
     def test_no_change(self):
         """Test no change returns zero."""
@@ -102,7 +102,6 @@ class TestSafePctChange:
 
     def test_negative_values(self):
         """Test with negative values."""
-        # From -100 to -50: (-50 - (-100)) / -100 = 50 / -100 = -0.5
         result = safe_pct_change(-100, -50)
         assert abs(result - (-0.5)) < 0.001
 

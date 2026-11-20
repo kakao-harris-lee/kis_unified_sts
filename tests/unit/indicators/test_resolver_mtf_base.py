@@ -43,10 +43,10 @@ def test_mtf_base_overrides_1m_base_for_bb_and_rsi():
         ],
     )
     out = r.collect_entry_indicators("101S6000")
-    assert engine.last_tf == 15  # resolver dispatched the 15m timeframe
+    assert engine.last_tf == 15
     assert out["bb_lower"] == 11.0 and out["bb_middle"] == 12.0
     assert out["bb_upper"] == 13.0 and out["rsi"] == 55.0
-    assert out["vwap"] == 99.0  # non-overlapping 1m key survives
+    assert out["vwap"] == 99.0
 
 
 def test_no_mtf_base_keeps_1m_base_unchanged():
@@ -70,7 +70,7 @@ def test_mtf_base_engine_returns_empty_keeps_1m_base():
         required_keys=["bb_lower", "rsi", "mtf_base_15m"],
     )
     out = r.collect_entry_indicators("101S6000")
-    assert out["bb_lower"] == 1.0  # 1m base retained
+    assert out["bb_lower"] == 1.0
     assert out["rsi"] == 10.0
 
 

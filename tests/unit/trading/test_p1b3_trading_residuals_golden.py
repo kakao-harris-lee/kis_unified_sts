@@ -1,27 +1,4 @@
-"""Golden pins: services/trading indicator residuals (P1-b3, Priority A).
-
-Pins the exact numeric behavior of the last hand-rolled indicator math in
-``shared/indicators/streaming/calculations.py`` BEFORE/AFTER its delegation to
-``shared.indicators.series`` (``docs/plans/2026-07-08-new-architecture-refactoring-plan.md``
-§3, P1-b item 3):
-
-* ``_ema_series`` / ``_ema_last``       — manual ``alpha = 2/(span+1)`` EMA loop
-* ``_calc_daily_ema_aligned``           — live momentum_breakout daily-alignment
-  gate (historically buggy, #audit-2026-07-05; semantics must not move)
-* ``_calc_high_n``                      — trailing max over daily-session highs
-
-Every ``_orig_*`` function below is a verbatim copy of the pre-refactor math.
-Boolean/ordering assertions are EXACT (``==``). EMA-derived float assertions
-are pinned to ``EMA_REL_TOL``: pandas >= 2.2.1 compiled ``ewm`` kernels contract
-the EMA update ``a*x + (1-a)*p`` into a fused multiply-add (one rounding), while
-the pure-Python reference rounds twice, so exact bit-identity is wheel- and
-platform-dependent (diverges on macOS arm64; measured max rel error 9.99e-16,
-worst case 6 ulp).
-
-The consumer-path test pins ``get_indicators()`` outputs (MACD family, EMA
-levels/alignment, ``high_N``, daily EMA alignment) so the live
-momentum_breakout inputs are pinned end-to-end, not just helper-by-helper.
-"""
+"""Golden pins: services/trading indicator residuals (P1-b3, Priority A)."""
 
 from __future__ import annotations
 
@@ -33,13 +10,7 @@ import pytest
 from shared.indicators.streaming.candles import Candle
 from shared.indicators.streaming.engine import StreamingIndicatorEngine
 
-# Last-ulp band for EMA-derived floats (see module docstring: FMA contraction
-# in compiled pandas kernels makes exact ``==`` platform-dependent).
 EMA_REL_TOL = 1e-14
-
-# ---------------------------------------------------------------------------
-# Verbatim pre-refactor implementations (the golden reference)
-# ---------------------------------------------------------------------------
 
 
 def _orig_ema_series(values: list[float], span: int) -> list[float]:
@@ -95,11 +66,6 @@ def _orig_high_n(
     return max(c.high for c in candles[-period:])
 
 
-# ---------------------------------------------------------------------------
-# Seeded input generators
-# ---------------------------------------------------------------------------
-
-
 def _walks(seed: int, count: int, min_len: int = 1, max_len: int = 150):
     rng = np.random.default_rng(seed)
     for _ in range(count):
@@ -122,11 +88,6 @@ def _make_candles(closes: list[float], rng: np.random.Generator) -> list[Candle]
             )
         )
     return out
-
-
-# ---------------------------------------------------------------------------
-# Helper-level pins
-# ---------------------------------------------------------------------------
 
 
 class TestEmaHelpersGolden:
@@ -186,14 +147,14 @@ class TestDailyEmaAlignedGolden:
     @pytest.mark.parametrize(
         ("closes", "today"),
         [
-            ([float(100 + 2 * i) for i in range(30)], 161.0),  # strong uptrend
-            ([float(200 - 2 * i) for i in range(30)], 139.0),  # strong downtrend
-            ([100.0] * 30, 100.0),  # flat
-            ([float(100 + i) for i in range(19)], 0.0),  # boundary: 19 + no today
-            ([float(100 + i) for i in range(19)], 120.0),  # boundary: 19 + today
-            ([float(100 + i) for i in range(20)], 0.0),  # exactly max_period
-            ([], 105.0),  # empty deque
-            ([float(-100 - i) for i in range(25)], -80.0),  # negative prices
+            ([float(100 + 2 * i) for i in range(30)], 161.0),
+            ([float(200 - 2 * i) for i in range(30)], 139.0),
+            ([100.0] * 30, 100.0),
+            ([float(100 + i) for i in range(19)], 0.0),
+            ([float(100 + i) for i in range(19)], 120.0),
+            ([float(100 + i) for i in range(20)], 0.0),
+            ([], 105.0),
+            ([float(-100 - i) for i in range(25)], -80.0),
         ],
     )
     def test_edge_scenarios(self, closes, today):
@@ -241,11 +202,6 @@ class TestHighNGolden:
         assert engine._calc_high_n("005930", []) == 0.0
 
 
-# ---------------------------------------------------------------------------
-# Consumer-path pin (momentum_breakout live inputs via get_indicators)
-# ---------------------------------------------------------------------------
-
-
 class TestGetIndicatorsConsumerGolden:
     """Pin the get_indicators() keys produced by the refactored helpers."""
 
@@ -282,7 +238,6 @@ class TestGetIndicatorsConsumerGolden:
         result = engine.get_indicators("005930")
         assert result is not None
 
-        # EMA levels + alignment (intraday)
         for period in (5, 20, 60):
             assert result[f"ema_{period}"] == pytest.approx(
                 _orig_ema_last(closes, period), rel=EMA_REL_TOL
@@ -292,7 +247,6 @@ class TestGetIndicatorsConsumerGolden:
         ) > _orig_ema_last(closes, 20) > _orig_ema_last(closes, 60)
         assert result["ema_aligned"] == want_aligned
 
-        # EMA ratios + MACD live in get_indicator_features (same helpers)
         features = engine.get_indicator_features("005930")
         assert features, "expected features (>=26 candles seeded)"
         cur_close = closes[-1]
@@ -301,7 +255,6 @@ class TestGetIndicatorsConsumerGolden:
                 cur_close / (_orig_ema_last(closes, w) + 1e-10), rel=EMA_REL_TOL
             )
 
-        # MACD family (12/26/9 via _ema_series)
         ema12 = _orig_ema_series(closes, 12)
         ema26 = _orig_ema_series(closes, 26)
         macd_series = [f - s for f, s in zip(ema12, ema26)]
@@ -312,10 +265,8 @@ class TestGetIndicatorsConsumerGolden:
             macd_series[-1] - macd_sig[-1], rel=EMA_REL_TOL, abs=1e-12
         )
 
-        # high_N (intraday fallback: no daily highs seeded)
         assert result["high_5"] == _orig_high_n([], 5, candles)
 
-        # Daily EMA alignment (momentum_breakout daily gate)
         assert result["ema_daily_aligned"] == _orig_daily_ema_aligned(
             daily, daily[-1] + 2.0, [5, 10, 20]
         )

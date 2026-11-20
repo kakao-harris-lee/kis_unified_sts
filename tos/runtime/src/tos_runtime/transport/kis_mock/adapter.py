@@ -43,15 +43,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class SendStamp:
-    """What a send is stamped with AT SEND START, before any network call (issue #1127).
-
-    ``trading_date`` is the broker day the ODNO sequence of this send belongs to;
-    ``started_time`` is the calendar timezone's wall time (``HHMMSS``) the POST started at —
-    the frame KIS prints 주문시각 (``ord_tmd``) in. The uncertain-send reconciliation needs
-    both: the date says which daily history to read, and the time is the floor a row of OURS
-    cannot be stamped below. Either is ``None`` when no reader was injected or the trusted
-    clock had no reading, and that reconciliation is fail-closed on a missing one.
-    """
+    """What a send is stamped with AT SEND START, before any network call (issue #1127)."""
 
     trading_date: str | None = None
     started_time: str | None = None
@@ -362,12 +354,6 @@ class KisMockTransport:
                 "kind": kind.value,
                 "status": status,
                 "latency_ms": latency_ms,
-                # Observation only, and recorded for EVERY kind — unlike the receipt's own
-                # ``trading_date``, which an unnumbered result may not carry. They are what the
-                # uncertain-send reconciliation asks the broker's daily order history about:
-                # without the date, a send whose answer named no ODNO names no date either;
-                # without the time, no row on that date is provably ours rather than an
-                # earlier order of the same shape (issue #1127).
                 "trading_date": stamp.trading_date,
                 "send_started_time": stamp.started_time,
                 **extra,
@@ -385,13 +371,7 @@ class KisMockTransport:
         )
 
     def _stamp_send(self) -> SendStamp:
-        """The injected date and local time at send start, each ``None`` when unreadable.
-
-        The date is read FIRST on purpose: in production it is the reader
-        ``compose._session_wiring.build_egress_trading_date_reader`` wrapped, which evaluates
-        the trusted time service before answering, so the time read that follows sees the
-        clock that evaluation refreshed rather than a stale one.
-        """
+        """The injected date and local time at send start, each ``None`` when unreadable."""
         return SendStamp(
             trading_date=_read_stamp(self._trading_date_now),
             started_time=_read_stamp(self._send_time_now),

@@ -1,17 +1,4 @@
-"""ReferenceBackend: engine exposure of the reference calculators (P1-a).
-
-Two guarantees:
-
-* **Equivalence** — the backend is a zero-math adapter: every output series is
-  bit-identical (``np.array_equal`` with ``equal_nan``) to calling the
-  calculator classes directly, so the engine path can never drift from the
-  ``shared.indicators.reference`` shim consumers.
-* **Shadow comparability** — the reference convention plugs into the same
-  :class:`ShadowDelta` mechanism as the other compat backends, pinning its
-  measured relationship to :class:`TALibBackend`: RSI/ADX near-parity,
-  ``atr_wilder`` == TA-Lib ATR exactly, ``atr`` (SMA mode) divergent
-  (the documented delegation gate), MFI bit-level parity on trending data.
-"""
+"""ReferenceBackend: engine exposure of the reference calculators (P1-a)."""
 
 from __future__ import annotations
 
@@ -75,11 +62,6 @@ def _series(
 ) -> dict[str, np.ndarray]:
     spec = IndicatorSpec.create(indicator_id, params or {})
     return dict(backend.compute(spec, window).series)
-
-
-# ---------------------------------------------------------------------------
-# Equivalence: backend output == direct calculator output, bit for bit
-# ---------------------------------------------------------------------------
 
 
 def test_rsi_series_bit_identical(
@@ -156,7 +138,6 @@ def test_mfi_series_bit_identical_and_last_matches_scalar(
         arrays["high"], arrays["low"], arrays["close"], arrays["volume"]
     )
     assert np.array_equal(out, direct, equal_nan=True)
-    # The series' last bar is the exact scalar every regime consumer reads.
     scalar = calc.mfi_last(
         arrays["high"], arrays["low"], arrays["close"], arrays["volume"]
     )
@@ -188,11 +169,6 @@ def test_mfi_series_prefix_matches_scalar_on_prefix(
             arrays["volume"][: i + 1],
         )
         assert float(series[i]) == prefix, f"bar {i}"
-
-
-# ---------------------------------------------------------------------------
-# Engine plumbing: ids, flat keys, errors, registry singleton
-# ---------------------------------------------------------------------------
 
 
 def test_supported_ids(backend: ReferenceBackend) -> None:
@@ -232,11 +208,6 @@ def test_reference_indicator_engine_is_cached_singleton() -> None:
     assert isinstance(engine.backends[0], ReferenceBackend)
 
 
-# ---------------------------------------------------------------------------
-# Shadow comparability vs TALibBackend (same mechanism as the compat backends)
-# ---------------------------------------------------------------------------
-
-
 def _talib_latest(window: OHLCVWindow, indicator_id: str, params: dict) -> float:
     from shared.indicators.engine.talib_backend import TALibBackend
 
@@ -263,7 +234,6 @@ def test_shadow_rsi_and_adx_near_parity_with_talib(
                 backend, window, indicator_id, {"period": 14}
             ),
         )
-        # Same Wilder family; residual gap is the warmup-seed difference only.
         assert delta.within(abs_tol=0.01), (indicator_id, delta.abs_delta)
 
 
@@ -301,5 +271,4 @@ def test_shadow_mfi_bit_level_parity_with_talib(
         engine_value=_talib_latest(window, "mfi", {"period": 14}),
         legacy_value=_reference_latest(backend, window, "mfi", {"period": 14}),
     )
-    # Identical classification + ratio math on non-flat data (sentinels differ).
     assert delta.within(abs_tol=1e-9), delta.abs_delta

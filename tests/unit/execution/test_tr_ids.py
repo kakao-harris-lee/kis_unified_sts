@@ -1,10 +1,4 @@
-"""Tests for shared/execution/tr_ids.py — Phase 5 Gate-2 prep.
-
-Verifies that:
-  - tr_id() returns the YAML-overridden value when present.
-  - tr_id() falls back to the baked _DEFAULTS when YAML is absent or
-    incomplete.
-"""
+"""Tests for shared/execution/tr_ids.py — Phase 5 Gate-2 prep."""
 
 from __future__ import annotations
 
@@ -24,8 +18,7 @@ def _clear_caches():
 
 
 def test_defaults_match_documented_values():
-    """Baked defaults must match the historical Field defaults so that
-    deleting kis/tr_ids.yaml leaves runtime behaviour unchanged."""
+    """Baked defaults must match the historical Field defaults so that"""
     from shared.execution.tr_ids import _DEFAULTS
 
     assert _DEFAULTS["stock_krx_buy_real"] == "TTTC0802U"
@@ -53,7 +46,6 @@ def test_tr_id_loads_yaml_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("KIS_CONFIG_DIR", str(cfg_dir))
     assert tr_id("futures_order_day_real") == "TTTO9999U"
     assert tr_id("futures_order_night_real") == "STTN9999U"
-    # Unrelated keys still fall back to defaults
     assert tr_id("stock_krx_buy_real") == "TTTC0802U"
 
 

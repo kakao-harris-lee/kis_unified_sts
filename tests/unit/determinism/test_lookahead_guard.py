@@ -19,7 +19,6 @@ def test_lookahead_guard_basic(mode, should_raise, caplog):
     arr = np.array([1, 2, 3, 4, 5])
     timestamps = [10, 20, 30, 40, 50]
     context_timestamp = 30
-    # arr[3], arr[4] (timestamps 40, 50) are future
     if should_raise:
         with pytest.raises(AssertionError):
             guard.check(arr, timestamps, context_timestamp, "test")
@@ -34,7 +33,6 @@ def test_lookahead_guard_no_future():
     arr = np.array([1, 2, 3])
     timestamps = [10, 20, 30]
     context_timestamp = 30
-    # No future values
     guard.check(arr, timestamps, context_timestamp, "test")
 
 
@@ -58,10 +56,9 @@ def test_lookahead_guard_warn_logs(caplog):
 def test_lookahead_guard_fingerprint_detects_mutation():
     guard = LookaheadGuard(mode=LookaheadGuardMode.ASSERT)
     arr = [1.0, 2.0, 3.0, 4.0]
-    # fingerprint is (length, first, last-but-one)
     fp = (len(arr), arr[0], arr[-2])
-    guard.check_fingerprint(arr, fp, "no-mutation")  # unchanged -> no raise
+    guard.check_fingerprint(arr, fp, "no-mutation")
 
-    mutated = [1.0, 2.0, 99.0, 4.0]  # last-but-one changed
+    mutated = [1.0, 2.0, 99.0, 4.0]
     with pytest.raises(AssertionError):
         guard.check_fingerprint(mutated, fp, "mutated")

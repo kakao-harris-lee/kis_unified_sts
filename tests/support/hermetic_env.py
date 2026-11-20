@@ -1,38 +1,4 @@
-"""Hermetic pytest-session helpers (#698).
-
-A pytest process must never reach a real ``.env``, a real broker credential or
-a real token cache. Three separate paths could put one there before this
-module existed:
-
-1. ``cli/commands/common.py`` called ``load_dotenv()`` with no argument, and
-   python-dotenv's ``find_dotenv()`` walks from the *calling file* up to the
-   filesystem root — out of a nested worktree and into the primary checkout's
-   ``.env``. Fixed at the source by
-   :func:`shared.config.dotenv_guard.load_project_dotenv`.
-2. ``tests/conftest.py`` loaded ``<checkout>/.env`` on purpose, so the main
-   checkout's own suite ran with the operator's real keys.
-3. The variables were already exported in the operator's shell.
-
-:func:`scrub_broker_env` closes (2) and (3) by emptying the whole ``KIS_*`` and
-``TELEGRAM_*`` namespace, and :func:`install_dotenv_guard` turns any *remaining*
-``.env`` read into a loud, named failure instead of a silent credential
-injection — including for a caller added after this was written.
-
-:func:`token_cache_witnesses` and :func:`token_caches_touched_since` cover the
-other half of the 2026-09-15 incident: the token file that a leaked credential
-produced. They compare against a snapshot taken at session start rather than
-asserting absence, because the primary checkout legitimately holds
-``.kis_token_real`` / ``.kis_token_mock`` from ordinary host ``sts`` runs
-(the default cache directory is ``Path.cwd()``) and a plain existence check
-would blame the test run for files written months earlier.
-
-The switch name and its truthy values are imported from
-``shared.config.dotenv_guard`` rather than repeated, so the two halves cannot
-drift: conftest setting one name while the loader reads another would silently
-re-open every path above.
-
-Nothing here is imported by runtime code; it exists only for the test session.
-"""
+"""Hermetic pytest-session helpers (#698)."""
 
 from __future__ import annotations
 
@@ -69,20 +35,10 @@ __all__ = [
     "token_caches_touched_since",
 ]
 
-#: The session-wide root every process's token-cache pin lives under. The
-#: controller creates it and xdist workers inherit it through the environment,
-#: so one process — the controller, whose ``pytest_sessionfinish`` runs last —
-#: sees tokens any worker wrote. A per-process ``mkdtemp`` cannot be checked
-#: that way: a worker's verdict never reaches the run's exit code.
 TOKEN_CACHE_BASE_ENV = "KIS_TEST_TOKEN_CACHE_BASE"
 
-#: Every variable in these namespaces is removed from a hermetic session. Both
-#: carry broker or operator credentials (``KIS_*_APP_KEY``, ``KIS_*_ACCOUNT_NO``,
-#: ``TELEGRAM_*_BOT_TOKEN``) and both are populated by the deploy host's ``.env``.
 SCRUBBED_PREFIXES = ("KIS_", "TELEGRAM_")
 
-#: Test-control variables that happen to share the ``KIS_`` prefix. They carry
-#: no credential and the session reads them to decide how to run.
 PRESERVED_ENV = frozenset(
     {
         HERMETIC_ENV,
@@ -92,16 +48,10 @@ PRESERVED_ENV = frozenset(
     }
 )
 
-#: ``shared/kis/auth.py::KISAuthConfig.token_cache_path`` writes these into the
-#: token cache directory, which defaults to ``Path.cwd()``.
 CWD_TOKEN_CACHE_NAMES = (".kis_token_real", ".kis_token_mock")
 
-#: ``shared/collector/historical/{stock,backfill}.py`` keep their own caches
-#: under the user's home, outside any directory this session can pin.
 HOME_TOKEN_CACHE_NAMES = ("kis_token_stock.json", "kis_token_futures.json")
 
-#: What a file looked like when the snapshot was taken: ``None`` for absent,
-#: otherwise identity enough to notice a rewrite.
 _Stat = tuple[int, int, int] | None
 
 TokenCacheSnapshot = dict[Path, _Stat]
@@ -114,11 +64,7 @@ class HermeticDotenvViolation(RuntimeError):
 def scrub_broker_env(
     environ: MutableMapping[str, str] | None = None,
 ) -> list[str]:
-    """Remove every broker/notification credential from ``environ``.
-
-    Returns:
-        The names removed, sorted — useful for a diagnostic message.
-    """
+    """Remove every broker/notification credential from ``environ``."""
     target = os.environ if environ is None else environ
     removed = [
         key
@@ -130,22 +76,8 @@ def scrub_broker_env(
     return sorted(removed)
 
 
-# ---------------------------------------------------------------------------
-# Token-cache witnesses
-# ---------------------------------------------------------------------------
-
-
 def token_cache_witnesses(project_root: Path) -> tuple[Path, ...]:
-    """Fixed paths where a KIS token cache could land during a test run.
-
-    The checkout root and the working directory because
-    ``KISAuthConfig.token_cache_path`` defaults to ``Path.cwd()``; the home
-    cache because two collectors hardcode ``~/.cache/kis_token_*.json``.
-
-    The session's pinned cache root is *not* here: its per-worker
-    subdirectories are not known in advance, so it is scanned as a tree by
-    :func:`new_token_caches_under` instead.
-    """
+    """Fixed paths where a KIS token cache could land during a test run."""
     roots = [project_root]
     try:
         cwd = Path.cwd()
@@ -174,13 +106,7 @@ def snapshot_token_caches(paths: Iterable[Path]) -> TokenCacheSnapshot:
 
 
 def new_token_caches_under(root: Path | None) -> list[Path]:
-    """Any ``.kis_token_*`` anywhere under the session's pinned cache root.
-
-    Pinning decides *where* a token lands, not whether one is issued — and a
-    test reaching the KIS token endpoint is what #698 is about. The root
-    starts empty and nothing legitimate writes there, so every hit is new and
-    no snapshot is needed.
-    """
+    """Any ``.kis_token_*`` anywhere under the session's pinned cache root."""
     if root is None:
         return []
     try:
@@ -190,34 +116,15 @@ def new_token_caches_under(root: Path | None) -> list[Path]:
 
 
 def token_caches_touched_since(snapshot: TokenCacheSnapshot) -> list[Path]:
-    """Witnesses this session created or rewrote, in snapshot order.
-
-    A file that already existed and has not changed is *not* reported: on the
-    primary checkout ``.kis_token_real`` predates this work by months, and
-    failing on it would accuse the current run of something it did not do.
-    """
+    """Witnesses this session created or rewrote, in snapshot order."""
     return [path for path, before in snapshot.items() if _stat_or_none(path) != before]
 
 
-# ---------------------------------------------------------------------------
-# dotenv guard
-# ---------------------------------------------------------------------------
-
-
-#: Extra roots registered once pytest's config exists. The guard is installed
-#: at conftest *import* time, before `--basetemp` has been parsed, so the set
-#: is read lazily on every check rather than frozen at install.
 _REGISTERED_SANDBOX_ROOTS: list[Path] = []
 
 
 def register_sandbox_root(path: Path | str | None) -> None:
-    """Add a directory the session may read a ``.env`` from.
-
-    ``tests/conftest.py`` calls this from ``pytest_configure`` with
-    ``--basetemp``. Without it, ``pytest --basetemp=./.pytest-tmp`` (common
-    when inspecting outputs) puts every ``tmp_path`` inside the checkout, and
-    the guard then refuses the suite's own fixture files.
-    """
+    """Add a directory the session may read a ``.env`` from."""
     if path is None:
         return
     candidate = Path(path)
@@ -230,12 +137,7 @@ def register_sandbox_root(path: Path | str | None) -> None:
 
 
 def sandbox_roots() -> tuple[Path, ...]:
-    """Directories a hermetic test session may read a ``.env`` from.
-
-    The system temp directory covers pytest's ``tmp_path``/``tmp_path_factory``
-    in its default location; ``PYTEST_DEBUG_TEMPROOT`` and anything passed to
-    :func:`register_sandbox_root` cover the relocated ones.
-    """
+    """Directories a hermetic test session may read a ``.env`` from."""
     roots = [Path(tempfile.gettempdir())]
     debug_temproot = os.environ.get("PYTEST_DEBUG_TEMPROOT")
     if debug_temproot:
@@ -261,9 +163,6 @@ def is_sandboxed(path: Path) -> bool:
 
 _GUARD_MARKER = "_kis_hermetic_guard"
 
-#: Every python-dotenv entry point that can read a file off disk. Guarding only
-#: ``load_dotenv`` left ``dotenv_values()`` and ``find_dotenv()`` free to walk
-#: out of the checkout exactly as #698 did.
 _GUARDED_NAMES = ("load_dotenv", "dotenv_values", "find_dotenv")
 
 
@@ -303,13 +202,7 @@ def _guard_reader(real: Callable[..., object], name: str) -> Callable[..., objec
 
 
 def _guard_finder(real: Callable[..., str]) -> Callable[..., str]:
-    """Wrap ``find_dotenv``: let it walk, refuse what the walk found.
-
-    Refusing the call outright would be louder than it needs to be — the walk
-    is harmless when it finds nothing, which is every CI checkout. What must
-    not happen is handing back a real ``.env`` from outside the sandbox for a
-    caller to read.
-    """
+    """Wrap ``find_dotenv``: let it walk, refuse what the walk found."""
 
     @functools.wraps(real)
     def guarded(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -326,12 +219,7 @@ def _guard_finder(real: Callable[..., str]) -> Callable[..., str]:
 def _rebind_early_importers(
     originals: dict[str, object], guards: dict[str, object]
 ) -> None:
-    """Replace names other modules bound before the guard was installed.
-
-    ``from dotenv import load_dotenv`` copies the function object, so a pytest
-    plugin or ``sitecustomize`` imported before ``tests/conftest.py`` keeps the
-    raw one. Sweeping ``sys.modules`` once catches those bindings.
-    """
+    """Replace names other modules bound before the guard was installed."""
     for module in list(sys.modules.values()):
         if module is None:
             continue
@@ -342,11 +230,6 @@ def _rebind_early_importers(
         if str(namespace.get("__name__", "")).startswith("dotenv"):
             continue
         for name, original in originals.items():
-            # `name in vars(module)` rather than getattr: a package with a
-            # module-level __getattr__ (lazy_loader, scipy/numpy shims,
-            # six.moves) would otherwise run its import path three times per
-            # module, during conftest import, with the cost hidden by the
-            # except below.
             if name in namespace and namespace[name] is original:
                 try:
                     setattr(module, name, guards[name])
@@ -355,25 +238,7 @@ def _rebind_early_importers(
 
 
 def install_dotenv_guard() -> Callable[[], None]:
-    """Make python-dotenv refuse real ``.env`` files for this process.
-
-    Every reader in :data:`_GUARDED_NAMES` is wrapped. Two things are refused:
-
-    * an argument-less call, because its ``find_dotenv()`` walk is the #698
-      root cause and its target cannot be known in advance; and
-    * a path that **exists** and sits outside :func:`sandbox_roots`.
-
-    A path that does not exist is allowed through: the read is a no-op either
-    way, and letting it pass keeps CI (which has no ``.env`` anywhere) free of
-    failures that say nothing about hermeticity.
-
-    Returns:
-        A callable that restores the original functions. Idempotent — calling
-        this twice installs one guard and the second call's restore is a no-op.
-        A no-op too when python-dotenv is not installed: the ``tos-firewall``
-        job installs the root project with ``--no-deps``, and with no loader
-        present there is nothing to guard.
-    """
+    """Make python-dotenv refuse real ``.env`` files for this process."""
     try:
         import dotenv
         import dotenv.main

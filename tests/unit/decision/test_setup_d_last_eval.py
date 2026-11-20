@@ -1,21 +1,4 @@
-"""Tests for Setup D's two read-only observability surfaces.
-
-Both exist so the CP-3 B1a producer (``tools/tos_cp3/produce_fields.py``) can
-read this setup's own math instead of restating it:
-
-* ``SetupDVWAPReversion.vwap_extension_z`` — the ONE definition of the fade
-  metric, called by ``check`` for both ``z`` and ``prev_z`` and by the producer
-  on bars ``check`` returns from early.
-* ``SetupDVWAPReversion.last_eval`` — the per-bar evaluation trace, populated
-  from the same branches that take each decision. A key is ABSENT when ``check``
-  returned before that branch ran, which is how a reader tells "this gate
-  rejected" from "this gate was never evaluated". The producer maps an absent
-  key to ``False`` (fail-closed), so the absence is load-bearing and is pinned
-  here.
-
-Hermetic: ``SetupDConfig`` defaults plus explicit overrides, no YAML / Redis /
-network.
-"""
+"""Tests for Setup D's two read-only observability surfaces."""
 
 from __future__ import annotations
 
@@ -56,17 +39,11 @@ def _ctx(
     )
 
 
-# ---------------------------------------------------------------------------
-# vwap_extension_z
-# ---------------------------------------------------------------------------
-
-
 def test_vwap_extension_z_is_the_signed_atr_scaled_distance() -> None:
     assert SetupDVWAPReversion.vwap_extension_z(404.0, 400.0, 2.0) == pytest.approx(2.0)
     assert SetupDVWAPReversion.vwap_extension_z(396.0, 400.0, 2.0) == pytest.approx(
         -2.0
     )
-    # Exact mirror: the setup's long/short symmetry starts here.
     up = SetupDVWAPReversion.vwap_extension_z(403.6, 400.0, 2.0)
     down = SetupDVWAPReversion.vwap_extension_z(396.4, 400.0, 2.0)
     assert up == pytest.approx(-down)
@@ -89,9 +66,6 @@ def test_check_uses_the_accessor_for_both_z_and_prev_z() -> None:
         range_warmup_bars=1,
     )
     setup = SetupDVWAPReversion(config=config)
-    # Bar 1 primes the close window at 410 (and rejects for no prev_close);
-    # bar 2 turns back toward VWAP, so the reversal block PASSES and records
-    # prev_z. (prev_z is only recorded on the passing path.)
     setup.check(_ctx(current_price=410.0, vwap=400.0))
     signal = setup.check(_ctx(current_price=404.0, vwap=400.0))
 
@@ -110,23 +84,12 @@ def test_check_uses_the_accessor_for_both_z_and_prev_z() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# last_eval: present vs absent keys
-# ---------------------------------------------------------------------------
-
 GATE_KEYS = ("hi_vol", "stall_ok", "reversal_ok")
 
 
 def test_last_eval_after_an_after_cutoff_bar_has_no_gate_keys() -> None:
-    """Past the cutoff ``check`` returns at step 1, so no gate has a value.
-
-    The producer maps these absences to ``False``. If they were present-but-true
-    here, a 14:35 bar would publish a passing volatility gate that nothing ever
-    evaluated.
-    """
+    """Past the cutoff ``check`` returns at step 1, so no gate has a value."""
     setup = SetupDVWAPReversion(config=SetupDConfig())
-    # SetupDConfig's DEFAULT cutoff is 360 min (the deployed YAML says 345), so
-    # the cutoff here is 08:45 + 360 = 14:45 and 15:00 is past it.
     signal = setup.check(_ctx(now_hhmm=(15, 0), current_price=404.0, vwap=400.0))
 
     assert signal is None
@@ -135,13 +98,11 @@ def test_last_eval_after_an_after_cutoff_bar_has_no_gate_keys() -> None:
     assert setup.last_eval["entry_window"] is False
     for key in GATE_KEYS:
         assert key not in setup.last_eval, key
-    # Nothing past step 1 was reached, so the inputs were not even recorded.
     assert "inputs_usable" not in setup.last_eval
 
 
 def test_last_eval_after_a_before_window_bar_has_no_gate_keys() -> None:
     setup = SetupDVWAPReversion(config=SetupDConfig())
-    # 08:45 + 15 = 09:00 is the earliest; 08:50 is before the window.
     setup.check(_ctx(now_hhmm=(8, 50), current_price=404.0, vwap=400.0))
     assert setup.last_reject_reason is not None
     assert setup.last_reject_reason.startswith("before_window")
@@ -152,7 +113,7 @@ def test_last_eval_after_a_before_window_bar_has_no_gate_keys() -> None:
 
 def test_last_eval_after_a_fired_bar_has_every_gate_key() -> None:
     config = SetupDConfig(
-        min_atr_ratio=0.0,  # gate permissive — exercise the fired path
+        min_atr_ratio=0.0,
         reversal_confirm_enabled=False,
         min_confidence=0.0,
     )
@@ -167,21 +128,15 @@ def test_last_eval_after_a_fired_bar_has_every_gate_key() -> None:
     for key in GATE_KEYS:
         assert evaluated[key] is True, key
     assert evaluated["extreme"] is True
-    assert evaluated["direction"] == "short"  # price above VWAP → fade the up-spike
+    assert evaluated["direction"] == "short"
     assert evaluated["confidence_ok"] is True
     assert evaluated["fired"] is True
 
 
 def test_last_eval_records_an_in_window_reject_without_clearing_entry_window() -> None:
-    """A vol-gate reject keeps ``entry_window`` true — the D5 premise.
-
-    The producer's fail-closed mapping only has to be safe because the gate that
-    rejected has its own field false; it does NOT rely on ``entry_window`` going
-    false, which an earlier draft of the lineage wrongly claimed.
-    """
+    """A vol-gate reject keeps ``entry_window`` true — the D5 premise."""
     config = SetupDConfig(min_atr_ratio=0.9, vol_warmup_bars=2, vol_window_bars=10)
     setup = SetupDVWAPReversion(config=config)
-    # Two loud bars fill the warmup window, then a quiet bar fails the gate.
     setup.check(_ctx(current_price=400.0, vwap=400.0, atr_14=5.0))
     setup.check(_ctx(current_price=400.0, vwap=400.0, atr_14=5.0))
     signal = setup.check(_ctx(current_price=404.0, vwap=400.0, atr_14=0.5))

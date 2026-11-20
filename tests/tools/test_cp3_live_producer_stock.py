@@ -1,20 +1,4 @@
-"""CP-3 ③ live producer on a STOCK symbol (rescope M2, 2026-10-22) — hermetic.
-
-The futures behaviour is pinned by ``test_cp3_live_producer.py``; this file
-pins what ``market: stock`` changes and nothing else:
-
-* the stock quotation TR ``FHKST03010230`` is the one requested, GET-only and
-  allowlisted, with the stock market division and no futures hour class;
-* a recorded-shape ``FHKST03010230`` response parses into the same bar tuples
-  the frame freezes;
-* the seed never rolls, the Parquet layout says ``stock``, the stock query keys
-  (not the futures ones) are read;
-* a whole session over a stock calendar publishes lines whose fifteen fields
-  equal B1a's ``produce_bars`` over the same frame.
-
-No socket, no credential, no KIS call: the transport is ``httpx.MockTransport``
-or an in-process fake, and the clock is fake.
-"""
+"""CP-3 ③ live producer on a STOCK symbol (rescope M2, 2026-10-22) — hermetic."""
 
 from __future__ import annotations
 
@@ -59,24 +43,13 @@ FUTURES_CONFIG = _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml"
 RECORDED = Path(__file__).parent / "fixtures/cp3_stock_005930_fhkst03010230_page.json"
 
 SYMBOL = "005930"
-#: Real 2026 trading days in the tenant calendar (10-09 is a holiday).
 SEED_DAYS = [date(2026, 10, d) for d in (6, 7, 8, 12, 13, 14, 15, 16)]
 TARGET = date(2026, 10, 19)
 
-#: The shipped tenant tree this producer serves. Real, not a fixture: the
-#: producer binds the declaration to the session at boot
-#: (``produce_fields.assert_declaration_binds_to_the_run``), so a stand-in
-#: would have to restate the shipped open anchor and vol window to be accepted
-#: — and then it would stop pinning the shipped ones.
 TENANT_TREE = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-stock-005930"
-STOCK_SESSION_BARS = 380  # 09:00 .. 15:19 (15:20-15:30 is the closing auction)
+STOCK_SESSION_BARS = 380
 TARGET_BARS = 40
 TARGET_SESSION_END = "09:40"
-
-
-# ---------------------------------------------------------------------------
-# config
-# ---------------------------------------------------------------------------
 
 
 def _stock_data(**overrides: Any) -> dict:
@@ -104,9 +77,7 @@ def test_the_shipped_stock_config_loads_as_a_stock_market() -> None:
     )
     transport = config.transport
     assert transport["market"] == "stock"
-    # #924: the close of each fetched day, from the calendar (regular day: 153000).
     assert transport["initial_cursor"] == config_mod.QUOTE_CURSOR_SESSION_END
-    # The futures hour-class parameter has no meaning for the stock TR.
     assert "hour_cls_code" not in transport
 
 
@@ -129,15 +100,10 @@ def test_the_shipped_futures_config_keeps_its_futures_meaning() -> None:
 @pytest.mark.parametrize(
     ("overrides", "why"),
     [
-        # an unknown market: nothing would select its TR
         ({"market": "bond"}, "not one of"),
-        # a stock config naming a futures product would request every seed
-        # day on a futures month
         ({"front_month_product": "mini"}, "does not roll"),
-        # the futures era rule is 08:45 — wrong for a 09:00 stock open
         ({"open_anchor": "auto"}, "FUTURES era rule"),
         ({"open_anchor": "9h"}, "neither 'auto' nor HH:MM"),
-        # the volume drop rule must be pinned for stock too
         ({"parser_env": {"KIS_FUTURES_HOUR_CLS_CODE": "60"}}, "must pin"),
     ],
 )
@@ -238,7 +204,6 @@ def test_a_stock_band_read_requests_the_stock_tr_and_yields_the_three_values() -
         "lower": "189000",
         "basis": "270000",
     }
-    # The futures shape cannot read it — the member and the field names differ.
     with pytest.raises(band_line_mod.BandLineError):
         band_line_mod.band_values_from_payload(read.payload)
 
@@ -280,15 +245,8 @@ def test_the_band_probe_writes_a_stock_band_line(tmp_path: Path) -> None:
     assert line["trading_date"] == "20261019"
 
 
-# ---------------------------------------------------------------------------
-# aspr_unit vs the tree's tick ladder (#929 review MEDIUM)
-# ---------------------------------------------------------------------------
-
-
 def _probe(tmp_path: Path, output: dict, config_path: Path = STOCK_CONFIG) -> tuple:
-    """Run the probe on the recorded band with ``output`` overriding fields.
-
-    Returns ``(rc, band lines, band-log stages)``."""
+    """Run the probe on the recorded band with ``output`` overriding fields."""
     payload = json.loads(RECORDED_BAND.read_text(encoding="utf-8"))
     payload["output"].update(output)
 
@@ -331,11 +289,8 @@ def test_a_matching_aspr_unit_is_checked_and_the_line_is_written(
 @pytest.mark.parametrize(
     "output",
     [
-        # The broker says 100원 at 271,500원; the ladder says 500원.
         {"aspr_unit": "100"},
-        # 199,900원 is on the 100원 rung; a broker answering 500 disagrees.
         {"stck_prpr": "199900", "aspr_unit": "500"},
-        # Above the ladder's top row (10,000,000원): no rung, never widened.
         {"stck_prpr": "12000000", "aspr_unit": "1000"},
     ],
 )
@@ -360,10 +315,8 @@ def test_an_aspr_unit_that_agrees_on_a_lower_rung_passes(tmp_path: Path) -> None
         {"aspr_unit": None},
         {"stck_prpr": "0"},
         {"aspr_unit": "5.0"},
-        # #930 review LOW: non-ASCII digits pass str.isdigit() and then raise in int() —
-        # a traceback (rc 1) before the fix, a refusal (rc 3, no line) after it.
         {"stck_prpr": "2²"},
-        {"stck_prpr": "２７１５００"},  # full-width digits
+        {"stck_prpr": "２７１５００"},
         {"aspr_unit": "５００"},
     ],
 )
@@ -417,11 +370,6 @@ def test_the_probe_reads_the_ladder_the_runtime_enforces() -> None:
     assert ladder.tick_for(19_990_000) == 10_000
 
 
-# ---------------------------------------------------------------------------
-# the recorded-shape response through the real client
-# ---------------------------------------------------------------------------
-
-
 def _recorded() -> dict:
     return json.loads(RECORDED.read_text(encoding="utf-8"))
 
@@ -432,7 +380,6 @@ def _stock_quotes(handler: Any) -> Any:
     quotes = object.__new__(quote_client.Quotes)
     quotes.cfg = {
         **config.transport,
-        # As real_quotes builds it: the session_end token resolved per day (#924).
         "initial_cursor": real_quotes_mod.resolve_initial_cursor(config),
         "pace_s": 0.0,
         "retry_pause_s": 0.0,
@@ -467,7 +414,6 @@ def test_a_stock_page_requests_the_stock_tr_and_parses_the_recorded_response() -
     assert params["FID_INPUT_DATE_1"] == "20261021"
     assert params["FID_INPUT_HOUR_1"] == "153000"
     assert "FID_HOUR_CLS_CODE" not in params
-    # The request log names the TR actually sent, not the futures constant.
     (event,) = quotes.recorder.events
     assert event["tr_id"] == "FHKST03010230"
     assert event["path"] == quote_client.STOCK_QUOTE_PATH
@@ -479,8 +425,6 @@ def test_a_stock_page_requests_the_stock_tr_and_parses_the_recorded_response() -
         last_frozen_minute=None,
         session_ended=False,
     )
-    # 09:01-09:04 are complete (a later row exists); 09:05 is still open; the
-    # previous day's 15:30 row is not this day's.
     assert [bar[1].strftime("%H:%M") for bar in step.newly_frozen] == [
         "09:01",
         "09:02",
@@ -539,11 +483,6 @@ def test_stock_history_walks_the_cursor_back_to_the_open() -> None:
         "090400",
         "090500",
     }
-
-
-# ---------------------------------------------------------------------------
-# a whole stock session through the producer
-# ---------------------------------------------------------------------------
 
 
 def _stock_bars(day: date, *, count: int, base: float, width: float) -> list[tuple]:
@@ -649,10 +588,6 @@ def _stock_calendar(tmp_path: Path) -> Path:
             {"phase": "CONTINUOUS", "start": "09:00", "end": TARGET_SESSION_END}
         ]
     }
-    # The shipped file now carries a dated override naming BOTH classes (2026-11-19,
-    # #924). This fixture declares only ``krx-stock``, and an override for a class the
-    # regular sessions do not declare is refused at load — so the shipped entry goes
-    # with the shipped sessions it belongs to. ``_override_calendar`` writes its own.
     source["session_overrides"] = {}
     path = tmp_path / "calendar.yaml"
     path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
@@ -697,7 +632,6 @@ def test_a_stock_session_publishes_b1a_equal_lines_under_the_stock_layout(
     producer.run_session()
     summary = producer.finish()
 
-    # Every request, seed walk included, named the symbol — no roll.
     assert {symbol for symbol, _ in quotes.requested} == {SYMBOL}
     assert producer.seed.contracts_used == (SYMBOL,)
     assert producer.anchor.kst == "09:00"
@@ -718,7 +652,6 @@ def test_a_stock_session_publishes_b1a_equal_lines_under_the_stock_layout(
     assert all(row["raw_event_id"].startswith(f"{SYMBOL}:1m:") for row in rows)
     assert summary["counters"]["published"] == len(rows)
 
-    # B1a over the SAME raw rows (seed days actually used + the target day).
     bars: list[tuple] = []
     for day in [*producer.seed.days_used, TARGET]:
         bars.extend(
@@ -771,10 +704,6 @@ def test_an_open_anchor_that_disagrees_with_the_calendar_is_refused(
     producer.finish()
 
 
-# ---------------------------------------------------------------------------
-# #924 — a dated session override (FICTITIOUS: no KRX notice moves 10-19)
-# ---------------------------------------------------------------------------
-
 OVERRIDE_OPEN, OVERRIDE_END = "10:00", "10:40"
 
 
@@ -808,9 +737,7 @@ def _late(bars: list[tuple], minutes: int) -> list[tuple]:
 def test_924_a_late_open_day_shifts_the_first_bar_and_the_session_end(
     tmp_path: Path, market: StockMarket
 ) -> None:
-    """The target day's window comes from its override: no bar is waited for before
-    10:00, the loop ends at the shifted close, and the anchor (regular 09:00) is
-    still accepted — the seed frame was counted with it."""
+    """The target day's window comes from its override: no bar is waited for before"""
     late_market = StockMarket(
         {**market.sessions, TARGET: _late(market.sessions[TARGET], 60)}
     )
@@ -866,25 +793,19 @@ def test_924_the_session_end_cursor_follows_each_days_close(tmp_path: Path) -> N
     config = config_mod.load_config(_write(tmp_path, data), repo_root=_REPO_ROOT)
     cursor = real_quotes_mod.resolve_initial_cursor(config)
     assert callable(cursor)
-    assert cursor(TARGET) == "104000"  # the override's close
+    assert cursor(TARGET) == "104000"
     assert cursor(SEED_DAYS[-1]) == TARGET_SESSION_END.replace(":", "") + "00"
-    # A literal stays a literal (the futures config's "").
     literal = config_mod.load_config(FUTURES_CONFIG, repo_root=_REPO_ROOT)
     assert real_quotes_mod.resolve_initial_cursor(literal) == ""
 
 
 def test_924_the_shipped_stock_cursor_follows_the_shipped_exam_day_override() -> None:
-    """``quote_initial_cursor: session_end`` on the DEPLOYED calendar: 153000 on a
-    regular day, 163000 on 2026-11-19 (2027학년도 수능), whose CONTINUOUS closes 16:30.
-
-    The second assertion replaces the earlier "the shipped calendar declares no dated
-    overrides" expectation now that the entry ships: a day-one cursor fixed at 153000
-    would drop every 15:31-16:30 bar of that session (#924 「무엇이 문제인가」)."""
+    """``quote_initial_cursor: session_end`` on the DEPLOYED calendar: 153000 on a"""
     config = config_mod.load_config(STOCK_CONFIG, repo_root=_REPO_ROOT)
     cursor = real_quotes_mod.resolve_initial_cursor(config)
-    assert cursor(date(2026, 10, 26)) == "153000"  # a regular Monday
-    assert cursor(date(2026, 11, 18)) == "153000"  # the regular day before the exam day
-    assert cursor(date(2026, 11, 19)) == "163000"  # the shipped override's close
+    assert cursor(date(2026, 10, 26)) == "153000"
+    assert cursor(date(2026, 11, 18)) == "153000"
+    assert cursor(date(2026, 11, 19)) == "163000"
 
 
 def test_924_quotes_page_calls_a_per_day_cursor() -> None:

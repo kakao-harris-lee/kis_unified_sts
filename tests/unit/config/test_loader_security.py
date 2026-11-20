@@ -1,7 +1,4 @@
-"""ConfigLoader 보안 테스트
-
-Path traversal 공격 차단 검증.
-"""
+"""ConfigLoader 보안 테스트"""
 
 import pytest
 
@@ -36,11 +33,9 @@ class TestPathTraversalPrevention:
         strategies_dir = config_dir / "strategies" / "stock"
         strategies_dir.mkdir(parents=True)
 
-        # 테스트 YAML 파일 생성
         test_file = strategies_dir / "test.yaml"
         test_file.write_text("strategy:\n  name: test\n  enabled: true\n")
 
-        # Path traversal 에러가 발생하지 않아야 함
         try:
             result = ConfigLoader.load("strategies/stock/test.yaml")
             assert result is not None
@@ -92,17 +87,14 @@ class TestExistsPathTraversal:
         strategies_dir = config_dir / "strategies" / "stock"
         strategies_dir.mkdir(parents=True)
 
-        # 테스트 YAML 파일 생성
         test_file = strategies_dir / "test.yaml"
         test_file.write_text("strategy:\n  name: test\n")
 
-        # 정상 경로는 True 반환
         result = ConfigLoader.exists("strategies/stock/test.yaml")
         assert result is True
 
     def test_exists_nonexistent_valid_path(self, config_dir):
         """exists() should return False for valid but nonexistent paths"""
-        # 존재하지 않지만 유효한 경로는 False 반환
         result = ConfigLoader.exists("strategies/nonexistent.yaml")
         assert result is False
 

@@ -73,15 +73,10 @@ REFUSED_BEFORE_TRANSPORT_CAUSE = UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPO
 
 NEVER_ACCEPTED_CAUSE = UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED.value
 
-# Every ``CAPACITY_RELEASE_INTENT`` cause this module writes: a release with no proof id and no
-# broker effect. Readers that skip / collect never-sent releases use THIS set, never a literal.
 NEVER_SENT_RELEASE_CAUSES: frozenset[str] = frozenset(
     reason.value for reason in UnsentDiscardReason
 )
 
-# Every row the gateway or a transport writes once an attempt is sealed, claimed, or sent.
-# The gateway writes SEND_SEALED / SEND_STARTED / NETWORK_CALL_ENTERED in that order BEFORE
-# ``send_once`` is entered, so none of them existing means the transport was never called.
 TRANSPORT_ENTRY_EVIDENCE_KINDS: tuple[str, ...] = (
     "SEND_SEALED",
     "SEND_STARTED",
@@ -100,15 +95,12 @@ TRANSPORT_ENTRY_EVIDENCE_KINDS: tuple[str, ...] = (
 _SEND_REFUSED_KIND = "SEND_REFUSED"
 _SEND_HANDED_OFF_KIND = "SEND_HANDED_OFF"
 _PRE_CLAIM_REFUSAL_STEP = CommitmentStep.SEND_BOUNDARY_VERIFICATION.value
-#: The step an uncertain send reached: its answer WAS recorded, it just named no order.
 _UNCERTAIN_RESULT_STEP = CommitmentStep.EVIDENCE_RECORD.value
 
 _DISCARDABLE_CAPACITY_STATES: frozenset[CapacityState] = frozenset(
     {CapacityState.COMMITTED_UNBOUND, CapacityState.ATTEMPT_BOUND}
 )
 
-# The two causes the kernel's ``_discardable`` matches by ATTEMPT, not only by proposal: both
-# name one exact attempt the gateway bound, so the discard token must carry it.
 _ATTEMPT_BOUND_DISCARD_REASONS: frozenset[UnsentDiscardReason] = frozenset(
     {
         UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT,
@@ -279,13 +271,7 @@ def _uncertain_send_never_accepted(
     attempt_id: str,
     consumed_seq: int,
 ) -> UnsentReleaseCandidate | None:
-    """A send the broker's own order history proved it never accepted (11-20 (e)).
-
-    This is the ONE never-sent cause whose flow genuinely reached the transport. The proof is
-    not in this flow's evidence — it is the completed reconciliation recorded by
-    :mod:`~tos_runtime.posttrade.uncertain_send`, which read 주식일별주문체결조회 for the send's
-    own trading date and found no order it could own, twice, a settle window apart.
-    """
+    """A send the broker's own order history proved it never accepted (11-20 (e))."""
     if attempt_id not in never_accepted_attempt_ids(evidence_store):
         return None
     proposal_id = _proposal_id(receipt)
@@ -343,8 +329,7 @@ def _refused_before_transport(
 def _only_pre_claim_refusals(
     conn: sqlite3.Connection, *, attempt_id: str, lo: int, hi: int
 ) -> bool:
-    """At least one ``SEND_REFUSED`` in the flow, every one for this attempt, at step 15, before
-    the seal and the single-use claim, and preserving no capacity obligation."""
+    """At least one ``SEND_REFUSED`` in the flow, every one for this attempt, at step 15, before"""
     refusals = [
         _payload(payload_json)
         for (payload_json,) in conn.execute(
@@ -517,14 +502,7 @@ def _attempt_id(
 
 
 def _awaits_broker_verdict(held: ProvisionalReservation) -> bool:
-    """Whether a ``final`` verdict for ``held`` can still be overturned by a LATER row.
-
-    review-1023 M2's cache treats a verdict reached with the flow's own ``EVENT_CONSUMED``
-    receipt in hand as final, because nothing else in that flow's evidence can change it. An
-    uncertain send breaks that: its answer is the broker's order history, recorded afterwards
-    by :mod:`~tos_runtime.posttrade.uncertain_send`, so a "no candidate" verdict for a
-    quarantined reservation is only true until the reconciliation records one.
-    """
+    """Whether a ``final`` verdict for ``held`` can still be overturned by a LATER row."""
     return held.capacity_state is CapacityState.QUARANTINED_UNKNOWN
 
 

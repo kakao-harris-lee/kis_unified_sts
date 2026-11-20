@@ -1,14 +1,4 @@
-"""Pytest configuration for test discovery and fixtures.
-
-Adds project root to sys.path for module imports.
-
-The session is hermetic, unconditionally: no ``.env`` is loaded, the whole
-``KIS_*`` and ``TELEGRAM_*`` namespace is emptied, and the config and
-token-cache directories are pinned to this checkout and a temp dir.
-``KIS_RUN_LIVE_INFRA_TESTS=1`` lifts the **Redis gate** only — it un-skips the
-``live_infra`` tests and lets ``pytest_runtest_setup`` ping Redis — and
-changes none of the above. See ``docs/CI_PARALLEL_NOTES.md`` and #698.
-"""
+"""Pytest configuration for test discovery and fixtures."""
 
 import atexit
 import os
@@ -22,11 +12,9 @@ from unittest import mock
 
 import pytest
 
-# Add project root to Python path immediately at module load time
 project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
 
-# Imported AFTER project_root lands on sys.path — `tests` is a namespace package.
 from tests.support import git_env, hermetic_env  # noqa: E402
 from tests.support.live_infra import (  # noqa: E402
     live_infra_enabled,
@@ -36,76 +24,20 @@ from tests.support.live_infra import (  # noqa: E402
 )
 
 _LIVE_INFRA_TEST_PATHS = {
-    # These tests connect to real Redis DB 1. Some of them
-    # write/delete runtime-shaped keys such as trading:{asset}:positions and
-    # risk:portfolio:state, so they must never run accidentally while paper
-    # trading is active on the same host.
     "tests/integration/test_redis_tls.py",
 }
 
 
-# --- Hermetic session --------------------------------------------------------
-# Everything below runs at conftest *import* time, before collection, because
-# the leak this closes happens at import time: a test module that imports
-# `cli.commands.common` (or any script entrypoint) used to run an
-# argument-less load_dotenv() during collection, which walked out of a nested
-# worktree into the primary checkout's real .env. A fixture runs too late to
-# stop that; `_hermetic_broker_env` below re-asserts the same invariants once
-# the session starts.
-#
-# Unconditional, with no opt-out. Hermeticity and the live-infra gate answer
-# different questions and used to share one switch:
-#
-#   "may a test talk to real Redis?"        -> live_infra_enabled()
-#   "may this process hold real broker      -> was the same flag, now always no
-#    credentials and read a .env?"
-#
-# Tying them together made the one CI job that always opted in (`performance`,
-# which injected KIS_RUN_LIVE_INFRA_TESTS=1 — that job and its suite were
-# removed in the legacy cleanup L1) the only job with no scrub, no dotenv guard
-# and no token-cache pin. No CI job opts in today, and the unconditional scrub
-# is what keeps that true of the next one. Nothing in this test tree needs real
-# broker credentials — the probe harness that does lives in tools/, not here —
-# so there is no third mode to support. Redis settings are unaffected: the
-# scrub touches only KIS_*/TELEGRAM_*, and REDIS_HOST/PORT/DB come from the
-# environment (CI injects them; their defaults already match this host).
-#: Always true. Kept as a name because the session-state fixture and the
-#: guard tests assert on it, and because a future third mode would land here.
 HERMETIC_SESSION = True
 
-#: The throwaway directory this process's token caches are pinned to: the
-#: shared root in the controller, a subdirectory of it in an xdist worker.
 TOKEN_CACHE_DIR: Path | None = None
 
-#: What the stray-token-cache witnesses looked like before any test ran.
-#: Compared against, not asserted absent: the primary checkout legitimately
-#: holds ``.kis_token_real`` from ordinary host ``sts`` runs, and blaming the
-#: test run for a file written months earlier is a false accusation (#698).
 TOKEN_CACHE_SNAPSHOT: hermetic_env.TokenCacheSnapshot = {}
 
 
 def _apply_hermetic_pins() -> None:
-    """Write every hermetic invariant into ``os.environ``.
-
-    One function, called from the import-time block below *and* from the
-    session fixture, so a pin added to one is never missing from the other —
-    re-asserting a subset would quietly defeat the fixture's whole purpose.
-
-    The scrub empties the entire ``KIS_*``/``TELEGRAM_*`` namespace whatever
-    its source: a ``.env`` already loaded by a plugin, or variables exported in
-    the operator's shell. Credentials aside, that is also what keeps a local
-    run honest, because CI sets none of them and a test that quietly depended
-    on one used to pass locally and fail in CI. Notably it blanks
-    ``TELEGRAM_*_BOT_TOKEN``, without which a test that starts a real
-    ``TradingOrchestrator`` and does not mock ``_notify`` (e.g.
-    ``test_orchestrator_lifecycle``) sends real "🚀 Trading Started" messages
-    to the operator. Tests that exercise Telegram routing self-provision
-    credentials via monkeypatch, which auto-restores per test.
-    """
+    """Write every hermetic invariant into ``os.environ``."""
     if TOKEN_CACHE_DIR is None:
-        # Without this, the pin below writes the string "None" and every token
-        # cache lands in a directory called None next to the working
-        # directory — a silent failure that looks exactly like a pinned cache.
         raise RuntimeError(
             "_apply_hermetic_pins() called before TOKEN_CACHE_DIR was created; "
             "it is only valid in a hermetic session (#698)"
@@ -113,30 +45,16 @@ def _apply_hermetic_pins() -> None:
 
     os.environ[hermetic_env.HERMETIC_ENV] = "1"
     hermetic_env.scrub_broker_env()
-    # Pin the config directory to THIS checkout. A worktree then reads its own
-    # config/, never the primary checkout's, and the value no longer depends
-    # on whether the operator exported KIS_CONFIG_DIR.
     os.environ["KIS_CONFIG_DIR"] = str(project_root / "config")
-    # Send token caches to a throwaway directory. The default is Path.cwd(),
-    # which is how a real .kis_token_real landed in a worktree root on
-    # 2026-09-15.
     os.environ["KIS_TOKEN_CACHE_DIR"] = str(TOKEN_CACHE_DIR)
     os.environ[hermetic_env.TOKEN_CACHE_BASE_ENV] = str(TOKEN_CACHE_BASE)
 
 
-#: The shared root, created by the controller and inherited by xdist workers.
 TOKEN_CACHE_BASE: Path | None = None
 
-# One root per *session*, not per process. xdist workers inherit it through
-# the environment and take a subdirectory of it, so the controller — whose
-# pytest_sessionfinish runs last — can see a token any worker wrote. Read
-# before the scrub, which empties the KIS_ namespace.
 _inherited_base = os.environ.get(hermetic_env.TOKEN_CACHE_BASE_ENV)
 _xdist_worker_id = os.environ.get("PYTEST_XDIST_WORKER")
 if _xdist_worker_id and _inherited_base:
-    # Only a worker inherits. A bare run that found the variable in the
-    # ambient environment would adopt some earlier run's directory and,
-    # having not created it, never clean it up.
     TOKEN_CACHE_BASE = Path(_inherited_base)
 else:
     TOKEN_CACHE_BASE = Path(tempfile.mkdtemp(prefix="kis-test-token-cache-"))
@@ -148,23 +66,12 @@ TOKEN_CACHE_DIR = (
 TOKEN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _apply_hermetic_pins()
 
-# Turn any remaining .env read into a named failure instead of a silent
-# credential injection — including from a caller added after #698.
 hermetic_env.install_dotenv_guard()
 
 TOKEN_CACHE_SNAPSHOT = hermetic_env.snapshot_token_caches(
     hermetic_env.token_cache_witnesses(project_root)
 )
 
-# --- pytest-xdist worker isolation -------------------------------------------
-# xdist workers are separate processes, so in-process singletons are already
-# isolated per worker. The remaining cross-worker hazard among the *parallel*
-# tests is Hypothesis' example database: by default every worker reads/writes
-# the same SQLite file and they contend/corrupt each other. Give each worker
-# its own directory. Tests that touch shared *external* state (e.g. Redis DB 1)
-# or assert on uncontended wall-clock timing are instead marked ``serial`` and
-# run in a separate non-parallel pass — see the ``serial`` marker in
-# pyproject.toml and the split steps in .github/workflows/test.yml.
 _xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
 if _xdist_worker:
     os.environ.setdefault(
@@ -202,37 +109,17 @@ def mocker():
 
 
 def pytest_configure(config):
-    """Configure pytest before test collection.
-
-    This hook runs before test collection, ensuring sys.path is set up correctly
-    for importing project modules in fixtures and tests.
-    """
-    # Ensure project root is at the beginning of sys.path
+    """Configure pytest before test collection."""
     project_root_str = str(project_root)
     if project_root_str in sys.path:
         sys.path.remove(project_root_str)
     sys.path.insert(0, project_root_str)
 
-    # The dotenv guard is installed at import time, before --basetemp has been
-    # parsed, so tell it now where tmp_path actually lives. Without this,
-    # `pytest --basetemp=./.pytest-tmp` puts every fixture file inside the
-    # checkout and the guard refuses the suite's own .env fixtures (#698).
     hermetic_env.register_sandbox_root(getattr(config.option, "basetemp", None))
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Fail the session if any test issued or rewrote a KIS token cache.
-
-    A plain test only observes files touched before it happens to run, and
-    under ``-n auto`` it lands mid-session on one worker — every test
-    scheduled after it goes unchecked. The verdict therefore belongs here,
-    after the last item on this worker, where it covers the whole run.
-
-    Comparison against the session-start snapshot, never an absence check:
-    the primary checkout legitimately holds ``.kis_token_real`` (2026-07-08)
-    and ``.kis_token_mock`` (2026-06-09) from ordinary host ``sts`` runs,
-    because the default cache directory is ``Path.cwd()`` (#698).
-    """
+    """Fail the session if any test issued or rewrote a KIS token cache."""
     if not TOKEN_CACHE_SNAPSHOT:
         return
 
@@ -254,15 +141,8 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip live-infra tests unless explicitly enabled.
-
-    The production/paper runtime and integration tests both use Redis DB 1 by
-    policy. Skipping these tests by default prevents accidental deletion or
-    overwrite of active paper-trading keys during ordinary local test runs.
-    """
+    """Skip live-infra tests unless explicitly enabled."""
     allow_live_infra = live_infra_enabled()
-    # One gate, one message: the wording lives in tests/support/live_infra.py
-    # so the skip reason and the failure text cannot drift apart.
     skip_live_infra = pytest.mark.skip(reason=skip_reason())
 
     for item in items:
@@ -279,39 +159,17 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(scope="session", autouse=True)
 def _hermetic_broker_env():
-    """Re-assert the hermetic invariants once the session starts.
-
-    The import-time block at the top of this file is what actually makes
-    collection safe. This fixture is the backstop for anything that ran
-    *during* collection and re-introduced a credential — a plugin, a module
-    that reads a file at import, a conftest further down the tree. It re-scrubs
-    rather than failing, so the session gets the safe state either way; the
-    assertions live in ``tests/unit/config/test_dotenv_hermeticity.py``, which
-    fails loudly and names itself.
-
-    Runs for every session. The live-infra opt-in lifts the Redis gate, not
-    these invariants — nothing in this test tree needs real broker
-    credentials.
-    """
+    """Re-assert the hermetic invariants once the session starts."""
     _apply_hermetic_pins()
     yield
 
 
 @pytest.fixture(scope="session")
 def token_cache_snapshot():
-    """What every stray-token-cache witness looked like before any test ran.
-
-    Requested by the guard test that asserts no test issued a KIS token. It is
-    a snapshot rather than an absence check because the primary checkout
-    legitimately holds ``.kis_token_real``/``.kis_token_mock`` from host
-    ``sts`` runs (#698).
-    """
+    """What every stray-token-cache witness looked like before any test ran."""
     return TOKEN_CACHE_SNAPSHOT
 
 
-# Probe result for this process, computed at most once: ``None`` = not probed
-# yet, ``(failure_or_None,)`` = probed. A tuple rather than a bare value so
-# "probed, and it was fine" is distinguishable from "not probed".
 _REDIS_PROBE: tuple[str | None] | None = None
 
 
@@ -324,21 +182,7 @@ def _redis_failure_once() -> str | None:
 
 
 def pytest_runtest_setup(item):
-    """Fail — never skip — a live-infra test that cannot reach Redis.
-
-    This is the second half of the gate whose first half is in
-    ``pytest_collection_modifyitems`` above. Not opted in: that hook already
-    skipped the item and the builtin skipping plugin (``tryfirst``) short-
-    circuits before this runs. Opted in: the test must run, so an unreachable
-    Redis is a failure, not silence. A skip here is exactly how the CI
-    ``performance`` job reported green for four months while measuring 13 of
-    its 25 benchmarks.
-
-    Failing per item, rather than raising at import time in the test modules,
-    keeps the blast radius to the gated tests: the rest of the session still
-    runs instead of pytest aborting collection with zero tests executed. It
-    also covers all of ``_LIVE_INFRA_TEST_PATHS``.
-    """
+    """Fail — never skip — a live-infra test that cannot reach Redis."""
     if "live_infra" not in item.keywords or not live_infra_enabled():
         return
     failure = _redis_failure_once()
@@ -348,12 +192,7 @@ def pytest_runtest_setup(item):
 
 @pytest.fixture(scope="session")
 def hermetic_session_state():
-    """How this session was configured, for the guard tests to assert on.
-
-    ``redis_probed`` is a callable rather than a value because the live-infra
-    gate pings lazily, at the first gated item — reading the flag at fixture
-    setup would always see "not probed" and pin nothing.
-    """
+    """How this session was configured, for the guard tests to assert on."""
     return SimpleNamespace(
         hermetic=HERMETIC_SESSION,
         live_infra_enabled=live_infra_enabled(),
@@ -365,16 +204,10 @@ def hermetic_session_state():
 
 @pytest.fixture(autouse=True)
 def _clean_prometheus_registry():
-    """Clean up Prometheus metric registry between tests to prevent pollution.
-
-    Some tests import modules that register Prometheus metrics at module level.
-    Without cleanup, these registrations persist and cause 'Duplicated timeseries'
-    errors in subsequent tests that import the same modules.
-    """
+    """Clean up Prometheus metric registry between tests to prevent pollution."""
     try:
         from prometheus_client import REGISTRY
 
-        # Snapshot metric names registered before the test
         names_before = set(REGISTRY._names_to_collectors.keys())
     except ImportError:
         yield
@@ -382,7 +215,6 @@ def _clean_prometheus_registry():
 
     yield
 
-    # Remove any metrics registered during the test
     names_after = set(REGISTRY._names_to_collectors.keys())
     new_names = names_after - names_before
     if new_names:
@@ -399,19 +231,7 @@ def _clean_prometheus_registry():
 
 @pytest.fixture
 def config_dir(tmp_path, monkeypatch):
-    """A temp config directory that BOTH the loader and the env var name.
-
-    Setting only ``ConfigLoader.set_config_dir(tmp)`` is no longer enough.
-    The hermetic session pins ``KIS_CONFIG_DIR`` to ``<checkout>/config``, and
-    ``ServiceConfigBase.from_yaml`` snaps the loader back to that env var
-    whenever the two disagree (``shared/config/base.py``). A test that sets
-    only the programmatic half therefore reads the real ``config/foo.yaml``
-    instead of its own fixture — passing or failing for the wrong reason.
-    Before the pin, ``KIS_CONFIG_DIR`` was unset in CI and the programmatic
-    dir won, so the two halves agreed by accident (#698 round-2 review).
-
-    Yields the directory, already created.
-    """
+    """A temp config directory that BOTH the loader and the env var name."""
     from shared.config.loader import ConfigLoader
 
     path = tmp_path / "config"
@@ -428,17 +248,11 @@ def config_dir(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_config_loader_singleton():
-    """Reset ConfigLoader singleton between tests to prevent config dir pollution.
-
-    Tests that set KIS_CONFIG_DIR via monkeypatch can leave the ConfigLoader
-    singleton pointing to a tmp directory, causing subsequent tests to fail
-    with ConfigNotFoundError.
-    """
+    """Reset ConfigLoader singleton between tests to prevent config dir pollution."""
     yield
     try:
         from shared.config.loader import ConfigLoader
 
-        # Reset singleton so next test re-initializes with correct config dir
         ConfigLoader._instance = None
         ConfigLoader._config_dir = None
         ConfigLoader._cache.clear()
@@ -448,15 +262,7 @@ def _reset_config_loader_singleton():
 
 @pytest.fixture(autouse=True)
 def _reset_futures_open_cache():
-    """Clear the module-level futures open/close cache between tests.
-
-    ``shared.decision.context.load_futures_open_from_config`` (and the
-    ``close`` twin) memoizes the parsed ``futures.regular`` time per config
-    path. Tests that point it at a
-    temp config (or rely on the default) could otherwise leak a cached value
-    into a later test — especially under pytest-xdist where module state is
-    shared within a worker. Clearing before AND after keeps each test hermetic.
-    """
+    """Clear the module-level futures open/close cache between tests."""
     try:
         from shared.decision.context import _reset_futures_open_cache as _clear
 
@@ -470,21 +276,7 @@ def _reset_futures_open_cache():
 
 @pytest.fixture(scope="session")
 def requires_repo_checkout():
-    """Precondition for a test that needs THIS repository's git metadata.
-
-    Request it from any test that reads the checkout through git — ``git clone <repo root>``
-    (the original case, #835) and equally a read of a tracked file's committed ``HEAD`` blob,
-    as ``scripts/tos/render_paper_config.py::broker_profile_pin`` does for the stock tree's
-    broker profile (#958, #1024). Both need the same thing and fail the same way without it:
-    ``fatal: not a git repository``. It skips in exactly one
-    place — the ``Dockerfile.test`` image, which sets
-    ``KIS_TEST_IMAGE_NO_GIT_METADATA`` because ``.dockerignore`` excludes ``.git`` — and
-    nowhere else. With no repository and no marker the test is allowed to run and fail
-    loudly, so a broken checkout on a real gate never reads as a green skip (#835).
-
-    The probe runs lazily, once per session, and raises rather than skipping when git fails
-    for a reason other than "no repository here" (dubious ownership and friends).
-    """
+    """Precondition for a test that needs THIS repository's git metadata."""
     reason = git_env.repo_checkout_skip_reason(
         git_env.repo_checkout_state(project_root),
         os.environ.get(git_env.NO_GIT_METADATA_ENV),

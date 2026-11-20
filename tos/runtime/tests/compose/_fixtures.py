@@ -532,9 +532,6 @@ def write_kis_mock_transport_config(
         {}
         if shared_app_key_state_dir is None
         else {
-            # #1125: the two optional pairs that make the tenant processes holding one app
-            # key share its token and its request queue. Absent by default, so every other
-            # fixture keeps the per-process behaviour it was written against.
             "token_cache_path": str(shared_app_key_state_dir / "stock-mock.json"),
             "token_cache_refresh_margin_s": 600,
             "shared_pacer_path": str(shared_app_key_state_dir / "stock-mock.pace"),

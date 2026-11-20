@@ -1,8 +1,4 @@
-"""Unit tests for shared/indicators/momentum.py
-
-Tests TRIX, CCI, MACD, Stochastic, RSI, OBV calculators and
-DivergenceDetector with known-input / known-output verification.
-"""
+"""Unit tests for shared/indicators/momentum.py"""
 
 from __future__ import annotations
 
@@ -20,10 +16,6 @@ from shared.indicators.momentum import (
     TRIXCalculator,
     calculate_all_momentum,
 )
-
-# =============================================================================
-# TRIX Calculator
-# =============================================================================
 
 
 def _make_ohlcv(close_values: list[float], volume: float = 1000.0) -> pd.DataFrame:
@@ -54,7 +46,6 @@ class TestTRIXCalculator:
         closes = np.linspace(100, 120, 100).tolist()
         df = _make_ohlcv(closes)
         result = TRIXCalculator(n=12, signal=9).calculate(df)
-        # Row 0 is NaN due to shift(1), remaining rows must be finite
         assert result["trix"].iloc[1:].isna().sum() == 0
         assert np.all(np.isfinite(result["trix"].iloc[1:].values))
 
@@ -62,7 +53,6 @@ class TestTRIXCalculator:
         """For constant price, TRIX should be near zero."""
         df = _make_ohlcv([100.0] * 100)
         result = TRIXCalculator(n=12, signal=9).calculate(df)
-        # After warm-up, TRIX should be ~0
         assert abs(result["trix"].iloc[-1]) < 0.001
 
     def test_uptrend_positive_trix(self):
@@ -70,13 +60,7 @@ class TestTRIXCalculator:
         closes = np.linspace(100, 200, 120).tolist()
         df = _make_ohlcv(closes)
         result = TRIXCalculator(n=12, signal=9).calculate(df)
-        # Last 10 bars should be positive
         assert all(result["trix"].iloc[-10:] > 0)
-
-
-# =============================================================================
-# CCI Calculator
-# =============================================================================
 
 
 class TestCCICalculator:
@@ -88,11 +72,9 @@ class TestCCICalculator:
     def test_constant_cci_zero(self):
         """CCI should be 0 for constant price (no deviation)."""
         df = _make_ohlcv([100.0] * 50)
-        # override high/low to match close for true constant
         df["high"] = 100.0
         df["low"] = 100.0
         result = CCICalculator(period=9).calculate(df)
-        # CCI should be very close to 0
         assert abs(result["cci"].iloc[-1]) < 1.0
 
     def test_cci_finite(self):
@@ -100,11 +82,6 @@ class TestCCICalculator:
         df = _make_ohlcv(closes)
         result = CCICalculator(period=9).calculate(df)
         assert result["cci"].isna().sum() == 0
-
-
-# =============================================================================
-# MACD Calculator
-# =============================================================================
 
 
 class TestMACDCalculator:
@@ -132,11 +109,6 @@ class TestMACDCalculator:
         assert abs(result["macd_oscillator"].iloc[-1]) < 0.01
 
 
-# =============================================================================
-# Stochastic Calculator
-# =============================================================================
-
-
 class TestStochasticCalculator:
     def test_adds_columns(self):
         df = _make_ohlcv(list(range(50, 100)))
@@ -150,7 +122,7 @@ class TestStochasticCalculator:
         closes = rng.normal(100, 10, 120).tolist()
         df = _make_ohlcv(closes)
         result = StochasticCalculator(12, 5, 5).calculate(df)
-        assert result["sto_k"].min() >= -0.01  # Allow minor float drift
+        assert result["sto_k"].min() >= -0.01
         assert result["sto_k"].max() <= 100.01
         assert result["sto_d"].min() >= -0.01
         assert result["sto_d"].max() <= 100.01
@@ -161,13 +133,7 @@ class TestStochasticCalculator:
         df["high"] = 100.0
         df["low"] = 100.0
         result = StochasticCalculator(12, 5, 5).calculate(df)
-        # Should use neutral 50 when range is 0
         assert result["sto_k"].iloc[-1] == pytest.approx(50.0)
-
-
-# =============================================================================
-# RSI Calculator
-# =============================================================================
 
 
 class TestRSICalculator:
@@ -189,16 +155,10 @@ class TestRSICalculator:
         """Mostly increasing with tiny noise → RSI near 100."""
         rng = np.random.default_rng(99)
         base = np.linspace(100, 200, 50)
-        # Add tiny noise so loss isn't exactly zero (avoids 0/0 edge)
         noisy = base + rng.normal(0, 0.01, 50)
         df = _make_ohlcv(noisy.tolist())
         result = RSICalculator(period=14).calculate(df)
         assert result["rsi"].iloc[-1] > 90
-
-
-# =============================================================================
-# OBV Calculator
-# =============================================================================
 
 
 class TestOBVCalculator:
@@ -216,36 +176,24 @@ class TestOBVCalculator:
             }
         )
         result = OBVDataFrameCalculator().calculate(df)
-        # Bar 0: direction=0 → cumsum starts at 0
-        # Bar 1: +2000 → 2000
-        # Bar 2: -1500 → 500
-        # Bar 3: +3000 → 3500
         expected = [0, 2000, 500, 3500]
         np.testing.assert_array_equal(result["obv"].values, expected)
-
-
-# =============================================================================
-# DivergenceDetector
-# =============================================================================
 
 
 class TestDivergenceDetector:
     def test_bearish_divergence(self):
         """Price higher highs + indicator lower highs ⇒ bearish."""
-        # Construct pattern with two peaks:
-        # Peak 1 at ~index 5, Peak 2 at ~index 15 (higher price, lower indicator)
         n = 20
         prices = np.zeros(n)
         indicators = np.zeros(n)
 
-        # Up-down-up-down pattern with rising price peaks
         for i in range(n):
             if i == 5:
-                prices[i] = 110  # First peak
+                prices[i] = 110
                 indicators[i] = 50
             elif i == 15:
-                prices[i] = 120  # Higher high
-                indicators[i] = 40  # Lower high
+                prices[i] = 120
+                indicators[i] = 40
             elif i == 4 or i == 6:
                 prices[i] = 100
                 indicators[i] = 40
@@ -271,7 +219,7 @@ class TestDivergenceDetector:
                 prices[i] = 120
                 indicators[i] = 50
             elif i == 15:
-                prices[i] = 110  # Lower high ← no divergence
+                prices[i] = 110
                 indicators[i] = 40
             elif i in (4, 6):
                 prices[i] = 100
@@ -296,11 +244,11 @@ class TestDivergenceDetector:
 
         for i in range(n):
             if i == 5:
-                prices[i] = 80  # First trough
+                prices[i] = 80
                 indicators[i] = 20
             elif i == 15:
-                prices[i] = 70  # Lower low
-                indicators[i] = 30  # Higher low
+                prices[i] = 70
+                indicators[i] = 30
             elif i in (4, 6):
                 prices[i] = 90
                 indicators[i] = 30
@@ -320,11 +268,6 @@ class TestDivergenceDetector:
         short = pd.Series([1.0, 2.0])
         assert detector.detect_bearish(short, short) is False
         assert detector.detect_bullish(short, short) is False
-
-
-# =============================================================================
-# calculate_all_momentum convenience function
-# =============================================================================
 
 
 class TestCalculateAllMomentum:
@@ -370,6 +313,5 @@ class TestCalculateAllMomentum:
         result = calculate_all_momentum(df, include_obv=False, include_rsi=False)
         assert "obv" not in result.columns
         assert "rsi" not in result.columns
-        # Core columns still present
         assert "trix" in result.columns
         assert "macd_oscillator" in result.columns

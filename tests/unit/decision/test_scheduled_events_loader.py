@@ -1,4 +1,3 @@
-# tests/unit/decision/test_scheduled_events_loader.py
 from shared.decision.context import load_scheduled_events
 
 

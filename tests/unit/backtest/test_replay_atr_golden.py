@@ -1,24 +1,4 @@
-"""Golden regression pins for ``MarketContextReplay`` indicator math (P1-b1).
-
-This test freezes the exact hand-rolled ATR-14 math that
-``shared/backtest/market_context_replay.py`` carried BEFORE delegation to the
-indicator package, and asserts the production path reproduces those numbers
-BIT-IDENTICALLY — exact float equality with NaN positions preserved
-(``np.testing.assert_array_equal``). ``MarketContextReplay`` is the B3 witness's
-market-context loader (``tools/tos_cp3/produce_fields.py``), so this is a pin on
-the witness path.
-
-The sibling pins for ``shared/backtest/daily_adapter.py`` and
-``shared/backtest/adapter.py`` went with those two modules in the legacy removal
-L7 — both fell outside the import closure
-(docs/plans/2026-11-07-legacy-removal-plan.md §3).
-
-A hard-coded literal spot pin additionally protects against BOTH sides drifting
-together (e.g. a frozen copy being "fixed" alongside production).
-
-Do NOT edit the ``_frozen_*`` reference implementation: it is a verbatim
-pre-refactor copy (the golden).
-"""
+"""Golden regression pins for ``MarketContextReplay`` indicator math (P1-b1)."""
 
 from __future__ import annotations
 
@@ -29,10 +9,6 @@ import pandas as pd
 
 from shared.backtest.market_context_replay import MarketContextReplay
 from shared.execution.contract_spec import ContractSpec
-
-# ---------------------------------------------------------------------------
-# Deterministic synthetic OHLCV builder
-# ---------------------------------------------------------------------------
 
 
 def _replay_frame(sessions: int = 2, bars_per_session: int = 100) -> pd.DataFrame:
@@ -59,16 +35,10 @@ def _replay_frame(sessions: int = 2, bars_per_session: int = 100) -> pd.DataFram
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
-# Frozen (pre-refactor) reference implementation
-# ---------------------------------------------------------------------------
-
-
 def _frozen_compute_atr(
     highs: np.ndarray, lows: np.ndarray, closes: np.ndarray
 ) -> np.ndarray:
-    """Verbatim pre-refactor ``market_context_replay._compute_atr`` (ATR-14,
-    TR with bar-0 = H-L, partial-window numpy slice means from bar 0)."""
+    """Verbatim pre-refactor ``market_context_replay._compute_atr`` (ATR-14,"""
     _ATR_PERIOD = 14
     n = len(closes)
     tr = np.empty(n)
@@ -120,7 +90,6 @@ class TestReplayAtrGolden:
         assert replay._atr_90th == float(np.nanpercentile(expected, 90))
 
 
-# Literal spot pins (full repr, generated from the pre-refactor code path).
 SPOT_REPLAY_ATR_LAST = 0.2438318145813493
 SPOT_REPLAY_ATR_90TH = 0.2763946369876343
 SPOT_REPLAY_CTX_ATR = 0.2317447600618274

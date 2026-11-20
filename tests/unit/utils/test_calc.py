@@ -39,7 +39,6 @@ class TestCalcProfitRate:
         """Test profit calculation for long position"""
         from shared.utils.calc import calc_profit_rate
 
-        # 100 -> 105: 5% profit
         result = calc_profit_rate(100.0, 105.0, "long")
         assert result == pytest.approx(0.05)
 
@@ -47,7 +46,6 @@ class TestCalcProfitRate:
         """Test loss calculation for long position"""
         from shared.utils.calc import calc_profit_rate
 
-        # 100 -> 95: -5% loss
         result = calc_profit_rate(100.0, 95.0, "long")
         assert result == pytest.approx(-0.05)
 
@@ -55,7 +53,6 @@ class TestCalcProfitRate:
         """Test profit calculation for short position"""
         from shared.utils.calc import calc_profit_rate
 
-        # 100 -> 95: 5% profit for short
         result = calc_profit_rate(100.0, 95.0, "short")
         assert result == pytest.approx(0.05)
 
@@ -63,7 +60,6 @@ class TestCalcProfitRate:
         """Test loss calculation for short position"""
         from shared.utils.calc import calc_profit_rate
 
-        # 100 -> 105: -5% loss for short
         result = calc_profit_rate(100.0, 105.0, "short")
         assert result == pytest.approx(-0.05)
 
@@ -89,7 +85,6 @@ class TestCalcProfitPct:
         """Test rate to percentage conversion"""
         from shared.utils.calc import calc_profit_pct
 
-        # 5% profit should be 5.0
         result = calc_profit_pct(100.0, 105.0, "long")
         assert result == pytest.approx(5.0)
 
@@ -101,7 +96,6 @@ class TestCalcUnrealizedPnl:
         """Test unrealized PnL for long profit"""
         from shared.utils.calc import calc_unrealized_pnl
 
-        # (105 - 100) * 10 = 50
         result = calc_unrealized_pnl(100.0, 105.0, 10, "long")
         assert result == pytest.approx(50.0)
 
@@ -109,7 +103,6 @@ class TestCalcUnrealizedPnl:
         """Test unrealized PnL for short profit"""
         from shared.utils.calc import calc_unrealized_pnl
 
-        # (100 - 95) * 10 = 50
         result = calc_unrealized_pnl(100.0, 95.0, 10, "short")
         assert result == pytest.approx(50.0)
 
@@ -128,10 +121,6 @@ class TestCalcRealizedPnl:
         """Test realized PnL with fees"""
         from shared.utils.calc import calc_realized_pnl
 
-        # Gross: (105 - 100) * 10 = 50
-        # Entry fee: 100 * 10 * 0.0015 = 1.5
-        # Exit fee: 105 * 10 * 0.0015 = 1.575
-        # Net: 50 - 1.5 - 1.575 = 46.925
         result = calc_realized_pnl(100.0, 105.0, 10, "long", 0.003)
         assert result == pytest.approx(46.925)
 
@@ -150,7 +139,6 @@ class TestCalcDropFromHigh:
         """Test drop percentage calculation"""
         from shared.utils.calc import calc_drop_from_high
 
-        # 3% drop from 100 to 97
         result = calc_drop_from_high(97.0, 100.0)
         assert result == pytest.approx(3.0)
 
@@ -183,7 +171,6 @@ class TestCalcOrderQuantity:
         """Test normal quantity calculation"""
         from shared.utils.calc import calc_order_quantity
 
-        # 1,000,000 / 50,000 = 20
         result = calc_order_quantity(1_000_000, 50_000)
         assert result == 20
 
@@ -242,6 +229,5 @@ class TestValidatePrice:
         """Test boundary values are exclusive"""
         from shared.utils.calc import validate_price
 
-        # min and max are exclusive
         assert validate_price(0.0, min_price=0.0) is False
         assert validate_price(100.0, max_price=100.0) is False

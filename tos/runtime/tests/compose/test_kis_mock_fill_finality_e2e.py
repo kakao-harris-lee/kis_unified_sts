@@ -31,7 +31,6 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 _ODNO = "0000004470"
 _FOREIGN_ODNO = "0000009999"
-#: 평균 체결가 as the broker prints it: whole KRW, NOT the tree's ×100 price scale.
 _FILL_PRICE = "193300"
 
 
@@ -121,16 +120,7 @@ def _row(
     tot_ccld_amt: str | None = None,
     ord_tmd: str | None = None,
 ) -> dict[str, str]:
-    """One ``VTTC0081R`` ``output1`` row, in the measured wire shape (all strings).
-
-    The two price fields are optional on purpose: a caller that omits them reproduces the row
-    shape every e2e here used before ``FILL_OBSERVED`` carried a price.
-
-    ``ord_tmd`` (주문시각) is optional for the same reason, and leaving it out is load-bearing
-    rather than incidental: an order with no broker-stamped placement time can never be proven
-    to predate this runtime's own first order, so every orphan built without one keeps its
-    veto. Only a test about an order placed BEFORE the runtime started sets it.
-    """
+    """One ``VTTC0081R`` ``output1`` row, in the measured wire shape (all strings)."""
     row = {
         "ord_dt": date,
         "odno": odno,
@@ -280,8 +270,6 @@ def test_partial_then_full_fill_releases_once_with_connected_evidence(
     assert [(k, d) for _a, k, d in report.emitted] == [
         (EgressResultKind.FULL_FILL, ResultDisposition.APPLIED)
     ]
-    # The broker's own 평균 체결가 / 총 체결금액 reach evidence in WHOLE KRW, unscaled by the
-    # tree's `_runtime.price_scale`; the partial-fill row above printed neither, so it says so.
     assert [
         (r["avg_execution_price"], r["executed_amount"])
         for r in _rows(runtime, "FILL_OBSERVED")

@@ -1,9 +1,4 @@
-"""Unit tests for the TA-Lib backend.
-
-Skipped entirely when the TA-Lib wheel is absent. The value these assert is the
-normalization contract (catalog id/output -> canonical flat key) and parity with
-a direct TA-Lib call, not TA-Lib's own math.
-"""
+"""Unit tests for the TA-Lib backend."""
 
 from __future__ import annotations
 
@@ -48,7 +43,6 @@ def test_supported_ids_cover_standard_set(backend: TALibBackend) -> None:
     ids = backend.supported_ids()
     for expected in ("rsi", "atr", "adx", "bollinger", "macd", "stochastic"):
         assert expected in ids
-    # TA-Lib does not provide these; they must NOT be claimed.
     for absent in ("vwap", "rvol", "volume_acceleration", "ichimoku"):
         assert absent not in ids
 
@@ -80,7 +74,6 @@ def test_adx_parity_with_direct_talib(backend: TALibBackend, window) -> None:
 def test_compute_latest_default_matches_flat_latest(
     backend: TALibBackend, window
 ) -> None:
-    # Exercises the base compute_latest() default (batch -> finite tail).
     spec = IndicatorSpec.create("rsi", {"period": 14})
     assert (
         backend.compute_latest(spec, window)
@@ -145,7 +138,6 @@ def test_empty_window_raises(backend: TALibBackend) -> None:
 
 
 def test_short_window_yields_no_finite_latest(backend: TALibBackend) -> None:
-    # 5 bars, RSI(14) never warms up -> all-NaN -> flat_latest drops it.
     short = OHLCVWindow.from_sequences(
         open=[1, 2, 3, 4, 5],
         high=[1, 2, 3, 4, 5],
@@ -172,22 +164,6 @@ def test_default_engine_uses_talib(window) -> None:
     assert {"bb_upper", "bb_middle", "bb_lower"} <= set(panel)
 
 
-# ---------------------------------------------------------------------------
-# APO/PPO do not inherit TA-Lib's default matype (#695)
-# ---------------------------------------------------------------------------
-#
-# These two took their moving-average type from TA-Lib's own default, and that
-# default MOVED between releases: ta-lib-python 0.7.0 (C 0.6.4) uses 0/SMA,
-# 0.8.0 (C 0.8.1) uses 1/EMA. So the published VALUE depended on which wheel was
-# installed, with nothing in the repo pinning it -- `grep -rniE '\b(apo|ppo)\b'
-# tests` found zero hits when #695 was written. `pyproject.toml` caps TA-Lib at
-# <0.8, but a dependency cap is not a value contract: lifting it (the point of
-# #695) would have changed every APO/PPO number with CI still green.
-#
-# The backend now passes matype=0 explicitly. These tests are what makes that
-# load-bearing instead of decorative.
-
-
 @pytest.mark.parametrize("indicator_id", ["apo", "ppo"])
 def test_apo_ppo_match_the_sma_variant_not_the_talib_default(
     backend: TALibBackend, window, indicator_id: str
@@ -208,12 +184,7 @@ def test_apo_ppo_match_the_sma_variant_not_the_talib_default(
 def test_apo_ppo_would_differ_under_the_other_matype(
     backend: TALibBackend, window, indicator_id: str
 ) -> None:
-    """The concrete input that makes the pin above matter.
-
-    If SMA and EMA happened to agree on this window, the parity test would pass
-    for the wrong reason and a silent default flip would still slip through.
-    They do not agree, and this is the test that says so.
-    """
+    """The concrete input that makes the pin above matter."""
     func = getattr(talib, indicator_id.upper())
     got = backend.compute(
         IndicatorSpec.create(indicator_id, {"fast": 12, "slow": 26}), window
@@ -226,12 +197,7 @@ def test_apo_ppo_would_differ_under_the_other_matype(
 
 
 def test_apo_ppo_pass_matype_explicitly_whatever_talib_defaults_to() -> None:
-    """Catches the regression directly: the argument must be SENT, not inherited.
-
-    A spy module stands in for `talib`, so this holds on a wheel whose default is
-    EMA as well -- which is exactly the version this repo is capped away from and
-    will eventually move to.
-    """
+    """Catches the regression directly: the argument must be SENT, not inherited."""
     from shared.indicators.engine import talib_backend as tb
 
     seen: dict[str, dict[str, object]] = {}

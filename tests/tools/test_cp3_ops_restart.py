@@ -1,14 +1,4 @@
-"""tools/tos_cp3/ops/restart_stock_tenant.sh — the gates that run before anything is touched.
-
-Every case here stops in the argument/precondition block, so the script never
-stops a session, never reads a balance and never moves a leaf: the assertions are
-that it exits 2 and that the state root is still empty. That ordering is the
-safety property — a restart that was invoked without the account fingerprint, or
-for a symbol that is not a tenant, must not have killed the session it was about
-to repair.
-
-Hermetic: fake state root, fake primary checkout, no broker call, no git clone.
-"""
+"""tools/tos_cp3/ops/restart_stock_tenant.sh — the gates that run before anything is touched."""
 
 from __future__ import annotations
 
@@ -88,8 +78,6 @@ def test_empty_fingerprint_env_is_still_a_refusal(host: Path) -> None:
 
 
 def test_fingerprint_flag_is_accepted_and_the_next_gate_refuses(host: Path) -> None:
-    # The flag satisfies the fingerprint gate; the fake primary checkout has no
-    # .venv, so the run still stops — before the stop/flat-check/archive steps.
     result = _run(host, "005930", "--expect-account-fingerprint", _FP)
     assert result.returncode == 2, result.stderr
     assert ".venv/bin/python" in result.stdout + result.stderr
@@ -135,18 +123,6 @@ def test_help_exits_zero_without_touching_the_host(host: Path) -> None:
     assert "restart_stock_tenant.sh" in result.stdout
     assert _untouched(host)
 
-
-# ---------------------------------------------------------------------------
-# Steps 2–7, on a scratch host: the ORDER is the contract
-# ---------------------------------------------------------------------------
-#
-# Still hermetic: `git` and the venv interpreter are stubs on PATH, the session
-# runner is a stub inside the stub worktree, and no broker call, no clone and no
-# network happen. What these pin is what the comments in the script claim and
-# nothing else could check — that a NOT-flat answer leaves both the leaf and the
-# approval alone, that the approval is moved BEFORE the runner starts and
-# written only AFTER `render ok`, and that a pid that is not this runner is
-# never signalled.
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SESSION_RUNNER = _REPO_ROOT / "tools/tos_cp3/runners/run_tenant_session.sh"
@@ -251,8 +227,6 @@ class _Stage:
             "CP3_DAILY_MAIN": str(self.main),
             "CP3_DAILY_STATE": str(self.state),
             "CP3_EXPECT_ACCOUNT_FP": _FP,
-            # The calendar read is the runner's; forcing it keeps this test off
-            # the real tree's config (the handle the script documents).
             "CP3_DAILY_STOP_AT": "15:40",
             "CP3_DAILY_APPROVAL_WAIT_TRIES": "30",
             "CP3_DAILY_APPROVAL_WAIT_SLEEP_S": "1",
@@ -312,25 +286,20 @@ def test_the_happy_path_archives_then_starts_then_writes_the_approval(
 ) -> None:
     result = stage.run()
     assert result.returncode == 0, result.stdout + result.stderr
-    # 4. the leaf was MOVED, not deleted.
     assert not stage.leaf.exists()
     archived = stage.archived()
     assert len(archived) == 1 and archived[0].name.startswith(f"{_SYMBOL}.restart-")
     assert (archived[0] / "evidence.sqlite3").is_file()
-    # 6. the previous approval was moved out of the slot BEFORE the runner ran —
-    # a file written after boot is refused as `digest_changed_since_bound`.
     assert not stage.approval.exists()
     assert len(list((stage.custody / "approvals-archive").iterdir())) == 1
     session = stage.sessions()[0]
     assert session.name == f"stock-r1-{stage.date}"
     seen_at_start = (session / "approvals-at-start.txt").read_text(encoding="utf-8")
     assert "standing-session.yaml" not in seen_at_start
-    # 7. and the new one was written only after `render ok`.
     assert (session / "approval-saw-render-ok").read_text(encoding="utf-8") == "yes\n"
     approval_args = (session / "approval-args.txt").read_text(encoding="utf-8")
     assert f"--custody-root {stage.custody}" in approval_args
     assert "--environment-label paper" in approval_args
-    # and the flat check came first of the two python calls.
     calls = stage.py_log.read_text(encoding="utf-8").splitlines()
     assert "mock_flat_check" in calls[0]
     assert "write-standing-approval" in calls[-1]
@@ -369,12 +338,7 @@ def test_a_pid_that_is_not_the_runner_is_skipped_not_signalled(
 
 
 def _start_impostor(stage: _Stage, session_root: str) -> subprocess.Popen[bytes]:
-    """A live process whose cmdline IS the session runner, at ``session_root``.
-
-    The reaper thread stands in for init: pytest is this process's parent and
-    never waits, and a zombie still answers `kill -0`, so without it the script
-    would wait out its whole stop bound on an already-dead runner.
-    """
+    """A live process whose cmdline IS the session runner, at ``session_root``."""
     proc = subprocess.Popen(
         ["bash", str(stage.root / "stub/run_tenant_session.sh")],
         env={
@@ -393,12 +357,7 @@ def _start_impostor(stage: _Stage, session_root: str) -> subprocess.Popen[bytes]
 def test_a_runner_living_at_another_session_root_is_refused_not_skipped(
     stage: _Stage,
 ) -> None:
-    """Round-1 MEDIUM: "not my session root" is not "not my process".
-
-    The pid IS a `run_tenant_session.sh`. If this run skipped it and carried on,
-    it would archive the leaf and start a second session NEXT TO a live runner.
-    `FAKE_FLAT_RC=0` here, so only the refusal stops that.
-    """
+    """Round-1 MEDIUM: "not my session root" is not "not my process"."""
     elsewhere = stage.root / "elsewhere"
     elsewhere.mkdir()
     session = stage.state / "cp3-sessions" / f"stock-r1-{stage.date}"
@@ -446,7 +405,7 @@ def test_the_stop_bound_is_read_from_the_session_runner(stage: _Stage) -> None:
         const("SIGKILL_AFTER_S")
         + const("PRODUCER_SIGKILL_AFTER_S")
         + const("BAND_PROCESS_KILL_AFTER_S")
-        + 5  # stop_wait()'s own grace, a literal in that same file
+        + 5
     )
     session = stage.state / "cp3-sessions" / f"stock-r1-{stage.date}"
     session.mkdir(parents=True)

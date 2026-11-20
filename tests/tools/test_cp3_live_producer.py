@@ -63,34 +63,18 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 INSTRUMENT = "A05611"
 BASE_PRICE = 400.0
-SESSION_BARS = 420  # 08:45 .. 15:44, the real shape of a 2026 futures session
+SESSION_BARS = 420
 OPEN_HM = (8, 45)
 
-#: Ten past sessions for the long-frame reference plus the target session. The
-#: dates are real 2026 trading days in the tenant calendar (so no holiday and
-#: no weekend), after the 2026-06-28 open-anchor cutover.
 SEED_DAYS = [date(2026, 10, d) for d in (1, 2, 6, 7, 8, 12, 13, 14, 15, 16)]
 TARGET = date(2026, 10, 19)
 
-#: The shipped tenant tree this producer serves. Real, not a fixture: the
-#: producer binds the declaration to the session at boot
-#: (``produce_fields.assert_declaration_binds_to_the_run``), so a stand-in
-#: would have to restate the shipped open anchor and vol window to be accepted
-#: — and then it would stop pinning the shipped ones.
 TENANT_TREE = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long"
 
-#: The target session is cut short in the test calendar so the loop walks 36
-#: boundaries instead of 420. Bar 09:00 is the first inside the entry window
-#: (``valid_minutes_min`` 15 after the 08:45 anchor).
 TARGET_BARS = 36
 TARGET_SESSION_END = "09:20"
 
 
-#: Measured in this file (see ``test_equivalence_*``): seed amplitude DECREASES
-#: toward the present, so a 780-bar causal window reaches back into a more
-#: volatile session than a 683-bar one does and ``hi_vol``'s percentile differs.
-#: Without that arrangement the equivalence test would be a tautology — any
-#: seed length would pass.
 def _seed_scale(index: int) -> float:
     return 4.00 - 0.30 * index
 
@@ -98,11 +82,6 @@ def _seed_scale(index: int) -> float:
 def _target_scale(bar_index: int) -> float:
     """Ramped so the target session's ATR sweeps ACROSS 0.9 x both percentiles."""
     return 1.50 + 0.022 * bar_index
-
-
-# ---------------------------------------------------------------------------
-# Synthetic market data
-# ---------------------------------------------------------------------------
 
 
 def _zigzag(index: int, period: int = 7) -> float:
@@ -186,11 +165,6 @@ def _constant(value: float, _index: int) -> float:
     return value
 
 
-# ---------------------------------------------------------------------------
-# Strategy / contract inputs, shared by the heavier tests
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(scope="module")
 def inputs() -> dict[str, Any]:
     strategy = load_strategy_inputs(
@@ -243,13 +217,6 @@ def _b1a_target_records(market: Market, inputs: dict, seed_days: list[date]) -> 
     }
 
 
-# ---------------------------------------------------------------------------
-# Fakes: the clock and the quotation transport
-# ---------------------------------------------------------------------------
-
-
-#: The measured first-appearance lag of a raw row after its own minute boundary
-#: (evidence §1.2: the ``+1 s`` mode's p50 is 1.107809 s).
 ARRIVAL_LAG_S = 1.1
 
 
@@ -266,10 +233,6 @@ class FakeClock:
         self.moment += timedelta(seconds=max(0.0, seconds))
 
 
-#: The band response the fake serves. The three values are P-VL's 2026-10-08
-#: MOCK measurement of ``A05611`` (upper 1162.72 / lower 990.48 — the pair that
-#: landed on the MINI 0.02 tick grid) with a basis between them. Strings,
-#: because the broker sends strings and the producer copies them verbatim.
 BAND_UPPER, BAND_LOWER, BAND_BASIS = "1162.72", "990.48", "1076.60"
 
 
@@ -305,22 +268,11 @@ class FakeQuotes:
         self.http = None
         self.last_received_kst = clock.now()
         self.fail_next = 0
-        #: ``minute -> seconds past its own boundary before the row appears``.
-        #: Anything over G makes that boundary miss its bar (review M1).
         self.hold_until: dict[datetime, float] = {}
-        # -- band (band plan §3.1). Deliberately on their OWN counters and
-        # their own failure switch: a band read must not consume the price
-        # path's `fail_next`, spend its pace or move `calls`, or every
-        # pre-existing timing assertion in this file would be measuring the
-        # band instead of what it was written for.
         self.band_calls = 0
         self.band_fail_next = 0
-        #: Seconds of fake clock one band attempt costs. 0 by default, so the
-        #: band is invisible to every test that is not about it.
         self.band_cost_s = 0.0
         self.band_payload: dict | None = None
-        #: The clock at each band attempt, and at each price page — the two
-        #: sequences the "band does not push the next poll" proof compares.
         self.band_started: list[datetime] = []
         self.poll_started: list[datetime] = []
 
@@ -330,7 +282,7 @@ class FakeQuotes:
     def _visible(self, day: date) -> list[dict]:
         rows = self.market.rows(day)
         if day != TARGET:
-            return rows  # a past session is complete
+            return rows
         now = self.clock.now().replace(tzinfo=None)
         return [
             row
@@ -378,12 +330,6 @@ class FakeQuotes:
         return self._visible(day)
 
 
-# ---------------------------------------------------------------------------
-# Config + calendar on disk
-# ---------------------------------------------------------------------------
-
-
-#: The years the producer's YAML declares for the tenant calendar (review L4).
 COVERED_YEARS = (2026,)
 
 
@@ -413,11 +359,6 @@ def _write_calendar(tmp_path: Path, *, session_end: str = TARGET_SESSION_END) ->
             {"phase": "CONTINUOUS", "start": "08:45", "end": session_end}
         ]
     }
-    # The shipped file carries a dated override naming BOTH classes (2026-11-19, #924)
-    # and this fixture declares only ``krx-index-futures``. An override for a class the
-    # regular ``sessions`` do not declare is refused at load, so the shipped entry goes
-    # with the shipped session list it belongs to. Overrides are not what this file
-    # tests — ``test_cp3_session_day.py`` pins them, shipped entry included.
     source["session_overrides"] = {}
     path = tmp_path / "calendar.yaml"
     path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
@@ -506,11 +447,6 @@ def _journal_rows(path: Path) -> list[dict]:
     ]
 
 
-# ===========================================================================
-# §5 1 — equivalence, and the proof it is not a tautology
-# ===========================================================================
-
-
 @pytest.mark.serial
 def test_item1_live_lines_equal_b1a_over_a_ten_session_frame(
     tmp_path: Path, market: Market, inputs: dict
@@ -538,7 +474,6 @@ def test_item1_live_lines_equal_b1a_over_a_ten_session_frame(
     assert set(live) <= set(reference)
     mismatched = {key for key in live if live[key] != reference[key]}
     assert not mismatched, sorted(mismatched)
-    # ... and the comparison actually covered the discriminating bars.
     assert {reference[key]["hi_vol"] for key in live} == {True, False}
 
 
@@ -594,12 +529,7 @@ def test_item1_the_window_fill_rule_counts_capacity_not_sessions(
     )
     assert seed.capacity == 993
     assert len(seed.days_used) == 4
-    assert walked == sorted(walked, reverse=True)  # newest first
-
-
-# ===========================================================================
-# §5 2 — as_of_ms monotonicity, regression refusal, one line per write
-# ===========================================================================
+    assert walked == sorted(walked, reverse=True)
 
 
 def _row(raw_event_id: str = "A05611:1m:20261019T090000+0900") -> dict:
@@ -647,7 +577,6 @@ def test_item2_red_a_non_advancing_stamp_is_refused(
     assert not refused.written
     assert refused.reason == "clock_regression"
     assert len(_journal_rows(journal.path)) == 1
-    # the journal is still usable: the next advancing stamp is written
     assert journal.append(_row()).written
     assert [row["as_of_ms"] for row in _journal_rows(journal.path)] == [1_000, 1_002]
 
@@ -677,15 +606,12 @@ def test_item2_red_the_stamp_is_taken_after_produce_bars_not_before(
     clock.moment = datetime(
         TARGET.year, TARGET.month, TARGET.day, 9, 10, 5, tzinfo=producer_mod.KST
     )
-    # patched on `line`, which is where `build_line` reads it from since the
-    # pure half moved there (PR #904 review round 1 item A.5). The name is the
-    # DECLARATIVE producer since P2-c.
     real_produce = line_mod.produce_bars_declarative
     compute_cost_s = 5.0
 
     def slow_produce(*args, **kwargs):
         result = real_produce(*args, **kwargs)
-        clock.sleep(compute_cost_s)  # the compute takes real time
+        clock.sleep(compute_cost_s)
         return result
 
     monkeypatch.setattr(line_mod, "produce_bars_declarative", slow_produce)
@@ -696,7 +622,6 @@ def test_item2_red_the_stamp_is_taken_after_produce_bars_not_before(
     rows = _journal_rows(producer.journal_path)
     assert len(rows) == 1
     stamped = rows[0]["as_of_ms"]
-    # the stamp is AFTER the compute, not before it
     assert stamped >= int((before.timestamp() + compute_cost_s) * 1000)
     assert stamped <= int(clock.now().timestamp() * 1000)
 
@@ -720,17 +645,9 @@ def test_item2_one_line_per_write_and_catch_up_is_counted_not_batched(
     assert len(rows) == 1
     assert producer.counters.pre_boot_lines == 1
     assert producer.counters.skipped_behind > 20
-    # every frozen bar is in the frame even though only one was published
     assert len(producer.frozen) == producer.counters.skipped_behind + 1
-    # the morning's bars are HISTORY, not late arrivals: `late_completed` is
-    # reserved for a bar whose own boundary passed while the session ran
     assert producer.counters.late_completed == 0
     producer.finish()
-
-
-# ===========================================================================
-# §5 3 — completion is judged on RAW rows
-# ===========================================================================
 
 
 def _target_rows_through(market: Market, minute_index: int) -> list[dict]:
@@ -771,7 +688,6 @@ def test_item3_a_sub_threshold_successor_row_still_completes_the_bar(
     )
     assert [bar[1] for bar in step.newly_frozen] == [market.target_bars[4][1]]
     assert step.deferred == ()
-    # the sub-threshold minute itself is not fabricated into a bar
     assert market.target_bars[5][1] not in [bar[1] for bar in step.newly_frozen]
 
 
@@ -852,17 +768,13 @@ def test_item3_a_full_run_freezes_the_gap_bar_and_publishes_the_session_end_bar(
     gap_bar = market.target_bars[-3][1]
     last_bar = market.target_bars[-1][1]
 
-    # the session-end bar: its own boundary, so published
     assert _event_id(last_bar) in published
     assert last_bar in frozen
-    # the gap bar: completed into the frame, deliberately NOT published
     assert gap_bar in frozen
     assert _event_id(gap_bar) not in published
     assert producer.counters.late_completed >= 1
-    # and the withheld minute never becomes a bar at all
     assert withheld not in frozen
     assert producer.counters.no_raw_row_for_minute >= 1
-    # every frozen bar reached Parquet, so B1a reads the same frame
     stored = len(list((producer.market_root).rglob("*.parquet")))
     assert stored >= len(producer.frozen)
 
@@ -889,13 +801,9 @@ def test_item3_red_a_late_bar_does_not_steal_the_current_bars_publication(
     to 2.5 s — past the first poll at +1.8 s, inside G — puts the late bar
     ALONE in that first poll, which is the shape the cascade needs.
     """
-    starved = market.target_bars[25][1]  # the bar whose boundary will miss
-    successor = market.target_bars[26][1]  # its completion signal, held back
+    starved = market.target_bars[25][1]
+    successor = market.target_bars[26][1]
     producer, _clock, quotes = _build(tmp_path, market)
-    # The successor row appears 12 s past ITS own boundary — past G = 10 s from
-    # `starved`'s boundary, so `starved` cannot complete inside its own window.
-    # And `successor`'s own completion signal arrives at +2.5 s, so the first
-    # poll of ITS boundary sees `starved` completing and nothing else.
     quotes.hold_until = {successor: 12.0, market.target_bars[27][1]: 2.5}
     producer.boot()
     producer.run_session()
@@ -906,17 +814,12 @@ def test_item3_red_a_late_bar_does_not_steal_the_current_bars_publication(
     ]
     frozen = {bar[1] for bar in producer.frozen}
 
-    # the starved minute's own boundary published nothing...
     assert starved not in published
     assert producer.counters.missing_no_successor >= 1
-    # ...it still reached the frame, so B1a sees the same bars...
     assert starved in frozen
     assert producer.counters.late_completed >= 1
-    # ...and the NEXT boundary published ITS OWN bar rather than returning on
-    # the late one (the cascade: the first cut lost this bar entirely)
     assert successor in published
     assert successor in frozen
-    # no published line is older than the one before it
     assert published == sorted(published)
 
 
@@ -943,9 +846,9 @@ def test_item3_red_a_stalled_poll_publishes_the_newest_frozen_bar(
     was sitting frozen in the frame. Now the newest newly frozen bar is
     published as a catch-up and the boundary it already covered returns at once.
     """
-    stalled = market.target_bars[30][1]  # 09:15 — overtaken by the stall
-    catch_up = market.target_bars[31][1]  # 09:16 — complete when the poll returns
-    following = market.target_bars[32][1]  # 09:17 — the next ordinary boundary
+    stalled = market.target_bars[30][1]
+    catch_up = market.target_bars[31][1]
+    following = market.target_bars[32][1]
     producer, clock, quotes = _build(tmp_path, market)
     quotes.hold_until = {catch_up: 30.0}
 
@@ -955,7 +858,7 @@ def test_item3_red_a_stalled_poll_publishes_the_newest_frozen_bar(
     def stalling_page(symbol: str, day: date, cursor: str = "") -> list[dict]:
         if not stalled_once and clock.now().replace(tzinfo=None) >= stall_at:
             stalled_once.append(clock.now())
-            clock.sleep(58.0)  # the response arrives at 09:17:06
+            clock.sleep(58.0)
         return inner_page(symbol, day, cursor)
 
     quotes.page = stalling_page
@@ -969,24 +872,18 @@ def test_item3_red_a_stalled_poll_publishes_the_newest_frozen_bar(
     ]
     frozen = {bar[1] for bar in producer.frozen}
 
-    # the newest bar the stalled poll froze is the one that gets published...
     assert catch_up in published
-    # ...the overtaken bar is frozen and counted, not mislabelled
     assert stalled in frozen
     assert stalled not in published
     assert producer.counters.skipped_behind >= 1
     assert producer.counters.omitted_unusable == 0
-    # ...the boundary the catch-up already covered polls nothing and claims no
-    # missing successor for a bar that is frozen
     assert producer.counters.missing_no_successor == 0
     assert producer.counters.already_published == 1
-    # ...and the session carries on at the next ordinary boundary
     assert following in published
 
-    # the invariants this catch-up must not break
-    assert len(published) == len(set(published))  # nothing published twice
-    assert published == sorted(published)  # strictly increasing minutes
-    assert set(published) <= frozen  # only bars that entered the frame
+    assert len(published) == len(set(published))
+    assert published == sorted(published)
+    assert set(published) <= frozen
 
 
 @pytest.mark.serial
@@ -1013,14 +910,12 @@ def test_red_i1_a_minute_that_never_existed_is_not_called_already_published(
     :meth:`LiveProducer._boundary_already_settled` and this test goes red on
     ``already_published == 1``.
     """
-    m = market.target_bars[30][1]  # 09:15 — completes only via m+2's row
-    missing = market.target_bars[31][1]  # 09:16 — no raw row, ever
-    m2 = market.target_bars[32][1]  # 09:17 — the catch-up publication
+    m = market.target_bars[30][1]
+    missing = market.target_bars[31][1]
+    m2 = market.target_bars[32][1]
     producer, clock, quotes = _build(tmp_path, market)
     quotes.hold_until = {missing: 10_000.0}
 
-    # The poll issued at m+1's boundary (+δ) returns only after m+3's row
-    # exists, so m and m+2 are both complete in that one response.
     stall_at = missing + timedelta(seconds=1)
     inner_page, stalled_once = quotes.page, []
 
@@ -1048,16 +943,12 @@ def test_red_i1_a_minute_that_never_existed_is_not_called_already_published(
     ]
     frozen = {bar[1] for bar in producer.frozen}
 
-    # the repro really happened: m+1 never became a bar, m+2 was the catch-up
     assert missing not in frozen
     assert m in frozen
     assert m2 in published
-    # the boundary about the minute that never existed says exactly that...
     missing_events = [e for e in events if e.get("bar") == str(missing)]
     assert [e["stage"] for e in missing_events] == ["no_raw_row_for_minute"]
     assert missing_events[0]["raw_event_id"] == _event_id(missing)
-    # ...and the publication counter counts the ONE real catch-up (m+2's own
-    # boundary), not two.
     assert producer.counters.already_published == 1
     assert [e["bar"] for e in events if e["stage"] == "already_published"] == [str(m2)]
 
@@ -1080,8 +971,8 @@ def test_red_i2_an_omitted_catch_up_does_not_count_as_published(
     :meth:`LiveProducer._boundary_already_settled` and ``missing_no_successor``
     becomes 1 with ``bar_minute_traded: true``.
     """
-    stalled = market.target_bars[30][1]  # 09:15
-    catch_up = market.target_bars[31][1]  # 09:16 — frozen, publication omitted
+    stalled = market.target_bars[30][1]
+    catch_up = market.target_bars[31][1]
     producer, clock, quotes = _build(tmp_path, market)
     quotes.hold_until = {catch_up: 30.0}
 
@@ -1125,29 +1016,20 @@ def test_red_i2_an_omitted_catch_up_does_not_count_as_published(
         _minute_of(r["raw_event_id"]) for r in _journal_rows(producer.journal_path)
     }
 
-    # the repro: the catch-up bar is in the frame, and its line was omitted
     assert catch_up in {bar[1] for bar in producer.frozen}
     assert producer.counters.omitted_unusable == 1
     assert catch_up not in journal_minutes
-    # the publication bookkeeping follows the WRITE, not the attempt
     assert producer.published_minutes == journal_minutes
     assert producer.last_published_minute == max(journal_minutes)
     assert catch_up not in producer.published_minutes
-    # the next boundary claims no publication and invents no missing successor
     assert producer.counters.already_published == 0
     assert producer.counters.missing_no_successor == 0
     assert [e["stage"] for e in events if e.get("bar") == str(catch_up)] == [
         "omitted_unusable",
         producer_mod.STAGE_ALREADY_FROZEN,
     ]
-    # the overtaken bar is still accounted for where it always was
     assert stalled in {bar[1] for bar in producer.frozen}
     assert producer.counters.skipped_behind >= 1
-
-
-# ===========================================================================
-# §5 4 — freezing
-# ===========================================================================
 
 
 def test_item4_a_response_that_would_move_an_earlier_bar_cannot(
@@ -1178,8 +1060,6 @@ def test_item4_a_response_that_would_move_an_earlier_bar_cannot(
     assert [bar[1] for bar in step.newly_frozen] == [market.target_bars[6][1]]
     assert frozen_bar[1] not in [bar[1] for bar in step.newly_frozen]
 
-    # Red proof of the clause: the revision IS in the response, so without the
-    # frozen-minute filter the same rows re-publish 08:50 with the moved close.
     unfrozen = frame_mod.freeze_step(
         rows,
         day=TARGET,
@@ -1206,16 +1086,11 @@ def test_item4_the_frozen_frame_is_append_only_across_a_whole_run(
     producer.finish()
 
     by_minute = {bar[1]: bar for bar in producer.frozen}
-    assert len(by_minute) == len(producer.frozen)  # no duplicate minute
+    assert len(by_minute) == len(producer.frozen)
     for row in _journal_rows(producer.journal_path):
         bar = by_minute[_minute_of(row["raw_event_id"])]
         assert row["fields"]["close_x100"] == round(bar[5] * 100)
         assert row["fields"]["volume"] == bar[6]
-
-
-# ===========================================================================
-# §5 5 — half-written files, order-path imports, pins, seed refusal
-# ===========================================================================
 
 
 def test_item5_a_half_written_journal_is_never_visible(tmp_path: Path) -> None:
@@ -1233,7 +1108,6 @@ def test_item5_a_half_written_journal_is_never_visible(tmp_path: Path) -> None:
     original = os.replace
 
     def spy(src, dst):
-        # what a reader sees at the instant BEFORE the rename
         seen.append((tmp_path / "journal.jsonl").read_text(encoding="utf-8"))
         return original(src, dst)
 
@@ -1242,8 +1116,6 @@ def test_item5_a_half_written_journal_is_never_visible(tmp_path: Path) -> None:
         assert journal.append(_row()).written
     finally:
         sinks_mod.os.replace = original
-    # mid-write the file still holds EXACTLY the previous complete line — the
-    # expectation is the writer's own bytes, not a re-serialisation here
     assert seen == [after_first]
     assert len(_journal_rows(journal.path)) == 2
     assert list(tmp_path.glob("*.tmp")) == []
@@ -1297,9 +1169,7 @@ def test_item5_a_crashed_parquet_write_is_not_picked_up(
     )
     monkeypatch.undo()
 
-    # mid-write: the temp file exists on disk, and NEITHER glob can see it
     assert seen == [([], 0)]
-    # afterwards: exactly the committed part file, visible to both
     assert [path.name for path in market_root.rglob("*.parquet")] == [written[0].name]
     assert written[0].name.startswith("part-") and not written[0].name.startswith(".")
     assert (
@@ -1358,7 +1228,6 @@ def _import_closure(module_name: str, *, root: Path | None = None) -> set[str]:
             continue
         seen.add(name)
         parts = name.split(".")
-        # Parent packages run their own __init__ on the way in.
         queue.extend(".".join(parts[:depth]) for depth in range(1, len(parts)))
         source = _module_source(name, base)
         if source is None:
@@ -1384,29 +1253,8 @@ def _import_closure(module_name: str, *, root: Path | None = None) -> set[str]:
     return seen
 
 
-#: The ONLY ``shared.execution`` modules the producer's closure may reach.
-#: Measured on this branch, and asserted by EQUALITY below rather than by
-#: "none of the bad ones" — an exact set is what turns a NEW arrival red.
-#:
-#: It is now EMPTY, and that is a measurement, not a relaxation. The producer
-#: reached ``shared.execution`` through exactly two edges: the package's own
-#: ``__init__``, which eagerly re-exported ``slippage_control``, and
-#: ``shared.backtest.config``. The legacy removal L7
-#: (``docs/plans/2026-11-07-legacy-removal-plan.md`` §3) removed that fan-out
-#: re-export and deleted ``shared/backtest/config.py`` and
-#: ``shared/execution/slippage_{control,model}.py``, so the credentialed
-#: producer process now reaches NO ``shared.execution`` module at all.
-#: Equality against the empty set is the strongest form of this pin: anything
-#: that re-opens the edge is red, including a module with no order call.
-#: Each allowlisted module is still checked for an order call
-#: (``place_order``/``order_cash``/``.post(``) so the allowlist cannot quietly
-#: absorb one if a later branch has to put something back.
 PURE_SHARED_EXECUTION: frozenset[str] = frozenset()
 
-#: Modules that can put an order on the wire. Forbidden by NAME as well, so the
-#: pin keeps its teeth independently of how the closure is reached: this check
-#: stays red on a direct import even if someone also widens
-#: :data:`PURE_SHARED_EXECUTION` above.
 ORDER_EMITTING_MODULES = (
     "shared.execution.executor",
     "shared.execution.venue_router",
@@ -1418,14 +1266,6 @@ ORDER_EMITTING_MODULES = (
     "shared.execution.pseudo_oco",
     "shared.execution.mock_mirror",
     "tools.broker_probes.probes_real_order",
-    # Band plan §L L5 (review SUGGESTION), decided in PR-A: pinned. It emits
-    # MOCK orders, which is not the real-money path `probes_real_order` is, but
-    # it is still an order path and the producer must not reach it. Measured
-    # free: the closure reaches `tools.broker_probes` (the package `__init__`,
-    # which imports nothing) and `tools.broker_probes.common` only, so this
-    # entry costs nothing today and turns a future `from .probes_order import
-    # DEFAULT_PACE_S` convenience red — which is exactly the edge
-    # `probes_balance`/`probes_ca` each declined by hand, in prose, twice.
     "tools.broker_probes.probes_order",
     "tos",
     "tos_runtime",
@@ -1456,7 +1296,6 @@ def test_item5_the_producer_import_graph_has_no_order_path(
         if name == forbidden or name.startswith(forbidden + ".")
     )
     assert not offending, offending
-    # the walk really reached the producer's own dependencies
     assert "tools.tos_cp3.produce_fields" in producer_closure
     assert "tools.tos_cp3.quote_client" in producer_closure
 
@@ -1486,7 +1325,6 @@ def test_red_the_band_process_import_graph_has_no_order_path(
         if name == forbidden or name.startswith(forbidden + ".")
     )
     assert not offending, offending
-    # the walk really reached the probe's own dependencies
     assert "tools.tos_cp3.quote_client" in band_probe_closure
     assert "tools.tos_cp3.live_producer.real_quotes" in band_probe_closure
 
@@ -1576,13 +1414,10 @@ def test_item5_red_the_closure_walker_sees_parents_and_relative_imports(
 
     closure = _import_closure("pkg.sub.entry", root=tmp_path)
 
-    # relative sibling (`.leaf`) -> and what it imports
     assert "pkg.sub.leaf" in closure
     assert "tools.broker_probes.probes_real_order" in closure
-    # relative parent (`..sibling`) -> and what it imports
     assert "pkg.sibling" in closure
     assert "shared.execution.venue_router" in closure
-    # parent package __init__ -> and what it imports
     assert "pkg" in closure
     assert "shared.execution.executor" in closure
 
@@ -1628,7 +1463,6 @@ def test_item5_red_an_env_pin_mismatch_refuses_to_start(
     environ = {key: bad}
     with pytest.raises(LiveProducerRefused, match="parser env pin mismatch"):
         config_mod.assert_env_pins(config, environ)
-    # unset is fine, and the pin is then applied
     applied: dict[str, str] = {}
     config_mod.assert_env_pins(config, applied)
     assert applied == dict(config.parser_env)
@@ -1810,8 +1644,6 @@ def test_the_lineage_digest_is_the_declaration_the_bind_accepted(
     real_build_seed = producer_mod.build_seed
 
     def _touch_then_build(*args: Any, **kwargs: Any):
-        # The declaration is loaded and bound by now; a re-read at lineage
-        # time would hash THESE bytes instead.
         fields_yaml.write_text(
             fields_yaml.read_text(encoding="utf-8") + "\n# edited mid-boot\n",
             encoding="utf-8",
@@ -1900,9 +1732,7 @@ def test_item5_red_a_second_producer_on_one_session_is_refused(
             sinks_mod.acquire_session_lock(market_root)
     finally:
         held.close()
-    # released: the next acquire succeeds
     sinks_mod.acquire_session_lock(market_root).close()
-    # and the lock file is not something B1a or the store would read as input
     assert list(market_root.rglob("*.parquet")) == []
 
 
@@ -1954,8 +1784,8 @@ def test_item5_red_a_second_producer_on_the_same_session_dir_is_refused(
             config=first.config,
             instrument=INSTRUMENT,
             target=TARGET,
-            session_dir=first.session_dir,  # SAME session
-            journal_path=first.session_dir / "other-journal.jsonl",  # different journal
+            session_dir=first.session_dir,
+            journal_path=first.session_dir / "other-journal.jsonl",
             tenant_tree=TENANT_TREE,
             clock=first.clock,
             quotes_factory=lambda _c, _l: pytest.fail("got past the lock"),
@@ -1973,7 +1803,7 @@ def test_item5_red_an_existing_journal_is_not_overwritten(tmp_path: Path) -> Non
     with pytest.raises(LiveProducerRefused, match="already holds"):
         sinks_mod.refuse_if_journal_exists(path)
     path.write_text("", encoding="utf-8")
-    sinks_mod.refuse_if_journal_exists(path)  # empty is fine
+    sinks_mod.refuse_if_journal_exists(path)
 
 
 @pytest.mark.parametrize(
@@ -2029,10 +1859,6 @@ def test_item5_the_shipped_config_carries_the_operator_confirmed_delta_and_g(
     assert "운영자 결정 2026-10-14" in text
     assert "1.765964" in text and "5.345897" in text
 
-    # Neither value appears as a NUMBER anywhere in the producer's code. Asked
-    # of the AST, not of the file text: a substring scan matched the "+1.8 s"
-    # and "09:06:01.85" in the prose and would have had to be loosened until it
-    # checked nothing.
     for module in ("producer.py", "frame.py", "sinks.py", "calendar.py"):
         tree = ast.parse(
             (_REPO_ROOT / "tools/tos_cp3/live_producer" / module).read_text("utf-8")
@@ -2062,12 +1888,9 @@ def test_item5_red_a_first_page_that_misses_the_open_escalates(
     at the session open.
     """
     producer, clock, quotes = _build(tmp_path, market)
-    # Boot BEFORE the open, so its history fetch finds nothing and the frame
-    # starts out empty — the `last_frozen is None` state the old check skipped.
     producer.boot()
     assert producer.frozen == [], "the premise is an empty frame at the first poll"
 
-    # Now it is mid-morning and the page is too short to reach the open.
     clock.moment = datetime(
         TARGET.year, TARGET.month, TARGET.day, 9, 10, 5, tzinfo=producer_mod.KST
     )
@@ -2081,7 +1904,6 @@ def test_item5_red_a_first_page_that_misses_the_open_escalates(
     assert producer.frozen[0][1] == datetime(
         TARGET.year, TARGET.month, TARGET.day, *OPEN_HM
     ), "today's frame did not start at the session open"
-    # and no minute is missing or duplicated between the open and the last bar
     minutes = [bar[1] for bar in producer.frozen]
     assert minutes == sorted(minutes)
     assert len(set(minutes)) == len(minutes)
@@ -2121,12 +1943,10 @@ def test_item5_red_a_declared_covered_year_without_holidays_is_refused() -> None
     instead.
     """
     assert _tenant_calendar().covered_years == frozenset({2026})
-    # a year the file does not really cover is refused, not accepted
     with pytest.raises(LiveProducerRefused, match="2027"):
         _tenant_calendar(covered_years=(2026, 2027))
     with pytest.raises(LiveProducerRefused, match="no covered years"):
         _tenant_calendar(covered_years=())
-    # the shipped config declares exactly the year the tenant file covers
     shipped = config_mod.load_config(
         _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml", repo_root=_REPO_ROOT
     )
@@ -2150,11 +1970,9 @@ def test_item5_red_a_thin_year_is_refused_even_with_one_holiday(
     path = tmp_path / "with-stray-2027.yaml"
     path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
 
-    # 2026 is genuinely covered...
     assert calendar_mod.load_runtime_calendar(
         path, covered_years=(2026,)
     ).covered_years == frozenset({2026})
-    # ...but the lone 2027 entry does not make 2027 covered
     with pytest.raises(LiveProducerRefused, match="2027: 1"):
         calendar_mod.load_runtime_calendar(path, covered_years=(2026, 2027))
 
@@ -2178,10 +1996,6 @@ def test_item5_the_token_cache_is_scoped_to_the_app_key(
         app_key = "app-key-under-test"
         app_secret = "app-secret-under-test"
 
-    # Patched on `real_quotes`, the module that now owns the only function in
-    # this package that resolves REAL credentials (PR #906 review round 1 —
-    # `producer.py` was at its 1,000-line cap). The function and this test's
-    # claim are unchanged; only the home is.
     monkeypatch.setattr(
         real_quotes_mod, "resolve_credentials", lambda *a, **k: FakeCreds()
     )
@@ -2305,7 +2119,6 @@ def test_red_a_feed_that_answers_nothing_all_day_stops_the_producer(
     assert "NO poll succeeded" in str(excinfo.value)
     assert producer.counters.published == 0
     assert producer.counters.fetch_error > 0
-    # and the refusal still writes a summary — `finish()` always runs
     assert producer.finish()["stage"] == "finish"
 
 
@@ -2325,8 +2138,6 @@ def test_red_a_feed_that_dies_mid_session_stops_the_producer(
     )
     producer.boot()
     real_poll = producer._poll
-    # inside the fixture's short CONTINUOUS window (08:45..09:20), the way
-    # 10:00 is inside the production one
     killed_at = datetime(TARGET.year, TARGET.month, TARGET.day, 9, 0)
 
     def poll_until_ten():
@@ -2337,8 +2148,6 @@ def test_red_a_feed_that_dies_mid_session_stops_the_producer(
     producer._poll = poll_until_ten
     with pytest.raises(LiveProducerRefused, match="3 consecutive minute"):
         producer.run_session()
-    # it did its job until the feed died, which is why the run must be
-    # consecutive rather than cumulative
     assert producer.counters.published > 0
 
 
@@ -2361,7 +2170,7 @@ def test_a_long_run_of_minutes_with_no_rows_does_not_stop_the_producer(
         tmp_path, quiet, max_consecutive_fetch_error_minutes=2
     )
     producer.boot()
-    producer.run_session()  # no refusal
+    producer.run_session()
     summary = producer.finish()
 
     assert summary["counters"]["no_raw_row_for_minute"] > 2, summary["counters"]
@@ -2391,7 +2200,6 @@ def test_red_a_boot_after_the_session_close_is_refused(
 
     with pytest.raises(LiveProducerRefused, match="already past the session end"):
         producer.boot()
-    # before the seed walk: nothing was fetched
     assert quotes.history_calls == 0
 
 
@@ -2419,20 +2227,17 @@ def test_red_a_seed_walk_that_crosses_the_close_refuses_before_the_loop(
 
     def costly_history(*args: Any, **kwargs: Any):
         rows = real_history(*args, **kwargs)
-        clock.sleep(90)  # each walked day costs wall-clock time
+        clock.sleep(90)
         return rows
 
     quotes.history = costly_history
 
-    producer.boot()  # the boot-time check passes: 09:20 <= 09:21
-    # read off the producer's own window, never a literal close
+    producer.boot()
     end = producer.window.end_boundary(TARGET)
     assert clock.now().replace(tzinfo=None) > end, "the walk must cross the close"
 
     with pytest.raises(LiveProducerRefused, match="already past the session end"):
         producer.run_session()
-    # every line this session wrote came from the BOOT catch-up; the loop
-    # contributed none, which is the "measured nothing" shape being refused
     assert producer.counters.published == producer.counters.pre_boot_lines
 
 
@@ -2448,9 +2253,9 @@ def test_a_boot_inside_the_session_is_not_refused(
     production one is 08:45..15:45 and the shape is the same.)
     """
     producer, clock, _quotes = _build(tmp_path, market)
-    clock.moment = clock.moment.replace(hour=9, minute=19)  # close is 09:20
+    clock.moment = clock.moment.replace(hour=9, minute=19)
 
-    producer.boot()  # no refusal
+    producer.boot()
     assert producer.window.end_boundary(TARGET) >= producer._first_boundary()
 
 
@@ -2513,21 +2318,9 @@ def test_item5_the_dry_run_touches_nothing(
     assert printed["orders"] == 0
     assert printed["method"] == "GET"
     assert printed["source_id"] == line_mod.SOURCE_ID
-    # The dry run names the declaration it WOULD publish from, so a mis-paired
-    # tree is visible without starting a session.
     assert printed["tenant_tree"] == str(TENANT_TREE)
     assert printed["fields_yaml"] == str(TENANT_TREE / "fields.yaml")
     assert not (tmp_path / "session").exists()
-
-
-# ===========================================================================
-# PR-A — the venue band (band plan 2026-10-15 §3.1-§3.2, §5 1)
-#
-# Hermetic like everything above: the band transport is the same fixture
-# server, and the two transport-level tests build a ``Quotes`` with
-# ``object.__new__`` so no auth manager, no credential and no socket exist at
-# all. No KIS call is made anywhere in this file.
-# ===========================================================================
 
 
 def _log_events(producer: Any) -> list[dict]:
@@ -2620,8 +2413,6 @@ class _Http:
         self.closed = False
 
     def close(self) -> None:
-        # The band attempt owns its client and closes it; the caller closes it
-        # too when it aborts. Both paths must find a `close` here.
         self.closed = True
 
     def stream(
@@ -2669,8 +2460,6 @@ def _bare_quotes(recorder: Any, http: Any) -> Any:
         "attempts": 1,
         "retry_pause_s": 0.0,
         "max_pages": 1,
-        # The band's size cap (band plan v3). Generous here: the tests that are
-        # ABOUT the cap set their own.
         "max_response_bytes": 1 << 20,
     }
     quotes.last = 0.0
@@ -2696,8 +2485,6 @@ def test_band_the_allowlist_is_four_paired_get_entries() -> None:
     assert by_tr[quote_client.TR] == quote_client.QUOTE_PATH
     assert by_tr[quote_client.STOCK_TR] == quote_client.STOCK_QUOTE_PATH
     assert by_tr[quote_client.STOCK_BAND_TR] == quote_client.STOCK_BAND_PATH
-    # The two paths are DIFFERENT endpoints: a reader who assumes the band
-    # rides the minute path would be wrong, and so would a swapped pair.
     assert quote_client.BAND_PATH != quote_client.QUOTE_PATH
     source = (_REPO_ROOT / "tools/tos_cp3/quote_client.py").read_text("utf-8")
     assert ".post(" not in source and '"POST"' not in source
@@ -2721,15 +2508,10 @@ def test_band_tr_and_path_are_pvls_pair_defined_locally() -> None:
 @pytest.mark.parametrize(
     "method,path,tr",
     [
-        # the band pair, as a POST
         ("POST", quote_client.BAND_PATH, quote_client.BAND_TR),
-        # the band TR aimed at an ORDER path
         ("GET", "/uapi/domestic-futureoption/v1/trading/order", quote_client.BAND_TR),
-        # an order TR aimed at the band path
         ("GET", quote_client.BAND_PATH, "TTTO1101U"),
-        # both allowlisted, but CROSSED: the minute TR on the band's path
         ("GET", quote_client.BAND_PATH, quote_client.TR),
-        # ...and the band TR on the minute path
         ("GET", quote_client.QUOTE_PATH, quote_client.BAND_TR),
     ],
 )
@@ -2770,9 +2552,6 @@ def test_band_logs_its_own_tr_id_and_hashes_the_raw_bytes() -> None:
     check while never having been seen by it — so the attempt record carries
     this call's own ``tr_id``, and the two must differ.
     """
-    # Deliberately not minified: a digest of ``json.dumps(parsed)`` would not
-    # equal a digest of THESE bytes, which is what makes the assertion below
-    # able to tell the two apart.
     raw = json.dumps(_band_payload(), indent=2).encode("utf-8")
     recorder = _Recorder()
     http = _Http(_Response(raw))
@@ -2789,7 +2568,6 @@ def test_band_logs_its_own_tr_id_and_hashes_the_raw_bytes() -> None:
     assert event["path"] == quote_client.BAND_PATH
     assert event["raw_payload_digest"] == read.raw_payload_digest
     assert event["rt_cd"] == "0"
-    # The request really carried that TR as well, not only the log line.
     _url, headers, params = http.seen[0]
     assert headers["tr_id"] == quote_client.BAND_TR
     assert params == {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": INSTRUMENT}
@@ -2799,8 +2577,8 @@ def test_band_logs_its_own_tr_id_and_hashes_the_raw_bytes() -> None:
     "payload",
     [
         {"rt_cd": "1", "msg_cd": "EGW00123", "output1": {}},
-        {"rt_cd": "0", "output1": {"futs_mxpr": "1162.72"}},  # two fields missing
-        {"rt_cd": "0"},  # no output1 at all
+        {"rt_cd": "0", "output1": {"futs_mxpr": "1162.72"}},
+        {"rt_cd": "0"},
     ],
 )
 def test_band_a_refusal_or_a_short_body_is_a_failure_that_still_logs(
@@ -2825,9 +2603,6 @@ def test_band_a_refusal_or_a_short_body_is_a_failure_that_still_logs(
     (event,) = recorder.events
     assert event["tr_id"] == quote_client.BAND_TR
     assert event["path"] == quote_client.BAND_PATH
-
-
-# -- review round 1 MEDIUM-1: the gate's refusal must PROPAGATE -------------
 
 
 def _safety_violation() -> Any:
@@ -2873,8 +2648,6 @@ def test_red_a_gate_refusal_on_the_price_poll_propagates_too(
     assert _stage(producer, "fetch_error") == []
 
 
-#: Every type that would swallow a ``SafetyViolation`` if ``main`` caught it:
-#: the class itself and each of its supertypes. A bare ``except`` counts too.
 _SWALLOWS_A_GATE_REFUSAL = frozenset(
     {"SafetyViolation", "ProbeError", "RuntimeError", "Exception", "BaseException"}
 )
@@ -2933,9 +2706,6 @@ def test_red_main_catches_nothing_that_would_swallow_a_gate_refusal() -> None:
         name for name in caught if name is None or name in _SWALLOWS_A_GATE_REFUSAL
     ]
     assert not offending, offending
-    # ...and the walker really resolves what it is given: the same check over a
-    # copy of `main` that grew `except RuntimeError:` must find it. Without
-    # this, a walker that silently returned nothing would pass above.
     planted = source.replace(
         "    except LiveProducerRefused as exc:",
         "    except RuntimeError:\n        raise\n    except LiveProducerRefused as exc:",
@@ -2967,9 +2737,6 @@ def test_the_cli_cannot_fold_a_gate_refusal_into_its_refusal_path() -> None:
     assert not issubclass(LiveProducerRefused, _safety_violation())
 
 
-# -- review round 1 LOW-1: what one attempt may cost ------------------------
-
-
 def test_the_band_get_keeps_the_phase_timeouts_as_inactivity_guards() -> None:
     """The phase limits are still passed — as inactivity guards, nothing more.
 
@@ -2990,13 +2757,6 @@ def test_the_band_get_keeps_the_phase_timeouts_as_inactivity_guards() -> None:
     assert all(phase is not None for phase in phases)
     assert all(phase == pytest.approx(budget / 4.0) for phase in phases)
 
-    # ...and NO clamp lifts them. The input that shows it: a budget under 4 ms,
-    # where `max(0.001, budget/4)` RAISES each phase above a quarter — a floor
-    # that loosens the bound it looks like it tightens. A 1 s budget cannot see
-    # this (0.25 either way), which is why the first version of this assertion
-    # survived the clamp's mutation. Production cannot reach such a budget —
-    # `config.MIN_REQUEST_TIMEOUT_S` refuses it — but the transport must not
-    # loosen on its own either.
     tiny = 0.002
     http_tiny = _Http(_Response(raw))
     quotes_tiny = _bare_quotes(_Recorder(), http_tiny)
@@ -3060,14 +2820,11 @@ def test_red_a_response_past_the_size_cap_is_refused_mid_stream() -> None:
     with pytest.raises(RuntimeError, match="band_response_too_large"):
         quotes.band(INSTRUMENT)
 
-    # It stopped mid-stream rather than reading the whole body...
     assert len(response.served) < len(raw)
-    # ...just past the cap, not an order of magnitude past it.
     assert len(response.served) <= cap + len(raw) // 16 + 1
     (event,) = recorder.events
     assert event["error"] == "band_response_too_large"
     assert event["max_response_bytes"] == cap
-    # and nothing was hashed, because nothing usable arrived
     assert "raw_payload_digest" not in event
 
 
@@ -3148,7 +2905,6 @@ def test_red_a_compressed_band_response_is_refused_before_decompression() -> Non
     (event,) = quotes.recorder.events
     assert event["error"] == "band_response_encoded"
     assert event["content_encoding"] == "gzip"
-    # Nothing was hashed or measured, because nothing was read.
     assert "raw_payload_digest" not in event
     assert "raw_payload_bytes" not in event
 
@@ -3203,7 +2959,6 @@ def test_an_identity_band_response_still_hashes_exactly_what_arrived() -> None:
     (event,) = quotes.recorder.events
     assert event["raw_payload_bytes"] == len(raw)
     assert "error" not in event
-    # identity is the absent header too, not only the literal value
     quotes = _streaming_quotes(
         [raw],
         {"content-encoding": "identity", "content-type": "application/json"},
@@ -3248,18 +3003,6 @@ def test_red_a_request_timeout_below_the_floor_is_refused(tmp_path: Path) -> Non
         _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml", repo_root=_REPO_ROOT
     )
     assert shipped.request_timeout_s >= config_mod.MIN_REQUEST_TIMEOUT_S
-
-
-# -- review round 1 LOW-3: exactly one extra window -------------------------
-
-
-# -- the re-read: measurement only ------------------------------------------
-
-
-# -- the journal the band reuses --------------------------------------------
-
-
-# -- the band PROBE: the separate process that writes the line (v3) ---------
 
 
 def _probe_quotes(*, fail: bool = False, body: bytes | None = None):
@@ -3325,20 +3068,12 @@ def test_the_band_probe_writes_one_line_in_the_plans_schema(
         BAND_BASIS,
     )
     assert all(isinstance(line[key], str) for key in ("upper", "lower", "basis"))
-    # The probe logs to its OWN file, so the post-session TR check has to read
-    # both (runbook §7.2-d) — that is why this is not `producer-log.jsonl`.
     log = session / band_probe.BAND_LOG_NAME
     events = [json.loads(entry) for entry in log.read_text().splitlines() if entry]
     assert any(event["stage"] == "band_published" for event in events)
     assert not (session / "producer-log.jsonl").exists()
 
 
-#: The RUNTIME's copy of the band line's shape, as a plain file.
-#: ``tos/runtime/tests/venue/test_band_journal.py`` pins
-#: ``tos_runtime.venue.band_journal.BAND_JOURNAL_LINE_KEYS`` against this fixture;
-#: the test below pins the WRITER against the same file. Read as text, never
-#: imported: the firewall is two-way and ``tools/`` may not import ``tos``
-#: (``tools/tos_firewall_check.py`` TOS-FW-R).
 _RUNTIME_BAND_FIXTURE = (
     _REPO_ROOT
     / "tos"
@@ -3396,9 +3131,6 @@ def test_the_band_probes_output_still_has_the_runtime_fixtures_shape(
     assert len(fixture_lines) == 1, fixture_lines
     fixture = json.loads(fixture_lines[0])
 
-    # ORDERED, not just the set: the runtime's reader compares a set, but the
-    # fixture's own docstring calls it the writer's output byte-for-byte, and a
-    # reordered writer makes that claim false while the reader stays happy.
     assert list(written) == list(fixture)
     assert written["kind"] == fixture["kind"]
 
@@ -3534,9 +3266,6 @@ def test_the_probe_dry_run_touches_nothing(
     assert not session.exists()
 
 
-# -- the price loop no longer knows about the band at all (v3 item 3) --------
-
-
 def test_red_a_config_refusal_leaves_no_band_log_and_the_runbook_says_so(
     tmp_path: Path,
 ) -> None:
@@ -3554,10 +3283,6 @@ def test_red_a_config_refusal_leaves_no_band_log_and_the_runbook_says_so(
     broken.write_text("env_file: /dev/null\n", encoding="utf-8")
     session = tmp_path / "probe"
 
-    # ⚠ `main` sets `os.umask(0o077)` and does not restore it — it is a
-    # process whose next statement is `SystemExit`. Called IN-PROCESS by a
-    # test, that mask would outlive this test and be inherited by every later
-    # test in this xdist worker (review round 6, LOW-3). Read-and-restore.
     previous_umask = os.umask(0o077)
     try:
         rc = band_probe.main(
@@ -3573,16 +3298,12 @@ def test_red_a_config_refusal_leaves_no_band_log_and_the_runbook_says_so(
         )
     finally:
         os.umask(previous_umask)
-    # ...and prove the restore happened, so deleting the `finally` is red here
-    # rather than in whichever later test inherits the mask.
     current_umask = os.umask(0o022)
     os.umask(current_umask)
     assert current_umask == previous_umask, oct(current_umask)
 
     assert rc == band_probe.RC_REFUSED
     assert not (session / band_probe.BAND_LOG_NAME).exists()
-    # ...and the runbook's own sentence covers that cause, not just "never
-    # launched". Lifted from the file so the two cannot drift apart.
     runbook = (_REPO_ROOT / "docs/runbooks/tos-paper-boot.md").read_text("utf-8")
     assert "refused at config" in runbook or "config 에서 거부" in runbook
 
@@ -3615,7 +3336,6 @@ def test_red_the_price_loop_contains_no_band_code() -> None:
     )
     for forbidden in ("band_mod", "band_journal", "BandCapture", "after_price_line"):
         assert forbidden not in code, forbidden
-    # and the band module itself is gone from the tree
     assert not (_REPO_ROOT / "tools/tos_cp3/live_producer/band.py").exists()
 
 
@@ -3659,9 +3379,6 @@ def test_red_a_band_row_missing_a_key_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(LiveProducerRefused, match="missing"):
         journal.append({"kind": band_line_mod.BAND_LINE_KIND})
-
-
-# -- the read side the runner uses ------------------------------------------
 
 
 def _good_line(**overrides: Any) -> dict:
@@ -3778,14 +3495,6 @@ def test_the_open_the_read_side_uses_is_the_tenant_calendars_own() -> None:
     assert trading_date == TARGET.strftime("%Y%m%d")
 
 
-# ===========================================================================
-# §5 6 — the reader round trip, and the fixture that cannot drift
-# ===========================================================================
-
-#: The committed hinge. ``tos/runtime/tests/marketfeed/
-#: test_journal_cp3_live_producer_row.py`` feeds it to the REAL
-#: ``JsonLinesObservationJournal``; the test below proves this producer still
-#: makes exactly these bytes. The firewall forbids one test doing both.
 _FIXTURE = (
     _REPO_ROOT
     / "tos"
@@ -3826,7 +3535,7 @@ def test_item6_the_producer_reproduces_the_committed_fixture(
         received_ms=expected["received_ms"],
     )
     assert outcome.row is not None
-    assert "as_of_ms" not in outcome.row  # the journal owns the stamp (review B1)
+    assert "as_of_ms" not in outcome.row
 
     with tempfile.TemporaryDirectory() as scratch:
         regenerated = Path(scratch) / _FIXTURE.name
@@ -3853,8 +3562,6 @@ def test_item6_the_fixture_carries_the_journals_required_shape() -> None:
     assert all(
         isinstance(value, (bool, int, float, str)) for value in row["fields"].values()
     )
-    # the live stamp is the WRITE time, not the bar label: a label stamp would
-    # make every observation at least 60,000 ms old against a budget of 800
     label = _minute_of(row["raw_event_id"]).replace(tzinfo=producer_mod.KST)
     assert row["as_of_ms"] != int(label.timestamp() * 1000)
 
@@ -3875,11 +3582,6 @@ def test_item6_the_runtime_side_half_of_the_hinge_exists() -> None:
     assert _FIXTURE.name in source
 
 
-# ---------------------------------------------------------------------------
-# Regeneration helper — run by hand when the line shape legitimately changes
-# ---------------------------------------------------------------------------
-
-
 def _regenerate() -> None:  # pragma: no cover - a maintenance entry point
     """Rewrite the committed fixture. ``python -m pytest`` never calls this."""
     market = Market(
@@ -3897,7 +3599,6 @@ def _regenerate() -> None:  # pragma: no cover - a maintenance entry point
         received_ms=1792286460001,
     )
     _FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-    # Through the real writer, so the committed bytes are the writer's bytes.
     sinks_mod.ObservationJournal(_FIXTURE, clock=lambda: 1792286460123).append(
         outcome.row
     )
@@ -3921,7 +3622,7 @@ def _runbook_tr_check_command() -> str:
         if 'print("tr_ids:' in block or 'print("files:' in block
     ]
     assert len(blocks) == 1, f"expected one TR-check block, found {len(blocks)}"
-    body = blocks[0].split("\n", 1)[1]  # drop the ```bash language line
+    body = blocks[0].split("\n", 1)[1]
     return "\n".join(
         line for line in body.splitlines() if not line.strip().startswith("#")
     )
@@ -3972,8 +3673,6 @@ def test_red_the_runbook_tr_check_reads_both_request_logs(tmp_path: Path) -> Non
     assert "files: 2" in clean
     assert "OK" in clean and "FINDING" not in clean
 
-    # Now the thing the single-log check could not see: an order TR, emitted by
-    # the band process, in the band process's own log.
     write(
         "band-log.jsonl",
         [
@@ -3983,8 +3682,6 @@ def test_red_the_runbook_tr_check_reads_both_request_logs(tmp_path: Path) -> Non
     )
     assert "FINDING" in run(command)
 
-    # ...and the counterfactual, on the identical input: drop the band log from
-    # the command's arguments and the order TR goes unseen.
     one_log = command.replace(' "$SESSION/producer/band-log.jsonl"', "")
     assert one_log != command
     blind = run(one_log)

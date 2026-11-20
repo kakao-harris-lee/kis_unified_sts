@@ -26,19 +26,16 @@ class TestCircuitBreakerMetrics:
 
     def test_metrics_enabled(self, metrics):
         """Test that metrics are enabled when prometheus_client is available."""
-        # prometheus_client is in dependencies
         assert metrics.enabled is True
 
     def test_record_failure(self, metrics):
         """Test recording failures."""
         metrics.record_failure("test-breaker")
-        # Should not raise
         metrics.record_failure("test-breaker")
 
     def test_record_success(self, metrics):
         """Test recording successes."""
         metrics.record_success("test-breaker")
-        # Should not raise
         metrics.record_success("test-breaker")
 
     def test_record_state_change(self, metrics):
@@ -46,19 +43,16 @@ class TestCircuitBreakerMetrics:
         metrics.record_state_change("test-breaker", "closed", "open")
         metrics.record_state_change("test-breaker", "open", "half_open")
         metrics.record_state_change("test-breaker", "half_open", "closed")
-        # Should not raise
 
     def test_set_state(self, metrics):
         """Test setting state gauge."""
         metrics.set_state("test-breaker", "closed")
         metrics.set_state("test-breaker", "open")
         metrics.set_state("test-breaker", "half_open")
-        # Should not raise
 
     def test_record_open_duration(self, metrics):
         """Test recording open duration."""
         metrics.record_open_duration("test-breaker", 10.5)
-        # Should not raise
 
 
 class TestCircuitBreakerWithMetrics:
@@ -85,7 +79,6 @@ class TestCircuitBreakerWithMetrics:
         breaker.record_failure()
         breaker.record_failure()
 
-        # Should not have opened yet (threshold is 3)
         assert breaker.state == CircuitState.CLOSED
 
     def test_metrics_recorded_on_success(self, metrics):
@@ -99,7 +92,6 @@ class TestCircuitBreakerWithMetrics:
         breaker.record_success()
         breaker.record_success()
 
-        # Should still be closed
         assert breaker.state == CircuitState.CLOSED
 
     def test_metrics_recorded_on_state_transition_to_open(self, metrics):
@@ -111,7 +103,7 @@ class TestCircuitBreakerWithMetrics:
         )
 
         breaker.record_failure()
-        breaker.record_failure()  # Should open
+        breaker.record_failure()
 
         assert breaker.state == CircuitState.OPEN
 
@@ -140,15 +132,12 @@ class TestCircuitBreakerWithMetrics:
             metrics=metrics,
         )
 
-        # Open the circuit
         breaker.record_failure()
         assert breaker.state == CircuitState.OPEN
 
-        # Wait for half-open
         time.sleep(0.1)
         assert breaker.state == CircuitState.HALF_OPEN
 
-        # Close with success
         breaker.record_success()
         assert breaker.state == CircuitState.CLOSED
 
@@ -157,7 +146,6 @@ class TestCircuitBreakerWithMetrics:
         breaker = CircuitBreaker(
             name="test-no-metrics",
             failure_threshold=2,
-            # No metrics parameter
         )
 
         breaker.record_failure()

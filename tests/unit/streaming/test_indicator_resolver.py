@@ -40,9 +40,6 @@ def test_collect_entry_indicators_uses_features_and_multi_timeframe_momentum():
 
     assert indicators["rsi"] == 55.0
     assert indicators["feature_score"] == 0.7
-    # The "ohlcv" contract is fulfilled EVEN when the feature bundle is warm.
-    # (The old else-branch dropped it once >= 26 candles existed, silencing
-    # every OHLCV-computing strategy — builder_v1 — live and in backtests.)
     assert indicators["ohlcv"] == [{"close": 100.0}]
     assert indicators["momentum_5m"]["trix"] == 5.0
     assert indicators["momentum_1h"]["trix"] == 60.0
@@ -90,12 +87,7 @@ class _RangeEngine(_FakeEngine):
 
 
 def test_collect_entry_indicators_injects_recent_range_for_setup_c():
-    """Setup C's ``last_15min_high/low`` are fulfilled from ``get_recent_range``.
-
-    Without this the orchestrator entry context never carries the 15-min range
-    and Setup C's strict ``current_price > last_15min_high`` breakout is
-    unreachable live (backtest/live parity break).
-    """
+    """Setup C's ``last_15min_high/low`` are fulfilled from ``get_recent_range``."""
     engine = _RangeEngine(recent_range=(100.0, 99.0))
     resolver = StreamingIndicatorResolver(
         engine=engine,
@@ -106,13 +98,12 @@ def test_collect_entry_indicators_injects_recent_range_for_setup_c():
 
     assert indicators["last_15min_high"] == 100.0
     assert indicators["last_15min_low"] == 99.0
-    # Window derived from the key name, not a hardcoded constant.
     assert engine.range_calls == [("A05603", 15)]
 
 
 def test_collect_entry_indicators_skips_recent_range_when_engine_lacks_method():
     """No ``get_recent_range`` → range keys are simply absent (no crash)."""
-    engine = _FakeEngine()  # base fake has no get_recent_range
+    engine = _FakeEngine()
     resolver = StreamingIndicatorResolver(
         engine=engine,
         required_keys=["atr", "last_15min_high", "last_15min_low"],

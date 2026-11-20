@@ -1,34 +1,4 @@
-"""Tests for the CP-3 B1a shared indicator producer (``tools/tos_cp3``).
-
-Hermetic: synthetic minute bars written to a ``tmp_path`` Parquet tree, the
-repo's own Setup D strategy YAML, no Redis / KIS / network.
-
-What is pinned here:
-
-* **Wire shape** — the five top-level keys the only JSONL observation reader in
-  the repo requires, and that ``fields`` carries the bar itself so a
-  ``tos.backtest.Bar`` can be built from this file alone.
-* **Parity of math** — every published field agrees, bar by bar, with what the
-  legacy ``SetupDVWAPReversion`` itself decided on the same series. The test
-  restates the mapping (reject reason → which field is false) independently of
-  the producer, and asserts the synthetic series actually reaches every branch,
-  so a vacuous pass is visible.
-* **Causality** — fields for ``bars[:n]`` are a prefix of fields for
-  ``bars[:n+k]``, with a **red proof** that a look-ahead variant breaks it.
-* **Quantization** — symmetric, conservative truncation for ``z_x1000``.
-* **Determinism** — two runs write byte-identical JSONL and lineage.
-* **Refusals** — NaN input, ``trend_filter_enabled``, a straddling open-anchor
-  window, and a float field each abort rather than ship something quietly wrong.
-
-File name: deliberately NOT ``test_tos_cp3_*``. ``tos-firewall.yml`` runs
-``pytest tests/tools/test_tos_*.py`` in a job that installs a minimal
-dependency set (``tos[test]`` + the repo root with ``--no-deps``) — no pyarrow,
-no duckdb — and ``test.yml``'s path filter negates ``tests/tools/test_tos_*``
-for the same reason. This suite needs the full runtime stack, so it belongs to
-the legacy ``test`` job; a ``test_tos_`` prefix would have put it in the
-governance battery, where it fails on import, and outside the one job that can
-actually run it.
-"""
+"""Tests for the CP-3 B1a shared indicator producer (``tools/tos_cp3``)."""
 
 from __future__ import annotations
 
@@ -58,23 +28,11 @@ from tools.tos_cp3 import legacy_setup_d_driver as legacy_driver  # noqa: E402
 from tools.tos_cp3 import produce_fields
 
 SYMBOL = "101S6000"
-#: Four consecutive 2026-03 weekdays. 2026-03-02 is a Korean substitute holiday
-#: (삼일절), which is used deliberately in the eod test below; the replay drops
-#: that first session anyway for lack of a prior-session close.
 SESSIONS = (date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4), date(2026, 3, 5))
-BARS_PER_SESSION = 421  # 08:45..15:45 KST inclusive, 1-minute bars
-#: A fifth session deliberately shorter than the 330 default, used only by the
-#: density-gate test so that gate has something to drop.
+BARS_PER_SESSION = 421
 SHORT_SESSION = date(2026, 3, 6)
 SHORT_SESSION_BARS = 200
-#: Seed chosen so the legacy setup reaches every one of its branches on this
-#: series, ``low_confidence`` on more than one bar — see the coverage assertions
-#: in :func:`test_fields_match_legacy_setup_evaluation`.
 SEED = 20261008
-#: The volatility burst sits in the THIRD session so it falls inside the longer
-#: prefix of the causality pair and outside the shorter one. That is what makes
-#: the look-ahead red proof red for the mechanism its docstring names: the
-#: full-series ATR peak differs between the two prefixes.
 BURST_SESSION_INDEX = 2
 
 STRATEGY_YAML = (
@@ -86,18 +44,8 @@ STRATEGY_YAML = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Synthetic series
-# ---------------------------------------------------------------------------
-
-
 def _synthetic_bars() -> pd.DataFrame:
-    """Four KST futures sessions of 1-minute bars, seeded and deterministic.
-
-    Shaped (quiet stretches punctuated by an impulse and a partial pullback,
-    plus a volatility burst in the third session) so the legacy setup reaches
-    each of its branches.
-    """
+    """Four KST futures sessions of 1-minute bars, seeded and deterministic."""
     rng = np.random.default_rng(SEED)
     rows: list[dict[str, object]] = []
     price = 400.0
@@ -149,11 +97,7 @@ def strategy() -> produce_fields.StrategyInputs:
 
 @pytest.fixture(scope="module")
 def anchor() -> produce_fields.OpenAnchor:
-    """The open anchor the producer resolves for this window — the era rule.
-
-    Restating 09:00 here would let the era rule rot while this suite stayed
-    green; resolving it the way ``run()`` does keeps the two in step.
-    """
+    """The open anchor the producer resolves for this window — the era rule."""
     return produce_fields.resolve_open_anchor(
         cli_value="auto", first_session=SESSIONS[0], last_session=SESSIONS[-1]
     )
@@ -172,8 +116,6 @@ def _produce(
     anchor: produce_fields.OpenAnchor,
 ) -> list[produce_fields.FieldRecord]:
     with warnings.catch_warnings():
-        # MarketContextReplay warns on synthetic series whose 1-min returns are
-        # large; the warning is about research trustworthiness, not correctness.
         warnings.simplefilter("ignore")
         return legacy_driver.produce_records(
             df.reset_index(drop=True),
@@ -203,25 +145,10 @@ def _write_parquet_tree(df: pd.DataFrame, root: Path) -> Path:
     return root
 
 
-# ---------------------------------------------------------------------------
-# Wire shape: the journal's required keys, and the bar B1b needs
-# ---------------------------------------------------------------------------
-
-#: MIRRORS ``tos/runtime/src/tos_runtime/marketfeed/journal.py::_REQUIRED_KEYS``.
-#: The import firewall forbids importing it (``tools/`` and ``tests/`` are both
-#: outside ``tos/``), so the five names are restated here as a literal. That
-#: reader refuses the WHOLE poll on a missing key, so a silently dropped key is
-#: not a degraded line — it is no data at all.
 JOURNAL_REQUIRED_KEYS_MIRROR = frozenset(
     {"raw_event_id", "instrument", "as_of_ms", "fields", "source_id"}
 )
 
-#: MIRRORS, BY NAME, the non-optional fields of
-#: ``tos/src/tos/backtest/bars.py::Bar``. The import firewall forbids importing
-#: it (``tests/`` is outside ``tos/``), so the names are restated as a literal
-#: — an earlier revision listed ``open``/``high``/``low``/``close`` and called
-#: that a mirror of ``Bar``, which it was not: ``Bar`` spells them
-#: ``open_price``/``high_price``/``low_price``/``close_price``.
 BAR_NON_OPTIONAL_FIELDS = (
     "bar_index",
     "timestamp_coordinate",
@@ -233,9 +160,6 @@ BAR_NON_OPTIONAL_FIELDS = (
     "session_token",
 )
 
-#: Where B1b gets each of those. ``"fields"`` = a published field key,
-#: ``"line"`` = a top-level key of the JSONL line, ``"runner"`` = the runner
-#: assigns it (``bar_index`` is a position in the stream B1b builds).
 BAR_FIELD_SOURCE: dict[str, tuple[str, str]] = {
     "bar_index": ("", "runner"),
     "timestamp_coordinate": ("as_of_ms", "line"),
@@ -262,8 +186,6 @@ def test_line_shape_matches_journal_required_keys(
         assert payload["instrument"] == SYMBOL
         assert isinstance(payload["as_of_ms"], int)
         assert isinstance(payload["fields"], dict)
-    # The producer's own mirrored tuple must agree with this test's literal, so
-    # the two cannot drift apart silently.
     assert set(produce_fields.JOURNAL_REQUIRED_KEYS) == JOURNAL_REQUIRED_KEYS_MIRROR
 
 
@@ -278,8 +200,6 @@ def test_fields_carry_the_bar_so_b1b_needs_no_second_parquet_path(
         pd.Timestamp(row.timestamp): row for row in bars.itertuples(index=False)
     }
 
-    # The mapping covers every non-optional Bar field by name, and each source
-    # really exists where it claims to.
     assert set(BAR_FIELD_SOURCE) == set(BAR_NON_OPTIONAL_FIELDS)
     for bar_field, (source, where) in BAR_FIELD_SOURCE.items():
         if where == "fields":
@@ -293,9 +213,6 @@ def test_fields_carry_the_bar_so_b1b_needs_no_second_parquet_path(
         fields = record.fields
         low = fields["low_x100"]
         high = fields["high_x100"]
-        # Mirrors Bar's own model validator (bars.py::_bar_is_well_formed):
-        # positive prices, a non-inverted range, open/close inside it, a
-        # non-negative volume and a non-blank session token.
         assert isinstance(low, int) and isinstance(high, int)
         assert low > 0 and high > 0
         assert high >= low
@@ -319,11 +236,6 @@ def test_fields_carry_the_bar_so_b1b_needs_no_second_parquet_path(
         assert fields["volume"] == int(row.volume)
 
 
-# ---------------------------------------------------------------------------
-# Parity of math against the legacy object's own evaluation
-# ---------------------------------------------------------------------------
-
-
 def test_fields_match_legacy_setup_evaluation(
     bars: pd.DataFrame,
     strategy: produce_fields.StrategyInputs,
@@ -331,7 +243,6 @@ def test_fields_match_legacy_setup_evaluation(
 ) -> None:
     records = _produce(bars, strategy, anchor)
 
-    # A SECOND, independent legacy instance replayed over the same series.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         replay = MarketContextReplay(
@@ -351,8 +262,6 @@ def test_fields_match_legacy_setup_evaluation(
         cfg.extreme_atr_mult, produce_fields.Z_SCALE
     )
 
-    # Bars with no publishable ATR are omitted, so align by bar instant rather
-    # than by position (this series has none, which the loop asserts).
     by_bar = {record.bar_kst: record for record in records}
     assert len(by_bar) == len(records)
 
@@ -371,7 +280,6 @@ def test_fields_match_legacy_setup_evaluation(
         outcomes[outcome] += 1
         fields = record.fields
 
-        # Prices and indicators: the replay's values, scaled.
         assert fields["close_x100"] == produce_fields.scaled_int_half_up(
             ctx.current_price, produce_fields.PRICE_SCALE
         )
@@ -388,15 +296,12 @@ def test_fields_match_legacy_setup_evaluation(
             expected_z, produce_fields.Z_SCALE
         )
 
-        # Session window: independently restated from the YAML parameters.
         minutes = ctx.minutes_since_open()
         assert fields["entry_window"] is (
             cfg.valid_minutes_min <= minutes <= cfg.no_entry_after_minutes_since_open
         )
-        # vwap_reverted: the declared band form (lineage D3).
         assert fields["vwap_reverted"] is (abs(expected_z) <= strategy.vwap_revert_band)
 
-        # Gate fields vs the legacy outcome on this very bar.
         if outcome == "FIRED":
             assert fields["hi_vol"] is True
             assert fields["stall_ok"] is True
@@ -405,13 +310,10 @@ def test_fields_match_legacy_setup_evaluation(
             assert abs(fields["z_x1000"]) >= extreme_x1000
         elif outcome in {"before_window", "after_cutoff"}:
             assert fields["entry_window"] is False
-            # Never evaluated past step 1 — fail-closed.
             assert fields["hi_vol"] is False
             assert fields["stall_ok"] is False
             assert fields["reversal_ok"] is False
         elif outcome == "vol_below_gate":
-            # D5: an IN-WINDOW reject keeps entry_window true; the AND is false
-            # through the gate that actually rejected.
             assert fields["entry_window"] is True
             assert fields["hi_vol"] is False
             assert fields["stall_ok"] is False
@@ -419,8 +321,6 @@ def test_fields_match_legacy_setup_evaluation(
         elif outcome == "not_extreme":
             assert fields["entry_window"] is True
             assert fields["hi_vol"] is True
-            # Truncation toward zero makes this exact rather than a near-tie:
-            # abs(z_x1000) < trunc(extreme*1000) iff abs(z) < extreme.
             assert abs(fields["z_x1000"]) < extreme_x1000
             assert fields["stall_ok"] is False
             assert fields["reversal_ok"] is False
@@ -435,8 +335,6 @@ def test_fields_match_legacy_setup_evaluation(
             assert fields["stall_ok"] is True
             assert fields["reversal_ok"] is False
         elif outcome == "low_confidence":
-            # Declared difference D1: no published field carries the confidence
-            # gate, so every field reads as a pass here.
             assert fields["entry_window"] is True
             assert fields["hi_vol"] is True
             assert fields["stall_ok"] is True
@@ -444,9 +342,6 @@ def test_fields_match_legacy_setup_evaluation(
         else:  # pragma: no cover - a new reject reason must be mapped
             pytest.fail(f"unmapped legacy outcome {outcome!r}")
 
-    # Branch coverage: a clause this series never reaches is a clause this test
-    # does not actually check, so require each one to occur — and more than once
-    # for low_confidence, whose single-bar coverage was a one-sample accident.
     for required in (
         "FIRED",
         "before_window",
@@ -465,11 +360,6 @@ def test_fields_match_legacy_setup_evaluation(
     ), "this series is meant to have no unusable-input bars"
 
 
-# ---------------------------------------------------------------------------
-# EOD against the legacy exit's own decision
-# ---------------------------------------------------------------------------
-
-
 def test_eod_matches_the_legacy_exit_decision(
     bars: pd.DataFrame,
     strategy: produce_fields.StrategyInputs,
@@ -480,9 +370,6 @@ def test_eod_matches_the_legacy_exit_decision(
     exit_gen = SetupTargetExit(strategy.exit_config)
 
     emitted_sessions = sorted({record.bar_kst.date() for record in records})
-    # The premise of the comparison below, asserted rather than assumed: the
-    # legacy helper returns False all day on a non-trading day, so an equality
-    # check would be meaningless on one.
     for session in emitted_sessions:
         probe = datetime.combine(session, time(12, 0)).replace(
             tzinfo=records[0].bar_kst.tzinfo
@@ -492,12 +379,6 @@ def test_eod_matches_the_legacy_exit_decision(
     for record in records:
         assert record.fields["eod"] is exit_gen._should_eod_close(record.bar_kst)
 
-    # Declared difference D4, with its concrete input: 2026-03-02 is a Korean
-    # substitute holiday, so the legacy helper refuses all day there while this
-    # producer's bar-time rule would say True after the cutoff. The real futures
-    # dataset carries no bars on a non-trading day, which is why D4 states the
-    # clause cannot move the cutoff in practice — but the difference is real and
-    # is pinned here rather than asserted in prose only.
     holiday_bar = datetime.combine(SESSIONS[0], time(15, 20)).replace(
         tzinfo=records[0].bar_kst.tzinfo
     )
@@ -506,10 +387,6 @@ def test_eod_matches_the_legacy_exit_decision(
     assert holiday_bar.time() >= strategy.exit_config.eod_close_time
     assert SESSIONS[0] not in emitted_sessions
 
-
-# ---------------------------------------------------------------------------
-# Causality / prefix property
-# ---------------------------------------------------------------------------
 
 PREFIX_N = BARS_PER_SESSION * 2 + 100
 PREFIX_K = BARS_PER_SESSION
@@ -538,27 +415,14 @@ def test_lookahead_variant_breaks_the_prefix_property(
     anchor: produce_fields.OpenAnchor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Replace ATR with the FULL-SERIES peak — the classic look-ahead.
-
-    ``MarketContextReplay``'s own ``atr_90th_percentile`` is look-ahead for
-    exactly this reason (its docstring says so), which is why Setup D refuses to
-    read it. Injecting the same shape of dependency must break the prefix
-    assertion; if it did not, that test would be proving nothing.
-
-    The series' volatility burst sits in the THIRD session
-    (:data:`BURST_SESSION_INDEX`), i.e. inside the longer prefix and outside the
-    shorter one, so the injected peak genuinely differs between the two runs —
-    the mechanism this docstring names, not incidental noise.
-    """
+    """Replace ATR with the FULL-SERIES peak — the classic look-ahead."""
 
     def lookahead_iter_contexts(self: MarketContextReplay):
         contexts = list(_ORIGINAL_ITER_CONTEXTS(self))
-        peak = max(ctx.atr_14 for ctx in contexts)  # depends on FUTURE bars
+        peak = max(ctx.atr_14 for ctx in contexts)
         for ctx in contexts:
             yield replace(ctx, atr_14=peak)
 
-    # The burst must actually move the peak between the two prefixes, otherwise
-    # this test would be red for the wrong reason.
     def peak_for(rows: int) -> float:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -585,11 +449,6 @@ def test_lookahead_variant_breaks_the_prefix_property(
     long_lines = [record.to_json_line() for record in long]
     assert 0 < len(short_lines) < len(long_lines)
     assert long_lines[: len(short_lines)] != short_lines
-
-
-# ---------------------------------------------------------------------------
-# Scalars only, and the quantization rules
-# ---------------------------------------------------------------------------
 
 
 def test_no_float_in_any_field(
@@ -621,14 +480,10 @@ def test_float_field_is_refused() -> None:
 def test_z_quantization_is_symmetric_and_conservative() -> None:
     """``z_x1000`` truncates toward zero; prices round half-up (D8)."""
     scale = produce_fields.Z_SCALE
-    # Symmetric at the near-tie that half-up resolved asymmetrically: half-up
-    # gave 1800 / -1799, which both widened the trigger and broke the mirror.
     assert produce_fields.scaled_int_toward_zero(1.7995, scale) == 1799
     assert produce_fields.scaled_int_toward_zero(-1.7995, scale) == -1799
-    assert produce_fields.scaled_int_half_up(1.7995, scale) == 1800  # the old rule
+    assert produce_fields.scaled_int_half_up(1.7995, scale) == 1800
 
-    # Conservative at the trigger: the integer comparison never admits a bar the
-    # real comparison would reject.
     threshold = produce_fields.scaled_int_toward_zero(1.8, scale)
     assert threshold == 1800
     for z in (1.7, 1.7995, 1.79999, -1.7995, 1.8, -1.8, 2.5, -2.5):
@@ -638,7 +493,6 @@ def test_z_quantization_is_symmetric_and_conservative() -> None:
         real_fires = abs(z) >= 1.8
         assert not (integer_fires and not real_fires), z
 
-    # Prices keep half-up, and it stays monotone so Bar's OHLC relations hold.
     assert (
         produce_fields.scaled_int_half_up(559.45, produce_fields.PRICE_SCALE) == 55945
     )
@@ -651,18 +505,12 @@ def test_z_quantization_is_symmetric_and_conservative() -> None:
     ) >= produce_fields.scaled_int_half_up(low, produce_fields.PRICE_SCALE)
 
 
-# ---------------------------------------------------------------------------
-# Refusals
-# ---------------------------------------------------------------------------
-
-
 def test_non_finite_input_aborts_rather_than_being_omitted() -> None:
     """NaN is a corrupt dataset, not a quiet bar — it must not become a count."""
     with pytest.raises(produce_fields.ProduceFieldsError, match="non-finite"):
         produce_fields._inputs_unusable(math.nan, 400.0, 0.5)
     with pytest.raises(produce_fields.ProduceFieldsError, match="non-finite"):
         produce_fields._inputs_unusable(400.0, 400.0, math.inf)
-    # The ordinary unusable cases still return a reason (an omission, not a raise).
     assert produce_fields._inputs_unusable(400.0, 400.0, 0.0) is not None
     assert produce_fields._inputs_unusable(400.0, 400.0, 0.5) is None
 
@@ -728,18 +576,8 @@ def test_open_anchor_era_rule() -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# Bars with no publishable ATR are omitted, not filled with a sentinel
-# ---------------------------------------------------------------------------
-
-
 def _bars_with_flat_run() -> pd.DataFrame:
-    """Two sessions whose second session holds a perfectly flat 41-bar run.
-
-    Every true range in that run is 0, so ``atr_partial`` reaches exactly 0 and
-    ``z = (close - vwap) / atr`` is undefined — the concrete input the omission
-    rule exists for.
-    """
+    """Two sessions whose second session holds a perfectly flat 41-bar run."""
     rows: list[dict[str, object]] = []
     price = 400.0
     for session_idx, day in enumerate(SESSIONS[:2]):
@@ -786,9 +624,6 @@ def test_zero_atr_bars_are_omitted_not_filled(
 
     omitted_ids = {raw_event_id for raw_event_id, _ in produced.omitted}
     assert not (omitted_ids & {record.raw_event_id for record in produced.records})
-    # The invariant a sentinel would have broken: a published bar never carries
-    # an undefined extension, so z_x1000 == 0 always means "at VWAP", never
-    # "ATR missing".
     for record in produced.records:
         assert record.fields["atr14_x100"] > 0
 
@@ -798,31 +633,7 @@ def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
     strategy: produce_fields.StrategyInputs,
     anchor: produce_fields.OpenAnchor,
 ) -> None:
-    """The read-only hook S1b's ``_atr_window`` measurement reads the setup through.
-
-    Four claims, each with its own way of being wrong:
-
-    1. The records are byte-identical with and without it — an observer that
-       consumed the replay would move them. Byte-identity alone does NOT catch
-       an observer moved BEFORE ``check()``: a non-mutating one called there
-       sees the previous bar's ``last_eval`` under the current bar's stamp and
-       leaves every record untouched. Claim 2 is what catches that.
-    2. The eval handed under a stamp is THAT bar's eval, not a neighbour's.
-       ``minutes_since_open`` is on every eval (``check()`` writes it before
-       its first early return), and it must be the stamp's own offset from the
-       resolved open anchor; on the bars that reached the price reads,
-       ``ev["close"]`` must be the frame's close at that same stamp. Shift the
-       hook one bar either way and both go wrong — on the very first bar
-       ``last_eval`` is still the constructor's empty dict.
-    3. It is called once per replayed bar, emitted or not. The window the
-       percentile is taken over is filled mostly by bars that are NOT emitted
-       (a stitched previous month), so an observer that only saw emitted bars
-       would measure the wrong window and say nothing about it.
-    4. ``vol_ref`` is present on exactly the bars that advanced the causal ATR
-       window — in-entry-window bars with usable inputs. ``stitch_measure``
-       counts the window's composition off that correspondence; if the key
-       appeared on other bars the composition would silently drift.
-    """
+    """The read-only hook S1b's ``_atr_window`` measurement reads the setup through."""
     emit = frozenset(SESSIONS[-1:])
     seen: list[tuple[datetime, Mapping[str, Any]]] = []
     closes = dict(zip(bars["timestamp"], bars["close"]))
@@ -849,7 +660,6 @@ def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
     assert len(seen) == plain.bars_replayed > len(plain.records)
     assert {stamp.date() for stamp, _ in seen} > set(emit), "only emitted bars observed"
 
-    # Claim 2: the stamp and the eval are the same bar's.
     for stamp, ev in seen:
         open_at = stamp.replace(
             hour=anchor.hour, minute=anchor.minute, second=0, microsecond=0
@@ -870,7 +680,6 @@ def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
         assert not (
             ev.get("entry_window") is True and ev.get("inputs_usable") is True
         ), f"{stamp}: an in-window usable bar advanced the window without a vol_ref"
-    # Both sides of the warmup appear, so neither assertion above is vacuous.
     references = [ev["vol_ref"] for _, ev in advanced]
     assert None in references and any(r is not None for r in references)
 
@@ -880,21 +689,7 @@ def test_an_observer_cannot_write_into_the_setups_eval(
     strategy: produce_fields.StrategyInputs,
     anchor: produce_fields.OpenAnchor,
 ) -> None:
-    """ "Read-only hook" holds by construction, not by the caller's good manners.
-
-    The hook is handed a :class:`~types.MappingProxyType` over the setup's live
-    ``last_eval``, and ``produce_bars`` reads ``hi_vol`` / ``stall_ok`` /
-    ``reversal_ok`` / ``entry_window`` back out of that same dict AFTER calling
-    the hook. So an observer writing one of those keys is not a hypothetical
-    leak — it is a direct edit of the next line of the record. Two claims:
-
-    1. The write raises instead of landing.
-    2. An observer that attempts the write and swallows the error leaves the
-       records byte-identical to the unobserved run. Non-vacuous: the key
-       chosen is ``hi_vol``, and the assertion below pins that the unobserved
-       run publishes ``hi_vol=false`` on at least one record, so the write it
-       could not make would have flipped something.
-    """
+    '"Read-only hook" holds by construction, not by the caller\'s good manners.'
     emit = frozenset(SESSIONS[-1:])
     refused: list[type[BaseException]] = []
 
@@ -904,7 +699,7 @@ def test_an_observer_cannot_write_into_the_setups_eval(
     def write_through_and_swallow(stamp: datetime, ev: Mapping[str, Any]) -> None:
         try:
             ev["hi_vol"] = True  # type: ignore[index]
-        except TypeError as exc:  # MappingProxyType refuses item assignment
+        except TypeError as exc:
             refused.append(type(exc))
 
     with warnings.catch_warnings():
@@ -935,11 +730,6 @@ def test_an_observer_cannot_write_into_the_setups_eval(
         "every record already carries hi_vol=true, so the refused write "
         "would have changed nothing and claim 2 is vacuous"
     )
-
-
-# ---------------------------------------------------------------------------
-# Determinism, lineage and the density gate
-# ---------------------------------------------------------------------------
 
 
 def _run(root: Path, out: Path, **kwargs) -> produce_fields.RunResult:
@@ -984,7 +774,6 @@ def test_jsonl_and_lineage_are_byte_deterministic(
     assert omitted["count"] == 0
     assert omitted["raw_event_ids"] == []
     assert omitted["raw_event_ids_truncated"] is False
-    # Bar accounting reconciles explicitly (the producer raises if it does not).
     assert (
         dataset["bars_after_density_gate"]
         - dataset["replay_warmup_bars_skipped"]
@@ -1003,7 +792,6 @@ def test_jsonl_and_lineage_are_byte_deterministic(
         "strategy.entry.params.reversal_confirm_atr_mult"
     )
 
-    # ADR-002-018 §10 lineage: versions, parents, type/sign/range, common mode.
     runtime = lineage["tool"]["runtime"]
     assert runtime["python"] and runtime["numpy"] != "unavailable"
     assert runtime["pandas"] != "unavailable"
@@ -1028,8 +816,6 @@ def test_jsonl_and_lineage_are_byte_deterministic(
             "parents",
             "range_observed",
         } <= set(spec), name
-        # scale is a TOKEN and multiplier the number, as
-        # config/tos_runtime/paper/critical_input_policy.yaml writes them.
         assert isinstance(spec["scale"], str), name
         assert isinstance(spec["multiplier"], str), name
         assert spec["sign"] in {"signed", "unsigned"}, name
@@ -1045,7 +831,6 @@ def test_jsonl_and_lineage_are_byte_deterministic(
     assert {entry["id"] for entry in lineage["declared_differences"]} == {
         f"D{index}" for index in range(1, 11)
     }
-    # No run timestamp anywhere: a changed lineage must mean changed inputs.
     assert "timestamp" not in json.dumps(lineage["tool"])
 
 
@@ -1073,11 +858,7 @@ def _bars_with_a_short_session(bars: pd.DataFrame) -> pd.DataFrame:
 def test_min_bars_per_day_gate_drops_a_thin_session(
     bars: pd.DataFrame, tmp_path: Path
 ) -> None:
-    """The density gate is a real knob, defaulted to the walk-forward's 330.
-
-    Asserting it against a series where every session already clears the gate
-    would assert nothing, so a 200-bar session is added for this test only.
-    """
+    """The density gate is a real knob, defaulted to the walk-forward's 330."""
     assert produce_fields.DEFAULT_MIN_BARS_PER_DAY == 330
     assert SHORT_SESSION_BARS < produce_fields.DEFAULT_MIN_BARS_PER_DAY
     widened = _bars_with_a_short_session(bars)
@@ -1105,7 +886,6 @@ def test_min_bars_per_day_gate_drops_a_thin_session(
         == len(widened) - SHORT_SESSION_BARS
     )
     assert default_run.lineage["dataset"]["min_bars_per_day"] == 330
-    # The gate changed the OUTPUT, not merely a count.
     assert off.jsonl_bytes != default_run.jsonl_bytes
     assert off.lineage["dataset"]["bars_emitted"] > (
         default_run.lineage["dataset"]["bars_emitted"]
@@ -1117,24 +897,12 @@ def test_min_bars_per_day_gate_drops_a_thin_session(
         one("all-dropped", min_bars_per_day=500)
 
 
-# ---------------------------------------------------------------------------
-# D7's generator, and the guards that had no failing input
-# ---------------------------------------------------------------------------
-
-
 def test_d7_measurement_buckets_are_disjoint_exhaustive_and_session_bounded(
     bars: pd.DataFrame,
     strategy: produce_fields.StrategyInputs,
     anchor: produce_fields.OpenAnchor,
 ) -> None:
-    """The generator behind the D7 literal, exercised on the synthetic series.
-
-    The parity-window numbers themselves cannot be regenerated here (the market
-    data is gitignored and lives only in the primary checkout), so what is
-    pinned is the thing that went wrong once: the bucket arithmetic. The first
-    revision measured the "frozen never reached" case to the end of the whole
-    SERIES and reported a 32,591-bar maximum lead.
-    """
+    """The generator behind the D7 literal, exercised on the synthetic series."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         measurement = legacy_driver.measure_moving_vs_frozen_exit(
@@ -1145,8 +913,6 @@ def test_d7_measurement_buckets_are_disjoint_exhaustive_and_session_bounded(
             anchor=anchor,
         )
 
-    # Shape: the committed literal and a fresh measurement must agree on keys,
-    # so the literal cannot drift out of the generator's schema.
     assert set(measurement) == set(produce_fields.D7_MEASUREMENT)
     for key, value in measurement.items():
         if key in {"window", "market_open_kst"}:
@@ -1154,10 +920,8 @@ def test_d7_measurement_buckets_are_disjoint_exhaustive_and_session_bounded(
         else:
             assert isinstance(value, int), key
 
-    # Non-vacuous: this series actually produces entries to classify.
     assert measurement["entries"] > 0
 
-    # Disjoint and exhaustive.
     assert (
         measurement["earlier"]
         + measurement["identical"]
@@ -1169,7 +933,6 @@ def test_d7_measurement_buckets_are_disjoint_exhaustive_and_session_bounded(
         measurement["earlier_frozen_never_reached_in_session"] <= measurement["earlier"]
     )
     assert measurement["later_moving_never_reached_in_session"] <= measurement["later"]
-    # A lead exists only where BOTH rules reached inside the session.
     assert measurement["lead_bars_measured_over"] <= (
         measurement["earlier"]
         - measurement["earlier_frozen_never_reached_in_session"]
@@ -1177,9 +940,6 @@ def test_d7_measurement_buckets_are_disjoint_exhaustive_and_session_bounded(
         - measurement["later_moving_never_reached_in_session"]
     )
 
-    # Session-bounded: the inner walk stops at the session boundary, so no lead
-    # can exceed one session's bar count. This is the assertion the 32,591-bar
-    # defect would have failed.
     assert 0 <= measurement["max_lead_bars"] < BARS_PER_SESSION
     assert 0 <= measurement["median_lead_bars"] <= measurement["max_lead_bars"]
 
@@ -1195,7 +955,6 @@ def test_measure_d7_cli_prints_a_pasteable_literal(
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        # No --out: the measure path writes nothing.
         exit_code = produce_fields.main(
             [
                 "--data-root",
@@ -1217,11 +976,9 @@ def test_measure_d7_cli_prints_a_pasteable_literal(
     printed = capsys.readouterr().out
     assert printed.startswith("D7_MEASUREMENT: dict[str, Any] = {")
     assert '"min_bars_per_day": DEFAULT_MIN_BARS_PER_DAY,' in printed
-    # Pasteable: every key of the committed literal appears.
     for key in produce_fields.D7_MEASUREMENT:
         assert f'"{key}":' in printed, key
 
-    # The lineage tells a sidecar reader how to regenerate the number.
     result = _run(data_root, tmp_path / "out", min_bars_per_day=0)
     d7 = next(
         entry for entry in result.lineage["declared_differences"] if entry["id"] == "D7"
@@ -1334,7 +1091,7 @@ def test_duplicate_bar_timestamps_are_refused() -> None:
         },
         {
             "code": SYMBOL,
-            "timestamp": base,  # the duplicate
+            "timestamp": base,
             "open": 401.0,
             "high": 401.5,
             "low": 400.5,
@@ -1347,7 +1104,5 @@ def test_duplicate_bar_timestamps_are_refused() -> None:
     ):
         legacy_driver._bar_lookup(pd.DataFrame(rows))
 
-    # The same frame without the duplicate is accepted, so the guard is not
-    # simply rejecting every two-row frame.
     rows[1]["timestamp"] = base + timedelta(minutes=1)
     assert len(legacy_driver._bar_lookup(pd.DataFrame(rows))) == 2

@@ -330,18 +330,7 @@ def _join_orders_by_execution_id(
 def _placed_before_our_first_order(
     order: WitnessOrder, ours: tuple[WitnessOrder, ...]
 ) -> bool:
-    """Whether the broker's OWN clock puts ``order`` before every order in ``ours`` (2026-11-20).
-
-    The comparison is between rows of ONE 주식일별주문체결조회 response: ``ord_dt`` + ``ord_tmd``
-    (주문시각, HHMMSS — an order PLACEMENT time, not a fill timestamp; measured in
-    ``tests/tools/test_broker_probes_p11_fill.py``). No local clock is involved, so there is no
-    clock-skew question; the broker stamped both sides.
-
-    An order placed before this runtime's own earliest order cannot be one this runtime placed.
-    Everything unprovable is false: a missing or malformed time on EITHER side, a different
-    trading date, no orders of our own to compare against, and — because ``ord_tmd`` resolves
-    only to the second — an equal time. Only STRICTLY earlier counts.
-    """
+    """Whether the broker's OWN clock puts ``order`` before every order in ``ours`` (2026-11-20)."""
     order_date, order_time = order.order_date, order.order_time
     if order_date is None or order_time is None or not ours:
         return False
@@ -351,29 +340,20 @@ def _placed_before_our_first_order(
             return False
         stamp = (own.order_date, own.order_time)
         earliest = stamp if earliest is None else min(earliest, stamp)
-    assert earliest is not None  # `ours` is non-empty and every row had a stamp
+    assert earliest is not None
     earliest_date, earliest_time = earliest
     if order_date != earliest_date:
         return False
     return order_time < earliest_time
 
 
-#: The witness states that mean the broker prints no further fill for an order. The model has no
-#: separate rejected state: ``witness_kis`` reads 취소 (``cncl_yn``) as ``CANCELLED``, and
-#: ``witness_synthetic`` maps ``REJECT``/``EXPIRED``/``CANCEL_ACK`` onto it too.
 _FINISHED_WITNESS_STATES = frozenset(
     (WitnessOrderState.FILLED, WitnessOrderState.CANCELLED)
 )
 
 
 def _is_finished(order: WitnessOrder) -> bool:
-    """Whether the broker's OWN row says ``order`` can never fill again (2026-11-20).
-
-    Both halves must hold: a terminal state (:data:`_FINISHED_WITNESS_STATES`) AND a residual
-    quantity the broker printed as exhausted. ``ACKED``, ``PARTIAL``, ``UNKNOWN``, a missing
-    ``rmn_qty``, or any residual left over is a live order — nothing unprovable counts as
-    finished.
-    """
+    """Whether the broker's OWN row says ``order`` can never fill again (2026-11-20)."""
     return (
         order.state in _FINISHED_WITNESS_STATES
         and order.remaining is not None
@@ -390,47 +370,8 @@ def _orphans_may_be_ours(
     matched_reservation_ids: frozenset[str],
     our_orders: tuple[WitnessOrder, ...] = (),
 ) -> bool:
-    """Whether an orphan broker order could be an order THIS runtime emitted (2026-11-20).
-
-    The broker's daily order inquiry is keyed by (account, symbol, trading date), not by
-    runtime: every order the account placed on the symbol today comes back, including the
-    ones an earlier, archived leaf placed and the ones an operator placed by hand. A leaf
-    booted mid-day inherits all of them as orphans, and an orphan's unconditional veto over
-    ``permits_capacity_release`` then wedges every release for the rest of the day — the
-    2026-11-20 incident, where 000660 and 005930 held ``NOT_CORROBORATED`` ~30 times each
-    while 005380, the one symbol with no earlier order that day, released normally.
-
-    The veto is kept for every orphan this runtime could itself have produced, because
-    releasing capacity against an order we may have sent and lost track of is how a second
-    lot gets bought. An orphan could be ours when ANY of these holds:
-
-    * some attempt in this report is not ``MATCHED`` — our own order may be the orphan, so
-      the orphan is not attributable to anyone else either;
-    * the RCL holds a non-``RELEASED`` reservation in this scope that no ``MATCHED`` attempt
-      in this report accounts for — the reservation strictly precedes transmission, so a
-      send we lost the receipt for still leaves one behind;
-    * the scope's reservations cannot be enumerated at all (no instrument key, or an
-      unreadable RCL) — an unprovable scope explains nothing;
-    * the orphan carries a broker execution id one of our OWN receipts carries — the
-      duplicate/ambiguous-order shape, where two broker orders answer to one attempt;
-    * the broker's own clock does NOT put the orphan before this runtime's earliest order
-      (:func:`_placed_before_our_first_order`). This is the load-bearing one. An order the
-      broker stamped after ours began could be an order of ours whose receipt never landed, so
-      only an order placed strictly BEFORE our first one is provably not ours. It is also what
-      keeps an orphan that merely *appeared* mid-session — between the balance read and the
-      order read, or after a release snapshot expired — withholding the release, since such an
-      order carries no earlier stamp.
-    * the orphan is not finished (:func:`_is_finished`) — an earlier-stamped order that is still
-      live can fill AFTER the release and buy a lot no reservation covers (#1128), so only a
-      terminal state with an exhausted ``rmn_qty`` earns the exemption.
-
-    Only when none of those holds is the orphan provably not ours and provably over: every order
-    we could have produced is already matched to a different witness order, this one's identity
-    is one we never recorded, and the broker placed it before we placed anything and has since
-    finished it. It stays classified as ``ORPHAN_BROKER_ORDER`` in the report either way.
-    Position-level exposure is a separate question, answered by ``observed_positions`` /
-    ``observed_positions_complete``, which this predicate does not touch.
-    """
+    """Whether an orphan broker order could be an order THIS runtime emitted (2026-11-20)."""
+    # SAFETY: 우리가 냈을 수 있거나 아직 살아 있는 고아 주문이면 거부를 유지한다 — 풀면 두 번째 물량을 산다 (#1128)
     if any(
         record.classification is not ReconciliationClass.MATCHED
         for record in attempt_records

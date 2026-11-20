@@ -1,4 +1,3 @@
-# tests/unit/execution/test_contract_spec.py
 import pytest
 
 from shared.execution.contract_spec import (
@@ -47,8 +46,7 @@ def test_resolve_by_symbol_prefix():
 
 
 def test_resolve_supports_comma_separated_prefixes():
-    """kospi200_full lists both the continuous '101…' (backtest) and the live
-    'A01…' front-month prefixes — resolve must match either (F200 paper)."""
+    """kospi200_full lists both the continuous '101…' (backtest) and the live"""
     registry = ContractSpecRegistry(
         specs={
             "kospi200_mini": ContractSpec(
@@ -69,11 +67,8 @@ def test_resolve_supports_comma_separated_prefixes():
             ),
         }
     )
-    # live F200 front-month (A01…) → full
     assert resolve_contract_spec("A01606", registry).name == "kospi200_full"
-    # continuous backtest code (101…) → full (unchanged)
     assert resolve_contract_spec("101S6000", registry).name == "kospi200_full"
-    # mini still resolves to mini, not full
     assert resolve_contract_spec("A05606", registry).name == "kospi200_mini"
 
 

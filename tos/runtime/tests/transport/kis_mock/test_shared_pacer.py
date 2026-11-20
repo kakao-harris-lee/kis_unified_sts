@@ -1,10 +1,4 @@
-"""The cross-process app-key request gate (#1125 — 2026-11-20 13:00–13:20 KST).
-
-Three tenants each paced themselves at one request per 2 s on ONE app key, so three requests
-landed in the same second: `VTTC0081R`/`VTTC8434R` answered HTTP 500 (the KIS mock's answer
-for `EGW00201`), every witness read was NOT_CORROBORATED, and every CLOSE refused at
-`quantity_basis ZERO_POSITION`. The gate is the app key's single queue across those processes.
-"""
+"""The cross-process app-key request gate (#1125 — 2026-11-20 13:00–13:20 KST)."""
 
 from __future__ import annotations
 
@@ -73,7 +67,7 @@ def test_three_tenants_never_land_inside_one_interval(tmp_path: Path) -> None:
 
 def test_a_slot_further_away_than_the_budget_refuses(tmp_path: Path) -> None:
     clock, path = _Clock(), tmp_path / "stock-mock.pace"
-    _gate(path, clock, max_rps=0.1).acquire(wait_budget_s=4.0)  # 10 s spacing
+    _gate(path, clock, max_rps=0.1).acquire(wait_budget_s=4.0)
 
     with pytest.raises(SharedPacingRefused, match="not sent"):
         _gate(path, clock, max_rps=0.1).acquire(wait_budget_s=4.0)
@@ -139,7 +133,7 @@ class TestTheInProcessPacerSpendsTheSameBudget:
         self, tmp_path: Path
     ) -> None:
         clock, path = _Clock(), tmp_path / "stock-mock.pace"
-        _gate(path, clock).acquire(wait_budget_s=4.0)  # a peer process just sent
+        _gate(path, clock).acquire(wait_budget_s=4.0)
         pacer = KisAppKeyPacer(
             pacing=KisPacing(min_interval_ms=1, wait_budget_ms=4_000),
             monotonic=FakeMonotonicSource(start_ms=1_000),

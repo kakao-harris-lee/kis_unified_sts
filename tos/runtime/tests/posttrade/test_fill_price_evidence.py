@@ -1,15 +1,4 @@
-"""``FILL_OBSERVED`` carries the broker's own execution price, or says it has none.
-
-The gap these tests close: the record named what filled and how much was left, never at what
-price, so a leaf's P&L could only be computed at the sealed LIMIT price (on 2026-11-17 that read
-−1,200 KRW where the fills said −1,100). The two new keys are OBSERVATION ONLY — no witness,
-release, discharge or held-position decision reads them, and a row written before they existed
-carries neither key and is read exactly as it always was.
-
-Unit: ``avg_execution_price``/``executed_amount`` are WHOLE KRW as the broker printed
-``avg_prvs``/``tot_ccld_amt`` — never the tenant tree's ``_runtime.price_scale`` (×100)
-representation, which only the send seal's ``ORD_UNPR = price / price_scale`` uses.
-"""
+"""``FILL_OBSERVED`` carries the broker's own execution price, or says it has none."""
 
 from __future__ import annotations
 
@@ -40,7 +29,6 @@ _ODNO = "0000007012"
 _ATTEMPT = "attempt-price-7f21"
 _QTY = Decimal(1)
 
-#: The 2026-11-17 BUY: sealed at the 193,400 limit, filled at 193,300.
 _AVG_PRVS = "193300"
 _TOT_CCLD_AMT = "193300"
 
@@ -209,11 +197,7 @@ def test_ambiguous_rows_claim_no_price(store: SqliteEvidenceStore) -> None:
 def test_an_unknown_verdict_claims_no_price_even_from_a_single_row(
     store: SqliteEvidenceStore, overrides: dict[str, str], expected_reason: str
 ) -> None:
-    """review-1121 L2: an ``UNKNOWN`` row contradicts the attempt — quoting its price as
-
-    the attempt's execution price would contradict the same row this record disbelieves. One
-    row, so the ODNO is unambiguous; the price is still refused because the verdict is.
-    """
+    """review-1121 L2: an ``UNKNOWN`` row contradicts the attempt — quoting its price as"""
     observer = _observer(store, (_row(**overrides),))
 
     assert observer.poll_once().emitted != ()
@@ -229,12 +213,7 @@ def test_an_unknown_verdict_claims_no_price_even_from_a_single_row(
 def test_a_stored_row_written_before_the_price_keys_still_loads(
     tmp_path: Path,
 ) -> None:
-    """The 2026-11-13 lesson: a persisted row re-validated against a changed model broke every
-
-    stored leaf. ``FILL_OBSERVED`` is a plain payload — no model validates it on read — so a row
-    written before these keys exist loads byte-identically, keeps its digest, and simply has
-    neither key.
-    """
+    """The 2026-11-13 lesson: a persisted row re-validated against a changed model broke every"""
     path = tmp_path / "evidence.sqlite3"
     keys = {1: b"test-fixed-key-bytes"}
     old = {

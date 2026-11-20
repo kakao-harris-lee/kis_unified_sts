@@ -400,8 +400,6 @@ def test_the_observer_get_is_bounded_by_its_own_timeout_not_the_order_paths(
 ) -> None:
     """#949 review HIGH (a). The witness the hook reads through is sealed with"""
     _deploy(config_dir, custody_root, server, monkeypatch)
-    # A value no other timeout here carries, so the seal below can only have come from it (the
-    # fixture transport's request_timeout_s is 5.0, the shipped witness value since 2026-11-19).
     path = config_dir / FILL_OBSERVER_CONFIG_NAME
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     raw["witness_request_timeout_s"] = 2.5
@@ -438,11 +436,7 @@ def test_the_loop_deadline_is_wired_to_the_app_keys_pacing_interval(
     monkeypatch,
     server,
 ) -> None:
-    """#1115 N1: the per-date increment is the TRANSPORT's pacing, so compose must pass it.
-
-    Nothing else here would notice if it arrived as ``None`` — the base deadline would simply be
-    used for every scope, which is the defect this fixes.
-    """
+    """#1115 N1: the per-date increment is the TRANSPORT's pacing, so compose must pass it."""
     _deploy(config_dir, custody_root, server, monkeypatch)
     runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
     observer = runtime.fill_observer
@@ -466,15 +460,11 @@ def test_the_loop_deadline_is_wired_to_the_app_keys_pacing_interval(
             order_dates=dates,
         )
 
-    # The composed witness counts THIS runtime's trading date as a page (#1136), so the
-    # one-page case is the scope that names it and nothing else.
     today = observer.today()
     assert today is not None
     assert witness.loop_deadline_ms_for(_scope(today)) == base
     assert witness.loop_deadline_ms_for(_scope(today, "1", "2")) == base + 2 * pacing
-    # A scope WITHOUT today still walks today, so it is one page more than it names.
     assert witness.loop_deadline_ms_for(_scope("1", "2")) == base + 2 * pacing
-    # And the app-key pacing is also what the observer reserves for the holdings refresh (#1107).
     assert observer.app_key_min_send_interval_ms == pacing
     _close(runtime)
 

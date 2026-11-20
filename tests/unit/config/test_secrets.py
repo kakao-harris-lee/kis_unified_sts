@@ -7,11 +7,7 @@ from pydantic import BaseModel
 
 
 class _TelegramCredentialsConfig(BaseModel):
-    """Local stand-in for the removed ``shared.alerts.models.AlertConfig``.
-
-    Only exists to exercise ``SecretsManager`` credential loading through a
-    ``from_env``-style entry point; it is not a production model.
-    """
+    """Local stand-in for the removed ``shared.alerts.models.AlertConfig``."""
 
     telegram_token: str | None = None
     telegram_chat_id: str | None = None
@@ -36,10 +32,8 @@ def test_secrets_manager_get_from_env():
     """Test getting secret from environment variable."""
     from shared.config.secrets import SecretsManager
 
-    # Clear cache before test
     SecretsManager.clear_cache()
 
-    # Set test env var
     os.environ["TEST_SECRET_KEY"] = "test_value"
 
     try:

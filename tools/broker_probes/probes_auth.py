@@ -1,22 +1,4 @@
-"""Rate-limit, session and credential probes — 모의투자, no order mutation.
-
-Probes here: P-13, P-14, P-15, N-15.
-
-None of these emits an order, but all four are **disruptive to a running system**
-and therefore still gate on ``--confirm``:
-
-* P-13 consumes the shared account request quota.
-* P-14 can displace live WebSocket sessions and, per quirk Q-SESS-3
-  (``config/streaming.yaml:59-64`` circuit-breaker rationale), repeated reconnect
-  churn is believed to risk a KIS account block.
-* P-15 / N-15 reissue the access token for an app key that every worker shares,
-  and the documented reissue limit is one per minute.
-
-Broker-courtesy discipline for the rate probe: step the request rate up one
-increment at a time, hold each step briefly, and stop **immediately** on the
-first limit signal. There is no ramp-past-the-limit mode and no automatic retry
-of a throttled call.
-"""
+"""Rate-limit, session and credential probes — 모의투자, no order mutation."""
 
 from __future__ import annotations
 
@@ -45,7 +27,7 @@ _STOCK_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _FUT_PRICE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
 _TOKEN_PATH = "/oauth2/tokenP"
 _APPROVAL_PATH = "/oauth2/Approval"
-_WS_URL_MOCK = "ws://ops.koreainvestment.com:31000"  # shared/kis/websocket.py:434
+_WS_URL_MOCK = "ws://ops.koreainvestment.com:31000"
 
 
 def _setup(spec: ProbeSpec, args: argparse.Namespace) -> tuple[ProbeRun, Any]:
@@ -62,39 +44,8 @@ def _setup(spec: ProbeSpec, args: argparse.Namespace) -> tuple[ProbeRun, Any]:
     return run, creds
 
 
-# ---------------------------------------------------------------------------
-# P-13 — rate limits
-# ---------------------------------------------------------------------------
-
-
 def probe_p13(args: argparse.Namespace) -> ProbeRun:
-    """P-13 RATE_LIMITS — stepwise ramp to the first throttle, then recovery time.
-
-    Measures: ``capabilities.rate_limits.hard_limits`` / ``scope`` /
-    ``sustained_and_burst_semantics``.
-    Feeds: ``B_rate_limit_recovery`` (VP-002:761, ``broker_specific``,
-    ``RESTRICT_OR_CONTAIN``, "recovery time after hitting the applicable broker
-    account or session rate limit; protective/reconciliation traffic budget must
-    survive this").
-
-    Why the repo's 5/20 req/s numbers cannot be used: ``config/execution.yaml``
-    and ``shared/execution/rate_limiter.py`` disagree, and neither is a measured
-    broker limit — they are self-imposed caps (draft §5 Q-RATE-1, and the
-    "folklore 철회" finding in the plan §2). ``hard_limits: {}`` stays empty until
-    this probe fills it.
-
-    Ramp design (broker courtesy):
-      * start at ``--start-rps``, add ``--step-rps`` per step,
-      * hold each step ``--hold-seconds``,
-      * abort the whole probe at the FIRST 429 / EGW00201,
-      * then measure recovery with single spaced probes until one succeeds,
-      * hard ceiling ``--max-rps`` and no retry of any throttled request.
-
-    Reporting: the first-throttle rate is a LOWER BOUND on the broker limit
-    (a step that survived proves only that the limit is at least that high, given
-    this account, session, endpoint class and time of day). It is never an exact
-    quota, and it must be recorded together with ``scope``.
-    """
+    """P-13 RATE_LIMITS — stepwise ramp to the first throttle, then recovery time."""
     spec = get("P-13")
     run, creds = _setup(spec, args)
     if not args.confirm:
@@ -185,7 +136,6 @@ def probe_p13(args: argparse.Namespace) -> ProbeRun:
                 "the ceiling as the limit.",
             )
         else:
-            # Recovery: single spaced calls, never a burst.
             recovered_at: float | None = None
             attempts = 0
             deadline = throttle_at + args.recovery_timeout_s
@@ -238,31 +188,8 @@ def probe_p13(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-# ---------------------------------------------------------------------------
-# P-14 — session model
-# ---------------------------------------------------------------------------
-
-
 def probe_p14(args: argparse.Namespace) -> ProbeRun:
-    """P-14 SESSION_CONNECTION_MODEL — concurrent WS sessions and subscription cap.
-
-    Measures: ``capabilities.sessions.concurrent_sessions`` and the real
-    subscription ceiling. ``config/streaming.yaml:50`` carries the comment
-    "KIS 제한: 41, 안전 마진으로 40" — the draft memo (§5:211-216) flags 41 as
-    unverified folklore, so this probe is what turns it into a fact or refutes it.
-
-    Method: open WebSocket connections one at a time up to ``--max-sessions``,
-    stopping at the first refusal; then on a single connection add symbol
-    subscriptions one at a time up to ``--max-subscriptions``, stopping at the
-    first rejection. Every connection is closed in a ``finally`` block.
-
-    Q-SESS-3 courtesy: the probe never retries a refused connection and never
-    reconnects in a loop — repeated reconnect churn is the pattern the runtime's
-    circuit breaker exists to prevent (``config/streaming.yaml:59-64``).
-
-    Transport note: mock WS is plain ``ws://`` (``shared/kis/websocket.py:434``,
-    quirk Q-SESS-1). The probe records that fact rather than upgrading it.
-    """
+    """P-14 SESSION_CONNECTION_MODEL — concurrent WS sessions and subscription cap."""
     spec = get("P-14")
     run, creds = _setup(spec, args)
     if not args.confirm:
@@ -276,7 +203,7 @@ def probe_p14(args: argparse.Namespace) -> ProbeRun:
         raise ProbeError("--symbol is required (subscription target, e.g. 005930)")
 
     import requests
-    import websocket  # websocket-client, already used by shared/kis/websocket.py
+    import websocket
 
     approval_url = f"{MOCK_BASE_URL}{_APPROVAL_PATH}"
     assert_mock_host(approval_url)
@@ -358,7 +285,7 @@ def probe_p14(args: argparse.Namespace) -> ProbeRun:
                         subscription_index=index, error=f"{type(exc).__name__}: {exc}"
                     )
                     break
-                time.sleep(0.05)  # streaming.yaml:55 subscription_delay
+                time.sleep(0.05)
             run.measure("subscriptions_accepted", subscribed)
             run.measure(
                 "subscription_cap_note",
@@ -383,20 +310,10 @@ def probe_p14(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-# ---------------------------------------------------------------------------
-# P-15 / N-15 — credentials
-# ---------------------------------------------------------------------------
-
-
 def _issue_token_raw(
     session: Any, creds: Any
 ) -> tuple[int, dict[str, Any], float, str]:
-    """Raw ``/oauth2/tokenP`` POST — deliberately unwrapped.
-
-    Mirrors ``shared/kis/auth.py:453-458`` but without the cache write and
-    without ``retry_once_on_token_expiry``, because the retry wrapper is part of
-    what N-15 is measuring.
-    """
+    """Raw ``/oauth2/tokenP`` POST — deliberately unwrapped."""
     url = f"{creds.base_url}{_TOKEN_PATH}"
     assert_mock_host(url)
     return http_json(
@@ -414,17 +331,7 @@ def _issue_token_raw(
 
 
 def probe_p15(args: argparse.Namespace) -> ProbeRun:
-    """P-15 CREDENTIALS_AUTHORIZATION — reissue twice inside one minute.
-
-    Measures: ``capabilities.credentials_and_revocation.reissue_rejection_semantics``.
-    The only OFFICIAL-DOC fact we hold here is "토큰 재발급 - 1분당 1회 발급됩니다"
-    (draft §5:208). This probe converts it from DOCUMENTED_NOT_VERIFIED to an
-    observed rejection code, or refutes it.
-
-    Method: issue a token, wait ``--reissue-gap-s`` (default 5s, well inside the
-    documented minute), issue again, and record the second response verbatim
-    (HTTP status, ``msg_cd``, ``msg1``). No retry, no cache write.
-    """
+    """P-15 CREDENTIALS_AUTHORIZATION — reissue twice inside one minute."""
     spec = get("P-15")
     run, creds = _setup(spec, args)
     if not args.confirm:
@@ -489,15 +396,6 @@ def probe_p15(args: argparse.Namespace) -> ProbeRun:
     return run
 
 
-#: Why the token this process ALREADY holds is checked during the blackout.
-#:
-#: The four 2026-07-29 attempts all measured the wrong thing. ``B_egress_hard_fence``
-#: is about a principal being unable to obtain a USABLE credential, and
-#: ``KISAuthManager.invalidate()`` only unlinks a local cache file — it does not
-#: revoke anything at the broker. So a reissue refusal does not by itself mean the
-#: fleet is credential-less: if the previously issued token still authorizes calls,
-#: there is no egress blackout at all, only a reissue cooldown. The two are
-#: separate quantities and the probe now reports both.
 _N15_HELD_TOKEN_NOTE = (
     "reissue_refusal_window and held_token_usable are DIFFERENT measurements. "
     "invalidate() unlinks a local cache file (shared/kis/auth.py:396-405); it does "
@@ -506,22 +404,10 @@ _N15_HELD_TOKEN_NOTE = (
     "in which NO usable credential exists feeds B_egress_hard_fence."
 )
 
-#: Dispositions for the held-token usability sample.
 _HELD_OK = "ACCEPTED"
 _HELD_REJECTED = "REJECTED"
 _HELD_UNKNOWN = "UNDETERMINED"
 
-#: What ``_HELD_REJECTED`` requires, and why it may never be observed at all.
-#:
-#: KIS signals plenty of failures as HTTP 200 with ``rt_cd != "0"``, so an
-#: authorization rejection may well arrive in that shape rather than as 401/403.
-#: This probe does NOT map 200+``rt_cd!=0`` to REJECTED, because no artifact in
-#: this campaign has yet recorded the token-rejection code on this surface and
-#: inventing the mapping would let an ordinary business rejection — a bad symbol, a
-#: closed session — read as a credential failure and manufacture an egress
-#: blackout. The honest consequence is stated rather than hidden: REJECTED may be
-#: structurally unreachable here, and a tally of all-UNDETERMINED is therefore NOT
-#: evidence that the held token kept working.
 _N15_REJECTION_REACHABILITY_NOTE = (
     "REJECTED is asserted only on HTTP 401/403. KIS also signals failures as "
     "200+rt_cd!=0, and if a token rejection arrives in THAT shape this probe "
@@ -537,18 +423,7 @@ _N15_REJECTION_REACHABILITY_NOTE = (
 def _held_token_usable(
     session: Any, creds: Any, token: str, args: argparse.Namespace
 ) -> tuple[str, dict[str, Any]]:
-    """Is the token this process already holds still accepted by the broker?
-
-    Uses the cheapest authenticated read there is — the same 시세 endpoint P-13
-    ramps — and consumes the QUERY quota, not the token quota, so it does not
-    lengthen the very window it is sampling.
-
-    Returns:
-        ``(_HELD_*, evidence)``. ``_HELD_UNKNOWN`` whenever the call did not
-        produce an authorization verdict, including a throttle: a throttled call
-        never reached the authorization check, and reading it as "rejected" would
-        manufacture a blackout out of a rate limit.
-    """
+    """Is the token this process already holds still accepted by the broker?"""
     is_futures = args.asset == "futures"
     path = _FUT_PRICE_PATH if is_futures else _STOCK_PRICE_PATH
     url = f"{MOCK_BASE_URL}{path}"
@@ -584,35 +459,11 @@ def _held_token_usable(
         return _HELD_OK, evidence
     if status in (401, 403):
         return _HELD_REJECTED, evidence
-    # Everything else — notably HTTP 200 with rt_cd != "0" — stays UNDETERMINED.
-    # See _N15_REJECTION_REACHABILITY_NOTE: the token-rejection code on this
-    # surface is unmeasured, and guessing it would turn a business rejection into a
-    # fabricated credential failure.
     return _HELD_UNKNOWN, evidence
 
 
 def _backoff_schedule(args: argparse.Namespace) -> list[float]:
-    """Sleep before each reissue retry, in order.
-
-    Exponential, floored at ``--reissue-poll-s`` and capped at
-    ``--blackout-backoff-max-s``. Two reasons the old fixed 5 s poll had to go:
-
-    * **Budget.** 36 token calls in 180 s on an app key the whole fleet shares,
-      against a window since measured at ≥ 8.8 min, is a lot of quota spent to
-      learn nothing. The defaults spend 12 calls to reach 1065 s ≈ 17.8 min:
-      gaps 15, 30, 60, then 120 × 8, so the twelfth attempt lands at t=1065 s.
-      ``--blackout-timeout-s`` defaults to 1200 s so the schedule runs to its end
-      instead of being truncated mid-way — at the previous 900 s ceiling the run
-      stopped after attempt 10 at t=825 s, and the "12 calls / ~18 min" claim in
-      the runbook was arithmetic the code did not honour.
-    * **Confounding.** If the broker restarts its cooldown on every REJECTED
-      attempt, dense polling makes the window unbounded and the probe measures its
-      own poll rate. Widening gaps discriminate the two models directly — a refusal
-      observed after a gap far larger than the documented minute refutes the
-      restart model at that gap, and ``reissue_refusal_survived_gap_s`` reports it.
-
-    ``--blackout-backoff-factor 1.0`` reproduces the old fixed-interval poll.
-    """
+    """Sleep before each reissue retry, in order."""
     delays: list[float] = []
     delay = max(float(args.reissue_poll_s), 0.0)
     for _ in range(max(int(args.blackout_max_attempts) - 1, 0)):
@@ -622,52 +473,7 @@ def _backoff_schedule(args: argparse.Namespace) -> list[float]:
 
 
 def probe_n15(args: argparse.Namespace) -> ProbeRun:
-    """N-15 token blackout — 1-minute reissue limit x invalidate→retry interaction.
-
-    Measures: ``credentials_and_revocation.token_blackout_window_ms``.
-    Feeds: the broker-denial half of ``B_egress_hard_fence`` (VP-002:203) — how
-    long a principal can be unable to obtain a usable credential.
-
-    The hazard (plan §2:68, draft §5 Q-IDEMP-2): the runtime clears its cached
-    token on a server-side expiry (``shared/kis/auth.py:396-405`` unlinks the
-    cache file, ``:64-104`` retries once with a fresh token). If the broker then
-    refuses reissue because of the 1-per-minute limit, there is a window in which
-    the process holds NO usable token while orders are still being routed to it.
-
-    Method (all on the probe's private cache — the runtime token file is never
-    touched):
-      1. obtain a token,
-      2. call ``KISAuthManager.invalidate()`` to force a reissue, exactly as the
-         runtime retry path does,
-      3. attempt reissue on an exponentially widening schedule until one succeeds,
-         sampling at each step whether the token the process ALREADY holds is
-         still accepted,
-      4. refusal window = (first success) - (invalidate).
-
-    Report the maximum over trials. A window shorter than 60s means the documented
-    per-minute limit was not the binding constraint on this attempt — say that, do
-    not average it away.
-
-    Three defects of the 2026-07-29 attempts are closed here, each demonstrated by
-    artifacts ``N-15-20260729T063312Z`` … ``064922Z`` — four runs, every one of
-    them ``duration_s = 0.0`` with ``measurements: {}``:
-
-    * **The probe could not start.** Step 1 called ``auth.get_token()``, which
-      raises when the broker refuses, and ``run.py:135-150`` then rebuilt a blank
-      ProbeRun — discarding even the observations already recorded. But a refusal
-      at step 1 IS the phenomenon under study: a blackout was already in progress.
-      It is now recorded and the observation phase proceeds from it.
-    * **The window could not fit.** ``--blackout-timeout-s`` defaulted to 180 s
-      against a refusal since observed to persist ≥ 8.8 min (06:40:35Z → 06:49:22Z
-      with one intervening attempt), so every run was structurally censored.
-    * **The wrong quantity.** See :data:`_N15_HELD_TOKEN_NOTE`.
-
-    What those four artifacts already refute, and what the widening schedule keeps
-    testing: the refusals at 06:40:35Z and 06:49:22Z came 265 s and 527 s after the
-    previous attempt. Both are far beyond the documented minute, so neither the
-    literal "1분당 1회" reading NOR the "every rejected attempt restarts the
-    cooldown" reading accounts for them.
-    """
+    """N-15 token blackout — 1-minute reissue limit x invalidate→retry interaction."""
     spec = get("N-15")
     run, creds = _setup(spec, args)
     if not args.confirm:
@@ -701,11 +507,6 @@ def probe_n15(args: argparse.Namespace) -> ProbeRun:
             "below is therefore NOT a usable-credential window and must not be "
             "read as one.",
         )
-    # Split by origin, never pooled. A PRE_EXISTING_REFUSAL trial starts the clock
-    # when the PROBE noticed the blackout, not when the blackout began, so its
-    # elapsed time UNDER-states the window. Summarising it together with a clean
-    # invalidate→reissue sample would push the candidate down — the fail-open
-    # direction for B_egress_hard_fence, which is a hard maximum.
     blackouts: list[float] = []
     pre_existing_bounds: list[float] = []
     censored_trials = 0
@@ -854,12 +655,7 @@ def probe_n15(args: argparse.Namespace) -> ProbeRun:
 
 
 def _tally(samples: list[str]) -> dict[str, int]:
-    """Count each held-token disposition, keeping every state visible at zero.
-
-    Zeros are kept rather than omitted: ``REJECTED: 0`` tells a reader the question
-    was asked and answered, whereas a missing key is indistinguishable from a probe
-    that never sampled at all.
-    """
+    """Count each held-token disposition, keeping every state visible at zero."""
     return {
         state: samples.count(state)
         for state in (_HELD_OK, _HELD_REJECTED, _HELD_UNKNOWN)
@@ -871,22 +667,7 @@ def _refusal_lower_bound(
     blackouts: list[float],
     pre_existing_bounds: list[float],
 ) -> dict[str, Any] | None:
-    """The censored-trial bound, so a timed-out run still carries its evidence.
-
-    ``None`` when no trial was censored.
-
-    ``censored_trials`` is counted at the censoring site rather than recovered by
-    scanning ``run.errors`` for the substring ``"CENSORED"``. The scan was
-    coincidence-prone in both directions: any unrelated error mentioning the word —
-    an operator ``--note``, a broker message quoted verbatim — would have inflated
-    the count, and a reworded censoring message would have silently zeroed it.
-
-    The provenance rule is deliberately left alone: ``run.error`` has already been
-    called for a censored trial, so the artifact stays ``NOT_MEASURED``. What
-    changes is that it now carries the bound and the reason instead of the empty
-    ``measurements`` object the four 2026-07-29 artifacts shipped. A lower bound
-    cited together with its censoring reason is usable evidence; silence is not.
-    """
+    """The censored-trial bound, so a timed-out run still carries its evidence."""
     if censored_trials <= 0:
         return None
     return {

@@ -1,38 +1,4 @@
-"""Release a held entry reservation once the broker double-reads its instrument flat (2026-11-19).
-
-Operator decision 2026-11-19 (option B): one position per symbol stays (step 8's no-pyramiding),
-but an entry reservation whose position is already gone at the broker must not block the scope
-for the rest of the day. The receipt-corroborated discharge (``entry_recovery``) can stay held
-forever when the close proof stops transferring or the order inquiry keeps failing; this path
-needs neither. It is opt-in per tenant (``fill_observer.yaml::broker_flat_release``) and runs on
-the held-position double read the observer already polls, so its retry cadence is
-``held_position_poll_interval_ms`` and a failed read simply waits for the next one.
-
-It releases only when ALL hold, judged on the session-loop thread:
-
-* (a) the scope's only outstanding RCL reservation is one ``POSITION_CONSUMED`` entry — i.e. a
-  FULL_FILL with nothing remaining; any other outstanding reservation (an OPEN or CLOSE between
-  step 8 and its release) refuses;
-* (b) BOTH reads of the double observation succeeded, are complete and broker-independent, show
-  the instrument at zero, belong to this scope and trading date, and are within
-  ``held_position_max_age_ms``;
-* (c) no TOS attempt for the scope is in flight: every sealed send has a terminal, matched result
-  (``EvidencePositionReader``'s ``in_flight_*`` are zero);
-* the RCL has not moved since the read was planned except by approval consumption, and the RCL
-  append is CAS-fenced on the tip read here;
-* (d) the flat result is CONFIRMED: a first qualifying flat poll whose read started at least
-  ``settle_ms`` after this process first saw the entry consumed, then a second qualifying flat
-  poll whose read started at least ``confirm_interval_ms`` later, with only approval consumption
-  between their RCL tips. Any other verdict in between resets the first. This covers the mock
-  account's fill-to-balance reflection lag (no published bound in the broker profile): a balance
-  that has not yet reflected the entry's buy reads flat right after the FULL_FILL, and releasing
-  on it would let the next OPEN buy a second lot while the first becomes an untracked orphan.
-
-Only an RCL refusal or an RCL error ends a release attempt quietly (``BROKER_FLAT_RELEASE_HELD``);
-an evidence-store append failure propagates, as it does from every other release writer here.
-Every verdict other than ``RELEASED`` is recorded once per process as a
-``BROKER_FLAT_RELEASE_HELD`` row so an operator can see why nothing released.
-"""
+"""Release a held entry reservation once the broker double-reads its instrument flat (2026-11-19)."""
 
 from __future__ import annotations
 
@@ -140,17 +106,10 @@ class BrokerFlatRelease:
         return verdict
 
     def _note(self, verdict: BrokerFlatVerdict) -> None:
-        """One ``BROKER_FLAT_RELEASE_HELD`` row per verdict per process (an operator's why).
-
-        A failed append propagates out of the observation pass (#1115 N3, recorded not changed):
-        every writer on this path behaves that way — an evidence store that cannot take a row is
-        not a condition under which this runtime keeps deciding — and the verdict it would have
-        explained is a HOLD, so nothing is released by the raise. The ``_noted`` guard is set
-        BEFORE the append on purpose: a store that refuses once refuses again, and retrying the
-        same row each pass would turn one failure into a per-pass exception storm.
-        """
+        """One ``BROKER_FLAT_RELEASE_HELD`` row per verdict per process (an operator's why)."""
         if verdict.value in self._noted:
             return
+        # SAFETY: append 전에 표시한다 — 거부된 append 를 패스마다 재시도하면 예외 폭풍이 된다
         self._noted.add(verdict.value)
         self.evidence_store.append(
             {
@@ -205,8 +164,9 @@ class BrokerFlatRelease:
         self, reservation_id: str, snapshot: HeldPositionSnapshot, current: RclTip
     ) -> bool:
         """(d): settle after the entry was first seen consumed, then a second flat poll."""
+        # SAFETY: 모의 잔고는 진입 체결보다 늦을 수 있다 — 이른 flat 읽기로 풀면 두 번째 물량을 산다
         started = snapshot.first_balance_read_started_ms
-        assert started is not None  # _read_verdict refused a read without one
+        assert started is not None
         seen = self._consumed_seen_ms.setdefault(reservation_id, self.now_ms())
         if started < seen + self.settle_ms:
             self._first_flat = None

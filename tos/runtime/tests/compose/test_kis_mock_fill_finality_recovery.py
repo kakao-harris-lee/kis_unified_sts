@@ -528,14 +528,7 @@ def test_a_replay_onto_a_ledger_that_already_holds_a_reservation_refuses_the_boo
 def test_a_dateless_ack_is_recovered_from_the_broker_and_releases_once(
     config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    """Issue #1096 end to end: the 2026-11-13 shape, from the dateless ACK to the release.
-
-    The incident's mechanism is reproduced, not simulated: the egress trading-date reader answers
-    ``None`` (a stale date clock), so the ACK row the transport records genuinely has no
-    ``trading_date`` key — the attempt is untrackable and its reservation would stay
-    ``COMMITTED_UNBOUND`` for ever. One bounded ODNO scan of the broker's own order rows recovers
-    the date, the fill is then observed normally, and the release commits exactly once.
-    """
+    """Issue #1096 end to end: the 2026-11-13 shape, from the dateless ACK to the release."""
     _deploy(config_dir, custody_root, server, monkeypatch)
     _set_observer_config(config_dir, ack_date_recovery_lookback_trading_days=1)
     with monkeypatch.context() as patch:

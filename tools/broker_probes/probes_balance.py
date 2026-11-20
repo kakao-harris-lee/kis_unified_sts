@@ -1,53 +1,4 @@
-"""P-BAL — balance-query pagination probe. READ-ONLY BY CONSTRUCTION.
-
-Why this probe exists
----------------------
-``shared/kis/client.py`` reads exactly ONE page of every balance query and has no
-way to notice that it did:
-
-* stock (``get_stock_balance``, ``:901-1021``) sends empty ``CTX_AREA_FK100`` /
-  ``CTX_AREA_NK100`` (``:931-932``), never reads the response continuation keys,
-  never inspects the ``tr_cont`` response header, never checks the row count, and
-  logs nothing on the success path;
-* futures (``get_futures_balance``, ``:1023-1114``) does the same with
-  ``CTX_AREA_FK200`` / ``CTX_AREA_NK200`` (``:1055-1056``).
-
-A correct continuation walk already exists in the same file —
-``fetch_invest_opinion`` (``:303-356``) loops until the ``tr_cont`` response
-header stops being ``"M"`` (``:354``) — so the omission is a local defect, not a
-missing capability.
-
-Why it matters, and how far the consequence is actually established
--------------------------------------------------------------------
-``services/trading/broker_verification.py`` consumes a balance read and has a
-DESTRUCTIVE branch: when ``remove_redis_only`` is enabled (``:105``, gated at
-``:121-127``) a position the broker "does not have" is dropped from tracking via
-``remove_position(reason="broker_absent")`` (``:187-190``). If the balance read is
-truncated, a genuinely held position beyond the page boundary is indistinguishable
-from an absent one.
-
-That consequence is **INFERENCE** today: the balance page size has never been
-measured. This probe measures it — and is written so that it cannot accidentally
-upgrade the inference. See :func:`truncation_verdict`.
-
-Safety model
-------------
-Strictly GET-only, and structurally so:
-
-* :data:`ALLOWLIST` is the complete set of calls this module may ever make. It
-  contains three balance-inquiry entries and nothing else.
-* :func:`_get` is the ONLY transport. It calls
-  :func:`~tools.broker_probes.common.assert_read_only_call` (GET ∧ TR id ∧ URL
-  path) *before* it touches the session, for every environment — the real host is
-  not a special case here, it is the default target.
-* There is no POST/PUT/PATCH/DELETE helper, no order-body builder, and this
-  module deliberately does not import :mod:`tools.broker_probes.probes_order`
-  (which does have order paths). ``tests/tools/test_broker_probes_balance.py``
-  asserts all of that structurally against the module's own AST, so the property
-  is committed rather than asserted in prose.
-
-Nothing in this module can mutate an order, in mock or in real.
-"""
+"""P-BAL — balance-query pagination probe. READ-ONLY BY CONSTRUCTION."""
 
 from __future__ import annotations
 
@@ -76,30 +27,15 @@ from tools.broker_probes.common import (
 )
 from tools.broker_probes.registry import ProbeSpec, get
 
-# ---------------------------------------------------------------------------
-# TR ids and paths — READ from shared/kis/client.py, not guessed
-# ---------------------------------------------------------------------------
-
-#: 주식 잔고조회 path — ``shared/kis/client.py:935``.
 _STOCK_BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 
-#: 선물옵션 잔고조회 path — ``shared/kis/client.py:1059``.
 _FUT_BALANCE_PATH = "/uapi/domestic-futureoption/v1/trading/inquire-balance"
 
-#: ``shared/kis/client.py:919`` — ``"TTTC8434R" if self.config.is_real else
-#: "VTTC8434R"``. The runtime picks between these two for the same path.
 _STOCK_TR_REAL = "TTTC8434R"
 _STOCK_TR_MOCK = "VTTC8434R"
 
-#: ``shared/kis/client.py:1048`` — the futures balance TR has no mock variant;
-#: ``:1031-1033`` refuses the call outright when ``is_real`` is false.
 _FUT_TR_REAL = "CTFO6118R"
 
-#: Complete read-only allowlist. A call not matching an entry is refused by
-#: :func:`~tools.broker_probes.common.assert_read_only_call` before any socket is
-#: opened. There is deliberately NO mock-futures entry: the broker does not serve
-#: that query (see :data:`_MOCK_FUTURES_SKIP_REASON`), so admitting it would be
-#: admitting a call that cannot succeed.
 ALLOWLIST: tuple[ReadOnlyCall, ...] = (
     ReadOnlyCall(
         _STOCK_TR_REAL,
@@ -134,17 +70,10 @@ class _Target:
     is_real: bool
     tr_id: str
     path: str
-    #: Continuation-key suffix: stock uses ``CTX_AREA_*K100``
-    #: (``client.py:931-932``), futures ``CTX_AREA_*K200`` (``:1055-1056``).
     ctx_suffix: str
-    #: Per-row holding-quantity field the RUNTIME filters on — stock ``hldg_qty``
-    #: (``client.py:1002``), futures ``cblc_qty`` (``:1091``). Rows with a
-    #: non-positive value are dropped by the runtime but still occupy a page, so
-    #: raw and runtime-visible counts are recorded separately.
     row_qty_field: str
 
 
-#: Mock futures is deliberately absent — see :data:`_MOCK_FUTURES_SKIP_REASON`.
 _TARGETS: dict[tuple[str, bool], _Target] = {
     ("stock", True): _Target(
         "stock", True, _STOCK_TR_REAL, _STOCK_BALANCE_PATH, "100", "hldg_qty"
@@ -167,59 +96,23 @@ _MOCK_FUTURES_SKIP_REASON = (
     "be recorded as 'no truncation risk'."
 )
 
-# ---------------------------------------------------------------------------
-# tr_cont semantics
-# ---------------------------------------------------------------------------
 
-#: ``tr_cont`` response values with evidence for "more follows".
-#: ``shared/kis/client.py:354`` breaks its continuation loop on
-#: ``response_tr_cont != "M"``; KIS's official ``inquire_balance`` example
-#: (open-trading-api ``examples_llm/domestic_stock/inquire_balance/
-#: inquire_balance.py``) recurses on ``tr_cont in ("M", "F")`` and logs
-#: "Data fetch complete." on every other value. A NON-EMPTY value outside this
-#: tuple is therefore the broker's end-of-set signal (P-BAL-20260731T083102Z
-#: observed ``"D"`` on the real stock endpoint with a static padded cursor
-#: still present in the body); an ABSENT header establishes nothing and the
-#: walk falls back to the continuation keys. The raw value is still recorded
-#: verbatim per page, so an unfamiliar code shows up as a finding rather than
-#: being silently folded into a boolean.
 _TR_CONT_MORE_CODE_EVIDENCED = ("M", "F")
 
-#: Request-side value for a follow-up page — ``shared/kis/client.py:356``.
 _TR_CONT_REQUEST_NEXT = "N"
 
-#: The broker's empty-result-set notation ("조회할 내용이 없습니다"). Wave-3
-#: established this msg_cd as 빈-응답 on futures trading TRs (N-16, campaign
-#: README), and the endpoints disagree on the rt_cd that accompanies it: the
-#: real STOCK balance pairs it with rt_cd='0' (P-BAL-20260731T084147Z), the
-#: real FUTURES balance with rt_cd='7' (P-BAL-20260731T114054Z). An empty set
-#: is an answer, not a rejection — but ONLY this exact msg_cd is read that way;
-#: every other non-zero rt_cd stays a rejection.
 _MSG_EMPTY_RESULT_SET = "KIOK0560"
 
-# ---------------------------------------------------------------------------
-# Termination causes — the whole point of the probe (§8.4 honest negatives)
-# ---------------------------------------------------------------------------
 
-#: The broker itself signalled end-of-set (no continuation key came back, or
-#: the ``tr_cont`` response header carried a non-empty non-more code).
 _TERM_BROKER_END = "BROKER_END_OF_SET"
-#: OUR ``--max-pages`` cap cut the walk. A total row count is NOT established.
 _TERM_CAP = "OUR_MAX_PAGES_CAP"
-#: A broker rejection or a non-advancing continuation key stopped the walk.
 _TERM_ERROR = "ERROR"
 
 _TERMINATION_CAUSES = (_TERM_BROKER_END, _TERM_CAP, _TERM_ERROR)
 
-# ---------------------------------------------------------------------------
-# Truncation-risk verdict — three-valued, computed from the data
-# ---------------------------------------------------------------------------
 
-#: Holdings provably exceed one page: the runtime's single-page read truncates.
 _RISK_DEMONSTRATED = "TRUNCATION_RISK_DEMONSTRATED"
-#: A page size is known AND the broker's own end-of-set was reached below it.
 _RISK_NOT_DEMONSTRATED = "TRUNCATION_RISK_NOT_DEMONSTRATED"
-#: Neither of the above is established. The honest outcome on a small account.
 _RISK_UNESTABLISHED = "TRUNCATION_RISK_UNESTABLISHED"
 
 _VERDICTS = (_RISK_DEMONSTRATED, _RISK_NOT_DEMONSTRATED, _RISK_UNESTABLISHED)
@@ -228,14 +121,6 @@ _PAGE_SIZE_MEASURED = "MEASURED_MULTI_PAGE_WALK"
 _PAGE_SIZE_OPERATOR = "OPERATOR_SUPPLIED_PRIOR_MEASUREMENT"
 _PAGE_SIZE_UNESTABLISHED = "UNESTABLISHED"
 
-#: Default pause between pages, in seconds.
-#:
-#: Measured, not guessed: P-13 (artifact ``P-13-20260729T063120Z``) bracketed the
-#: mock account's query class at clean 1.0 rps / throttled 2.0 rps (``EGW00201``).
-#: 1.1 s sits just above the measured clean rate. Deliberately a local constant
-#: rather than an import of ``probes_order.DEFAULT_PACE_S``: importing that module
-#: would put order-submitting code in this module's import graph and weaken the
-#: structural read-only property this file exists to guarantee.
 DEFAULT_INTER_PAGE_S = 1.1
 
 
@@ -246,40 +131,7 @@ def truncation_verdict(
     known_page_size: int = 0,
     known_page_size_source: str = "",
 ) -> dict[str, Any]:
-    """Derive the three-valued truncation verdict from the walk. PURE function.
-
-    The verdict is computed from the observations, never self-reported, because
-    the failure mode this probe exists to avoid is a comfortable summary. With a
-    small account a single page of ``k`` rows is consistent with **any** page size
-    ``>= k``; it is not evidence that the page size is ``k``, and it is not
-    evidence that there is no truncation risk.
-
-    Rules:
-
-    * A page size is MEASURED only when a second page was actually returned and
-      page 1 was the largest page (``pages >= 2``, ``rows[0] > 0``, and no later
-      page larger than page 1). One page never establishes a page size.
-    * ``known_page_size`` lets a prior measurement be carried in. It is recorded
-      with source :data:`_PAGE_SIZE_OPERATOR` and always loses to a measurement
-      taken in this run; a disagreement between the two is reported, not merged.
-    * :data:`_RISK_NOT_DEMONSTRATED` additionally requires that the BROKER
-      signalled end-of-set. If our own ``--max-pages`` cap ended the walk, "rows
-      seen so far are below the page size" is not evidence that the account's
-      holdings are — concluding otherwise is the fail-open direction.
-    * A total holdings count is reported only when ``termination`` is
-      :data:`_TERM_BROKER_END`. Otherwise only a lower bound exists.
-
-    Args:
-        page_row_counts: Raw row count per walked page, in walk order.
-        termination: One of :data:`_TERMINATION_CAUSES`.
-        known_page_size: A page size established by an earlier run, or 0.
-        known_page_size_source: Provenance for ``known_page_size``; required by
-            the caller whenever the value is used (see :func:`probe_pbal`).
-
-    Returns:
-        A dict carrying the verdict plus every input it was derived from, so a
-        reviewer can recompute it without rerunning the probe.
-    """
+    """Derive the three-valued truncation verdict from the walk. PURE function."""
     if termination not in _TERMINATION_CAUSES:
         raise ProbeError(
             f"unknown termination cause {termination!r} "
@@ -399,11 +251,6 @@ def truncation_verdict(
     return result
 
 
-# ---------------------------------------------------------------------------
-# Transport — the ONLY one in this module
-# ---------------------------------------------------------------------------
-
-
 def _get(
     session: Any,
     auth: Any,
@@ -414,22 +261,7 @@ def _get(
     params: dict[str, Any],
     tr_cont: str = "",
 ) -> tuple[int, dict[str, Any], dict[str, str], str, float]:
-    """The ONLY transport in this module. GET, allowlisted, headers preserved.
-
-    Deliberately not routed through
-    :func:`~tools.broker_probes.common.http_json`: that helper discards the
-    response headers, and the ``tr_cont`` response header is one of the four
-    things this probe exists to observe. Reading it directly mirrors
-    ``shared/kis/client.py:341`` (``fetch_invest_opinion``) and
-    ``probes_query.py``'s ``Date``-header read in P-16 — both go to the transport
-    for a header the shared helper drops.
-
-    The allowlist assertion runs BEFORE the session is touched, so a refused call
-    opens no socket.
-
-    Returns:
-        ``(status, parsed_body, response_headers, raw_text, elapsed_ms)``.
-    """
+    """The ONLY transport in this module. GET, allowlisted, headers preserved."""
     url = f"{base_url}{path}"
     assert_read_only_call("GET", url, tr_id, ALLOWLIST)
     headers = dict(auth.get_auth_headers())
@@ -459,25 +291,7 @@ def _get(
 def _balance_params(
     target: _Target, creds: Any, *, fk: str = "", nk: str = ""
 ) -> dict[str, str]:
-    """Mirror the runtime's balance params, with the continuation keys USABLE.
-
-    Stock: ``shared/kis/client.py:921-933``. Futures: ``:1051-1057``. Every field
-    is transcribed from there, with exactly two documented divergences:
-
-    * ``CTX_AREA_FK*`` / ``CTX_AREA_NK*`` carry the previous page's keys instead
-      of being hard-wired to empty strings. That difference IS the defect under
-      measurement.
-    * Futures adds ``MGNA_DVSN`` and ``EXCC_STAT_CD``, which the runtime omits.
-      REAL_PROD rejects the runtime's exact param set with rt_cd=7 APMP0001
-      "증거금구분코드은(는) 필수입력 항목입니다" (measured:
-      P-BAL-20260731T084304Z) — and mock serves no futures balance at all, so
-      the runtime's futures-balance request has never succeeded against any
-      broker. KIS's official inquire_balance example (open-trading-api
-      ``examples_llm/domestic_futureoption/inquire_balance/inquire_balance.py``)
-      marks both fields [필수]; the values below are that example's
-      documented examples (01: 게시 margin, 1: 정산). Without them the probe
-      cannot measure pagination, because no page is ever served.
-    """
+    """Mirror the runtime's balance params, with the continuation keys USABLE."""
     if target.asset == "stock":
         return {
             "CANO": creds.cano,
@@ -506,15 +320,7 @@ def _balance_params(
 def _read_ctx_key(
     body: dict[str, Any], headers: dict[str, str], kind: str, suffix: str
 ) -> tuple[str, str]:
-    """Find one continuation key and record WHERE it was found.
-
-    The runtime never reads these keys, so the repo carries no evidence of their
-    casing or location on the balance TRs. Rather than assume, this looks for both
-    spellings in the body and then in the headers, and returns the location it
-    actually used. ``("", "")`` means no spelling was present anywhere — which is
-    an observation ("the broker returned no continuation key"), not a lookup
-    failure to paper over.
-    """
+    """Find one continuation key and record WHERE it was found."""
     lower = f"ctx_area_{kind.lower()}{suffix}"
     upper = f"CTX_AREA_{kind.upper()}{suffix}"
     for name in (lower, upper):
@@ -527,26 +333,14 @@ def _read_ctx_key(
 
 
 def _key_fingerprint(value: str) -> str:
-    """Non-reversible correlator for a continuation cursor.
-
-    Fingerprinted rather than stored raw by default: a continuation cursor is
-    broker-opaque and may embed account-derived material, and ``redact()`` only
-    masks field names it already knows. The fingerprint is enough for the thing
-    that matters here — telling whether a key ADVANCED between pages, per key.
-    Pass ``--record-raw-continuation-keys`` to add the raw values.
-    """
+    """Non-reversible correlator for a continuation cursor."""
     if not value:
         return ""
     return hashlib.sha256(value.encode()).hexdigest()[:12]
 
 
 def _positive_qty_rows(rows: list[Any], qty_field: str) -> int:
-    """Count rows the RUNTIME would keep (``qty > 0``) — ``client.py:1002``/``:1091``.
-
-    Recorded alongside the raw count because pagination is over raw rows while the
-    destructive consumer only ever sees the filtered ones. Conflating the two
-    would make a page look emptier than it is.
-    """
+    """Count rows the RUNTIME would keep (``qty > 0``) — ``client.py:1002``/``:1091``."""
     kept = 0
     for row in rows:
         if not isinstance(row, dict):
@@ -559,31 +353,8 @@ def _positive_qty_rows(rows: list[Any], qty_field: str) -> int:
     return kept
 
 
-# ---------------------------------------------------------------------------
-# P-BAL
-# ---------------------------------------------------------------------------
-
-
 def probe_pbal(args: argparse.Namespace) -> ProbeRun:
-    """P-BAL BALANCE_PAGINATION — page size, continuation behaviour, truncation risk.
-
-    Establishes, and records separately:
-
-    1. **Page size** — rows returned in page 1, and whether that number is a page
-       size at all (it is not, unless a second page followed).
-    2. **Continuation behaviour** — whether non-empty continuation keys came back,
-       where they were found, and what the ``tr_cont`` response header said.
-    3. **Walk** — per-page row counts and per-KEY advance, up to ``--max-pages``.
-       Both keys are recorded every page, because the prior campaign found a case
-       where only one of two keys moved; a single boolean would have hidden it.
-    4. **Termination cause** — broker end-of-set / our cap / error, explicitly. A
-       total row count is reported ONLY on broker end-of-set. P-5b's artifact had
-       to say "total unestablished" because our cap ended its walk; that is a
-       first-class outcome here, not a footnote.
-    5. **Truncation-risk verdict** — three-valued, from :func:`truncation_verdict`.
-
-    Read-only in every environment. There is no order path in this module.
-    """
+    """P-BAL BALANCE_PAGINATION — page size, continuation behaviour, truncation risk."""
     spec = get("P-BAL")
     asset = str(getattr(args, "asset", "") or "").strip().lower()
     env = str(getattr(args, "env", "") or "").strip().lower()
@@ -608,9 +379,6 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
         probe_id=spec.probe_id,
         title=spec.title,
         mode="live" if args.confirm else "dry-run",
-        # NOT spec.environment: the artifact must state the environment that was
-        # actually contacted, because §6.2 forbids citing a MOCK_VTS artifact in a
-        # REAL_PROD document (ADR-002-004 §13.14).
         environment=ENV_REAL if is_real else ENV_MOCK,
         args=vars(args),
     )
@@ -625,8 +393,6 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
 
     target = _TARGETS.get((asset, is_real))
     if target is None:
-        # Before credential resolution on purpose: a missing-credential
-        # ProbeError would replace the informative skip with a noisy failure.
         run.skip(f"{asset} balance walk on {env}", _MOCK_FUTURES_SKIP_REASON)
         run.measure("target_supported", False)
         run.measure("truncation_risk", None)
@@ -681,9 +447,6 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
     termination_detail = "the walk did not execute"
     fk = nk = ""
     prev_fp = {"fk": "", "nk": ""}
-    # True when the final request repeated the previous cursor position: the
-    # page is preserved in observations but its rows are the SAME rows again
-    # and must never enter a total (that would double-count holdings).
     duplicate_final_page = False
     try:
         for index in range(int(args.max_pages)):
@@ -718,8 +481,6 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
                     "length": len(value),
                     "fingerprint": fingerprint,
                     "found_at": where,
-                    # None on page 0: there is no previous page to advance from,
-                    # so "advanced" would be a claim about nothing.
                     "advanced": (
                         None
                         if index == 0
@@ -958,8 +719,6 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
 
 
 def add_balance_args(parser: argparse.ArgumentParser) -> None:
-    # The shared --asset default is futures, but the target that matters here is
-    # real stock: that is the environment the destructive consumer runs against.
     parser.set_defaults(asset="stock")
     parser.add_argument(
         "--env",

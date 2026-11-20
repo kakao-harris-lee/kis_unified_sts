@@ -1,19 +1,4 @@
-"""``GET /api/tos/sessions/{id}/bars`` — the read-only per-bar read model.
-
-Roadmap ``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1, second item.
-Mirrors the discipline ``test_tos_projection.py`` already holds its sibling to:
-
-* every failure is ``200`` + ``available=false`` + a ``reason``, never a 5xx;
-* every ``reason`` prefix is pinned by the shared fixture the UI matcher also
-  asserts (``tests/fixtures/tos/bars-reasons.json``);
-* no ``reason`` and no response field carries a value read from the document —
-  and, specific to this route, no response field carries a HOST PATH;
-* the route imports no ``tos``/``tos_runtime`` (it cannot: the container holds
-  neither the kernel code nor the state directories).
-
-The one path segment a caller controls is the session id, so its validation is
-tested as its own class of input rather than assumed.
-"""
+"""``GET /api/tos/sessions/{id}/bars`` — the read-only per-bar read model."""
 
 from __future__ import annotations
 
@@ -35,11 +20,6 @@ _REASONS_FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "tos" / "bars-reasons.jso
 
 SESSION = "stock-r1-20261110"
 
-#: One valid document, in the exporter's own shape but two bars long. The field
-#: set mirrors ``tools/tos_cp3/export_bars.py``'s output: the inspection's
-#: ``--json`` document plus ``schema_version``, host paths included — so the
-#: test proves the ROUTE drops them rather than relying on the exporter never
-#: writing them.
 _VALID_DOCUMENT: dict[str, Any] = {
     "schema_version": 1,
     "session": SESSION,
@@ -196,11 +176,6 @@ def _get(client: TestClient, session: str = SESSION) -> dict[str, Any]:
     return response.json()
 
 
-# ===========================================================================
-# The happy path
-# ===========================================================================
-
-
 def test_a_valid_document_is_served_with_its_summary(
     client: TestClient, bars_dir: Path
 ) -> None:
@@ -224,19 +199,13 @@ def test_a_valid_document_is_served_with_its_summary(
 
 
 def test_no_host_path_reaches_the_body(client: TestClient, bars_dir: Path) -> None:
-    """``data_dir`` and both ``path`` keys are dropped, not merely unrendered.
-
-    The document on disk carries them (an operator artifact), but this body
-    reaches a browser holding the dashboard API key in its bundle, so the
-    deployment's filesystem layout must not travel with it.
-    """
+    """``data_dir`` and both ``path`` keys are dropped, not merely unrendered."""
     _write(bars_dir, SESSION, _VALID_DOCUMENT)
     body = _get(client)
     document = body["document"]
     assert "data_dir" not in document
     assert "path" not in document["strategy"]
     assert "path" not in document["bindings"]
-    # The parts that ARE the point survive.
     assert document["strategy"]["sha256"].startswith("df164ee2")
     assert document["bindings"]["values"] == {"z_entry_max_x1000": -1800}
     assert "/home/deploy" not in json.dumps(body)
@@ -262,11 +231,6 @@ def test_latest_with_nothing_exported_is_absent_not_an_error(
     body = _get(client, tos_bars.LATEST)
     assert (body["available"], body["document"]) == (False, None)
     assert body["reason"].startswith("bars document absent")
-
-
-# ===========================================================================
-# Every failure is a 200 with a pinned reason
-# ===========================================================================
 
 
 def test_a_missing_document_is_absent(client: TestClient, bars_dir: Path) -> None:
@@ -313,12 +277,7 @@ def test_a_non_object_document_is_invalid_json(
 def test_a_foreign_schema_version_is_unsupported(
     client: TestClient, bars_dir: Path, version: object, type_name: str
 ) -> None:
-    """The reason names the TYPE, never the value read from the file.
-
-    ``True`` is in here on purpose: ``True == 1``, so an ``isinstance`` gate
-    would have let a JSON ``true`` render as a valid v1 document. ``"1"`` is the
-    case that proves the value is not echoed — its type name carries no ``1``.
-    """
+    """The reason names the TYPE, never the value read from the file."""
     _write(bars_dir, SESSION, {**_VALID_DOCUMENT, "schema_version": version})
     body = _get(client)
     assert body["available"] is False
@@ -342,11 +301,6 @@ def test_a_schema_mismatch_reports_only_the_exception_type(
     assert "a-secret-looking-string" not in body["reason"]
 
 
-# ===========================================================================
-# The caller-controlled path segment
-# ===========================================================================
-
-
 @pytest.mark.parametrize(
     "session_id",
     ["", "a" * 65, "has space", "..", ".", "dot.dot", "semi;colon", "-leading"],
@@ -354,17 +308,11 @@ def test_a_schema_mismatch_reports_only_the_exception_type(
 def test_a_session_id_outside_the_pattern_is_refused(
     bars_dir: Path, session_id: str
 ) -> None:
-    """Refused by a positive pattern, so traversal cannot match by construction.
-
-    Called directly rather than through the client because Starlette resolves
-    some of these in the URL path before a handler sees them — the point here
-    is that THIS function refuses them whatever reaches it.
-    """
+    """Refused by a positive pattern, so traversal cannot match by construction."""
     result = tos_bars._read_document(bars_dir, session_id)
     assert result.available is False
     assert result.reason is not None
     assert result.reason.startswith("invalid session id")
-    # Never echo the rejected id: it is caller-supplied and ends up in a browser.
     assert session_id not in result.reason or session_id == ""
 
 
@@ -388,11 +336,6 @@ def test_the_pattern_admits_real_session_names(bars_dir: Path, session_id: str) 
     result = tos_bars._read_document(bars_dir, session_id)
     assert result.reason is not None
     assert result.reason.startswith("bars document absent")
-
-
-# ===========================================================================
-# Shared contracts
-# ===========================================================================
 
 
 def test_every_emitted_reason_prefix_is_in_the_shared_fixture() -> None:
@@ -424,12 +367,7 @@ def test_every_emitted_reason_prefix_is_in_the_shared_fixture() -> None:
 
 
 def test_the_route_imports_nothing_from_tos() -> None:
-    """The reverse firewall, restated where a reader of this suite sees it.
-
-    This container holds neither ``tos/`` nor the state directories, so the
-    boundary is a file; an ``import tos`` here would be both a firewall
-    violation and an ImportError at runtime.
-    """
+    """The reverse firewall, restated where a reader of this suite sees it."""
     for line in _ROUTE_MODULE.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         assert not stripped.startswith(("import tos", "from tos ")), line
@@ -440,11 +378,7 @@ def test_the_route_imports_nothing_from_tos() -> None:
 def test_an_absent_document_logs_at_info_and_a_fault_at_warning(
     client: TestClient, bars_dir: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A session nobody exported is normal; an unreadable one is not.
-
-    The panel can be left open, so the normal state must not fill the
-    container's stderr — the same split the projection reader makes.
-    """
+    """A session nobody exported is normal; an unreadable one is not."""
     with caplog.at_level(logging.INFO, logger=tos_bars.logger.name):
         _get(client)
     assert [record.levelno for record in caplog.records] == [logging.INFO]
@@ -465,39 +399,22 @@ def test_the_route_is_registered_on_the_app() -> None:
     assert "/api/tos/projection" in paths
 
 
-# ===========================================================================
-# Review LOWs of #1059
-# ===========================================================================
-
-
 def test_the_served_session_is_the_resolved_id_not_the_documents_own(
     client: TestClient, bars_dir: Path
 ) -> None:
-    """``session`` is the id THIS ROUTE resolved, never file content.
-
-    The earlier revision echoed ``document.session``, so a document carrying a
-    hostile name had it reflected into a field the page renders outside the
-    ``document`` block.
-    """
+    """``session`` is the id THIS ROUTE resolved, never file content."""
     hostile = "<img src=x onerror=alert(1)>"
     _write(bars_dir, SESSION, {**_VALID_DOCUMENT, "session": hostile})
     body = _get(client)
     assert body["available"] is True
     assert body["session"] == SESSION
-    # Inside `document` the file's own value is still mirrored — that is what a
-    # read model does — but the top-level field the page trusts is not it.
     assert body["document"]["session"] == hostile
 
 
 def test_latest_survives_a_document_vanishing_mid_listing(
     client: TestClient, bars_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An export replacing a document between ``iterdir`` and ``stat`` is not a 500.
-
-    ``stat`` used to sit in ``max``'s key function, outside the try, so the
-    ``FileNotFoundError`` reached FastAPI — a server error for "the exporter ran
-    while the page was loading".
-    """
+    """An export replacing a document between ``iterdir`` and ``stat`` is not a 500."""
     _write(bars_dir, SESSION, _VALID_DOCUMENT)
     real_stat = Path.stat
 
@@ -517,15 +434,11 @@ def test_latest_survives_a_document_vanishing_mid_listing(
 def test_latest_ignores_a_leftover_temp_file(
     client: TestClient, bars_dir: Path
 ) -> None:
-    """A ``SIGKILL``-ed export leaves ``.<name>.<rand>.tmp``; it is not a document.
-
-    Deliberately not swept by the exporter (CLAUDE.md R5), which is only safe
-    because this listing cannot mistake one for a document.
-    """
+    """A ``SIGKILL``-ed export leaves ``.<name>.<rand>.tmp``; it is not a document."""
     _write(bars_dir, SESSION, _VALID_DOCUMENT)
     leftover = bars_dir / f".{SESSION}.json.abc123.tmp"
     leftover.write_text("half a document", encoding="utf-8")
-    os.utime(leftover, (9_000_000, 9_000_000))  # newer than the real one
+    os.utime(leftover, (9_000_000, 9_000_000))
     body = _get(client, tos_bars.LATEST)
     assert body["available"] is True
     assert body["session"] == SESSION

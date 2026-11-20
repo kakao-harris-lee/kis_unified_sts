@@ -40,12 +40,6 @@ def load_declaration(
     """Load and bind the tenant's ``fields.yaml``, or refuse to start."""
     fields_yaml = fields_yaml_of(tenant_tree)
     try:
-        # ONE read (#1101 re-review LOW 1): the lineage digest below is of the
-        # SAME bytes this parse validated, so the two cannot describe different
-        # files. `load_fields_file` is the path-taking twin of these two lines
-        # and the validation itself — `parse_fields_document` — is shared with
-        # it, so no refusal is restated here; only the YAML error it would have
-        # dressed up is folded into the one refusal this function raises.
         raw_bytes = fields_yaml.read_bytes()
         document = parse_fields_document(yaml.safe_load(raw_bytes.decode("utf-8")))
         assert_dsl_refs_are_published(
@@ -61,16 +55,6 @@ def load_declaration(
             f"session — {exc}"
         ) from exc
     except (KeyError, TypeError, ValueError) as exc:
-        # #1068 review LOW 1. The checks above read values by key and coerce
-        # them (`params["open_hour"]`, `int(config.vol_window_bars)`,
-        # `float(config.vol_percentile)`), so a missing key or a value that is
-        # not the expected type ends them with a raw lookup/coercion error.
-        # Fail-closed either way, but a traceback is not the one exception the
-        # runner reads as "the producer did not start" — so it refuses here
-        # like every other declaration fault. It names BOTH files on purpose
-        # (#1101 re-review LOW 2): the compared values come from the
-        # declaration AND from the strategy YAML it is sized against, and this
-        # clause cannot tell which side was unreadable.
         raise LiveProducerRefused(
             f"{fields_yaml}: the tenant declaration is not usable for this "
             f"session — binding it ended in a raw lookup/coercion error "

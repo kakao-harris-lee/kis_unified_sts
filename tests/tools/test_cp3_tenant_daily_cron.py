@@ -1,13 +1,4 @@
-"""CP-3 tenant daily cron — the wrapper and its installer, end to end, hermetically.
-
-Nothing here touches the real crontab, the real ``~/.config/kis-probes`` or
-``~/.local/state/tos``: every call gets a fixture git ``origin`` (the two scripts,
-a stub ``run_tenant_session.sh``, the two tenant calendars, a copy of the
-front-month helper), a clone of it as ``MAIN``, a tmp ``HOME`` and a fake
-``crontab`` on ``PATH`` that reads and writes a file.
-
-Runbook: docs/runbooks/tos-paper-boot.md §7.2-e.
-"""
+"""CP-3 tenant daily cron — the wrapper and its installer, end to end, hermetically."""
 
 from __future__ import annotations
 
@@ -31,15 +22,10 @@ _RUNNERS = _REPO_ROOT / "tools" / "tos_cp3" / "runners"
 _WRAPPER_REL = "tools/tos_cp3/runners/cp3_tenant_daily.sh"
 _INSTALLER_REL = "tools/tos_cp3/runners/install_tenant_cron.sh"
 
-_HOLIDAY = "2026-11-03"  # a Tuesday, listed as a holiday in the fixture calendars
-_OPEN_DAY = "2026-10-26"  # a Monday, not a holiday
-#: A FICTITIOUS dated session override (#924 shape): a Thursday the fixture calendar
-#: shifts an hour late. Not a real KRX notice — tests only.
+_HOLIDAY = "2026-11-03"
+_OPEN_DAY = "2026-10-26"
 _OVERRIDE_DAY = "2026-12-03"
 
-#: Like the real tenant calendars (§7.2-g keeps the four byte-identical), this
-#: carries BOTH session classes: the futures wrapper reads ``krx-index-futures``
-#: and the stock one ``krx-stock``, whose CONTINUOUS close is 15:30.
 _CALENDAR = f"""calendar_version: "t"
 holidays:
   - "{_HOLIDAY}"
@@ -71,9 +57,6 @@ calendar_session_phase: CONTINUOUS
 market: stock
 """
 
-#: The runner's own stock-tenant set, read from the shipped script rather than retyped —
-#: one tenant per symbol (operator directive 2026-11-19). A symbol added to the runner
-#: without a tree, a producer config or the host state below makes these tests red.
 _STOCK_SYMBOLS: tuple[str, ...] = tuple(
     re.search(
         r'^STOCK_SYMBOLS="([^"]+)"',
@@ -86,11 +69,8 @@ _STOCK_SYMBOLS: tuple[str, ...] = tuple(
     .split()
 )
 
-#: The one stock tenant whose HOST paths carry no symbol (its leaf was born 2026-11-06).
 _STOCK_LEGACY_SYMBOL = "005930"
 
-#: What `TENANT_INSTRUMENT=` must say in the tracked env example — read from the runner, which
-#: is where `--preflight` reads it too, so this test cannot drift from the thing it checks.
 _SYMBOL_REF = re.search(
     r"^STOCK_ENV_INSTRUMENT_REF='([^']+)'",
     (_REPO_ROOT / "tools/tos_cp3/runners/cp3_tenant_daily.sh").read_text(
@@ -124,10 +104,6 @@ fi
 exit "${CP3_TEST_STUB_RC:-0}"
 """
 
-#: Stub of the bar-document exporter the wrapper's post-B3 hook calls (roadmap
-#: §P1 ②). Records its argv and honours two knobs so the hook's NON-FATALITY and
-#: its ceiling can be exercised without the real inspection. What the real
-#: exporter does is pinned by tests/tools/test_cp3_export_bars.py.
 _STUB_EXPORT_BARS = """#!/usr/bin/env python3
 import os
 import pathlib
@@ -142,8 +118,6 @@ if os.environ.get("FAKE_EXPORT_HANG_S"):
 sys.exit(int(os.environ.get("FAKE_EXPORT_RC", "0")))
 """
 
-#: Stub of the runtime CLI the wrapper reaches with the `-c` form (§7.2-f: `-m`
-#: would do nothing and exit 0). Records argv so the invocation itself is pinned.
 _STUB_COMPOSE_CLI = '''"""Test stub of tos_runtime.compose.cli."""
 
 import os
@@ -196,12 +170,7 @@ _LEGACY_LINES = """CRON_TZ=Asia/Seoul
 
 
 def _canonical_transport_block() -> str:
-    """The `mode: live` … `allow_plaintext…` block of the real setup script.
-
-    Read from the shipped ``setup_stock_mock_once.sh`` rather than copied here, so
-    the "keys agree" case keeps agreeing when a key is added to the canonical set
-    (the #979 / 10-30 r1 failure was exactly a key added on one side only).
-    """
+    """The `mode: live` … `allow_plaintext…` block of the real setup script."""
     lines = (
         (_REPO_ROOT / "tools/tos_cp3/runners/setup_stock_mock_once.sh")
         .read_text(encoding="utf-8")
@@ -253,9 +222,6 @@ class Env:
                 seed / f"config/tos_probes/cp3-live-producer-stock-{symbol}.yaml",
                 _STOCK_PRODUCER_CONFIG.format(symbol=symbol),
             )
-        # The stock session's TENANT_* set and the canonical transport keys are the
-        # SHIPPED files, not copies: the wrapper sources one and diffs against the
-        # other, so a drifting copy here would hide the drift it is meant to catch.
         for rel in (
             "tools/tos_cp3/runners/stock-mock-session.env.example",
             "tools/tos_cp3/runners/setup_stock_mock_once.sh",
@@ -267,7 +233,6 @@ class Env:
         ):
             _write(seed / rel, "")
         _write(seed / "tos/runtime/src/tos_runtime/compose/cli.py", _STUB_COMPOSE_CLI)
-        # The wrapper derives the stop time through the SHIPPED day-window reader.
         shutil.copy(
             _REPO_ROOT / "tools/tos_cp3/session_day.py",
             seed / "tools/tos_cp3/session_day.py",
@@ -311,7 +276,6 @@ class Env:
             "CP3_DAILY_STATE": str(self.state),
             "CP3_DAILY_LOCK_DIR": str(self.locks),
             "CP3_DAILY_NOTIFY": "0",
-            # The 20-minute `render ok` wait, shortened: 3 × 1 s.
             "CP3_DAILY_APPROVAL_WAIT_TRIES": "3",
             "CP3_DAILY_APPROVAL_WAIT_SLEEP_S": "1",
             "LANG": "C.UTF-8",
@@ -350,13 +314,7 @@ def _data_parents(env: Env) -> None:
 def _stock_host_state(
     env: Env, *, symbol: str = _STOCK_LEGACY_SYMBOL, transport: str | None = None
 ) -> Path:
-    """One STOCK tenant's one-time host state (§7.2-f): durable parent, custody,
-    and the operation transport config. Returns the transport config's path.
-
-    Every stock tenant has its OWN custody root — the standing approval binds to one
-    tenant's rendered config — and its own operation directory, so each tenant's
-    transport keys can be checked (and if ever needed, tuned) on its own.
-    """
+    """One STOCK tenant's one-time host state (§7.2-f): durable parent, custody,"""
     suffix = _stock_host_suffix(symbol)
     for name in (
         f"cp3-setup-d-stock-{symbol}-data",
@@ -372,8 +330,6 @@ def _stock_host_state(
     return path
 
 
-#: The standing approval artifact's FIXED path and the archive beside it
-#: (tos_runtime ``authority.standing.STANDING_APPROVAL_RELPATH``).
 _APPROVAL_REL = "cp3-setup-d-stock-custody/approvals/standing-session.yaml"
 _ARCHIVE_REL = "cp3-setup-d-stock-custody/approvals-archive"
 
@@ -396,9 +352,6 @@ def _write_approval(env: Env, body: str) -> Path:
     return path
 
 
-# ------------------------------------------------------------------ installer
-
-
 def test_dry_run_is_the_default_and_writes_nothing(env: Env) -> None:
     env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
     r = env.install()
@@ -415,8 +368,6 @@ def test_dry_run_is_the_default_and_writes_nothing(env: Env) -> None:
         f"+40 8 * * 1-5 /bin/bash {dest} SHORT >> {env.state}/cp3-short-tenant-daily.cron.log 2>&1 # cp3-short-tenant-daily"
         in r.stdout
     )
-    # STOCK: 08:53, inside §7.2-f's 08:52-09:05 start window; the other two stock
-    # tenants (operator directive 2026-11-19) follow at 08:55 and 08:57, still inside it.
     for direction, lc, _sleep_s, at in _CATCHUP:
         hhmm = f"{int(at[3:])} {int(at[:2])}"
         assert (
@@ -433,13 +384,13 @@ def test_apply_replaces_hand_lines_keeps_the_rest_and_is_idempotent(env: Env) ->
     assert r.returncode == 0, r.stdout + r.stderr
     tab = env.crontab.read_text(encoding="utf-8")
     assert tab.startswith(_OTHER_LINES)
-    assert "/usr/bin/flock -n /tmp/a.lock" not in tab  # hand lines gone
-    assert "/x/k.log" not in tab  # the one-off stock line too
+    assert "/usr/bin/flock -n /tmp/a.lock" not in tab
+    assert "/x/k.log" not in tab
     assert tab.count("# cp3-long-tenant-daily") == 1
     assert tab.count("# cp3-short-tenant-daily") == 1
     assert tab.count("# cp3-stock-tenant-daily") == 1
     assert tab.count("# BEGIN CP3_TENANT_DAILY") == 1
-    assert "CP3_DAILY_TODAY" not in tab  # the test-only knob never reaches cron
+    assert "CP3_DAILY_TODAY" not in tab
 
     dest = env.dest_dir / "run-cp3-tenant-daily.sh"
     assert dest.read_bytes() == (_REPO_ROOT / _WRAPPER_REL).read_bytes()
@@ -498,9 +449,6 @@ def test_apply_refuses_a_non_kst_host(env: Env) -> None:
     assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES
 
 
-# ------------------------------------------------------------------- wrapper
-
-
 def test_holiday_is_a_silent_skip(env: Env) -> None:
     _data_parents(env)
     r = env.daily("LONG", CP3_DAILY_TODAY=_HOLIDAY)
@@ -513,8 +461,7 @@ def test_holiday_is_a_silent_skip(env: Env) -> None:
 
 def test_weekend_and_extra_closed_dates_skip(env: Env) -> None:
     _data_parents(env)
-    assert "SKIP" in env.daily("SHORT", CP3_DAILY_TODAY="2026-10-24").stdout  # Saturday
-    # 2026-12-30 (Wed) is open in the fixture calendar — closed only via the knob.
+    assert "SKIP" in env.daily("SHORT", CP3_DAILY_TODAY="2026-10-24").stdout
     r = env.daily(
         "SHORT", CP3_DAILY_TODAY="2026-12-30", CP3_DAILY_EXTRA_CLOSED="2026-12-30"
     )
@@ -522,9 +469,7 @@ def test_weekend_and_extra_closed_dates_skip(env: Env) -> None:
 
 
 def test_real_tenant_calendars_carry_the_krx_year_end_close() -> None:
-    """The wrapper no longer defaults 2026-12-31 into the extra closed dates (#964):
-    the KRX year-end close (유가증권시장 업무규정 제5조) must come from each tree's own
-    calendar, or the cron would boot a session on a closed day."""
+    """The wrapper no longer defaults 2026-12-31 into the extra closed dates (#964):"""
     for tree in ("cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"):
         path = _REPO_ROOT / "config" / "tos_runtime" / tree / "calendar.yaml"
         holidays = {
@@ -534,10 +479,7 @@ def test_real_tenant_calendars_carry_the_krx_year_end_close() -> None:
 
 
 def test_real_tenant_calendars_carry_the_exam_day_override() -> None:
-    """#924: the wrapper derives the stop time from the tree's own calendar, so the
-    2026-11-19 (2027학년도 수능) entry must BE in those files — the fixture calendar above
-    proves the mechanism, this proves the shipped data. 16:45 + 5 for futures, 16:30 + 5
-    for the stock tree; the weekday before stays regular."""
+    """#924: the wrapper derives the stop time from the tree's own calendar, so the"""
     for tree in ("cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"):
         path = _REPO_ROOT / "config" / "tos_runtime" / tree / "calendar.yaml"
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -580,7 +522,6 @@ def test_open_day_runs_the_runner_with_every_tenant_value(env: Env) -> None:
     ):
         assert expected in out
     assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
-    # the session's worktree stays for the session; detached at origin/main
     assert _git("rev-parse", "HEAD", cwd=wt) == _git(
         "rev-parse", "origin/main", cwd=env.main
     )
@@ -592,8 +533,7 @@ def _runner_out(env: Env, lc: str, day: str) -> str:
 
 
 def test_924_a_dated_override_moves_the_stop_time_with_the_close(env: Env) -> None:
-    """#924: the stop comes from THAT day's close in the tree's calendar (16:45 + 5),
-    not from a literal 15:50 that would kill an exam-day session an hour early."""
+    """#924: the stop comes from THAT day's close in the tree's calendar (16:45 + 5),"""
     _data_parents(env)
     r = env.daily("LONG", CP3_DAILY_TODAY=_OVERRIDE_DAY)
     assert r.returncode == 0, r.stdout
@@ -678,7 +618,6 @@ def test_a_held_lock_is_a_failure_not_a_second_session(env: Env) -> None:
     assert r.returncode == 75
     assert "lock busy" in r.stdout and "실패" in r.stdout
     assert not (env.state / "cp3-sessions").exists()
-    # the other direction has its own lock
     assert env.daily("SHORT", CP3_DAILY_TODAY=_OPEN_DAY).returncode == 0
 
 
@@ -688,9 +627,6 @@ def test_bad_arguments(env: Env) -> None:
     assert env.daily("LONG", "--now").returncode == 2
 
 
-# ----------------------------------------------------------------- preflight
-
-
 def test_preflight_reports_the_roll_and_writes_nothing(env: Env) -> None:
     _data_parents(env)
     (env.state / "cp3-setup-d-long-data/A05611").mkdir()
@@ -698,16 +634,12 @@ def test_preflight_reports_the_roll_and_writes_nothing(env: Env) -> None:
         p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
     )
 
-    r11 = env.daily(
-        "LONG", "--preflight", "2026-11-12"
-    )  # expiry day: still the November leaf
+    r11 = env.daily("LONG", "--preflight", "2026-11-12")
     assert r11.returncode == 0, r11.stdout + r11.stderr
     assert "market=OPEN" in r11.stdout and "instrument=A05611" in r11.stdout
     assert "present (continues)" in r11.stdout
 
-    r13 = env.daily(
-        "LONG", "--preflight", "2026-11-13"
-    )  # first session on the December leaf
+    r13 = env.daily("LONG", "--preflight", "2026-11-13")
     assert "instrument=A05612" in r13.stdout
     assert "absent (first session genesis)" in r13.stdout
 
@@ -718,9 +650,6 @@ def test_preflight_reports_the_roll_and_writes_nothing(env: Env) -> None:
         p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
     )
     assert after == before
-
-
-# ------------------------------------------------- review #933 regressions
 
 
 def _assert_alerted_failure(r: subprocess.CompletedProcess[str], rc: int = 2) -> None:
@@ -769,7 +698,6 @@ def test_n1_a_non_kst_host_zone_is_refused_at_run_time(env: Env) -> None:
 
 
 def test_n4_the_hand_lines_outer_lock_does_not_block_the_new_wrapper(env: Env) -> None:
-    # 10-22 hand lines hold `cp3-long-tenant-daily.lock` around the call.
     _data_parents(env)
     env.locks.mkdir()
     with open(env.locks / "cp3-long-tenant-daily.lock", "w") as fh:
@@ -825,14 +753,6 @@ def test_n6_no_crontab_at_all_is_an_empty_crontab(env: Env) -> None:
     assert "# BEGIN CP3_TENANT_DAILY" in env.crontab.read_text(encoding="utf-8")
 
 
-# --------------------------------------------- STOCK (#M2, operator 2026-11-05)
-#
-# The third direction: the kis-mock tenant of runbook §7.2-f, which SENDS. What is
-# new next to LONG/SHORT is the stock session window (krx-stock, close 15:30), the
-# `stock-r<RUN>-` session naming, the transport-key precheck and the standing
-# approval the session cannot send without.
-
-
 def _stock_session(
     env: Env, day: str, run: int = 1, *, symbol: str = _STOCK_LEGACY_SYMBOL
 ) -> Path:
@@ -857,12 +777,9 @@ def test_stock_open_day_hands_the_runner_the_env_examples_tenant_values(
     out = (session / "runner.out").read_text(encoding="utf-8")
     for expected in (
         "TENANT_TREE=cp3-setup-d-stock-005930",
-        # The wrapper's direction is STOCK; the SESSION's direction is Setup D LONG,
-        # and the runner accepts only LONG/SHORT.
         "TENANT_DIRECTION=LONG",
         "TENANT_INSTRUMENT=005930",
         "TENANT_ENVIRONMENT_LABEL=paper",
-        # krx-stock CONTINUOUS close 15:30 + 10 — the 11-03 sequence's 15:40.
         "TENANT_STOP_AT=15:40",
         f"TENANT_DATA_PARENT={env.state}/cp3-setup-d-stock-005930-data",
         f"TENANT_CUSTODY_ROOT={env.state}/cp3-setup-d-stock-custody",
@@ -884,9 +801,7 @@ def test_stock_open_day_hands_the_runner_the_env_examples_tenant_values(
 
 
 def test_stock_the_standing_approval_is_written_after_render_ok(env: Env) -> None:
-    """#955: without today's standing approval the flow stops at step 4 and the
-    session sends nothing, so writing it is part of the unattended run. The `-c`
-    form is what runs — `python -m tos_runtime.compose.cli` would exit 0 silently."""
+    """#955: without today's standing approval the flow stops at step 4 and the"""
     _data_parents(env)
     r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
     assert r.returncode == 0, r.stdout
@@ -929,7 +844,7 @@ def test_stock_a_session_that_never_renders_alerts_and_keeps_running(env: Env) -
         CP3_TEST_STUB_NO_RENDER="1",
         CP3_TEST_STUB_SLEEP_S="6",
     )
-    assert r.returncode == 0, r.stdout  # the runner's own rc, waited for
+    assert r.returncode == 0, r.stdout
     assert not env.approval_argv.exists()
     assert "no 'render ok' within 3s" in r.stdout
     assert "상시 승인 못 씀" in r.stdout
@@ -940,7 +855,7 @@ def test_stock_a_failed_approval_write_alerts_but_does_not_kill_the_session(
 ) -> None:
     _data_parents(env)
     r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY, FAKE_APPROVAL_RC="1")
-    assert r.returncode == 0, r.stdout  # the runner's rc decides, not the approval's
+    assert r.returncode == 0, r.stdout
     assert "write-standing-approval rc=1" in r.stdout
     assert "상시 승인 쓰기 실패" in r.stdout and "notify-body" in r.stdout
     assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
@@ -949,9 +864,7 @@ def test_stock_a_failed_approval_write_alerts_but_does_not_kill_the_session(
 def test_stock_a_transport_key_missing_from_the_operation_file_is_refused(
     env: Env,
 ) -> None:
-    """The 10-30 r1 failure: #979 added `app_key_request_wait_budget_ms` on 10-28,
-    the 10-26 operation file did not have it, and the session refused at boot with
-    0 sends. Refused here instead, before anything is created."""
+    """The 10-30 r1 failure: #979 added `app_key_request_wait_budget_ms` on 10-28,"""
     _data_parents(env)
     path = env.state / "cp3-setup-d-stock-ops/kis_mock_transport.yaml"
     kept = [
@@ -963,7 +876,7 @@ def test_stock_a_transport_key_missing_from_the_operation_file_is_refused(
     r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
     assert r.returncode == 2, r.stdout
     assert "운영 전송 설정 키가 정본" in r.stdout and "notify-body" in r.stdout
-    assert "app_key_request_wait_budget_ms:" in r.stdout  # the diff names the key
+    assert "app_key_request_wait_budget_ms:" in r.stdout
     assert not _stock_session(env, _OPEN_DAY).exists()
     assert not _stock_wt(env, _OPEN_DAY).exists()
     assert not env.approval_argv.exists()
@@ -1001,24 +914,14 @@ def test_stock_924_a_dated_override_moves_the_stop_with_the_stock_close(
     out = (_stock_session(env, _OVERRIDE_DAY) / "runner.out").read_text(
         encoding="utf-8"
     )
-    assert "TENANT_STOP_AT=16:40" in out  # 16:30 + 10, not the futures 16:50
+    assert "TENANT_STOP_AT=16:40" in out
     assert "10:00-16:30 OVERRIDE" in r.stdout
 
 
 def test_stock_924_the_approval_wait_grows_with_the_dated_open_delay(
     env: Env,
 ) -> None:
-    """review-1021 r1 HIGH: `render ok` follows the OPEN — the runner's first-row
-    wait ends there — so on an override day it arrives an hour late (on 11-05 the
-    first-row wait started 08:53:06 and the render came 09:01:25; a 10:00 open puts
-    it past 10:01). With a FIXED bound the wait expires first, nothing writes
-    today's standing approval, and the session sends 0 all day. The wrapper's bound
-    grows by the same delay the runner's own first-row bound grows by.
-
-    Scaled for speed: a 1 × 1 s base bound (the real 120 × 10), the fixture's
-    09:00 -> 10:00 stock open = 3600 s of extra bound, and a render 3 s in — past
-    the base bound, well inside the extended one.
-    """
+    """review-1021 r1 HIGH: `render ok` follows the OPEN — the runner's first-row"""
     _data_parents(env)
     r = env.daily(
         "STOCK",
@@ -1036,9 +939,7 @@ def test_stock_924_the_approval_wait_grows_with_the_dated_open_delay(
 
 
 def test_stock_924_a_regular_day_keeps_the_fixed_approval_wait(env: Env) -> None:
-    """The other half of the pair: a regular day's delay is 0, so the bound is the
-    configured one and the same late render runs it out — the extension is read
-    from the calendar, not handed out to every day."""
+    """The other half of the pair: a regular day's delay is 0, so the bound is the"""
     _data_parents(env)
     r = env.daily(
         "STOCK",
@@ -1047,7 +948,7 @@ def test_stock_924_a_regular_day_keeps_the_fixed_approval_wait(env: Env) -> None
         CP3_DAILY_APPROVAL_WAIT_SLEEP_S="1",
         CP3_TEST_STUB_RENDER_AFTER_S="3",
     )
-    assert r.returncode == 0, r.stdout  # the runner's own rc, waited for
+    assert r.returncode == 0, r.stdout
     assert "개장이 정규보다" not in r.stdout
     assert "no 'render ok' within 1s" in r.stdout
     assert not env.approval_argv.exists()
@@ -1077,13 +978,6 @@ def test_stock_holds_its_own_lock(env: Env) -> None:
     assert not _stock_session(env, _OPEN_DAY).exists()
 
 
-# ------------------------------- one stock tenant per symbol (operator 2026-11-19)
-#
-# 「유동성이 큰 대형주들로 최종 모의투자에서 매수/매도가 잘 동작하게 완료해」 — one open
-# position per symbol, so three concurrent slots come from three symbols. Every host
-# coordinate a stock tenant owns alone follows the symbol; the account and its app key
-# are what the three share.
-
 _EXTRA_STOCK_SYMBOLS = tuple(
     symbol for symbol in _STOCK_SYMBOLS if symbol != _STOCK_LEGACY_SYMBOL
 )
@@ -1101,13 +995,7 @@ def test_the_runner_declares_more_than_one_stock_symbol() -> None:
 def test_stock_symbol_runs_with_its_own_tree_producer_leaf_and_custody(
     env: Env, symbol: str
 ) -> None:
-    """`STOCK:<symbol>` is a tenant of its own, down to the custody root.
-
-    Custody is the one that would be silently wrong if shared: the standing approval
-    artifact's path is fixed relative to the custody root and the document binds to ONE
-    tenant's rendered config, so a shared root would have each tenant's boot bind another
-    tenant's approval.
-    """
+    """`STOCK:<symbol>` is a tenant of its own, down to the custody root."""
     _data_parents(env)
     r = env.daily(f"STOCK:{symbol}", CP3_DAILY_TODAY=_OPEN_DAY)
     assert r.returncode == 0, r.stdout
@@ -1128,7 +1016,6 @@ def test_stock_symbol_runs_with_its_own_tree_producer_leaf_and_custody(
         f"/config/tos_probes/cp3-live-producer-stock-{symbol}.yaml",
     ):
         assert expected in out, out
-    # Its standing approval went to its OWN custody root, not the legacy tenant's.
     argv = env.approval_argv.read_text(encoding="utf-8").split("\n")
     assert (
         argv[argv.index("--custody-root") + 1]
@@ -1139,15 +1026,7 @@ def test_stock_symbol_runs_with_its_own_tree_producer_leaf_and_custody(
 
 
 def test_each_stock_tenant_gets_its_own_boot_stagger(env: Env) -> None:
-    """One app key, one token a minute — so the BOOTS are spread, not the cron minutes.
-
-    Every stock producer's first row arrives at the open, so sessions started at 08:53 /
-    08:55 / 08:57 all render and boot within seconds of 09:01. Without a stagger the second
-    and third runtimes get a TokenResponseError and then wait out
-    `token_reissue_min_interval_s` (60 s) before they may try again. The delay is derived
-    from the tenant's POSITION in STOCK_SYMBOLS, so the first listed symbol boots at once
-    and a fourth tenant needs no new constant.
-    """
+    """One app key, one token a minute — so the BOOTS are spread, not the cron minutes."""
     _data_parents(env)
     offsets: dict[str, int] = {}
     for index, symbol in enumerate(_STOCK_SYMBOLS):
@@ -1163,17 +1042,12 @@ def test_each_stock_tenant_gets_its_own_boot_stagger(env: Env) -> None:
         offsets[symbol] = int(line.split("=", 1)[1])
         assert f"boot_delay={offsets[symbol]}s" in r.stdout, r.stdout
         assert offsets[symbol] == index * 7, (symbol, index, offsets)
-    # The tenant that was already deployed boots at once; the rest are spread apart.
     assert offsets[_STOCK_SYMBOLS[0]] == 0, offsets
     assert len(set(offsets.values())) == len(offsets), offsets
 
 
 def test_the_default_boot_offset_clears_the_kis_token_minute() -> None:
-    """70 s = KIS's own one-token-per-minute window plus room to reach the first token use.
-
-    A value below 60 would put two boots back inside the same minute, which is the whole
-    failure this stagger exists for.
-    """
+    """70 s = KIS's own one-token-per-minute window plus room to reach the first token use."""
     text = (_REPO_ROOT / "tools/tos_cp3/runners/cp3_tenant_daily.sh").read_text("utf-8")
     match = re.search(
         r"^\s*BOOT_OFFSET_S=\$\{CP3_DAILY_BOOT_OFFSET_S:-([0-9]+)\}", text, re.M
@@ -1210,8 +1084,6 @@ def test_each_stock_tenant_holds_its_own_lock(env: Env, symbol: str) -> None:
     ("argument", "needle"),
     [
         ("STOCK:999999", "unknown stock symbol '999999'"),
-        # A `STOCK:` with the symbol missing is a typo in a cron line. Reading it as the
-        # legacy tenant would start that tenant's session from a line nobody aimed at it.
         ("STOCK:", "unknown stock symbol ''"),
         ("STOCKfoo", "usage:"),
     ],
@@ -1246,12 +1118,7 @@ def test_stock_symbol_preflight_names_its_own_leaf_and_transport(
 
 
 def test_preflight_refuses_an_env_example_that_hardcodes_a_symbol(env: Env) -> None:
-    """The symbol flows argument -> TOS_STOCK_SYMBOL -> TENANT_INSTRUMENT, once.
-
-    A hand-edit that pinned one symbol in the env example would hand EVERY stock
-    tenant's session that symbol while the tree stayed its own, which `run_tenant_session`
-    only catches mid-start (its instrument.pattern check). The preflight says it here.
-    """
+    """The symbol flows argument -> TOS_STOCK_SYMBOL -> TENANT_INSTRUMENT, once."""
     _data_parents(env)
     rel = "tools/tos_cp3/runners/stock-mock-session.env.example"
     path = env.main / rel
@@ -1309,16 +1176,7 @@ def test_stock_preflight_names_a_transport_key_difference_without_refusing(
     assert r.returncode == 0, r.stdout + r.stderr
     assert "keys DIFFER" in r.stdout and "a run would refuse" in r.stdout
     assert "only_key:" in r.stdout
-    assert "market=OPEN" in r.stdout  # the rest of the preflight still reports
-
-
-# ------------------------------------- review-1031: the one approval slot ----
-#
-# The artifact path is fixed, so the slot is a resource the day has to take over:
-# the writer refuses an existing file without --replace, and the runtime's
-# bind_at_boot() binds whatever sits there when it boots (after which any other
-# digest is `digest_changed_since_bound` for that whole process). Left alone, the
-# SECOND cron day would write nothing and send nothing.
+    assert "market=OPEN" in r.stdout
 
 
 def test_stock_1031_yesterdays_approval_is_archived_before_the_runner(
@@ -1331,13 +1189,9 @@ def test_stock_1031_yesterdays_approval_is_archived_before_the_runner(
     assert r.returncode == 0, r.stdout
     assert "archived the 20261023 standing approval" in r.stdout
     assert not stale.exists()
-    # Moved, not deleted — it is the record of that day's authority — and OUTSIDE
-    # approvals/, where per-proposal approval files live. Same name the operator
-    # used by hand on 2026-11-05.
     archived = env.state / _ARCHIVE_REL / "standing-session.20261023.yaml"
     assert archived.read_bytes() == stale_bytes
     assert not list((env.state / _APPROVAL_REL).parent.iterdir())
-    # …and today's approval is then written, without --replace.
     assert "write-standing-approval rc=0" in r.stdout
     argv = env.approval_argv.read_text(encoding="utf-8").splitlines()
     assert argv[-2:] == ["--trading-date", _OPEN_DAY]
@@ -1345,8 +1199,7 @@ def test_stock_1031_yesterdays_approval_is_archived_before_the_runner(
 
 
 def test_stock_1031_todays_approval_is_kept_and_not_rewritten(env: Env) -> None:
-    """A manual RUN=2 restart: the slot already carries today, so it stays and the
-    write is skipped — re-deriving it is the operator's `--replace` call."""
+    """A manual RUN=2 restart: the slot already carries today, so it stays and the"""
     _data_parents(env)
     mine = _write_approval(env, _approval_doc(_OPEN_DAY.replace("-", "")))
     kept = mine.read_bytes()
@@ -1377,16 +1230,15 @@ def test_stock_1031_an_archive_name_collision_gets_a_suffix(env: Env) -> None:
 @pytest.mark.parametrize(
     "body",
     [
-        "trading_date: 2026-10-23\n",  # a date, not the writer's 8-digit string
-        "schema: tos-standing-session-approval/1\n",  # no trading_date at all
+        "trading_date: 2026-10-23\n",
+        "schema: tos-standing-session-approval/1\n",
         "- not: a mapping\n",
-        "trading_date: '20261023'\n  bad: indent\n",  # not loadable
-        "",  # empty file
+        "trading_date: '20261023'\n  bad: indent\n",
+        "",
     ],
 )
 def test_stock_1031_an_unreadable_approval_file_is_refused(env: Env, body: str) -> None:
-    """Not guessed at, not moved: a file this wrapper cannot read exactly is a file
-    it must not decide about."""
+    """Not guessed at, not moved: a file this wrapper cannot read exactly is a file"""
     _data_parents(env)
     path = _write_approval(env, body)
     before = path.read_bytes()
@@ -1403,8 +1255,7 @@ def test_stock_1031_an_unreadable_approval_file_is_refused(env: Env, body: str) 
 def test_stock_1031_low1_a_holiday_skips_before_the_operation_file_checks(
     env: Env,
 ) -> None:
-    """review-1031 LOW-1: a weekday holiday skips silently even when both operation
-    files would refuse the day — the calendar is asked first."""
+    """review-1031 LOW-1: a weekday holiday skips silently even when both operation"""
     _data_parents(env)
     _stock_host_state(env, transport="mode: live\nonly_key: 1\n")
     _write_approval(env, "nonsense: [\n")
@@ -1435,7 +1286,7 @@ def test_stock_1031_preflight_names_the_slot_without_moving_anything(
 
     _write_approval(env, "- not: a mapping\n")
     bad = env.daily("STOCK", "--preflight", _OPEN_DAY)
-    assert bad.returncode == 0  # the preflight reports; only a run refuses
+    assert bad.returncode == 0
     assert "slot not readable" in bad.stdout and "a run would refuse" in bad.stdout
 
 
@@ -1454,22 +1305,10 @@ def test_n6_a_begin_without_end_aborts(env: Env, apply: bool) -> None:
     assert not Path(f"{env.crontab}.writes").exists()
 
 
-# ------------------------------------ #1038 @reboot catch-up (the 11-06 reboot)
-#
-# The host rebooted at 09:00:53 on 2026-11-06 and this cron does not replay a
-# missed line, so 08:38 · 08:40 · 08:53 never fired. The three `@reboot` lines call
-# `--catch-up HH:MM` with the regular lines' own minutes, and the wrapper decides.
-
-#: What the wrapper is handed, per direction: the regular minute as HH:MM and the
-#: boot stagger. A second copy of the installer's constants ON PURPOSE — a drift in
-#: ``LONG_AT`` / ``LONG_SLEEP`` has to fail here.
 _CATCHUP = (
     ("LONG", "long", 90, "08:38"),
     ("SHORT", "short", 240, "08:40"),
     ("STOCK", "stock", 390, "08:53"),
-    # One stock tenant per symbol (operator directive 2026-11-19). Both later stock lines
-    # stay inside §7.2-f's 08:52-09:05 start window, and all three stock tenants keep the
-    # two-minute / 150 s gaps: unlike the futures pair they DO share one REAL app key.
     ("STOCK:000660", "stock-000660", 540, "08:55"),
     ("STOCK:005380", "stock-005380", 690, "08:57"),
 )
@@ -1502,11 +1341,7 @@ def test_1038_apply_writes_them_in_the_block_and_remove_takes_them_with_it(
         at for _, _, _, at in _CATCHUP
     ]
     sleeps = [int(ln.split("sleep ", 1)[1].split(";", 1)[0]) for ln in reboot]
-    # Every neighbouring pair keeps 150 s: LONG and SHORT share the REAL read key, and so
-    # do the three stock producers — KIS issues one token a minute per app key, the same
-    # reason the regular lines are two minutes apart.
     assert all(b - a >= 120 for a, b in zip(sleeps, sleeps[1:], strict=False)), sleeps
-    # Ubuntu cron 3.0pl1 reads an unescaped `%` in the command field as a newline.
     assert all("%" not in ln for ln in reboot), reboot
 
     again = env.install("--apply")
@@ -1537,12 +1372,7 @@ def test_1038_a_hand_installed_catchup_line_outside_the_block_is_dropped(
 def test_a_hand_installed_per_symbol_stock_line_outside_the_block_is_dropped(
     env: Env,
 ) -> None:
-    """The tag filter has to reach `cp3-stock-<6 digits>-tenant-*` too.
-
-    Otherwise a hand-installed line for one of the per-symbol stock tenants would survive
-    beside the block's own and that tenant would get TWO calls a day — the second refused
-    as `lock busy` or `session dir already exists`, i.e. a daily failure alert.
-    """
+    """The tag filter has to reach `cp3-stock-<6 digits>-tenant-*` too."""
     env.crontab.write_text(
         _OTHER_LINES + "55 8 * * 1-5 /bin/bash /x/run-cp3-tenant-daily.sh STOCK:000660"
         " >> /x/hand.log 2>&1 # cp3-stock-000660-tenant-daily\n"
@@ -1564,14 +1394,13 @@ def test_1038_catchup_runs_the_session_the_reboot_missed(env: Env) -> None:
         "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="09:10"
     )
     assert r.returncode == 0, r.stdout
-    assert "재부팅 catch-up 기동" in r.stdout  # NOTIFY=0 logs the body it would send
+    assert "재부팅 catch-up 기동" in r.stdout
     assert "TENANT_STOP_AT=15:50" in _runner_out(env, "long", _OPEN_DAY)
     assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
 
 
 def test_1038_b_a_boot_before_the_regular_minute_does_nothing(env: Env) -> None:
-    """The regular line is still going to fire, so the catch-up must not race it —
-    and it must not fetch or add a worktree on the way to that conclusion."""
+    """The regular line is still going to fire, so the catch-up must not race it —"""
     _data_parents(env)
     r = env.daily(
         "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="08:20"
@@ -1608,8 +1437,7 @@ def test_1038_c_a_boot_past_the_stop_time_starts_nothing(env: Env) -> None:
 
 
 def test_1038_c_the_stop_bound_is_the_run_paths_own_derivation(env: Env) -> None:
-    """#924 × #1038: 16:00 is past a regular day's 15:50 and inside the override
-    day's 16:50, because the bound comes from that day's close, not from a literal."""
+    """#924 × #1038: 16:00 is past a regular day's 15:50 and inside the override"""
     _data_parents(env)
     regular = env.daily(
         "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="16:00"
@@ -1644,9 +1472,7 @@ def test_1038_d_a_session_cut_by_a_mid_day_reboot_is_not_restarted(env: Env) -> 
 def test_1038_d_a_still_running_session_is_a_quiet_skip_not_a_lock_alert(
     env: Env,
 ) -> None:
-    """A catch-up that fires while the regular line's call is still running finds
-    both the lock held and a session dir — and `lock busy` is an alert. The session
-    dir is asked about first, before the lock, and a live session owns one."""
+    """A catch-up that fires while the regular line's call is still running finds"""
     _data_parents(env)
     (env.state / "cp3-sessions" / f"long-{_OPEN_DAY.replace('-', '')}").mkdir(
         parents=True
@@ -1667,10 +1493,7 @@ def test_1038_d_a_still_running_session_is_a_quiet_skip_not_a_lock_alert(
 
 
 def test_1039_low1_a_lock_held_by_the_regular_run_is_a_quiet_skip(env: Env) -> None:
-    """review-1039 LOW-1: the two can overlap for real — a boot at 08:36:30-08:37
-    puts LONG's `sleep 90` inside the 08:38 call, which has not created its session
-    dir yet, so gate d cannot see it. The day IS being started; `lock busy` + a
-    telegram would be a false alarm. A regular call still fails 75 (test above)."""
+    """review-1039 LOW-1: the two can overlap for real — a boot at 08:36:30-08:37"""
     _data_parents(env)
     env.locks.mkdir()
     with open(env.locks / "cp3-long-tenant-daily.wrapper.lock", "w") as fh:
@@ -1691,8 +1514,7 @@ def test_1039_low1_a_lock_held_by_the_regular_run_is_a_quiet_skip(env: Env) -> N
 
 @pytest.mark.parametrize("extra", ["LONG", "--preflight", _OPEN_DAY, "0"])
 def test_1039_low2_an_argument_after_the_time_is_refused(env: Env, extra: str) -> None:
-    """review-1039 LOW-2: a 4th word in the cron line is a typo, and half-reading it
-    would start a session nobody asked for."""
+    """review-1039 LOW-2: a 4th word in the cron line is a typo, and half-reading it"""
     _data_parents(env)
     r = env.daily(
         "LONG",
@@ -1724,8 +1546,7 @@ def test_1038_a_time_the_wrapper_cannot_read_exactly_is_refused(
 
 
 def test_1038_an_unreadable_now_override_is_refused(env: Env) -> None:
-    """The test-only clock knob gets the same strictness — a mis-typed one would
-    otherwise let the catch-up tests above pass by exiting for the wrong reason."""
+    """The test-only clock knob gets the same strictness — a mis-typed one would"""
     r = env.daily(
         "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="9:10"
     )
@@ -1733,9 +1554,7 @@ def test_1038_an_unreadable_now_override_is_refused(env: Env) -> None:
 
 
 def test_1038_stock_a_late_start_still_writes_the_standing_approval(env: Env) -> None:
-    """11-06 by hand: the STOCK session started at 09:13 and `render ok` came ~60 s
-    later, so the late start does not disturb the approval wait. Without the
-    approval the session sends nothing (#955)."""
+    """11-06 by hand: the STOCK session started at 09:13 and `render ok` came ~60 s"""
     _data_parents(env)
     r = env.daily(
         "STOCK",
@@ -1756,9 +1575,7 @@ def test_1038_stock_a_late_start_still_writes_the_standing_approval(env: Env) ->
 def test_1038_stock_a_catchup_that_skips_does_not_touch_the_approval_slot(
     env: Env,
 ) -> None:
-    """The stop-time gate decides BEFORE the STOCK pre-runner steps: a catch-up that
-    is not going to run a session must not move this host's approval file nor alert
-    about its transport keys."""
+    """The stop-time gate decides BEFORE the STOCK pre-runner steps: a catch-up that"""
     _data_parents(env)
     stale = _write_approval(env, _approval_doc("20261023"))
     before = stale.read_bytes()
@@ -1772,27 +1589,6 @@ def test_1038_stock_a_catchup_that_skips_does_not_touch_the_approval_slot(
     assert not _stock_session(env, _OPEN_DAY).exists()
 
 
-# ===========================================================================
-# The post-B3 bar-document export hook (roadmap §P1 ②)
-# ===========================================================================
-#
-# The tenant cron boots from an origin/main detached worktree every morning, so
-# a broken wrapper breaks the NEXT day's sessions. Every test here asserts the
-# same property from a different angle: whatever the export does, the session's
-# verdict and exit code are untouched.
-#
-# "After B3" is structural rather than asserted directly: B3 is step 14 INSIDE
-# run_tenant_session.sh, so the hook running after the runner returns is after
-# B3 by construction. What IS asserted is the hook's position relative to the
-# runner's own rc line, which the wrapper logs the moment the runner returns.
-#
-# ⚠ Not covered, by decision: the `export_bars.py is absent at this revision`
-# SKIP branch. It exists because the wrapper and the exporter land in separate
-# PRs, so a session may boot from an origin/main that has only one of them —
-# and exercising it would mean pushing a file removal into the fixture origin
-# mid-test, which costs more than the two-line branch is worth. The branch is
-# a `[ ! -f ]` guard with no decision in it.
-
 _SESSION_DAY = _OPEN_DAY.replace("-", "")
 
 
@@ -1801,13 +1597,7 @@ def _long_session_dir(env: Env) -> Path:
 
 
 def test_the_export_hook_skips_loudly_when_no_projection_dir_is_set(env: Env) -> None:
-    """Unset variable is a SKIP with a reason, never a guessed destination.
-
-    A document written somewhere the dashboard does not mount is, from the page,
-    indistinguishable from no document at all. This is also the state of the
-    tenant cron TODAY — the variable lives in .env.paper, for the resident paper
-    session — so this test pins that the hook is inert until an operator opts in.
-    """
+    """Unset variable is a SKIP with a reason, never a guessed destination."""
     _data_parents(env)
     r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
     assert r.returncode == 0, r.stdout
@@ -1898,11 +1688,7 @@ def test_a_succeeding_export_does_not_mask_a_failing_session(env: Env) -> None:
 
 
 def test_a_hanging_export_is_bounded_and_still_not_fatal(env: Env) -> None:
-    """A wedged export must not hold the cron wrapper's flock past midnight.
-
-    That would refuse TOMORROW's session ("lock busy"), a bigger loss than a
-    missing document — the same reasoning B3's own ceiling records.
-    """
+    """A wedged export must not hold the cron wrapper's flock past midnight."""
     _data_parents(env)
     r = env.daily(
         "LONG",
@@ -1912,7 +1698,6 @@ def test_a_hanging_export_is_bounded_and_still_not_fatal(env: Env) -> None:
         FAKE_EXPORT_HANG_S="30",
     )
     assert r.returncode == 0, r.stdout
-    # 124 is `timeout`'s own code for "the ceiling fired".
     assert "END BARS EXPORT rc=124" in r.stdout
     assert "일일 세션 종료" in r.stdout
 
@@ -1927,12 +1712,9 @@ def test_the_hook_adds_nothing_to_the_state_tree(env: Env) -> None:
         TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
     )
     assert r.returncode == 0, r.stdout
-    # The session directory and its worktree are the runner's own doing; the
-    # export contributes no new top-level entry.
     assert {p.name for p in env.state.iterdir()} - before <= {
         "cp3-sessions",
         "measure",
     }
-    # Its record sits beside the session's other logs, not in the durable set.
     assert (_long_session_dir(env) / "bars-export.out").exists()
     assert not (env.state / "cp3-setup-d-long-data" / "bars").exists()

@@ -44,7 +44,7 @@ class TestConfigMixin:
         )
 
         assert config.name == "test"
-        assert config.count == 10  # default
+        assert config.count == 10
         assert not hasattr(config, "unknown_field")
 
     def test_from_dict_uses_defaults(self):
@@ -52,8 +52,8 @@ class TestConfigMixin:
         config = SampleConfig.from_dict({"name": "only_name"})
 
         assert config.name == "only_name"
-        assert config.count == 10  # default
-        assert config.enabled is True  # default
+        assert config.count == 10
+        assert config.enabled is True
 
     def test_from_dict_none_uses_non_none_default(self):
         """Test that None does not override a non-None default."""
@@ -101,7 +101,7 @@ class TestConfigMixin:
         """Test params unwrapping ignores extra keys outside params."""
         config = SampleConfig.from_dict(
             {
-                "type": "some_type",  # extra key at root level
+                "type": "some_type",
                 "params": {
                     "name": "nested",
                 },
@@ -196,12 +196,7 @@ class TestConfigMixinWithNestedDataclass:
             {"name": "custom", "inner": {"value": 42, "label": "nested"}}
         )
 
-        # Note: ConfigMixin doesn't automatically convert nested dicts
-        # The nested dict is passed directly to the dataclass
-        # This test documents current behavior
         assert config.name == "custom"
-        # With current implementation, inner is still a dict
-        # This is a known limitation of the simple ConfigMixin
         assert config.inner == {"value": 42, "label": "nested"} or (
             hasattr(config.inner, "value") and config.inner.value == 42
         )
@@ -326,7 +321,6 @@ class TestConfigMixinValidation:
 
     def test_validation_skipped_when_disabled(self):
         """Test that validation can be skipped."""
-        # This should NOT raise even though values are invalid
         config = ValidatedConfig.from_dict({"threshold": 1.5}, validate=False)
 
         assert config.threshold == 1.5
@@ -339,27 +333,23 @@ class TestConfigMixinValidation:
     def test_default_validate_is_no_op(self):
         """Test that default validate() does nothing."""
         config = SampleConfig(name="test")
-        # Should not raise
         config.validate()
 
     def test_validation_runs_on_direct_construction(self):
         """Test that validation can be called manually after construction."""
         config = ValidatedConfig(threshold=1.5)
 
-        # Validation should fail when called manually
         with pytest.raises(ValueError):
             config.validate()
 
     def test_validation_with_edge_values(self):
         """Test validation with boundary values."""
-        # Boundary values should pass
         config1 = ValidatedConfig.from_dict({"threshold": 0.0})
         assert config1.threshold == 0.0
 
         config2 = ValidatedConfig.from_dict({"threshold": 1.0})
         assert config2.threshold == 1.0
 
-        # Min == max should pass
         config3 = ValidatedConfig.from_dict(
             {
                 "min_value": 50,

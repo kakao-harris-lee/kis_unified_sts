@@ -1,14 +1,4 @@
-"""tools/tos_cp3/ops — the mock-account flat check and flatten, as the restart script uses them.
-
-What this pins is the contract ``restart_stock_tenant.sh`` depends on and cannot
-see: the exit codes (0 flat · 1 unreadable/rejected · 2 refused · 3 held) and the
-fail-closed order — a missing account fingerprint refuses BEFORE anything is
-built, so a restart that forgot it stops nothing and archives nothing.
-
-Hermetic: no broker call, no network, no credential file. The client and the
-balance read are monkeypatched; the real ones are exercised only against the
-mock account by hand (runbook §7.2-f).
-"""
+"""tools/tos_cp3/ops — the mock-account flat check and flatten, as the restart script uses them."""
 
 from __future__ import annotations
 
@@ -32,9 +22,6 @@ class _Creds:
     account_no = "5000000001"
 
 
-#: ``tr_cont`` on a response page that ends the set. 'D' is what the mock
-#: answered on VTTC8434R (P-BAL 2026-08-05) — with the cursor keys still set,
-#: which is why the walk reads the header and not the keys.
 _END_OF_SET = "D"
 
 
@@ -85,9 +72,6 @@ def _no_env_file(monkeypatch: pytest.MonkeyPatch, module: Any) -> None:
     monkeypatch.setattr(module, "load_env_file", lambda path: Path("/dev/null"))
 
 
-# --- fail closed on the account fingerprint ---------------------------------
-
-
 def test_flat_check_refuses_without_fingerprint(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -113,8 +97,6 @@ def test_flatten_refuses_without_fingerprint(
 def test_fingerprint_comes_from_env_or_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(flat.EXPECT_FP_ENV, "  EE1BDB5F1CA2 ")
     assert flat.resolve_expected_fingerprint(None) == _FP
-    # The flag wins, and an empty flag is still a refusal (no silent env fallback
-    # to an account the operator did not name on this call).
     assert flat.resolve_expected_fingerprint("DEADBEEFCAFE") == "deadbeefcafe"
     with pytest.raises(flat.OpsRefusal):
         flat.resolve_expected_fingerprint("")
@@ -123,14 +105,7 @@ def test_fingerprint_comes_from_env_or_flag(monkeypatch: pytest.MonkeyPatch) -> 
 def test_credentials_come_through_the_bounded_loader_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A test process reads no credential file at all, and says so (#698).
-
-    The hermetic switch is on for the whole pytest session, so
-    ``read_explicit_dotenv`` returns nothing and the tool refuses instead of
-    running with a half-filled environment. That is also the proof the file is
-    read through that loader rather than python-dotenv directly, which the
-    repo-wide gate (``tests/unit/config/test_dotenv_call_gate.py``) forbids.
-    """
+    """A test process reads no credential file at all, and says so (#698)."""
     env_file = tmp_path / ".env.mock"
     env_file.write_text(
         "KIS_STOCK_APP_KEY=FAKEKEY\n"
@@ -152,9 +127,6 @@ def test_missing_credential_file_is_a_refusal(
     missing = tmp_path / ".env.mock"
     assert flat.main([_SYMBOL, "--env-file", str(missing)]) == flat.EXIT_REFUSED
     assert str(missing) in capsys.readouterr().err
-
-
-# --- argument handling ------------------------------------------------------
 
 
 @pytest.mark.parametrize("bad", ["5930", "0059300", "00593a", "", " "])
@@ -191,9 +163,6 @@ def test_both_tools_take_the_same_account_arguments() -> None:
         assert args.pace_s == 0.5
 
 
-# --- the balance read -------------------------------------------------------
-
-
 def test_holdings_sums_rows_per_symbol_and_queries_the_mock_tr() -> None:
     client = _Client(
         {
@@ -216,9 +185,6 @@ def test_holdings_sums_rows_per_symbol_and_queries_the_mock_tr() -> None:
 def test_holdings_refuses_a_non_zero_rt_cd() -> None:
     with pytest.raises(flat.BalanceUnreadable):
         flat.holdings(_Client({"rt_cd": "1", "msg1": "조회가 불가합니다"}), _Creds())
-
-
-# --- exit codes the restart script branches on ------------------------------
 
 
 @pytest.mark.parametrize(
@@ -255,9 +221,6 @@ def test_flat_check_unreadable_balance_is_not_flat(
     monkeypatch.setattr(flat, "holdings", _unreadable)
     assert flat.main([_SYMBOL]) == flat.EXIT_UNREADABLE
     assert client.closed == 1
-
-
-# --- flatten -----------------------------------------------------------------
 
 
 def _wire_flatten(
@@ -325,9 +288,6 @@ def test_flatten_says_still_held_when_the_poll_bound_runs_out(
         flatten.main([_SYMBOL, "--poll-interval-s", "0", "--poll-tries", "1"])
         == flatten.EXIT_STILL_HELD
     )
-
-
-# --- the open-order read (#1130 review: a resting order is not flat) --------
 
 
 class _PagedClient(_Client):
@@ -399,7 +359,6 @@ def _resting(odno: str = "0000000001", qty: str = "1") -> dict[str, Any]:
         ({"pdno": _SYMBOL, "rmn_qty": "0", "cncl_yn": "N"}, False),
         ({"pdno": _SYMBOL, "rmn_qty": "1", "cncl_yn": "Y"}, False),
         ({"pdno": "000660", "rmn_qty": "5", "cncl_yn": "N"}, False),
-        # Unattributable working quantity is never read as flat.
         ({"pdno": "", "rmn_qty": "1", "cncl_yn": "N"}, True),
     ],
 )
@@ -413,12 +372,7 @@ def test_row_is_open(row: dict[str, Any], expected: bool) -> None:
     ids=["blank", "spaces", "none", "not-a-number", "not-an-int"],
 )
 def test_an_unreadable_remainder_is_open_not_zero(rmn_qty: Any) -> None:
-    """Round-1 HIGH: `or "0"` read a blank remainder as a closed order.
-
-    The row is a working limit entry — one ordered, none filled — whose
-    ``rmn_qty`` the broker did not fill in. Read as 0 it is "closed", the check
-    says flat, and the leaf is archived with the order still live.
-    """
+    """Round-1 HIGH: `or "0"` read a blank remainder as a closed order."""
     row = {
         "pdno": _SYMBOL,
         "ord_qty": "1",
@@ -444,11 +398,8 @@ def test_the_remainder_is_derived_when_the_row_does_not_state_it() -> None:
 @pytest.mark.parametrize(
     "row",
     [
-        # cancelled, but with nothing to quantify it: still open to this gate.
         {"pdno": _SYMBOL, "rmn_qty": "", "cncl_yn": "Y"},
-        # quantities that contradict each other (1 + 5 != 2).
         {"pdno": _SYMBOL, "ord_qty": "2", "tot_ccld_qty": "1", "rmn_qty": "5"},
-        # a negative remainder is not a remainder.
         {"pdno": _SYMBOL, "rmn_qty": "-1"},
     ],
     ids=["cancelled-unquantified", "inconsistent", "negative"],
@@ -464,8 +415,6 @@ def test_open_orders_queries_the_mock_tr_with_the_runtimes_parameters() -> None:
     sent = client.sent[0]
     assert sent["PDNO"] == _SYMBOL
     assert sent["CANO"] == _Creds.cano
-    # 전체, not 미체결-only: a narrowing filter that returned nothing would read
-    # as "no open order" — the one error this check may not make.
     assert sent["CCLD_DVSN"] == "00"
     assert sent["INQR_STRT_DT"] == sent["INQR_END_DT"]
     assert sent["EXCG_ID_DVSN_CD"] == "KRX"
@@ -473,12 +422,7 @@ def test_open_orders_queries_the_mock_tr_with_the_runtimes_parameters() -> None:
 
 
 def test_the_last_page_is_the_one_the_tr_cont_header_calls_last() -> None:
-    """Round-1 MEDIUM: the mock sets cursor keys on its LAST page too.
-
-    Reading the keys instead of the header (P-BAL 2026-08-05 saw tr_cont='D'
-    with both keys set) would make every answer "the cursor did not advance" —
-    rc 1 on every symbol that has orders, and a restart that never works.
-    """
+    """Round-1 MEDIUM: the mock sets cursor keys on its LAST page too."""
     client = _PagedClient([_page([_resting()], fk="FK9", nk="NK9")])
     assert len(flat.open_orders(client, _Creds(), _SYMBOL)) == 1
     assert len(client.sent) == 1, "a page the broker called last was followed"
@@ -498,7 +442,6 @@ def test_open_orders_walks_while_the_header_says_more() -> None:
         "FK1",
         "NK1",
     )
-    # First page asks with no tr_cont; every later page asks for the next one.
     assert client.tr_cont_sent == ["", flat.TR_CONT_REQUEST_NEXT]
 
 
@@ -548,9 +491,6 @@ def test_open_orders_refuses_a_non_200() -> None:
     client = _PagedClient([_page([])], status=500)
     with pytest.raises(flat.BalanceUnreadable, match="http 500"):
         flat.open_orders(client, _Creds(), _SYMBOL)
-
-
-# --- the balance read is walked too (L3: 25 holdings over 2 pages, 08-05) ---
 
 
 def test_holdings_walks_past_the_first_page() -> None:
@@ -616,9 +556,6 @@ def test_flat_check_spends_no_order_call_when_the_balance_already_says_held(
     _wire_flat_check(monkeypatch, client, {_SYMBOL: 1})
     assert flat.main([_SYMBOL]) == flat.EXIT_HELD
     assert client.sent == []
-
-
-# --- transport failures: rc 1, and no URL (the URL carries CANO) ------------
 
 
 _URL_IN_EXC = (

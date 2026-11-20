@@ -1,23 +1,4 @@
-"""``tools/tos_cp3/perf.py`` — `sts tos perf` (종목·날짜별 체결·손익).
-
-계획 ``docs/plans/2026-11-19-tos-usage-plan.md`` §5 «`sts tos perf` 최소판».
-
-이 묶음이 쥐어야 하는 것은 산술보다 «정직함» 쪽이다.
-
-* **가격 기준을 숨기지 않는다.** 런타임의 ``FILL_OBSERVED`` 는 브로커의 평균
-  체결가를 ``avg_execution_price`` 로 적는다(``posttrade/fill_observer.py``;
-  파서는 ``recon/witness_kis.py::KisOrderRow.avg_prvs``). 그 키가 있으면 손익은
-  체결가 기준이고, 없는 체결(그 필드가 생기기 전에 기록된 잎)은 ``SEND_SEALED``
-  의 주문 지정가로 떨어진다. 어느 쪽이 쓰였는지는 JSON 의 ``pnl_basis`` 와 표의
-  «*» 표시로 드러난다 — 이 테스트가 그 두 길을 모두 고정한다.
-* ACK 만 받고 체결 관측이 없는 attempt(2026-11-13 의 미추적 주문)는 **집계에
-  들어가지 않고** 사유·odno 와 함께 따로 나온다. 조용히 0 으로 세거나 체결로
-  세면 숫자가 거짓이 된다.
-* 짝 없는 매도(계좌를 손으로 평탄화한 날)와 남은 보유 수량도 따로 나온다.
-* 잎은 ``mode=ro`` 로만 열린다 — 보고서를 보는 것이 증거를 바꾸면 안 된다.
-
-픽스처는 이 파일이 직접 만드는 evidence 저장소다(호스트 경로를 읽지 않는다).
-"""
+"""``tools/tos_cp3/perf.py`` — `sts tos perf` (종목·날짜별 체결·손익)."""
 
 from __future__ import annotations
 
@@ -89,7 +70,6 @@ def _fill(
         "reason": "filled",
     }
     if executed_krw is not None:
-        # 브로커가 찍는 원 단위 — price_scale 을 곱하지 않는다(지정가와 다른 점).
         row["avg_execution_price"] = str(executed_krw)
         row["executed_amount"] = str(executed_krw * quantity)
     return row
@@ -127,11 +107,7 @@ def _policy() -> tuple[str, dict[str, Any]]:
 
 
 def _round_trip_rows(*, executed: bool = True) -> list[tuple[str, dict[str, Any]]]:
-    """2026-11-17 왕복 한 번 — 지정가 193,400 에 내서 **193,300 에 체결**, 192,200 에 매도.
-
-    체결가 기준 손익은 −1,100 이다. ``executed=False`` 는 그 필드가 생기기 전의 잎
-    모양 — 같은 왕복이 지정가 기준 −1,200 으로 읽힌다.
-    """
+    """2026-11-17 왕복 한 번 — 지정가 193,400 에 내서 **193,300 에 체결**, 192,200 에 매도."""
     buy_fill = 193_300 if executed else None
     sell_fill = 192_200 if executed else None
     return [
@@ -244,11 +220,7 @@ def test_a_leaf_without_the_price_keys_falls_back_to_the_sealed_order_price(
 def test_an_uncomparable_or_nonpositive_execution_price_falls_back(
     tmp_path: Path, value: str
 ) -> None:
-    """``Decimal("NaN") > 0`` 은 ``False`` 가 아니라 ``InvalidOperation`` 을 던진다.
-
-    이 도구는 자기가 쓰지 않은 잎도 읽으므로(보관된 잎 · 손댄 잎) 비교 전에 걸러야
-    보고서가 죽지 않는다. 쓸 수 없는 가격은 지정가로 떨어질 뿐이다.
-    """
+    """``Decimal("NaN") > 0`` 은 ``False`` 가 아니라 ``InvalidOperation`` 을 던진다."""
     rows = _round_trip_rows()
     rows[3][1]["avg_execution_price"] = value
 
@@ -259,7 +231,6 @@ def test_an_uncomparable_or_nonpositive_execution_price_falls_back(
 
     assert code == 0
     (symbol,) = document["symbols"]
-    # 매수는 지정가 193,400, 매도는 체결가 192,200 → −1,200 이고 기준은 «섞임».
     assert symbol["days"][0]["pnl_krw"] == "-1200"
     assert symbol["days"][0]["pnl_basis"] == perf.BASIS_MIXED
     assert f"-1,200{perf.FALLBACK_MARK}" in text
@@ -343,11 +314,7 @@ def test_an_acked_order_with_no_fill_observation_is_reported_unresolved(
 
 
 def test_a_cancelled_order_that_partially_filled_says_so(tmp_path: Path) -> None:
-    """#1120 MEDIUM-1: BUY 2 · 부분 체결 1 · 취소 — 계좌에는 1주가 남는다.
-
-    부분 체결 관측을 버리면 이 주문은 비체결 종료(CANCEL_ACK)라서 집계에서 아예 사라지고,
-    보고서는 그 1주를 어디에도 적지 않는다.
-    """
+    """#1120 MEDIUM-1: BUY 2 · 부분 체결 1 · 취소 — 계좌에는 1주가 남는다."""
     rows = [
         _policy(),
         ("SEND_SEALED", _seal("attempt-partial", "BUY", 193_400, quantity=2)),
@@ -381,7 +348,6 @@ def test_a_cancelled_order_that_partially_filled_says_so(tmp_path: Path) -> None
 
     assert code == 0
     (symbol,) = document["symbols"]
-    # 부분 체결은 FIFO 에 들어가지 않는다 — 집계 수량은 그대로 0 이다.
     assert symbol["days"] == []
     (attempt,) = symbol["unresolved_attempts"]
     assert attempt["status"] == perf.STATUS_NO_FILL
@@ -559,7 +525,6 @@ def test_a_sell_with_no_open_lot_is_reported_unmatched(tmp_path: Path) -> None:
     (symbol,) = document["symbols"]
     assert symbol["totals"]["closed_round_trips"] == 0
     assert symbol["totals"]["wins"] == 0
-    # 보유 수량은 음수가 되지 않는다 — 짝 없는 매도는 수량이 아니라 아래 줄로 센다.
     assert symbol["days"][0]["open_quantity_end"] == "0"
     assert symbol["totals"]["open_quantity"] == "0"
     assert symbol["unmatched_sell_fills"] == [

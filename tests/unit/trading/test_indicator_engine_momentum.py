@@ -1,8 +1,4 @@
-"""Tests for StreamingIndicatorEngine momentum indicators.
-
-Tests the multi-timeframe momentum indicator calculations (TRIX, CCI, MACD, Stochastic)
-via get_momentum_indicators() method.
-"""
+"""Tests for StreamingIndicatorEngine momentum indicators."""
 
 from __future__ import annotations
 
@@ -16,19 +12,7 @@ def _build_warm_mtf_engine(
     timeframe: int = 5,
     num_1m_candles: int = 260,
 ) -> StreamingIndicatorEngine:
-    """Build an engine with enough 1m candles to produce warm MTF candles.
-
-    For 5-minute timeframe: 260 1m candles → 51 5m candles (>=50 required)
-    For 15-minute timeframe: 260 1m candles → 17 15m candles (need more for 50)
-
-    Args:
-        symbol: Symbol to warm up.
-        timeframe: MTF timeframe to enable (default: 5 minutes).
-        num_1m_candles: Number of 1-minute candles to generate.
-
-    Returns:
-        Warmed StreamingIndicatorEngine.
-    """
+    """Build an engine with enough 1m candles to produce warm MTF candles."""
     engine = StreamingIndicatorEngine(
         bb_period=20,
         mtf_timeframes=[timeframe],
@@ -39,7 +23,6 @@ def _build_warm_mtf_engine(
     base_volume = 1000
     cumulative_volume = 0
 
-    # Generate N 1-minute candles by ticking across minute boundaries
     for minute in range(num_1m_candles):
         ts = datetime(2026, 2, 17, 9 + minute // 60, minute % 60, 30)
         price = base_price + minute * 10
@@ -56,7 +39,6 @@ def _build_warm_mtf_engine(
             ts,
         )
 
-    # Finalize the last candle
     cumulative_volume += base_volume + num_1m_candles
     engine.on_tick(
         symbol,
@@ -96,17 +78,11 @@ class TestMomentumIndicatorsTRIX:
         assert math.isfinite(indicators["trix_signal"])
 
     def test_trix_changes_with_price_trend(self):
-        """TRIX should reflect price trend direction.
-
-        For consistently rising prices, TRIX should eventually be positive.
-        """
+        """TRIX should reflect price trend direction."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
-        # With steadily increasing prices (base + minute*10), TRIX should be positive
-        # TRIX measures rate of change of triple-smoothed EMA
         assert "trix" in indicators
-        # Note: TRIX can be near zero for linear trends, so we just verify it's calculable
         assert isinstance(indicators["trix"], float)
 
 
@@ -131,15 +107,10 @@ class TestMomentumIndicatorsCCI:
         assert math.isfinite(indicators["cci"])
 
     def test_cci_typical_range(self):
-        """CCI typically ranges from -200 to +200, but can exceed.
-
-        For normal market conditions, CCI should be within reasonable bounds.
-        Extreme values (>500 or <-500) would indicate calculation issues.
-        """
+        """CCI typically ranges from -200 to +200, but can exceed."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
-        # Sanity check: CCI shouldn't be absurdly large for normal data
         assert (
             -1000 < indicators["cci"] < 1000
         ), f"CCI {indicators['cci']} is outside normal bounds"
@@ -180,14 +151,10 @@ class TestMomentumIndicatorsMACD:
         )
 
     def test_macd_positive_in_uptrend(self):
-        """MACD line should be positive for strong uptrend.
-
-        MACD = EMA(12) - EMA(26). For steadily rising prices, fast EMA > slow EMA.
-        """
+        """MACD line should be positive for strong uptrend."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
-        # With steadily increasing prices, MACD line should be positive
         assert (
             indicators["macd_line"] > 0
         ), f"MACD line should be positive in uptrend, got {indicators['macd_line']}"
@@ -217,15 +184,10 @@ class TestMomentumIndicatorsStochastic:
         ), f"sto_d {indicators['sto_d']} out of range [0, 100]"
 
     def test_stochastic_high_in_uptrend(self):
-        """Stochastic should be high (>50) for steadily rising prices.
-
-        %K = (close - lowest_low) / (highest_high - lowest_low) * 100
-        In an uptrend, close is near highest_high, so %K should be high.
-        """
+        """Stochastic should be high (>50) for steadily rising prices."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
-        # For steadily rising prices, stochastic should be elevated
         assert (
             indicators["sto_k"] > 50
         ), f"sto_k should be > 50 in uptrend, got {indicators['sto_k']}"
@@ -298,10 +260,7 @@ class TestMomentumIndicatorsWarmup:
     """Tests for warmup and data sufficiency requirements."""
 
     def test_momentum_requires_mtf_warmup(self):
-        """Momentum indicators require sufficient MTF candles.
-
-        Default min_candles=50. With insufficient data, should return empty dict.
-        """
+        """Momentum indicators require sufficient MTF candles."""
         engine = StreamingIndicatorEngine(
             bb_period=20,
             mtf_timeframes=[5],
@@ -311,7 +270,6 @@ class TestMomentumIndicatorsWarmup:
         symbol = "TEST"
         cumulative = 0
 
-        # Generate only 10 1-minute candles → 2 5-minute candles (insufficient)
         for minute in range(10):
             ts = datetime(2026, 2, 17, 9, minute, 30)
             cumulative += 1000
@@ -337,7 +295,6 @@ class TestMomentumIndicatorsWarmup:
         """Empty dict when candle count < min_candles threshold."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=100)
 
-        # 100 1m candles → 20 5m candles, less than default min_candles=50
         indicators = engine.get_momentum_indicators(
             "005930", timeframe=5, min_candles=50
         )
@@ -350,7 +307,6 @@ class TestMomentumIndicatorsWarmup:
         """Non-empty dict when candle count >= min_candles."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
-        # 260 1m candles → 51 5m candles, exceeds default min_candles=50
         indicators = engine.get_momentum_indicators(
             "005930", timeframe=5, min_candles=50
         )
@@ -362,8 +318,6 @@ class TestMomentumIndicatorsWarmup:
         """Respect custom min_candles parameter."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=105)
 
-        # 105 1m candles → 21 5m candles
-        # Should succeed with min_candles=20, fail with min_candles=50
         indicators_low_threshold = engine.get_momentum_indicators(
             "005930", timeframe=5, min_candles=20
         )
@@ -382,13 +336,10 @@ class TestMomentumIndicatorsCaching:
         """Results should be cached by (symbol, timeframe) key."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
-        # First call computes
         indicators1 = engine.get_momentum_indicators("005930", timeframe=5)
 
-        # Second call should hit cache (same candle count → same result)
         indicators2 = engine.get_momentum_indicators("005930", timeframe=5)
 
-        # Should return same dict (cached)
         assert indicators1 is indicators2
 
     def test_cache_invalidates_on_new_candle(self):
@@ -398,8 +349,7 @@ class TestMomentumIndicatorsCaching:
         indicators1 = engine.get_momentum_indicators("005930", timeframe=5)
         candle_count1 = indicators1["candle_count"]
 
-        # Add more candles
-        cumulative = 1000000  # arbitrary high value
+        cumulative = 1000000
         for minute in range(250, 255):
             ts = datetime(2026, 2, 17, 9 + minute // 60, minute % 60, 30)
             cumulative += 1000
@@ -424,7 +374,6 @@ class TestMomentumIndicatorsCaching:
         indicators2 = engine.get_momentum_indicators("005930", timeframe=5)
         candle_count2 = indicators2["candle_count"]
 
-        # Candle count should have increased
         assert candle_count2 > candle_count1
 
 
@@ -442,7 +391,6 @@ class TestMomentumIndicatorsErrorHandling:
         """Empty dict when timeframe not in mtf_timeframes."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
-        # Request 15m timeframe, but only 5m is registered
         indicators = engine.get_momentum_indicators("005930", timeframe=15)
 
         assert indicators == {}, "Should return empty dict for unregistered timeframe"
@@ -451,11 +399,6 @@ class TestMomentumIndicatorsErrorHandling:
         """Should return empty dict on calculation errors (logged, not raised)."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
-        # Artificially corrupt data to trigger calculation error
-        # (This is a design test - normal data shouldn't error, but we verify graceful handling)
-        # Current implementation catches Exception and returns {}
-
-        # For now, verify that with valid data, no errors occur
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
         assert indicators != {}
 
@@ -467,7 +410,6 @@ class TestMomentumIndicatorsCustomParameters:
         """Custom TRIX parameters should be respected."""
         engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
-        # Use non-default parameters
         indicators = engine.get_momentum_indicators(
             "005930",
             timeframe=5,
@@ -477,7 +419,6 @@ class TestMomentumIndicatorsCustomParameters:
 
         assert "trix" in indicators
         assert "trix_signal" in indicators
-        # Values will differ from defaults, but we just verify they compute
 
     def test_custom_cci_period(self):
         """Custom CCI period should be respected."""
@@ -536,7 +477,6 @@ class TestMomentumIndicatorsMultipleTimeframes:
 
     def test_15_minute_timeframe(self):
         """15-minute timeframe should work correctly."""
-        # 760 1m candles → 50 15m candles
         engine = _build_warm_mtf_engine(timeframe=15, num_1m_candles=760)
         indicators = engine.get_momentum_indicators("005930", timeframe=15)
 
@@ -548,7 +488,6 @@ class TestMomentumIndicatorsMultipleTimeframes:
         """Momentum indicators for different symbols should be independent."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[5], staleness_seconds=0)
 
-        # Build data for two symbols
         for symbol in ["SYMBOL_A", "SYMBOL_B"]:
             cumulative = 0
             for minute in range(260):
@@ -583,6 +522,4 @@ class TestMomentumIndicatorsMultipleTimeframes:
 
         assert indicators_a != {}
         assert indicators_b != {}
-        # Different symbols should have different indicator values
-        # (SYMBOL_B has higher base price, so indicators will differ)
         assert indicators_a is not indicators_b

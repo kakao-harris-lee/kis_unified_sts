@@ -1,9 +1,4 @@
-"""A send the egress gateway refused before any transport call releases its reservation (11-20).
-
-Incident 2026-11-20 (KIS MOCK stock tenants): a broker-facts GET failed, the gateway refused the
-OPEN at step 15 (``SEND_REFUSED``, no ``NETWORK_CALL_ENTERED``), the driver later timed the
-attempt out, and every later OPEN was denied over the stranded reservation for the rest of the day.
-"""
+"""A send the egress gateway refused before any transport call releases its reservation (11-20)."""
 
 from __future__ import annotations
 
@@ -217,7 +212,6 @@ def test_a_pre_transport_refusal_releases_and_the_next_open_is_sent(
     assert len(transmit.accepted) == 1
     held = core.ledger.outstanding(fx.instrument_key())
     assert held is not None and held.attempt_id == transmit.accepted[0]
-    # The refused attempt is never timed out once its projection is gone.
     assert _payloads(evidence_store, "RESULT_UNMATCHED") == []
     assert all(
         row.get("attempt_id") != attempt_id
@@ -359,7 +353,6 @@ def test_a_crash_between_the_refusal_and_the_release_is_released_at_boot(
     assert held is not None and held.capacity_state is CapacityState.POTENTIALLY_LIVE
     assert _state(rcl_log) is CapacityState.COMMITTED_UNBOUND
 
-    # Boot replay rebuilds the hand-off projection (RecordedTransmit accepts the hand-off).
     replayed = ProvisionalReservationLedger(max_unresolved_send_per_scope=1)
     replayed.commit_unbound(fx.instrument_key(), proposal_id=held.proposal_id)
     assert held.attempt_id is not None

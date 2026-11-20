@@ -1,8 +1,4 @@
-"""The cross-process shared token cache (#1125 — 2026-11-20's three-tenant token collision).
-
-Each test builds TWO independent registries over ONE cache file: that is what the three stock
-tenants are — three processes, one KIS 모의투자 app key, one token a minute.
-"""
+"""The cross-process shared token cache (#1125 — 2026-11-20's three-tenant token collision)."""
 
 from __future__ import annotations
 
@@ -237,7 +233,7 @@ def test_another_app_keys_entry_is_never_used(tmp_path: Path) -> None:
 
     assert session.ensure_token_string() == "a-token-1"
     document = json.loads(path.read_text(encoding="utf-8"))
-    assert len(document["entries"]) == 2  # the other key's entry is left alone
+    assert len(document["entries"]) == 2
 
 
 def test_a_still_valid_token_survives_a_refused_reissue(tmp_path: Path) -> None:
@@ -246,7 +242,7 @@ def test_a_still_valid_token_survives_a_refused_reissue(tmp_path: Path) -> None:
     first, _ = _tenant(_cache(path, clock), _CountingTokenClient(name="a"))
     assert first.ensure_token_string() == "a-token-1"
 
-    clock.now += _LIFETIME_S - _MARGIN_S + 1  # inside the margin, still 9m59s of life
+    clock.now += _LIFETIME_S - _MARGIN_S + 1
     refusing = _RefusingTokenClient()
     second, evidence = _tenant(_cache(path, clock), refusing)
     assert second.ensure_token_string() == "a-token-1"
@@ -281,7 +277,7 @@ def test_the_cooldown_does_not_block_a_peers_cached_token(tmp_path: Path) -> Non
     stuck, _ = _tenant(_cache(path, clock), _RefusingTokenClient())
     with pytest.raises(TokenResponseError):
         stuck.ensure_token_string()
-    with pytest.raises(TokenStale):  # the 65 s cooldown is running now
+    with pytest.raises(TokenStale):
         stuck.ensure_token_string()
 
     peer, _ = _tenant(_cache(path, clock), _CountingTokenClient(name="b"))

@@ -1,16 +1,8 @@
-"""Import-closure firewall test for the shared.determinism commons.
-
-Enforces the 2026-07-20 tos boundary / import-firewall design (§2.3 / §3.4):
-``import shared.determinism`` must not transitively load any operations-only
-package or MLflow/Optuna. Run in a fresh subprocess so the assertion reflects
-the module's own closure, not modules already imported by the pytest session.
-"""
+"""Import-closure firewall test for the shared.determinism commons."""
 
 import subprocess
 import sys
 
-# Packages that must never appear in shared.determinism's import closure
-# (§2.3 forbidden operations-only packages + heavy tracking/optimization libs).
 FORBIDDEN_MODULES = [
     "shared.execution",
     "shared.kis",

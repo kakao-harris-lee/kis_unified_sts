@@ -487,8 +487,7 @@ def test_a_tilde_token_cache_path_is_expanded(tmp_path: Path) -> None:
 
 
 def test_a_relative_token_cache_path_refuses(tmp_path: Path) -> None:
-    """A relative path names a different file per working directory — the one thing a
-    cache shared between processes must not do."""
+    """A relative path names a different file per working directory — the one thing a"""
     raw = _valid_raw()
     raw["token_cache_path"] = "state/stock-mock.json"
     raw["token_cache_refresh_margin_s"] = 600

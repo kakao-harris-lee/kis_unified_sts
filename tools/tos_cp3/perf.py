@@ -37,7 +37,7 @@ if str(REPO_ROOT) not in sys.path:
 from tools.tos_cp3 import session_inputs as si  # noqa: E402
 from tools.tos_cp3 import status_board  # noqa: E402
 from tools.tos_cp3.inspect_session import (  # noqa: E402
-    TENANT_DATA_PARENT_SUFFIX,  # the one definition of the data-parent convention (#1120)
+    TENANT_DATA_PARENT_SUFFIX,
 )
 
 __all__ = [
@@ -56,37 +56,30 @@ __all__ = [
     "run",
 ]
 
-# 런타임이 적는 종류 이름. 출처는 각 줄 옆에 — 이 모듈은 그 패키지를 import 할 수 없다.
-SEND_SEALED_KIND = "SEND_SEALED"  # tos/src/tos/egressgw/seal.py (send_seal 블록)
-FILL_OBSERVED_KIND = "FILL_OBSERVED"  # posttrade/fill_observer.py::FILL_OBSERVED_KIND
-ACK_UNTRACKABLE_KIND = "FILL_OBSERVER_ACK_UNTRACKABLE"  # 같은 파일
-#: 브로커는 체결을 보여 줬는데 엔진이 그 attempt 의 예약을 쥐고 있지 않아 보류한 행.
-ENGINE_RESERVATION_ABSENT_KIND = "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT"  # 같은 파일
-#: 브로커가 취소를 보여 줬는데 이 경로가 취소 결과를 적용하지 못해 보류한 행.
-CANCEL_UNSUPPORTED_KIND = "FILL_OBSERVER_CANCEL_UNSUPPORTED"  # 같은 파일
-EGRESS_RESULT_CONSUMED_KIND = "EGRESS_RESULT_CONSUMED"  # engine 투영 전진
-VENUE_POLICY_BOUND_KIND = "VENUE_POLICY_BOUND"  # price_scale 의 출처
+SEND_SEALED_KIND = "SEND_SEALED"
+FILL_OBSERVED_KIND = "FILL_OBSERVED"
+ACK_UNTRACKABLE_KIND = "FILL_OBSERVER_ACK_UNTRACKABLE"
+ENGINE_RESERVATION_ABSENT_KIND = "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT"
+CANCEL_UNSUPPORTED_KIND = "FILL_OBSERVER_CANCEL_UNSUPPORTED"
+EGRESS_RESULT_CONSUMED_KIND = "EGRESS_RESULT_CONSUMED"
+VENUE_POLICY_BOUND_KIND = "VENUE_POLICY_BOUND"
 
 FULL_FILL = "FULL_FILL"
-PARTIAL_FILL = "PARTIAL_FILL"  # tos.engine.vocabulary.EgressResultKind 의 철자
+PARTIAL_FILL = "PARTIAL_FILL"
 NON_FILL_TERMINAL_KINDS = frozenset({"CANCEL_ACK", "EXPIRED", "REJECT"})
 
 BUY, SELL = "BUY", "SELL"
 
 TENANT_TREE_GLOB = "cp3-setup-d-stock-*"
 ARCHIVE_DIRNAME = "archive"
-#: 종목을 모르는 잎들의 묶음 이름. 디렉터리 이름으로 추측하지 않는다(#1120) — 보관된
-#: 잎 이름은 운영자가 붙인 라벨(`005930.stuck-20261105`)이라 종목이 아니다.
 UNKNOWN_SYMBOL = "종목 모름"
 
 PRICE_BASIS = "EXECUTION_PRICE_WITH_SEALED_FALLBACK"
 
-#: 한 체결(또는 한 날)의 가격이 어디서 왔는지.
 BASIS_EXECUTION = "EXECUTION"
 BASIS_ORDER_PRICE = "ORDER_PRICE"
 BASIS_MIXED = "MIXED"
 
-#: 지정가로 떨어진 체결이 섞인 줄에 붙는 표시.
 FALLBACK_MARK = "*"
 
 PRICE_BASIS_NOTE_LINES: tuple[str, ...] = (
@@ -100,7 +93,6 @@ PRICE_BASIS_NOTE_LINES: tuple[str, ...] = (
 
 PRICE_BASIS_NOTE = " ".join(line.strip() for line in PRICE_BASIS_NOTE_LINES)
 
-#: 집계 규칙 중 숫자를 오해하게 둘 수 있는 두 가지(#1120 LOW).
 AGGREGATION_NOTE_LINES: tuple[str, ...] = (
     "손익은 수수료·세금·슬리피지 전이다 — 증거에 그 값이 없다.",
     "왕복·승은 FIFO 로 닫힌 lot 조각마다 센다 — 매수 둘을 한 번에 턴 매도는 왕복 2 다.",
@@ -178,7 +170,6 @@ class _DayRow:
     pnl: Decimal = Decimal(0)
     open_quantity_end: Decimal = Decimal(0)
     pnl_known: bool = True
-    #: 그 날 손익에 실제로 쓰인 가격의 출처들 — 둘 다 있으면 «섞임».
     bases: set[str] = field(default_factory=set)
 
     @property
@@ -215,12 +206,7 @@ def _decimal(value: Any) -> Decimal | None:
 
 
 def _positive(value: Decimal | None) -> Decimal | None:
-    """0 이나 음수인 «가격» 은 가격이 아니다 — 브로커가 아직 못 찍은 것으로 본다.
-
-    ``is_finite()`` 를 먼저 묻는 이유: ``Decimal("NaN") > 0`` 은 ``False`` 가 아니라
-    ``InvalidOperation`` 을 던진다. 잎이 적은 문자열은 이 도구가 고르지 않으므로
-    (오래된 잎 · 손댄 잎도 읽는다) 비교 전에 걸러 보고서가 죽지 않게 한다.
-    """
+    """0 이나 음수인 «가격» 은 가격이 아니다 — 브로커가 아직 못 찍은 것으로 본다."""
     return value if value is not None and value.is_finite() and value > 0 else None
 
 
@@ -235,13 +221,7 @@ def _dig(record: Any, *path: str) -> Any:
 def discover_leaves(
     *, state_dir: Path, config_dir: Path, tree_glob: str = TENANT_TREE_GLOB
 ) -> list[Path]:
-    """tenant 트리마다 **살아 있는** 잎 하나씩. 보관된 잎은 ``--leaf`` 로만 읽는다.
-
-    트리 이름(``config/tos_runtime/<tree_id>``)에서 데이터 부모
-    ``<state_dir>/<tree_id>-data`` 를 만들고, 그 아래 ``evidence.sqlite3`` 를 쥔
-    바로 아래 디렉터리를 잎으로 본다. ``archive/`` 는 건너뛴다 — 보관된 잎은
-    운영자가 이름으로 부를 때만 읽는다.
-    """
+    """tenant 트리마다 **살아 있는** 잎 하나씩. 보관된 잎은 ``--leaf`` 로만 읽는다."""
     leaves: list[Path] = []
     for tree in sorted(config_dir.glob(tree_glob)):
         if not tree.is_dir():
@@ -337,13 +317,9 @@ def _fold_leaf(
     last_result_kind: dict[str, str] = {}
     untrackable: dict[str, str] = {}
     fills: dict[str, Fill] = {}
-    #: 전량 체결 전에 관측된 **마지막** 부분 체결 수량 — 왜 따로 쥐는지는
-    #: :func:`_attempt_document` 의 주석에 있다(#1120 MEDIUM-1).
     partial: dict[str, Decimal] = {}
-    #: 브로커 관측은 있는데 보류된 두 모양(#1120 MEDIUM-2).
     absent: dict[str, dict[str, Any]] = {}
     cancel_held: dict[str, str] = {}
-    # 체결이 관측되지 않은 attempt 도 브로커 번호·거래일은 알 수 있다 — ACK 가 적는다.
     broker_id: dict[str, str] = {}
     acked_date: dict[str, str] = {}
 
@@ -400,11 +376,6 @@ def _fold_leaf(
             _remember(acked_date, record, "trading_date")
         elif kind == FILL_OBSERVED_KIND:
             if record.get("kind") == PARTIAL_FILL:
-                # 부분 체결은 FIFO 에 넣지 않는다 — 그 수량은 아직 움직이는 중이고,
-                # 다음 관측이 전량 체결이면 같은 주문을 두 번 세게 된다. 대신 마지막
-                # 관측 수량을 기억해 두었다가, 그 attempt 가 전량 체결 없이 끝나면
-                # «체결 관측 없음» 대신 그 수량을 적는다(#1120 MEDIUM-1: BUY 2 ·
-                # PARTIAL_FILL 1 · 취소면 실제로 1주를 들고 있다).
                 attempt = record.get("attempt_id")
                 quantity = _decimal(record.get("filled_quantity"))
                 if isinstance(attempt, str) and quantity is not None and quantity > 0:
@@ -420,8 +391,6 @@ def _fold_leaf(
             order = orders.get(attempt)
             side = order.side if order is not None else None
             if side not in (BUY, SELL) or not isinstance(date, str) or not date:
-                # 방향이나 거래일을 모르는 체결은 FIFO 에 넣을 수 없다. 조용히
-                # 버리면 숫자가 거짓이 되므로 따로 적는다.
                 report.unattributed_fills.append(
                     {
                         "attempt_id": attempt,
@@ -446,7 +415,6 @@ def _fold_leaf(
                 side=str(side),
                 quantity=quantity,
                 order_price=order.order_price if order is not None else None,
-                # 이미 원 단위다 — price_scale 로 나누지 않는다(지정가와 다른 점).
                 execution_price=_positive(_decimal(record.get("avg_execution_price"))),
             )
 
@@ -484,8 +452,6 @@ def _fold_leaf(
                 ),
                 "last_egress_result_kind": last_result_kind.get(attempt),
                 "ack_untrackable_reason": untrackable.get(attempt),
-                # 집계에 들어가지 않은 **관측된 사실** 셋. 셋 다 비면 그때만 정말로
-                # «체결 관측 없음» 이다(#1120 MEDIUM-1/2).
                 "partial_filled_quantity": (
                     None if partial_quantity is None else _num(partial_quantity)
                 ),
@@ -511,26 +477,11 @@ def _sole(values: Any) -> str | None:
 
 
 def build_report(leaves: list[LeafReport]) -> dict[str, Any]:
-    """잎 보고서들을 종목별 집계로.
-
-    FIFO 는 한 tenant 안에서만 돈다 — 커널이 tenant 당 한 번에 한 포지션을
-    보장한다(계획 ``2026-11-19-tos-usage-plan.md`` §7 U1). 체결은 거래일 ·
-    잎 순서 · seq 로 줄 세운다.
-
-    ⚠ **같은 거래일에 두 잎이 걸치면 그 날의 순서는 인자 순서다**(#1120 LOW). 잎끼리
-    비교할 수 있는 시각이 증거에 없다 — ``entries`` 의 유일한 시간 열
-    ``appended_at_monotonic_ns`` 는 프로세스마다 기준이 다르고, ``SEND_SEALED`` 에는
-    벽시계가 없으며, 보관된 잎의 디렉터리 이름은 운영자 라벨이다. 장중에 잎을 갈아
-    끼운 날(11-12 · 11-20)은 ``--leaf`` 를 **보관된 잎 → 살아 있는 잎** 순서로 주면
-    그 순서가 맞는다. 같은 잎을 두 번 주어도 두 번 세지는 않는다 — :func:`run` 이
-    resolve 한 경로로 중복을 지운다.
-    """
+    """잎 보고서들을 종목별 집계로."""
     by_symbol: dict[str, SymbolReport] = {}
     fills_by_symbol: dict[str, list[Fill]] = {}
     for leaf in leaves:
         if not (leaf.fills or leaf.attempts or leaf.unattributed_fills):
-            # 주문도 체결도 없는 잎(부팅만 한 날)은 종목 칸을 만들지 않는다 —
-            # 종목 이름을 디렉터리에서 추측하느니 «읽은 잎» 줄로만 남긴다.
             continue
         symbol = leaf.symbol or UNKNOWN_SYMBOL
         report = by_symbol.setdefault(symbol, SymbolReport(symbol=symbol))
@@ -573,12 +524,7 @@ def build_report(leaves: list[LeafReport]) -> dict[str, Any]:
 
 
 def _needs_an_operators_eye(attempt: dict[str, Any]) -> bool:
-    """집계에 들어가지 않았는데 브로커 쪽에 무언가 있었던 attempt.
-
-    미해결(전량 체결도 비체결 종료도 관측되지 않음)이거나, 비체결로 끝났지만 그 전에
-    **부분 체결이 관측된** 경우다 — 후자는 수량이 실제로 계좌에 남는데 상태만 보면
-    사라진다(#1120 MEDIUM-1). 전량 체결로 집계에 들어간 attempt 는 여기 오지 않는다.
-    """
+    """집계에 들어가지 않았는데 브로커 쪽에 무언가 있었던 attempt."""
     if attempt["status"] == STATUS_FILLED:
         return False
     return (
@@ -588,13 +534,7 @@ def _needs_an_operators_eye(attempt: dict[str, Any]) -> bool:
 
 
 def _fifo(report: SymbolReport, fills: list[Fill]) -> None:
-    """FIFO 매칭. 가격을 모르는 체결은 손익에서 빼고 그 날을 «손익 모름» 으로 표시한다.
-
-    ⚠ **왕복·승은 닫힌 lot 조각마다 센다**(#1120 LOW, 문서화로 처리). 매수 둘을 한 번에
-    터는 매도 하나는 왕복 2 · 승 0~2 다 — 조각마다 그 lot 의 가격으로 손익을 보기
-    때문이고, 손익 합계는 어느 쪽으로 세든 같다. 지금 설정(주문 1주 고정, tenant 당
-    포지션 하나)에서는 조각과 매도 건수가 언제나 1:1 이라 두 셈이 같은 수를 낸다.
-    """
+    """FIFO 매칭. 가격을 모르는 체결은 손익에서 빼고 그 날을 «손익 모름» 으로 표시한다."""
     lots: deque[list[Any]] = deque()
     for fill in fills:
         row = report.days.setdefault(fill.trading_date, _DayRow())
@@ -626,8 +566,6 @@ def _fifo(report: SymbolReport, fills: list[Fill]) -> None:
                     lots.popleft()
             if remaining > 0:
                 report.unmatched_sell_fills.append(_fill_document(fill, remaining))
-        # 열린 수량은 «아직 짝이 없는 매수» 의 합이다. 짝 없는 매도를 여기서 빼면
-        # 수량이 음수가 되고 합계(열린 lot 의 합)와 어긋난다 — 그 매도는 따로 적는다.
         row.open_quantity_end = sum((lot[0] for lot in lots), Decimal(0))
     report.open_lots = [_fill_document(lot[2], lot[0]) for lot in lots if lot[0] > 0]
 
@@ -875,13 +813,8 @@ def run(
     config_dir: Path | None = None,
     as_json: bool = False,
 ) -> tuple[str, int]:
-    """(출력, 종료코드). 읽을 잎이 없거나 읽히지 않는 잎이 있으면 1.
-
-    ``leaf_paths`` 를 주면 탐색하지 않는다 — 상태판 설정도 그때는 읽지 않는다.
-    """
+    """(출력, 종료코드). 읽을 잎이 없거나 읽히지 않는 잎이 있으면 1."""
     if leaf_paths:
-        # 같은 잎을 두 번(혹은 심볼릭 링크로 돌려) 주면 그 잎의 체결이 두 번 집계된다
-        # — resolve 한 경로로 중복을 지우고, 남은 것은 준 순서를 지킨다(#1120 LOW).
         paths = []
         for raw in leaf_paths:
             resolved = Path(raw).expanduser().resolve()

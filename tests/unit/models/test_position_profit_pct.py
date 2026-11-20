@@ -42,7 +42,7 @@ class TestProfitPctAfterClose:
     """exit_price가 설정되면 current_price와 무관하게 exit_price 기준으로 계산."""
 
     def test_uses_exit_price_when_available(self):
-        pos = _make_position(100.0, 50.0, PositionSide.LONG)  # stale current_price
+        pos = _make_position(100.0, 50.0, PositionSide.LONG)
         pos.exit_price = 98.0
         pos.exit_time = datetime(2026, 4, 10, 15, 30)
         assert pos.profit_pct == pytest.approx(-2.0)
@@ -53,10 +53,9 @@ class TestProfitPctAfterClose:
         assert pos.profit_pct == pytest.approx(-5.0)
 
     def test_short_uses_exit_price(self):
-        pos = _make_position(100.0, 200.0, PositionSide.SHORT)  # stale current_price
+        pos = _make_position(100.0, 200.0, PositionSide.SHORT)
         pos.exit_price = 97.0
         pos.exit_time = datetime(2026, 4, 10, 15, 30)
-        # SHORT profit: (entry - exit)/entry = (100-97)/100 = 3%
         assert pos.profit_pct == pytest.approx(3.0)
 
 

@@ -55,8 +55,6 @@ class WitnessOrder:
     remaining: Decimal | None
     state: WitnessOrderState
     order_date: str | None = None
-    #: The broker's own 주문시각 for this order (HHMMSS), or ``None`` when it did not print one.
-    #: Only ever compared with other orders of the SAME observation, never with a local clock.
     order_time: str | None = None
 
 

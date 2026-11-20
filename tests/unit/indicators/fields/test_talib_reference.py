@@ -1,20 +1,4 @@
-"""``rsi`` and ``williams_r`` against TA-Lib, to the last bit.
-
-These two catalog ops have a published reference implementation, so the golden
-is that implementation rather than a number typed into this file: every bar of a
-fixed series must equal ``talib.RSI`` / ``talib.WILLR`` EXACTLY (``==``, no
-tolerance — a threshold written on the published integer can flip on a last-bit
-difference, which is how a 1-ULP "simplification" becomes a different trade).
-
-The one place the two deliberately disagree — a degenerate window, where TA-Lib
-returns ``0.0`` and the catalog op has no value — is asserted here too, on both
-sides, so the divergence stays declared rather than becoming a surprise.
-
-TA-Lib is an optional dependency (``shared/indicators/engine/talib_backend.py``
-degrades without it), so every test here skips when it is absent. The warmup,
-look-ahead, determinism and refusal properties do NOT depend on it; they are in
-``test_stateful_ops.py`` and ``test_schema_refusals.py`` and always run.
-"""
+"""``rsi`` and ``williams_r`` against TA-Lib, to the last bit."""
 
 from __future__ import annotations
 
@@ -30,8 +14,6 @@ from shared.indicators.fields import (
 
 from .conftest import bar, parsed
 
-#: Wilder's own worked example (New Concepts in Technical Trading Systems,
-#: the 14-day RSI table), the series TA-Lib's own test suite uses.
 CLOSES: tuple[float, ...] = (
     44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08,
     45.89, 46.03, 45.61, 46.28, 46.28, 46.00, 46.03, 46.41, 46.22, 45.64,
@@ -80,11 +62,7 @@ class TestRsiAgainstTalib:
 
     @pytest.mark.parametrize("period", [2, 5, 14, 20])
     def test_four_thousand_bars_equal_talib_rsi(self, period: int) -> None:
-        """Long enough that the Wilder recurrence's drift would show.
-
-        20 is the catalog's upper bound for this op, so the parity is pinned
-        across the whole domain a declaration can ask for.
-        """
+        """Long enough that the Wilder recurrence's drift would show."""
         talib = pytest.importorskip("talib")
         _, _, close = _random_bars()
         op = WilderRsi(period=period, field="rsi")
@@ -117,15 +95,7 @@ class TestWilliamsRAgainstTalib:
 
     @pytest.mark.parametrize("period", [2, 5, 14, 30, 120])
     def test_four_thousand_bars_equal_talib_willr(self, period: int) -> None:
-        """The test that pins the arithmetic ORDER.
-
-        Periods run past 20 here, unlike ``rsi``: this op's window forgets, so
-        the catalog puts no upper bound on it (`test_williams_r_has_no_upper_bound`).
-
-        The algebraically equal ``-100 * (hh - c) / (hh - ll)`` differs from
-        TA-Lib in the last bit on roughly a third of these bars, so this is what
-        keeps a future "simplification" from silently moving values.
-        """
+        """The test that pins the arithmetic ORDER."""
         talib = pytest.importorskip("talib")
         high, low, close = _random_bars()
         op = WilliamsR(period=period, field="wr")
@@ -168,18 +138,7 @@ class TestWilliamsRAgainstTalib:
 
 
 class TestDeclaredDivergenceOnADegenerateWindow:
-    """Where a window carries no information, measured on both sides.
-
-    The two ops reach "degenerate" differently and must be described
-    differently — getting this wrong was a review finding on PR #1119:
-
-    * ``williams_r`` has a finite window, so a lock really does flatten it:
-      TA-Lib reports ``0.0`` ("the close is at the top of the range", an entry
-      trigger out of nothing) and this op reports no value.
-    * ``rsi`` never forgets, so its ``None`` needs a series that has not moved
-      AT ALL. After earlier movement a lock leaves it holding the pre-lock
-      ratio, while TA-Lib eventually prints ``0.0`` — the opposite direction.
-    """
+    """Where a window carries no information, measured on both sides."""
 
     def test_talib_rsi_on_a_flat_series_is_zero(self) -> None:
         talib = pytest.importorskip("talib")
@@ -202,12 +161,7 @@ class TestDeclaredDivergenceOnADegenerateWindow:
         assert values == [None] * 40
 
     def test_a_lock_after_movement_holds_the_pre_lock_rsi(self) -> None:
-        """NOT ``None``: Wilder's averages decay toward 0 without reaching it.
-
-        30 moving bars then 400 locked ones, ``period=2``. This op reports
-        99.0196 on every one of the 400 — stale, but definite — so a tenant
-        cannot rely on RSI going missing to notice a lock.
-        """
+        """NOT ``None``: Wilder's averages decay toward 0 without reaching it."""
         closes = [100.0 + (index % 3) for index in range(30)] + [130.0] * 400
         op = WilderRsi(period=2, field="rsi")
         values = [op.update(close) for close in closes]
@@ -217,11 +171,7 @@ class TestDeclaredDivergenceOnADegenerateWindow:
         assert locked[0] == pytest.approx(99.01960785040595)
 
     def test_talib_flips_that_same_lock_to_zero(self) -> None:
-        """TA-Lib's ``TA_IS_ZERO`` epsilon (1e-8) crosses at bar 81 here.
-
-        The crossing bar is a property of a C constant, not of the data, so it
-        is build-dependent — which is exactly why this op does not copy it.
-        """
+        """TA-Lib's ``TA_IS_ZERO`` epsilon (1e-8) crosses at bar 81 here."""
         talib = pytest.importorskip("talib")
         closes = np.asarray(
             [100.0 + (index % 3) for index in range(30)] + [130.0] * 400, dtype=float
@@ -251,7 +201,7 @@ class TestDeclaredDivergenceOnADegenerateWindow:
         op = WilderRsi(period=3, field="rsi")
         for _ in range(10):
             assert op.update(100.0) is None
-        assert op.update(101.0) == 100.0  # one gain, no loss
+        assert op.update(101.0) == 100.0
 
     def test_williams_r_recovers_once_the_window_moves_again(self) -> None:
         op = WilliamsR(period=3, field="wr")

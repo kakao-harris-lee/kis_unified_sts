@@ -1,16 +1,6 @@
-"""``SharedAppKeyGate`` — one request rate for the tenant PROCESSES that share a KIS app key.
+"""``SharedAppKeyGate`` — one request rate for the tenant PROCESSES that share a KIS app key."""
 
-``KisAppKeyPacer`` spaces this process's requests. KIS's limit is per app key, so three
-tenants each pacing themselves at one request per 2 s can still put three requests into the
-same instant: the average is fine, the second is not. 2026-11-20 13:00–13:20 KST that showed
-up as `HTTP 500` on `VTTC0081R`/`VTTC8434R` — the KIS mock answers 500 for `EGW00201`
-(초당 거래건수 초과) as well as for an expired token — which made every witness read
-`NOT_CORROBORATED` and every CLOSE refuse at `quantity_basis ZERO_POSITION`.
-
-This gate is the app key's single queue across those processes: one grant instant in a file,
-read-modify-written under the shared exclusive lock, so no two requests on one app key are
-closer together than ``1 / max_rps`` no matter which process asked.
-"""
+# SAFETY: KIS 모의는 토큰 만료뿐 아니라 EGW00201 호출 한도에도 HTTP 500 을 준다 — 한도는 app key 단위로 프로세스를 가로지른다
 
 from __future__ import annotations
 
@@ -95,7 +85,5 @@ class SharedAppKeyGate:
             return None
         now = self._now()
         if last > now + self._min_interval_s:
-            # Dated past any grant this host could have made: a clock that moved, not a
-            # queue position. Treat it as no grant rather than stalling every tenant.
             return None
         return last

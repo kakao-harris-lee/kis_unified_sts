@@ -56,10 +56,5 @@ def test_runtime_code_does_not_import_clickhouse_clients_directly():
 
 
 def test_shared_db_package_removed():
-    """The ``shared/db`` ClickHouse compatibility tombstone was deleted outright.
-
-    It used to exist only to raise ``ClickHouseRemovedError`` for stale call
-    sites; once no code called it, the safer guarantee is that the package
-    itself is gone rather than trusting every caller to keep failing loudly.
-    """
+    """The ``shared/db`` ClickHouse compatibility tombstone was deleted outright."""
     assert not (REPO_ROOT / "shared" / "db").exists()

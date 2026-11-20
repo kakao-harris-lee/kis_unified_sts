@@ -1,13 +1,4 @@
-"""An orphan broker order this runtime could not have placed must not withhold its release.
-
-2026-11-20: 주식일별주문체결조회 is keyed by (account, symbol, trading date), not by leaf, so a
-leaf booted mid-day sees every order the account placed on its symbol that day — an archived
-leaf's morning round trips, an operator's manual flatten. Each arrived as an
-``ORPHAN_BROKER_ORDER`` whose unconditional veto over ``permits_capacity_release`` wedged every
-release for the rest of the day. These tests pin both halves of
-:func:`~tos_runtime.recon.service._orphans_may_be_ours`: the foreign order does not withhold,
-and each shape of "it could be ours" still does.
-"""
+"""An orphan broker order this runtime could not have placed must not withhold its release."""
 
 from __future__ import annotations
 
@@ -30,16 +21,11 @@ from tos_runtime.recon.service import ReconciliationClass, ReconciliationService
 ACCOUNT = "acct-1"
 INSTRUMENT = "000660"
 KEY = InstrumentKey(account=ACCOUNT, instrument=INSTRUMENT)
-#: The attempt under release, and the reservation it committed against.
 OURS = "a1"
 OUR_RESERVATION = "resv-a1"
 OUR_ODNO = "0000021560"
-#: Three of the six orders 000660's fresh leaf inherited on 2026-11-20 — two from the
-#: archived morning leaf, one the operator's manual market SELL that flattened the account.
 FOREIGN_ODNOS = ("0000008456", "0000008560", "0000019398")
 DATE = "20261120"
-#: 주문시각 as the broker stamps it. The foreign orders are the morning leaf's and the manual
-#: flatten's; this runtime's own order went in after the 12:48 reboot.
 FOREIGN_TIME = "093015"
 OUR_TIME = "125012"
 
@@ -146,11 +132,7 @@ def _order(
 
 
 def _ours(odno: str = OUR_ODNO) -> WitnessOrder:
-    """This runtime's own order, placed after the 12:48 reboot.
-
-    ``attempt_id`` is ``None`` because that is the real KIS shape — 주식일별주문체결조회 knows
-    only the ODNO, and the join to our attempt happens through the receipt that carries it.
-    """
+    """This runtime's own order, placed after the 12:48 reboot."""
     return _order(odno, order_time=OUR_TIME)
 
 
@@ -206,11 +188,7 @@ def test_orders_the_leaf_never_placed_do_not_withhold_its_release(fresh) -> None
 
 
 def test_an_orphan_carrying_our_own_execution_id_still_withholds(fresh) -> None:
-    """The duplicate-order shape: two broker orders answer to one attempt of ours.
-
-    Its broker stamp is our own order's, so the placement-time test is not what withholds here
-    — the shared execution id is.
-    """
+    """The duplicate-order shape: two broker orders answer to one attempt of ours."""
     report = _reconcile(fresh, orders=(_order(OUR_ODNO, order_time=OUR_TIME),))
 
     assert report.permits_capacity_release is False
@@ -299,13 +277,7 @@ def test_an_attempt_without_its_own_witness_order_withholds(fresh) -> None:
 
 
 def test_orders_alone_with_none_of_our_own_permit_nothing(fresh) -> None:
-    """With no order of our own in the observation there is nothing to be earlier THAN.
-
-    So no orphan is provably foreign, every one keeps its veto, and a report made only of
-    orphans permits nothing. This is also why the relaxation can never produce a vacuously
-    positive report: being foreign requires one of our own orders in the same observation, and
-    that order is an attempt whose own flags are in the tally.
-    """
+    """With no order of our own in the observation there is nothing to be earlier THAN."""
     service = ReconciliationService(
         _Rcl(),
         _Evidence(()),
@@ -337,11 +309,7 @@ def test_orders_alone_with_none_of_our_own_permit_nothing(fresh) -> None:
 def test_an_orphan_not_stamped_before_our_first_order_withholds(
     fresh, time_: str | None, label: str
 ) -> None:
-    """Only a STRICTLY earlier broker stamp proves an order is not ours.
-
-    This is what keeps an order that merely appeared mid-session — between the balance read and
-    the order read, or after a release snapshot expired — withholding the release.
-    """
+    """Only a STRICTLY earlier broker stamp proves an order is not ours."""
     report = _reconcile(fresh, orders=(_order("0000099999", order_time=time_),))
 
     assert report.permits_capacity_release is False, label
@@ -368,12 +336,7 @@ def test_an_orphan_not_stamped_before_our_first_order_withholds(
 def test_an_earlier_orphan_that_is_not_finished_withholds(
     fresh, state: WitnessOrderState, remaining: Decimal | None, label: str
 ) -> None:
-    """An earlier stamp proves the order is not ours; it does not prove the order is over (#1128).
-
-    The 10:00 limit BUY an archived leaf left hanging — or an operator's resting order — is
-    stamped before this leaf's first order and can still fill after the release, buying a lot no
-    reservation covers. Only a terminal state with an exhausted ``rmn_qty`` earns the exemption.
-    """
+    """An earlier stamp proves the order is not ours; it does not prove the order is over (#1128)."""
     report = _reconcile(
         fresh,
         orders=(_order("0000099999", state=state, remaining=remaining),),
@@ -401,11 +364,7 @@ def test_an_earlier_cancelled_orphan_with_nothing_left_does_not_withhold(fresh) 
 
 @pytest.mark.parametrize("other_date", ["20261119", "20261121"])
 def test_an_orphan_from_another_trading_date_withholds(fresh, other_date: str) -> None:
-    """A stamp from a different date is not compared with ours at all, so it proves nothing.
-
-    An earlier date looks earlier, but a leaf that has run for more than one session could own
-    it, and ``ord_tmd`` alone cannot say. Only a same-date, strictly-earlier stamp counts.
-    """
+    """A stamp from a different date is not compared with ours at all, so it proves nothing."""
     other_day = WitnessOrder(
         attempt_id=None,
         broker_execution_id="0000099999",

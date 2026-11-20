@@ -29,19 +29,13 @@ def _base() -> dict:
 def test_defaults_applied_when_omitted() -> None:
     ctx = build_market_context(**_base())
     assert isinstance(ctx, MarketContext)
-    assert ctx.atr_90th_percentile == 3.0  # -> atr_14 * 1.5
-    assert ctx.current_spread_ticks == 1.0  # -> 1.0
+    assert ctx.atr_90th_percentile == 3.0
+    assert ctx.current_spread_ticks == 1.0
     assert ctx.scheduled_events == []
 
 
 def test_vwap_is_required_and_has_no_fallback() -> None:
-    """Omitting vwap raises rather than silently defaulting to current_price.
-
-    The retired ``vwap := current_price`` fallback made Setup D's
-    z = (price - vwap)/atr collapse to 0 on any producer that forgot the field
-    — a silent inert, not a degraded value. Both live producers supply a real
-    session VWAP now, so the omission must fail loudly.
-    """
+    """Omitting vwap raises rather than silently defaulting to current_price."""
     without_vwap = {k: v for k, v in _base().items() if k != "vwap"}
     with pytest.raises(TypeError):
         build_market_context(**without_vwap)

@@ -67,28 +67,6 @@ def test_storage_config_rejects_clickhouse_market_data_source(monkeypatch):
         StorageConfig.from_yaml()
 
 
-# ---------------------------------------------------------------------------
-# One truthy set for every env flag (#847)
-# ---------------------------------------------------------------------------
-#
-# The repo had FOUR env-boolean helpers with hand-written truthy tuples, and
-# they had already drifted: `services/stock_strategy/daemon.py` additionally
-# accepted "y", and `tests/support/live_infra.py` did NOT accept "on", so
-# `KIS_RUN_LIVE_INFRA_TESTS=on` lifted hermeticity while leaving the live_infra
-# tests skipped. Three of those four went with the legacy runtime (L1-L7), but
-# a repo-wide scan for the literal found two the issue never listed:
-# `shared/config/base.py` (same set) and `tests/integration/test_redis_tls.py`
-# (a second reading of KIS_RUN_LIVE_INFRA_TESTS that dropped "on" -- the very
-# failure live_infra.py's docstring warns about, re-created one directory over).
-# All of them now read one set. These pin that it stays that way.
-#
-# `shared/models/stream_models.py::_parse_bool` keeps its own, wider set on
-# purpose and is NOT unified here: it parses broker STREAM payloads, not env
-# vars, where "Y"/"N" is the KIS field convention, and it is tri-state with a
-# matching falsy set. Folding it into the env set would narrow what the feed
-# parses -- the "동작이 좁아진다" risk #847 itself flagged.
-
-
 def test_service_config_base_env_bool_reads_the_shared_truthy_set():
     """`ServiceConfigBase._parse_env_value` coerces bools by the shared set."""
     from shared.config import TRUTHY_VALUES
@@ -103,19 +81,7 @@ def test_service_config_base_env_bool_reads_the_shared_truthy_set():
 
 
 def test_redis_tls_module_shares_the_one_live_infra_reading():
-    """The two readings of KIS_RUN_LIVE_INFRA_TESTS are now the same function.
-
-    The input that used to split them is "on": `tests/conftest.py` dropped the
-    hermetic session and loaded real credentials, while the TLS module's own
-    copy skipped every test in it.
-
-    Read as SOURCE, never imported. `tests/integration/test_redis_tls.py` carries
-    five module-level `@pytest.mark.skipif(not redis_available(), ...)`, and a
-    skipif argument is evaluated at import time -- so importing that module from
-    this unit test would make up to five real Redis connections (1s socket
-    timeout each) whenever KIS_RUN_LIVE_INFRA_TESTS is set and Redis is down.
-    A unit test must not reach for the network to check a fact about a file.
-    """
+    """The two readings of KIS_RUN_LIVE_INFRA_TESTS are now the same function."""
     import ast
     from pathlib import Path
 
@@ -151,13 +117,7 @@ def test_redis_tls_module_shares_the_one_live_infra_reading():
 
 @pytest.mark.parametrize("value", ["on", "ON", "1", "true", "yes", " 1 "])
 def test_live_infra_reading_accepts_on_like_the_hermetic_gate(monkeypatch, value):
-    """Pins the concrete failing input from #847 for every truthy token.
-
-    Exercises the shared helper itself, which the test above proves is the one
-    `test_redis_tls.py` now calls -- so this stays a unit test and makes no
-    Redis connection. `" 1 "` is here because routing the TLS module through
-    `env_flag` also gained it `.strip()`: the old local copy read it as False.
-    """
+    """Pins the concrete failing input from #847 for every truthy token."""
     from tests.support.live_infra import LIVE_INFRA_ENV, live_infra_enabled
 
     monkeypatch.setenv(LIVE_INFRA_ENV, value)
@@ -195,12 +155,7 @@ def test_storage_env_bool_is_false_outside_the_shared_truthy_set(monkeypatch, va
 
 @pytest.mark.parametrize("unset_value", [None, ""])
 def test_storage_env_bool_keeps_its_tri_state(monkeypatch, unset_value):
-    """Unset and empty stay `None` — the reason this is not `shared.config.env_flag`.
-
-    `StorageConfig.apply_env_overrides` only overrides `sqlite.wal` when this
-    returns a bool, so folding "unset" into `False` (what `env_flag` does)
-    would silently turn WAL off for every process that never set the variable.
-    """
+    """Unset and empty stay `None` — the reason this is not `shared.config.env_flag`."""
     from shared.storage.config import _env_bool
 
     if unset_value is None:

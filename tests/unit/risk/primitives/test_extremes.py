@@ -1,23 +1,4 @@
-"""Unit + golden tests for ``shared.risk.primitives.extremes``.
-
-Test contract (post P4-b): ``extreme_since_entry`` is pinned to **independent
-golden values** — ``max(high, current)`` for LONG, ``min(low, current)`` for
-SHORT, with the ``highest_price == 0.0`` / ``lowest_price == inf`` unset
-sentinels falling back to ``entry_price``.
-
-    Why not differential vs the 5 legacy ``_get_extreme_since_entry`` copies
-    (``atr_dynamic``, ``mean_reversion_exit``, ``momentum_decay``,
-    ``three_stage``, ``williams_r_exit``)? P4-b rewired those copies to
-    delegate to this primitive, so ``primitive(x) == LegacyClass.
-    _get_extreme_since_entry(x)`` became a tautology with no independent
-    cross-check. The grids below keep the same input width but compare against
-    the hand-derived min/max so a max↔min or fallback regression is caught.
-
-``builder_strategy_exit`` / ``trix_golden_exit`` keep extremes in private
-per-position dicts (not ``Position`` attributes) and are intentionally out of
-scope. ``technical_consensus_exit._get_high_since_entry`` lacks the SHORT
-``inf -> entry_price`` fallback and is likewise not part of this contract.
-"""
+"""Unit + golden tests for ``shared.risk.primitives.extremes``."""
 
 from __future__ import annotations
 
@@ -107,14 +88,9 @@ class TestExtremeSinceEntryGolden:
         assert extreme_since_entry(pos, current) == min(low, current)
 
     def test_unset_extremes_golden(self) -> None:
-        """Unset sentinels (0.0 high / inf low) fall back to entry_price.
-
-        entry == 100: LONG → ``max(100, current)``, SHORT → ``min(100, current)``.
-        Expected values are independent literals, not read from any exit copy.
-        """
+        """Unset sentinels (0.0 high / inf low) fall back to entry_price."""
         long_pos = make_position(PositionSide.LONG, 100.0, highest_price=0.0)
         short_pos = make_position(PositionSide.SHORT, 100.0, lowest_price=float("inf"))
-        # (current, long_expected = max(100, current), short_expected = min(100, current))
         cases = [
             (95.0, 100.0, 95.0),
             (100.0, 100.0, 100.0),

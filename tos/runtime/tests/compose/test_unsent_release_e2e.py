@@ -326,8 +326,7 @@ def test_a_raising_release_pass_still_lets_the_operator_projection_publish(
 
 
 def _refused_open(runtime: Any, custody_root: Path) -> str:
-    """2026-11-20 incident shape: item 12's tradability fact is None, so the gateway refuses the
-    OPEN at step 15 — after the hand-off, before seal, claim, and any transport call."""
+    """2026-11-20 incident shape: item 12's tradability fact is None, so the gateway refuses the"""
     _reach_trusted(runtime)
     resolver = runtime.context_resolver
     original = resolver.tradability_facts_current_reader
@@ -388,9 +387,7 @@ def test_a_crash_before_the_refused_release_is_released_at_boot_and_replays_clea
     custody_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Die after the refused flow's receipt and before the release: the boot pass reaches the same
-    answer from evidence, and a third boot replays the discard row without divergence.
-    """
+    """Die after the refused flow's receipt and before the release: the boot pass reaches the same"""
     monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
     turn_the_venue_ledger_on(config_dir_with_risk_state)
     runtime = _boot_with_the_production_risk_service(

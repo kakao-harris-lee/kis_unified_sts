@@ -20,10 +20,6 @@ __all__ = [
 
 _BOUNDARY_SEARCH_HORIZON_DAYS = 8
 
-# Calendar days searched per trading date asked for by `recent_trading_dates`. It is a SEARCH
-# bound, not a policy threshold: how far back to look is the caller's configured count. Seven
-# gives every requested date a whole week of closures to survive (KRX's longest run of
-# consecutive non-trading days is five), so the walk ends on the count, not on this.
 _TRADING_DAY_SEARCH_SPAN_DAYS = 7
 
 _SOURCE = "calendar"
@@ -38,14 +34,7 @@ def _to_unix_ms(instant_local: datetime.datetime) -> int:
 
 
 def local_time_at(instant_unix_ms: int, cfg: CalendarConfig) -> str:
-    """The calendar timezone's wall time (``HHMMSS``) at ``instant_unix_ms`` (issue #1127).
-
-    The one comparable frame for a broker stamp the broker prints in its own local time: KIS
-    prints 주문시각 as ``HHMMSS`` with no zone, and this calendar's ``tz_id`` is the zone that
-    is (``config/tos_runtime/*/calendar.yaml`` — Asia/Seoul here, config, never a constant).
-    It is a wall time, not a trading date: unlike :func:`trading_date_at` it answers outside a
-    session window too, because a send's own start instant is a fact regardless of phase.
-    """
+    """The calendar timezone's wall time (``HHMMSS``) at ``instant_unix_ms`` (issue #1127)."""
     tz = zoneinfo.ZoneInfo(cfg.tz_id)
     return _to_local(instant_unix_ms, tz).strftime("%H%M%S")
 

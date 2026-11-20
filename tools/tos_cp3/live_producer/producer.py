@@ -107,8 +107,6 @@ class LiveProducer:
     window: SessionWindow = field(init=False)
     strategy: StrategyInputs = field(init=False)
     document: FieldsDocument = field(init=False)
-    #: Digest of the declaration's BYTES, as the lineage records it — set by
-    #: :meth:`_load_declaration` from the read that bound it (#1068 LOW 2).
     fields_yaml_sha256: str = field(init=False)
     anchor: OpenAnchor = field(init=False)
     contract_spec: Any = field(init=False)
@@ -248,10 +246,6 @@ class LiveProducer:
         document, record = load_declaration(
             self.tenant_tree, strategy=self.strategy, anchor=self.anchor
         )
-        # #1068 review LOW 2: the lineage digest is the one THIS read computed.
-        # Re-hashing the file at lineage time would hash it as it is THEN,
-        # which is not necessarily the bytes the bind above accepted — and it
-        # would read the declaration a second time to say so.
         self.fields_yaml_sha256 = str(record["fields_yaml_sha256"])
         self.log.event(record)
         return document

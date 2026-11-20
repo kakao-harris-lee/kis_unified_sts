@@ -1,22 +1,4 @@
-"""Recover the trading date a dateless ACK row never carried, from the broker's own order rows.
-
-Issue #1096 (incident 2026-11-13): one ``EGRESS_RESULT_CONSUMED`` ACK row was written without a
-``trading_date`` key, so :meth:`KisMockFillObserver._trackable` dropped it from the tracked set on
-every boot, its entry reservation stayed ``COMMITTED_UNBOUND`` forever, and the ARE limit stayed
-saturated. #1074 stamps the date on NEW ACKs; evidence is append-only, so the row already written
-can only be repaired by asking the broker. This module does that, GET-only.
-
-The scan reads ONE trading date per FETCH (review-1105 M1/M2: a whole-window FETCH ran ~8.2 s,
-which aged the release snapshot past its 6 s bound and blocked the held-position refresh past its
-20 s one), accumulating each date's rows here until the configured window is complete. Only then
-is a verdict reached, and only an EXACTLY-ONE-date match recovers the ACK; zero, more than one,
-or any failed read inside the window keeps the existing fail-closed refusal.
-
-A match is more than "same ODNO": a KIS mock ODNO is a daily counter, so the same digits recur on
-other days. A candidate row must also name this instrument, carry the attempt's own sealed
-outbound quantity, and fall on a day NOT already claimed by a dated receipt — otherwise the scan
-could bind this reservation to another attempt's order and orphan that attempt (review-1105 M3).
-"""
+"""Recover the trading date a dateless ACK row never carried, from the broker's own order rows."""
 
 from __future__ import annotations
 
@@ -48,11 +30,8 @@ RECOVERED = "recovered"
 NO_MATCH = "no_match"
 AMBIGUOUS = "ambiguous"
 
-#: One dateless ACK the scan looks for: ``(attempt_id, broker_execution_id)``.
 UndatedAck = tuple[str, str]
 
-#: ``(odno_key, trading_date, attempt_id)`` for every DATED receipt. A day one of these claims is
-#: not a recovery candidate for a DIFFERENT attempt — the attempt's own rows never veto it.
 ClaimedOrderDays = frozenset[tuple[str, str, str]]
 
 Recorder = Callable[[str, dict[str, Any]], None]

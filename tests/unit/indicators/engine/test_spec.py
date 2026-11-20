@@ -51,7 +51,7 @@ class TestIndicatorSpec:
         b = IndicatorSpec.create("rsi", {"period": 14})
         c = IndicatorSpec.create("rsi", {"period": 21})
         seen = {a: 1}
-        assert b in seen  # equal spec dedups
+        assert b in seen
         assert c not in seen
 
     def test_timeframe_participates_in_identity(self) -> None:
@@ -87,7 +87,7 @@ class TestOHLCVWindow:
                 open=[1, 2],
                 high=[2, 3],
                 low=[0, 1],
-                close=[1, 2, 3],  # longer
+                close=[1, 2, 3],
                 volume=[10, 20],
             )
 
@@ -114,10 +114,9 @@ class TestWindowContentToken:
 
     def test_token_is_cached_on_the_window(self) -> None:
         window = self._window([1.0, 2.0, 3.0])
-        assert window.content_token() is window.content_token()  # computed once
+        assert window.content_token() is window.content_token()
 
     def test_column_boundary_is_unambiguous(self) -> None:
-        # Same flattened bytes, different column split -> different token.
         a = OHLCVWindow.from_sequences(
             open=[1.0, 2.0],
             high=[3.0, 4.0],

@@ -62,13 +62,7 @@ def _decimal_or_none(value: Any) -> Decimal | None:
 
 
 def _finite_decimal_or_none(value: Any) -> Decimal | None:
-    """:func:`_decimal_or_none`, but ``NaN``/``sNaN``/``Infinity`` is also ``None``.
-
-    Only the two price fields use this. ``Decimal("NaN")`` parses, so a broker string of
-    that shape would travel into evidence and raise ``InvalidOperation`` the first time a
-    reader compared it. The quantity fields keep the older coercion untouched — their
-    ``_fill_state`` comparisons are a decision path this change may not alter.
-    """
+    """:func:`_decimal_or_none`, but ``NaN``/``sNaN``/``Infinity`` is also ``None``."""
     parsed = _decimal_or_none(value)
     return parsed if parsed is not None and parsed.is_finite() else None
 
@@ -162,10 +156,6 @@ def _read_ctx_key(body: Mapping[str, Any], suffix: str, kind: str) -> str:
     return str(body.get(name) or "").strip()
 
 
-#: What a non-200 body may say about itself: KIS's own fault code and text, never a header,
-#: a token or a key. The KIS mock answers HTTP 500 both for an expired token and for
-#: `EGW00201` (초당 거래건수 초과), and on 2026-11-20 the two were indistinguishable from the
-#: refusal this witness recorded — `NOT_CORROBORATED … returned HTTP 500`, nothing more.
 _FAULT_FIELDS = ("msg_cd", "msg1", "rt_cd", "error_code", "error_description")
 _FAULT_MAX_CHARS = 200
 
@@ -244,24 +234,9 @@ class KisOrderRow:
     rmn_qty: Decimal | None
     rjct_qty: Decimal | None
     cancelled: bool
-    #: 평균 체결가 ``avg_prvs`` and 총 체결금액 ``tot_ccld_amt``, exactly as the broker
-    #: printed them: WHOLE KRW on the wire, NOT the tenant tree's ``_runtime.price_scale``
-    #: representation (the seal scales the other way — ORD_UNPR = price / price_scale).
-    #: Observation only: no witness/fill/release decision reads either, and an absent,
-    #: blank, unparseable, or non-finite (``NaN``/``Infinity``) value is ``None`` rather
-    #: than a refused row.
     avg_prvs: Decimal | None = None
     tot_ccld_amt: Decimal | None = None
-    #: 주문시각 ``ord_tmd`` (HHMMSS, 1-second resolution) as the broker printed it, or ``None``
-    #: when absent or not HHMMSS-shaped. It is an ORDER PLACEMENT time, NOT a fill timestamp
-    #: (measured: ``tests/tools/test_broker_probes_p11_fill.py``), and the only thing that reads
-    #: it compares it with other rows of the SAME response — never with a local clock. It
-    #: defaults to ``None`` so a row built without one is simply unprovable, never an error.
     ord_tmd: str | None = None
-    #: 매도매수구분코드 ``sll_buy_dvsn_cd`` as the broker printed it (``01`` 매도 / ``02``
-    #: 매수), or ``None`` when the row carried none. Read only by the uncertain-send
-    #: reconciliation, which uses it to refuse a row on the opposite side of the send it is
-    #: looking for; an absent code is "unknown", never a refusal.
     sll_buy_dvsn_cd: str | None = None
 
     @classmethod

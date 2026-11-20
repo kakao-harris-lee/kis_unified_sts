@@ -110,13 +110,7 @@ class SqliteEvidenceReceiptReader:
         return frozenset(attempts)
 
     def _never_accepted_attempts(self) -> frozenset[str]:
-        """Attempts a completed uncertain-send reconciliation proved were never accepted.
-
-        Their receipt is a blind one — a timeout or a 500, naming no order — and the broker's
-        own history has since shown there is no order for it to join. Leaving it in scope would
-        classify the attempt ``STALE_RESERVATION`` on every later pass and block every other
-        release in the same scope forever (2026-11-20 (e)).
-        """
+        """Attempts a completed uncertain-send reconciliation proved were never accepted."""
         attempts: set[str] = set()
         for row in self._read_kind(frozenset({_DISCARDED_UNSENT_KIND})):
             attempt_id = row.get("attempt_id")

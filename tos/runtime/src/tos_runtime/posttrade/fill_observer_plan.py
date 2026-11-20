@@ -106,36 +106,7 @@ def due_recovery_attempts(source: _PlanSource, now: int) -> tuple[str, ...]:
 
 
 def idle_read_delays_the_held_refresh(source: _PlanSource, now: int) -> bool:
-    """Is the next holdings refresh too close to spend an idle paced GET before it? (#1107 L1)
-
-    An idle read (the #1096 ack-date scan, the 11-20 uncertain-send read) is planned only into a
-    FETCH with no fill, recovery or held-position work — but it is NOT ``risk_only``, so once the
-    worker holds it nothing preempts it, and its GET takes an app-key pacing slot. The next
-    holdings refresh therefore starts up to ``app_key_min_send_interval_ms`` (the pacer's spacing)
-    plus ``poll_deadline_ms`` (this FETCH's own bound) late, and the holdings proof's
-    ``held_position_max_age_ms`` carries only ~800 ms of margin over its poll period
-    (``fill_observer.yaml``): a CLOSE proposed in the hole reads ``PROOF_UNAVAILABLE`` after
-    spending its one standing-approval use.
-
-    So an idle read waits until that reserve fits. ``None`` pacing (no transport wired) or no
-    configured holdings poll means there is nothing to delay. A tenant that has never polled
-    holdings (``_last_held_position_poll_ms is None`` — the RCL has granted no CLOSE-observation
-    purpose yet) likewise has no proof to invalidate: its FIRST proof has no predecessor whose
-    validity window must overlap, so an idle read may precede it.
-
-    ⚠ **The reserve is only owed to a refresh that is actually coming** (review-1132 r1 HIGH).
-    ``_last_held_position_poll_ms`` advances only on a pass that PLANNED a refresh, and planning
-    one needs :func:`_held_position_is_eligible` — exactly one ``POSITION_CONSUMED`` reservation
-    in the RCL. The moment that stops holding (the CLOSE went out and is uncertain, the
-    reservation was released, a second one appeared) the watermark freezes, ``remaining`` goes
-    negative, and a guard that only did the arithmetic would answer "too close" forever: with
-    interval 36000 / deadline 4000 / pacing 2000, a tenant that polled at t=0 and lost
-    eligibility would plan no ack-date scan and no uncertain-send read for the rest of the
-    process — the two recovery paths that exist to unstick exactly that kind of tenant. So a
-    watermark that is already past its interval (no refresh is pending) and an ineligible tenant
-    (no refresh is coming) both answer False. The eligibility read is last: the cheap arithmetic
-    rules out every wide-open window first, so the RCL is consulted only in the tight one.
-    """
+    """Is the next holdings refresh too close to spend an idle paced GET before it? (#1107 L1)"""
     reserve = source.app_key_min_send_interval_ms
     interval = source.config.held_position_poll_interval_ms
     last = source._last_held_position_poll_ms
@@ -167,15 +138,7 @@ def _ack_date_scope(source: _PlanSource, date: str) -> tuple[str, WitnessScope]:
 def due_ack_date_scan(
     source: _PlanSource, now: int, *, idle: bool
 ) -> tuple[str, WitnessScope] | None:
-    """Issue #1096: the ONE scan date this FETCH may read, or ``None``.
-
-    ``idle`` is the whole of M1/M2's fix: the scan never shares a FETCH with fill, recovery, or
-    held-position work, so it can neither age a release snapshot nor defer a holdings refresh. A
-    window already open is continued one date at a time; a new one starts at the configured
-    cadence and is anchored so ``today`` advancing mid-scan cannot change the dates being judged.
-    Each date is its own paced GET, so #1107 L1's reserve is checked for the continuation too:
-    see :func:`idle_read_delays_the_held_refresh`.
-    """
+    """Issue #1096: the ONE scan date this FETCH may read, or ``None``."""
     if (
         source.config.ack_date_recovery_lookback_trading_days is None
         or source.trading_dates_back is None
@@ -211,15 +174,7 @@ def due_ack_date_scan(
 def due_uncertain_send_read(
     source: _PlanSource, now: int, *, idle: bool
 ) -> tuple[str, WitnessScope] | None:
-    """The uncertain send's own trading date to read this FETCH, or ``None`` (11-20 d/e).
-
-    ``idle`` is the same discipline issue #1096's scan follows: the read never shares a FETCH
-    with fill, recovery or held-position work, so it can neither age a release snapshot nor
-    defer a holdings refresh. It takes the same #1107 L1 reserve before the next holdings
-    refresh (:func:`idle_read_delays_the_held_refresh`) — one paced GET is one paced GET
-    whichever idle read spends it. An ack-date window already open finishes first — one scan at
-    a time keeps either read's cadence its own.
-    """
+    """The uncertain send's own trading date to read this FETCH, or ``None`` (11-20 d/e)."""
     source._uncertain_send_due = None
     if (
         source.uncertain_send is None

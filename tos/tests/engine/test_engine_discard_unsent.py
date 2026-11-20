@@ -388,9 +388,7 @@ def _quarantined_ledger(
 def test_a_never_accepted_discard_takes_the_quarantined_projection(
     kind: EgressResultKind,
 ) -> None:
-    """2026-11-20 (e): the broker's own order history proved no such order exists. This is the
-    ONE discard whose attempt already consumed a result — every one of them said UNKNOWN.
-    """
+    """2026-11-20 (e): the broker's own order history proved no such order exists. This is the"""
     ledger, key = _quarantined_ledger(kind)
     held = outstanding(ledger, key)
     assert held.capacity_state is CapacityState.QUARANTINED_UNKNOWN
@@ -420,8 +418,7 @@ def test_a_never_accepted_discard_is_refused_before_the_quarantine() -> None:
 
 
 def test_an_acknowledged_order_that_went_blind_is_never_discarded() -> None:
-    """The broker NAMED this order once. A later blind answer does not unsay it, so the
-    never-accepted discard must refuse even though the projection now reads UNKNOWN."""
+    """The broker NAMED this order once. A later blind answer does not unsay it, so the"""
     ledger, key = _quarantined_ledger(EgressResultKind.ACK, EgressResultKind.TIMEOUT)
     before = outstanding(ledger, key)
     assert before.capacity_state is CapacityState.QUARANTINED_UNKNOWN

@@ -1,18 +1,4 @@
-"""``SharedTokenCache`` — one KIS app key's OAuth token, shared between tenant processes.
-
-KIS issues at most one token per minute per app key, and the three CP-3 stock tenants
-(005930 · 000660 · 005380) are three processes holding ONE 모의투자 app key. Each held its
-token in its own memory and issued its own at first use, so their boots collided: on
-2026-11-20 12:50 KST 000660 and 005380 got tokens and 005930 got ``TokenResponseError`` on
-every attempt (then ``TokenStale`` inside its own 60 s cooldown), which left its broker facts
-``None`` and every signal at ``SEND_REFUSED``.
-
-This cache makes those processes share one token: a JSON file, read and written only under an
-exclusive ``fcntl.flock`` on a sibling lock file, so the first process to want a token issues
-it while the others wait and then read what it wrote. Entries are keyed by the sha256 of the
-app key — the key itself is never written here, and neither the token nor the key is ever put
-in an exception message or an evidence row.
-"""
+"""``SharedTokenCache`` — one KIS app key's OAuth token, shared between tenant processes."""
 
 from __future__ import annotations
 
@@ -39,8 +25,6 @@ __all__ = [
 ]
 
 _CACHE_VERSION = 1
-# An entry dated this far into the future is not an entry this host wrote a moment ago; it is
-# a clock that moved. Treat it as unusable rather than trusting its remaining lifetime.
 _FUTURE_TOLERANCE_S = 60
 
 

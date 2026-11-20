@@ -110,9 +110,6 @@ _DISCARDABLE_CAPACITY: frozenset[CapacityState] = frozenset(
 )
 
 
-#: The two kinds whose application establishes no knowledge at all: the reservation they
-#: quarantine is the one an :data:`UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED` discard
-#: may still take, because the broker's own order history has since replaced that absence.
 _UNCERTAIN_RESULT_KINDS: frozenset[EgressResultKind] = frozenset(
     {EgressResultKind.UNKNOWN, EgressResultKind.TIMEOUT}
 )
@@ -121,8 +118,6 @@ _UNCERTAIN_RESULT_KINDS: frozenset[EgressResultKind] = frozenset(
 def _discardable(reservation: ProvisionalReservation, ref: UnsentDiscardRef) -> bool:
     """Whether ``ref``'s reason admits discarding ``reservation`` (the three never-sent shapes)."""
     if ref.reason is UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED:
-        # The send reached the transport and came back without an order id, so the sequencer
-        # quarantined this exact attempt. Only the attempt the discard names may be taken.
         return (
             ref.attempt_id is not None
             and reservation.attempt_id == ref.attempt_id
@@ -130,8 +125,6 @@ def _discardable(reservation: ProvisionalReservation, ref: UnsentDiscardRef) -> 
             and reservation.capacity_state is CapacityState.QUARANTINED_UNKNOWN
         )
     if ref.reason is UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT:
-        # The gateway refused this exact attempt before any transport call: the sequencer
-        # already projected POTENTIALLY_LIVE, and nothing has been applied to it since.
         return (
             ref.attempt_id is not None
             and reservation.attempt_id == ref.attempt_id
@@ -149,12 +142,7 @@ def _results_admit_discard(
     reservation: ProvisionalReservation,
     signatures: tuple[tuple[object, ...], ...],
 ) -> bool:
-    """Whether the results already applied to ``reservation``'s attempt still admit a discard.
-
-    A reservation that has consumed a result is normally past discarding. The one exception is
-    the broker-proved never-accepted discard: every result applied to it said UNKNOWN or
-    TIMEOUT, which is the ABSENCE of knowledge the broker's order history has since replaced.
-    """
+    """Whether the results already applied to ``reservation``'s attempt still admit a discard."""
     if reservation.attempt_id is None:
         return True
     mine = [

@@ -1,4 +1,3 @@
-# tests/unit/decision/test_signal.py
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -40,7 +39,6 @@ def test_signal_to_stream_dict_roundtrip():
     fields = s.to_stream_dict()
     assert fields["setup_type"] == "A_gap_reversion"
     assert fields["direction"] == "long"
-    # reason_tags serialized as JSON
     import json
 
     assert json.loads(fields["reason_tags_json"]) == ["sp500_gap_+1.20%"]

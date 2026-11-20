@@ -1,7 +1,4 @@
-"""Unit tests for the NumPy backend + multi-backend routing.
-
-Pure NumPy — runs without TA-Lib. Expected values are hand-computed.
-"""
+"""Unit tests for the NumPy backend + multi-backend routing."""
 
 from __future__ import annotations
 
@@ -32,7 +29,6 @@ def test_supported_ids(backend: NumpyBackend) -> None:
 
 
 def test_volume_acceleration_second_difference(backend: NumpyBackend) -> None:
-    # volume = [1, 2, 4, 7] -> 2nd diff at last = 7 - 2*4 + 2 = 1.
     window = OHLCVWindow.from_sequences(
         open=[1, 1, 1, 1],
         high=[1, 1, 1, 1],
@@ -64,8 +60,6 @@ def test_ichimoku_multi_output_and_cloud_bounds(backend: NumpyBackend) -> None:
 
 
 def test_vwap_cumulative(backend: NumpyBackend) -> None:
-    # tp == close (high==low==close); volume all 1 ->
-    # vwap = cumsum(close)/count = [10, 15, 20].
     window = OHLCVWindow.from_sequences(
         open=[10, 20, 30],
         high=[10, 20, 30],
@@ -85,15 +79,11 @@ def test_vwap_handles_zero_leading_volume(backend: NumpyBackend) -> None:
         close=[10, 20],
         volume=[0, 2],
     )
-    # first bar cum_v==0 -> NaN (dropped); second: (10*0 + 20*2)/2 = 20.
     flat = backend.compute(IndicatorSpec.create("vwap"), window).flat_latest()
     assert flat["vwap"] == pytest.approx(20.0)
 
 
 def test_rvol_ratio(backend: NumpyBackend) -> None:
-    # volume = [1,1,1,1,2], short=2, long=4.
-    # last short mean = (1+2)/2 = 1.5; last long mean = (1+1+1+2)/4 = 1.25.
-    # rvol = 1.5 / 1.25 = 1.2.
     window = OHLCVWindow.from_sequences(
         open=[1, 1, 1, 1, 2],
         high=[1, 1, 1, 1, 2],
@@ -111,13 +101,11 @@ def test_rvol_short_window_yields_no_value(backend: NumpyBackend) -> None:
         open=[1, 1], high=[1, 1], low=[1, 1], close=[1, 1], volume=[1, 1]
     )
     spec = IndicatorSpec.create("rvol", {"short_window": 2, "long_window": 20})
-    # long window never fills -> all NaN -> dropped.
     assert backend.compute(spec, window).flat_latest() == {}
 
 
 def test_default_engine_routes_across_backends() -> None:
     engine = default_engine()
-    # NumPy backend always registers -> vwap/rvol resolvable.
     assert engine.resolve("vwap").name == "numpy"
     assert "vwap" in engine.supported_ids()
     assert "rvol" in engine.supported_ids()
@@ -126,6 +114,5 @@ def test_default_engine_routes_across_backends() -> None:
 def test_default_engine_prefers_talib_for_standard_ids() -> None:
     pytest.importorskip("talib")
     engine = default_engine()
-    # TA-Lib registered first -> wins for ids it covers.
     assert engine.resolve("rsi").name == "talib"
     assert engine.resolve("atr").name == "talib"

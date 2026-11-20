@@ -1,12 +1,4 @@
-"""Golden pin: stateful VWAP / VolumeAcceleration relocation is value-preserving.
-
-``stateful_volume_golden.json`` captures a live tick sequence through
-``VWAPCalculator`` (incl. a KST date-boundary reset) and
-``VolumeAccelerationCalculator`` BEFORE they were relocated from
-``shared/indicators/volume.py`` into ``shared/indicators/engine/stateful.py``.
-Asserts the relocated classes reproduce every per-tick result bit-for-bit, and
-that the volume.py re-export + the engine export both resolve to them.
-"""
+"""Golden pin: stateful VWAP / VolumeAcceleration relocation is value-preserving."""
 
 from __future__ import annotations
 
@@ -31,7 +23,6 @@ _GOLDEN = json.loads(
 
 
 def test_reexport_is_the_engine_class() -> None:
-    # backward-compat: volume.py re-exports the very same classes
     assert VWAPReexport is VWAPCalculator
     assert VolAccelReexport is VolumeAccelerationCalculator
 

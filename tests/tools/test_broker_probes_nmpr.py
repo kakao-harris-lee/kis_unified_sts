@@ -1,21 +1,4 @@
-"""Unit tests for the P-NMPR probe (``tools/broker_probes``).
-
-P-NMPR is an order-emitting probe: a mistake here places real 모의투자 orders.
-These tests therefore guard the two properties that cannot be checked by reading
-the code at review time:
-
-1. **The dry-run path opens no socket.** Both transports the probe could use
-   (``MockTradingClient`` and ``common.http_json``) are replaced with sentinels
-   that raise on contact, so a regression that moved the ``--confirm`` gate would
-   fail loudly instead of quietly reaching the broker.
-2. **The A/B arms differ in exactly the two fields under test.** If any other
-   field drifted between the arms, an observed difference would no longer be
-   attributable to the blank-vs-explicit question the probe exists to answer.
-
-Registry metadata gets the same treatment, because a wrong ``instance_fields``
-entry does not fail at runtime — it silently mis-files evidence against a
-capability the probe never measured (runbook §4.1).
-"""
+"""Unit tests for the P-NMPR probe (``tools/broker_probes``)."""
 
 from __future__ import annotations
 
@@ -83,11 +66,6 @@ def _client(creds: ProbeCredentials) -> MockTradingClient:
     return MockTradingClient(creds, auth_manager=object(), run=run)
 
 
-# ---------------------------------------------------------------------------
-# registry metadata
-# ---------------------------------------------------------------------------
-
-
 def test_registry_entry_is_order_emitting_and_confirm_gated() -> None:
     spec = get("P-NMPR")
     assert spec.kind == "ORDER"
@@ -122,8 +100,7 @@ def test_probe_does_not_claim_the_tif_value_set() -> None:
 
 
 def test_dimension_reuses_an_existing_taxonomy_member() -> None:
-    """No 18th CapabilityDimension: the enum has 17 members and
-    ``command_construction_and_wire_semantics`` has no dimension of its own."""
+    """No 18th CapabilityDimension: the enum has 17 members and"""
     ratified = {
         spec.dimension
         for spec in PROBES.values()
@@ -141,11 +118,6 @@ def test_followup_probe_does_not_inflate_the_ratified_counts() -> None:
     assert "P-NMPR" not in report["canonical_12"]
     assert "P-NMPR" not in report["census_4"]
     assert "P-NMPR" in report["order_emitting"]
-
-
-# ---------------------------------------------------------------------------
-# request-body shapes
-# ---------------------------------------------------------------------------
 
 
 def test_explicit_arm_matches_the_official_enumeration(
@@ -192,11 +164,6 @@ def test_unknown_required_fields_mode_is_refused(
         _client(mock_creds).futures_order_body(
             "101S6000", 1, _tick_price(340.0), "BUY", required_fields="typo"
         )
-
-
-# ---------------------------------------------------------------------------
-# dry-run safety
-# ---------------------------------------------------------------------------
 
 
 def test_dry_run_contacts_no_broker(

@@ -18,7 +18,6 @@ class TestMultiTimeframeCandleAccumulator:
         """A single 1-min candle should buffer, not finalize, until bucket changes."""
         acc = MultiTimeframeCandleAccumulator(timeframe_minutes=5, maxlen=100)
 
-        # 09:30 candle (bucket 930)
         candle = Candle(
             open=100.0, high=101.0, low=99.0, close=100.5, volume=1000, minute=930
         )
@@ -29,17 +28,9 @@ class TestMultiTimeframeCandleAccumulator:
         assert len(acc._buffer) == 1, "One candle in buffer"
 
     def test_5m_candle_aggregation_ohlcv(self):
-        """5-min candle should aggregate OHLCV correctly from buffered 1-min candles.
-
-        Note: The accumulator only finalizes the buffer when a NEW bucket arrives.
-        Feeding candles 930-933 (bucket 930) then next_candle at 935 (bucket 935)
-        triggers finalization of the 4-candle buffer [930, 931, 932, 933].
-        The 5th candle (934) is NOT fed before the trigger; it's part of one_min_candles
-        but skipped by the [:-1] slice. So the finalized 5-min candle covers 930-933.
-        """
+        """5-min candle should aggregate OHLCV correctly from buffered 1-min candles."""
         acc = MultiTimeframeCandleAccumulator(timeframe_minutes=5, maxlen=100)
 
-        # Feed 5 candles for 09:30-09:34 (bucket 930)
         one_min_candles = [
             Candle(
                 open=100.0, high=101.0, low=99.0, close=100.5, volume=1000, minute=930
@@ -62,7 +53,6 @@ class TestMultiTimeframeCandleAccumulator:
             result = acc.on_1m_candle(c)
             assert result is None, "Should buffer until bucket changes"
 
-        # Next bucket (935) triggers finalization of 4 buffered candles (930-933)
         next_candle = Candle(
             open=101.5, high=102.0, low=101.0, close=101.8, volume=1300, minute=935
         )
@@ -71,7 +61,6 @@ class TestMultiTimeframeCandleAccumulator:
         assert result is not None, "Bucket change should finalize previous 5-min candle"
         assert len(acc.candles) == 1, "One completed 5-min candle"
 
-        # Verify aggregated OHLCV — buffer contains candles 930, 931, 932, 933
         assert result.open == 100.0, "Open should be from first 1-min candle (930)"
         assert (
             result.high == 103.0
@@ -89,13 +78,12 @@ class TestMultiTimeframeCandleAccumulator:
         """15-min candle should aggregate 15 consecutive 1-min candles correctly."""
         acc = MultiTimeframeCandleAccumulator(timeframe_minutes=15, maxlen=100)
 
-        # Feed 15 candles for 09:30-09:44 (bucket 930)
         base_price = 100.0
         cumulative_volume = 0
 
         for i in range(15):
             minute = 930 + i
-            if minute % 100 >= 60:  # Handle hour boundary
+            if minute % 100 >= 60:
                 minute = ((minute // 100) + 1) * 100 + (minute % 100 - 60)
 
             price = base_price + i * 0.5
@@ -113,7 +101,6 @@ class TestMultiTimeframeCandleAccumulator:
             result = acc.on_1m_candle(candle)
             assert result is None, f"Candle {i+1} should buffer (same 15-min bucket)"
 
-        # Next bucket (945) triggers finalization
         next_candle = Candle(
             open=108.0, high=109.0, low=107.5, close=108.5, volume=1200, minute=945
         )
@@ -124,8 +111,6 @@ class TestMultiTimeframeCandleAccumulator:
         assert (
             result.high == 107.5
         ), "High should be max of all highs (100 + 14*0.5 + 0.5)"
-        # price increases each candle: price[i] = 100 + i*0.5, low[i] = price[i] - 0.5
-        # For i=0: low=99.5 (minimum, since prices increase)
         assert (
             result.low == 99.5
         ), "Low should be min of all lows (candle i=0: low=100.0-0.5=99.5)"
@@ -138,31 +123,28 @@ class TestMultiTimeframeCandleAccumulator:
         acc_5m = MultiTimeframeCandleAccumulator(timeframe_minutes=5, maxlen=100)
         acc_15m = MultiTimeframeCandleAccumulator(timeframe_minutes=15, maxlen=100)
 
-        # 5-minute buckets
-        assert acc_5m._get_bucket(930) == 930  # 09:30 → 930
-        assert acc_5m._get_bucket(932) == 930  # 09:32 → 930
-        assert acc_5m._get_bucket(934) == 930  # 09:34 → 930
-        assert acc_5m._get_bucket(935) == 935  # 09:35 → 935
-        assert acc_5m._get_bucket(939) == 935  # 09:39 → 935
-        assert acc_5m._get_bucket(940) == 940  # 09:40 → 940
-        assert acc_5m._get_bucket(1000) == 1000  # 10:00 → 1000
-        assert acc_5m._get_bucket(1003) == 1000  # 10:03 → 1000
+        assert acc_5m._get_bucket(930) == 930
+        assert acc_5m._get_bucket(932) == 930
+        assert acc_5m._get_bucket(934) == 930
+        assert acc_5m._get_bucket(935) == 935
+        assert acc_5m._get_bucket(939) == 935
+        assert acc_5m._get_bucket(940) == 940
+        assert acc_5m._get_bucket(1000) == 1000
+        assert acc_5m._get_bucket(1003) == 1000
 
-        # 15-minute buckets
-        assert acc_15m._get_bucket(930) == 930  # 09:30 → 930
-        assert acc_15m._get_bucket(935) == 930  # 09:35 → 930
-        assert acc_15m._get_bucket(944) == 930  # 09:44 → 930
-        assert acc_15m._get_bucket(945) == 945  # 09:45 → 945
-        assert acc_15m._get_bucket(959) == 945  # 09:59 → 945
-        assert acc_15m._get_bucket(1000) == 1000  # 10:00 → 1000
-        assert acc_15m._get_bucket(1014) == 1000  # 10:14 → 1000
-        assert acc_15m._get_bucket(1015) == 1015  # 10:15 → 1015
+        assert acc_15m._get_bucket(930) == 930
+        assert acc_15m._get_bucket(935) == 930
+        assert acc_15m._get_bucket(944) == 930
+        assert acc_15m._get_bucket(945) == 945
+        assert acc_15m._get_bucket(959) == 945
+        assert acc_15m._get_bucket(1000) == 1000
+        assert acc_15m._get_bucket(1014) == 1000
+        assert acc_15m._get_bucket(1015) == 1015
 
     def test_incomplete_bucket_not_finalized(self):
         """Partial bucket (e.g., 3 candles in 5-min bucket) should not auto-finalize."""
         acc = MultiTimeframeCandleAccumulator(timeframe_minutes=5, maxlen=100)
 
-        # Feed only 3 candles in 09:30 bucket
         for i in range(3):
             candle = Candle(
                 open=100.0,
@@ -182,7 +164,6 @@ class TestMultiTimeframeCandleAccumulator:
         """flush() should finalize any buffered candles."""
         acc = MultiTimeframeCandleAccumulator(timeframe_minutes=5, maxlen=100)
 
-        # Feed 3 candles (partial bucket)
         for i in range(3):
             candle = Candle(
                 open=100.0 + i,
@@ -196,7 +177,6 @@ class TestMultiTimeframeCandleAccumulator:
 
         assert len(acc.candles) == 0, "No finalized candles yet"
 
-        # Flush should finalize the partial bucket
         result = acc.flush()
 
         assert result is not None, "flush() should finalize buffered candles"
@@ -211,7 +191,6 @@ class TestMultiTimeframeCandleAccumulator:
         """Test multiple sequential 5-min candles are created correctly."""
         acc = MultiTimeframeCandleAccumulator(timeframe_minutes=5, maxlen=100)
 
-        # Feed 15 1-min candles (3 complete 5-min buckets)
         completed_count = 0
         for i in range(15):
             minute = 930 + i
@@ -225,8 +204,6 @@ class TestMultiTimeframeCandleAccumulator:
             )
             result = acc.on_1m_candle(candle)
 
-            # Buckets: 930 (930-934), 935 (935-939), 940 (940-944)
-            # Finalization happens at minute 935 and 940
             if minute in [935, 940]:
                 completed_count += 1
                 assert result is not None, f"Should finalize at minute {minute}"
@@ -241,7 +218,6 @@ class TestMultiTimeframeCandleAccumulator:
         """Accumulator should respect maxlen limit."""
         acc = MultiTimeframeCandleAccumulator(timeframe_minutes=5, maxlen=3)
 
-        # Create 20 5-min candles (100 1-min candles)
         for bucket_idx in range(20):
             bucket_start = 930 + bucket_idx * 5
             if bucket_start % 100 >= 60:
@@ -264,7 +240,6 @@ class TestMultiTimeframeCandleAccumulator:
                 )
                 acc.on_1m_candle(candle)
 
-        # maxlen=3, so only last 3 completed candles should be retained
         assert (
             len(acc.candles) <= 3
         ), f"Should retain at most 3 candles, got {len(acc.candles)}"
@@ -277,7 +252,6 @@ class TestStreamingIndicatorEngineMTF:
         """MTF accumulators should not be created if mtf_timeframes is empty."""
         engine = StreamingIndicatorEngine(staleness_seconds=0)
 
-        # Feed ticks to create 1-min candles
         engine.on_tick(
             "005930",
             {"close": 100.0, "high": 101.0, "low": 99.0, "volume": 1000},
@@ -289,7 +263,6 @@ class TestStreamingIndicatorEngineMTF:
             datetime(2026, 3, 7, 9, 31, 0),
         )
 
-        # No MTF accumulators should exist
         assert (
             "005930" not in engine._mtf_accumulators
             or len(engine._mtf_accumulators["005930"]) == 0
@@ -299,7 +272,6 @@ class TestStreamingIndicatorEngineMTF:
         """MTF accumulators should be created for configured timeframes."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[5, 15], staleness_seconds=0)
 
-        # Feed ticks to create 1-min candles (cumulative volumes)
         cumulative = 0
         for minute in range(10):
             cumulative += 1000 + minute * 10
@@ -314,7 +286,6 @@ class TestStreamingIndicatorEngineMTF:
                 datetime(2026, 3, 7, 9, 30 + minute, 30),
             )
 
-        # Cross to next minute to finalize last candle
         cumulative += 1100
         engine.on_tick(
             "005930",
@@ -322,24 +293,14 @@ class TestStreamingIndicatorEngineMTF:
             datetime(2026, 3, 7, 9, 40, 30),
         )
 
-        # MTF accumulators should exist for both timeframes
         assert "005930" in engine._mtf_accumulators
         assert 5 in engine._mtf_accumulators["005930"]
         assert 15 in engine._mtf_accumulators["005930"]
 
     def test_get_mtf_candles_5m(self):
-        """get_mtf_candles should return 5-min candles aggregated from 1-min candles.
-
-        Note on timing: on_tick finalizes a 1m candle when the minute boundary changes.
-        A tick at minute M finalizes the candle for minute M-1. So to finalize a 5m
-        bucket ending at minute 934, we need a candle from minute 935 (from a tick at
-        9:36). To then finalize bucket 935 (935-939), we need a tick at 9:45 that
-        creates the 9:44 candle (bucket 940), triggering bucket 935 finalization.
-        """
+        """get_mtf_candles should return 5-min candles aggregated from 1-min candles."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[5], staleness_seconds=0)
 
-        # Feed 10 1-min candles (ticks at 9:30-9:39)
-        # This will complete 1m candles for 9:30-9:38 (finalized at next-minute tick)
         cumulative = 0
         for minute in range(10):
             cumulative += 1000 + minute * 10
@@ -354,9 +315,6 @@ class TestStreamingIndicatorEngineMTF:
                 datetime(2026, 3, 7, 9, 30 + minute, 30),
             )
 
-        # Tick at 9:40 finalizes the 9:39 1m candle (bucket 935),
-        # adding it to the bucket-935 buffer but not triggering MTF finalization
-        # (still in bucket 935). Need 9:45 tick to finalize bucket 935.
         cumulative += 1100
         engine.on_tick(
             "005930",
@@ -364,17 +322,12 @@ class TestStreamingIndicatorEngineMTF:
             datetime(2026, 3, 7, 9, 40, 30),
         )
 
-        # After ticks 9:30-9:40, only bucket 930 (9:30-9:34) has been finalized.
-        # Bucket 935 (9:35-9:39) is still buffered (needs tick at 9:45 to finalize).
         candles_5m = engine.get_mtf_candles("005930", timeframe=5)
 
         assert (
             len(candles_5m) == 1
         ), "Only bucket 930 is finalized; bucket 935 still buffered"
 
-        # First 5-min candle (930-934): 1m candles at minutes 930-934
-        # 1m candle[0]: close=100, high=101, low=99 (from tick at 9:30 finalized at 9:31)
-        # 1m candle[4]: close=104, high=105, low=103 (from tick at 9:34 finalized at 9:35)
         assert candles_5m[0]["open"] == 100.0, "First candle open from minute 930"
         assert candles_5m[0]["high"] == 105.0, "First candle high is max(101..105)"
         assert candles_5m[0]["low"] == 99.0, "First candle low is min(99..103)"
@@ -384,18 +337,9 @@ class TestStreamingIndicatorEngineMTF:
         ), "First candle volume sum (1000+1010+1020+1030+1040)"
 
     def test_get_mtf_candles_15m(self):
-        """get_mtf_candles should return 15-min candles aggregated from 1-min candles.
-
-        Note on timing: a tick at minute M finalizes the 1m candle for minute M-1.
-        Ticks at 9:30-9:49 finalize 1m candles for 9:30-9:48. Bucket 930 covers
-        9:30-9:44 (15 candles). The 9:44 1m candle (close=114, high=115) is finalized
-        by the tick at 9:45. The 9:45 1m candle is in bucket 945, triggering MTF
-        finalization of bucket 930. So with 20 ticks (9:30-9:49), bucket 930 is
-        finalized and bucket 945 has 4 buffered candles (9:45-9:48).
-        """
+        """get_mtf_candles should return 15-min candles aggregated from 1-min candles."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[15], staleness_seconds=0)
 
-        # Feed 20 1-min candles (1 complete 15-min bucket + partial second bucket)
         cumulative = 0
         for minute in range(20):
             cumulative += 1000 + minute * 10
@@ -410,15 +354,11 @@ class TestStreamingIndicatorEngineMTF:
                 datetime(2026, 3, 7, 9, 30 + minute, 30),
             )
 
-        # Get 15-min candles
         candles_15m = engine.get_mtf_candles("005930", timeframe=15)
 
-        # Only first bucket (930-944) should be complete
         assert len(candles_15m) == 1, "Should have 1 completed 15-min candle"
 
         assert candles_15m[0]["open"] == 100.0, "Open from minute 930"
-        # 1m candle high[i] = 101+i. Bucket 930 covers 1m candles 930-944:
-        # max high = 101+14 = 115 (from candle at minute 944)
         assert candles_15m[0]["high"] == 115.0, "High is max of 15 candles (101+14=115)"
         assert candles_15m[0]["low"] == 99.0, "Low is min of 15 candles"
         assert candles_15m[0]["close"] == 114.0, "Close from minute 944 (100+14=114)"
@@ -427,9 +367,8 @@ class TestStreamingIndicatorEngineMTF:
         """get_mtf_candles should respect limit parameter."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[5], staleness_seconds=0)
 
-        # Feed 25 1-min candles (5 complete 5-min buckets)
         cumulative = 0
-        for minute in range(26):  # 26 to finalize 5th bucket
+        for minute in range(26):
             cumulative += 1000 + minute * 10
             engine.on_tick(
                 "005930",
@@ -442,7 +381,6 @@ class TestStreamingIndicatorEngineMTF:
                 datetime(2026, 3, 7, 9, 30 + minute, 30),
             )
 
-        # Get last 2 candles only
         candles = engine.get_mtf_candles("005930", timeframe=5, limit=2)
         assert len(candles) == 2, "Should return only last 2 candles"
 
@@ -457,7 +395,6 @@ class TestStreamingIndicatorEngineMTF:
         """get_mtf_candles should return empty list for non-configured timeframe."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[5], staleness_seconds=0)
 
-        # Feed some candles
         cumulative = 0
         for minute in range(5):
             cumulative += 1000
@@ -467,7 +404,6 @@ class TestStreamingIndicatorEngineMTF:
                 datetime(2026, 3, 7, 9, 30 + minute, 30),
             )
 
-        # Request 15-min candles (not configured)
         candles = engine.get_mtf_candles("005930", timeframe=15)
         assert candles == [], "Should return empty list for unconfigured timeframe"
 
@@ -475,7 +411,6 @@ class TestStreamingIndicatorEngineMTF:
         """seed_mtf_candles should pre-warm MTF accumulator with historical candles."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[5], staleness_seconds=0)
 
-        # Seed 10 historical 5-min candles
         historical_5m = []
         for i in range(10):
             historical_5m.append(
@@ -490,7 +425,6 @@ class TestStreamingIndicatorEngineMTF:
 
         engine.seed_mtf_candles("005930", historical_5m, timeframe=5)
 
-        # Verify candles were seeded
         candles = engine.get_mtf_candles("005930", timeframe=5)
         assert len(candles) == 10, "Should have 10 seeded candles"
         assert candles[0]["open"] == 100.0
@@ -514,16 +448,9 @@ class TestStreamingIndicatorEngineMTF:
         assert 5 in engine._mtf_timeframes, "5-min timeframe should be added"
 
     def test_multiple_symbols_independent_mtf(self):
-        """MTF candles for different symbols should be tracked independently.
-
-        Note on timing: a tick at minute M finalizes the 1m candle for minute M-1.
-        With 10 ticks (9:30-9:39) + trigger at 9:40, only bucket 930 (9:30-9:34) is
-        finalized. Bucket 935 (9:35-9:39) remains buffered until a tick at 9:45 arrives.
-        Each symbol maintains its own independent accumulators.
-        """
+        """MTF candles for different symbols should be tracked independently."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[5], staleness_seconds=0)
 
-        # Feed ticks for two symbols
         for symbol, base_price in [("005930", 100.0), ("000660", 200.0)]:
             cumulative = 0
             for minute in range(10):
@@ -538,8 +465,6 @@ class TestStreamingIndicatorEngineMTF:
                     },
                     datetime(2026, 3, 7, 9, 30 + minute, 30),
                 )
-            # Tick at 9:40 finalizes 9:39 candle (bucket 935), adds to buffer.
-            # Bucket 935 not yet finalized (needs 9:45 tick).
             cumulative += 1100
             engine.on_tick(
                 symbol,
@@ -552,15 +477,12 @@ class TestStreamingIndicatorEngineMTF:
                 datetime(2026, 3, 7, 9, 40, 30),
             )
 
-        # Get candles for each symbol
         candles_samsung = engine.get_mtf_candles("005930", timeframe=5)
         candles_sk = engine.get_mtf_candles("000660", timeframe=5)
 
-        # Only bucket 930 is finalized for each symbol
         assert len(candles_samsung) == 1
         assert len(candles_sk) == 1
 
-        # Verify prices are different (first 1m candle in bucket 930 comes from 9:30)
         assert candles_samsung[0]["open"] == 100.0
         assert candles_sk[0]["open"] == 200.0
 
@@ -568,7 +490,6 @@ class TestStreamingIndicatorEngineMTF:
         """Multiple timeframes for same symbol should all receive candles."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[5, 15], staleness_seconds=0)
 
-        # Feed 20 1-min candles
         cumulative = 0
         for minute in range(20):
             cumulative += 1000 + minute * 10
@@ -583,37 +504,19 @@ class TestStreamingIndicatorEngineMTF:
                 datetime(2026, 3, 7, 9, 30 + minute, 30),
             )
 
-        # Get candles for both timeframes
         candles_5m = engine.get_mtf_candles("005930", timeframe=5)
         candles_15m = engine.get_mtf_candles("005930", timeframe=15)
 
-        # 5-min: 20 minutes = 4 complete buckets (partial 5th buffered)
         assert (
             len(candles_5m) == 3
         ), "Should have 3 completed 5-min candles (930-934, 935-939, 940-944)"
 
-        # 15-min: 20 minutes = 1 complete bucket (930-944, partial second buffered)
         assert len(candles_15m) == 1, "Should have 1 completed 15-min candle"
 
     def test_mtf_candles_match_manual_aggregation(self):
-        """MTF candles should exactly match manually aggregated values.
-
-        Note on timing: on_tick finalizes a 1m candle when minute boundary changes.
-        Feeding ticks at 9:30-9:34 (5 ticks) will finalize 1m candles for 9:30-9:33
-        (4 candles). The 9:34 candle is only in the CandleAccumulator buffer.
-        The tick at 9:35 then finalizes the 9:34 1m candle and adds it to the MTF
-        buffer (still bucket 930). The 9:35 1m candle (bucket 935) triggers MTF
-        finalization only from the NEXT tick at 9:36. So 5 ticks at 9:30-9:34 +
-        trigger at 9:35 produces a 5m candle covering 1m candles at 930-933 (4 candles).
-
-        To get all 5 candles in the 5m bucket, we need ticks at 9:30-9:35 (6 ticks),
-        then a trigger at 9:36 (which finalizes 9:35 candle with bucket=935, triggering
-        MTF finalization of bucket 930 containing candles 930-934).
-        """
+        """MTF candles should exactly match manually aggregated values."""
         engine = StreamingIndicatorEngine(mtf_timeframes=[5], staleness_seconds=0)
 
-        # Feed ticks at 9:30-9:35 (6 ticks) to create 1m candles for 9:30-9:34 (5 candles)
-        # and trigger MTF bucket 930 finalization
         one_min_data = [
             {
                 "minute": 930,
@@ -671,8 +574,6 @@ class TestStreamingIndicatorEngineMTF:
                 datetime(2026, 3, 7, 9, data["minute"] % 100, 30),
             )
 
-        # Tick at 9:35 finalizes the 9:34 1m candle (bucket 930), adding to buffer.
-        # Bucket 930 still not finalized (need bucket 935 candle to trigger it).
         cumulative += 1500
         engine.on_tick(
             "TEST",
@@ -680,8 +581,6 @@ class TestStreamingIndicatorEngineMTF:
             datetime(2026, 3, 7, 9, 35, 30),
         )
 
-        # Tick at 9:36 finalizes the 9:35 1m candle (bucket 935), which triggers
-        # MTF finalization of bucket 930 (containing all 5 candles 930-934).
         cumulative += 1600
         engine.on_tick(
             "TEST",
@@ -692,16 +591,11 @@ class TestStreamingIndicatorEngineMTF:
         candles_5m = engine.get_mtf_candles("TEST", timeframe=5)
         assert len(candles_5m) == 1
 
-        # Manual aggregation of all 5 candles (930-934)
-        # Note: 1m candles from CandleAccumulator use the tick's close/high/low directly
-        # since each tick is in a different minute. Open = first tick's close in that minute.
-        expected_open = one_min_data[0][
-            "close"
-        ]  # 101.0 (open of 930 1m candle = close of first tick)
-        expected_high = max(d["high"] for d in one_min_data)  # 107.0
-        expected_low = min(d["low"] for d in one_min_data)  # 98.0
-        expected_close = one_min_data[-1]["close"]  # 106.0
-        expected_volume = sum(d["volume"] for d in one_min_data)  # 6000
+        expected_open = one_min_data[0]["close"]
+        expected_high = max(d["high"] for d in one_min_data)
+        expected_low = min(d["low"] for d in one_min_data)
+        expected_close = one_min_data[-1]["close"]
+        expected_volume = sum(d["volume"] for d in one_min_data)
 
         assert candles_5m[0]["open"] == expected_open
         assert candles_5m[0]["high"] == expected_high
@@ -739,12 +633,11 @@ class TestMTFEdgeCases:
         """Bucket calculation should handle hour boundaries correctly."""
         acc = MultiTimeframeCandleAccumulator(timeframe_minutes=15, maxlen=100)
 
-        # Test buckets around 10:00
-        assert acc._get_bucket(945) == 945  # 09:45
-        assert acc._get_bucket(959) == 945  # 09:59 → 945
-        assert acc._get_bucket(1000) == 1000  # 10:00 → 1000
-        assert acc._get_bucket(1014) == 1000  # 10:14 → 1000
-        assert acc._get_bucket(1015) == 1015  # 10:15 → 1015
+        assert acc._get_bucket(945) == 945
+        assert acc._get_bucket(959) == 945
+        assert acc._get_bucket(1000) == 1000
+        assert acc._get_bucket(1014) == 1000
+        assert acc._get_bucket(1015) == 1015
 
     def test_zero_volume_candles(self):
         """Zero-volume candles should aggregate correctly."""
@@ -756,7 +649,6 @@ class TestMTFEdgeCases:
             )
             acc.on_1m_candle(candle)
 
-        # Next bucket to finalize
         next_candle = Candle(
             open=100.5, high=101.5, low=99.5, close=101.0, volume=1000, minute=935
         )
@@ -769,7 +661,6 @@ class TestMTFEdgeCases:
         """Very large or very small prices should aggregate correctly."""
         acc = MultiTimeframeCandleAccumulator(timeframe_minutes=5, maxlen=100)
 
-        # Extremely large prices
         for i in range(5):
             candle = Candle(
                 open=1000000.0,
@@ -803,12 +694,7 @@ def _seed_minutes(
     base_price: float = 300.0,
     start: datetime | None = None,
 ) -> None:
-    """Seed ``count`` sequential 1-minute candles via ``seed_candles``.
-
-    ``seed_candles`` derives the HHMM ``minute`` from each ``datetime`` and
-    feeds the MTF accumulators, mirroring the orchestrator prewarm path. Prices
-    are irrelevant to warmth (is_warm only counts candles).
-    """
+    """Seed ``count`` sequential 1-minute candles via ``seed_candles``."""
     start = start or datetime(2026, 2, 17, 9, 0)
     candles = [
         {
@@ -825,19 +711,7 @@ def _seed_minutes(
 
 
 class TestIsWarmMtfAware:
-    """is_warm must account for the *strategy-required* MTF timeframe.
-
-    Regression: a 15m strategy (mtf_base_15m) cannot emit signals until the
-    15m accumulator holds ``bb_period`` closed candles. If is_warm reports warm
-    as soon as the 1m accumulator fills, the orchestrator prewarm short-circuits
-    (``if is_warm(symbol): continue``) and skips the deep Parquet load that
-    seeds those 15m bars — producing zero signals indefinitely.
-
-    The gate keys on ``mtf_warmth_timeframe`` (the deepest timeframe the
-    *strategy* needs, from ``IndicatorContract.warmth_timeframe``), NOT on the
-    full accumulation set. An engine accumulating 5m/15m for telemetry while its
-    strategy only needs 1m must stay warm on 1m depth alone.
-    """
+    """is_warm must account for the *strategy-required* MTF timeframe."""
 
     def test_not_warm_until_deepest_mtf_filled(self):
         engine = StreamingIndicatorEngine(
@@ -846,7 +720,6 @@ class TestIsWarmMtfAware:
             mtf_warmth_timeframe=15,
             staleness_seconds=0,
         )
-        # 60 1m candles -> 1m accumulator warm (>=20), but 15m only ~3 closed.
         _seed_minutes(engine, "TEST", 60)
         assert len(engine._accumulators["TEST"].candles) >= 20
         assert engine.mtf_total_appended("TEST", 15) < 20
@@ -862,13 +735,11 @@ class TestIsWarmMtfAware:
             mtf_warmth_timeframe=15,
             staleness_seconds=0,
         )
-        # ~22 distinct 15m buckets -> >=21 closed 15m candles.
         _seed_minutes(engine, "TEST", 330)
         assert engine.mtf_total_appended("TEST", 15) >= 20
         assert engine.is_warm("TEST")
 
     def test_deepest_tf_gates_not_shallowest(self):
-        # 5m fills well before 15m; warmth must follow the strategy tf (15m).
         engine = StreamingIndicatorEngine(
             bb_period=20,
             mtf_timeframes=[5, 15],
@@ -881,14 +752,11 @@ class TestIsWarmMtfAware:
         assert not engine.is_warm("TEST")
 
     def test_warm_unchanged_without_mtf(self):
-        # Backward compat: no MTF configured -> 1m bb_period alone warms.
         engine = StreamingIndicatorEngine(bb_period=20, staleness_seconds=0)
         _seed_minutes(engine, "TEST", 25)
         assert engine.is_warm("TEST")
 
     def test_daily_does_not_gate_warmth(self):
-        # 'daily' is loaded from Parquet separately, never fed from the 1m
-        # stream. The contract excludes it, so warmth_timeframe is 15m here.
         engine = StreamingIndicatorEngine(
             bb_period=20,
             mtf_timeframes=[15, "daily"],
@@ -899,10 +767,6 @@ class TestIsWarmMtfAware:
         assert engine.is_warm("TEST")
 
     def test_stock_engine_not_blocked_by_unused_mtf(self):
-        # Regression: streaming.yaml accumulates [5,15] for stock telemetry, but
-        # a 1m-only strategy passes mtf_warmth_timeframe=None. The engine must
-        # warm on 1m depth alone — NOT wait ~3h for 15m bars to fill, which
-        # would block all entry signals (is_warm hard-gates them).
         engine = StreamingIndicatorEngine(
             bb_period=20,
             mtf_timeframes=[5, 15],
@@ -916,9 +780,6 @@ class TestIsWarmMtfAware:
         ), "1m-only strategy must not be gated by accumulated-but-unused 15m"
 
     def test_warmth_tf_not_accumulated_falls_back_to_1m(self):
-        # Defensive: if warmth_timeframe is set to a tf the engine does not
-        # accumulate, the guard (warmth_tf in _numeric_mtf_timeframes) skips it
-        # rather than gating on mtf_total_appended==0 forever.
         engine = StreamingIndicatorEngine(
             bb_period=20,
             mtf_timeframes=[5],
@@ -930,9 +791,6 @@ class TestIsWarmMtfAware:
         assert engine.is_warm("TEST")
 
     def test_seed_candles_minute_fallback_feeds_mtf(self):
-        # Redis-cached candles carry an HHMM "minute" field but no "datetime".
-        # seed_candles must honor it so MTF bucketing advances instead of
-        # collapsing every candle into bucket 0 (which never closes a 15m bar).
         engine = StreamingIndicatorEngine(
             bb_period=20,
             mtf_timeframes=[15],

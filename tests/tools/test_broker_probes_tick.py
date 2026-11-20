@@ -1,33 +1,4 @@
-"""Unit tests for limit-price tick discipline (``tools/broker_probes``).
-
-Tick rounding exists because of a lost measurement, not a hypothesis. P-5 went
-out with ``UNIT_PRICE`` computed as ``round(last * 0.9, 2)`` — two decimal places,
-which is not a multiple of the KOSPI200 full contract's 0.05 index-point tick —
-and the broker refused the order outright: artifact
-``P-5-20260730T000608Z.json``, ``rt_cd=1``,
-``모의투자 주문처리가 안되었습니다(호가단위 오류)``, ``n=0``, ``NOT_MEASURED``. An
-off-tick price does not degrade a trial, it deletes it.
-
-Three properties are tested here because each one fails silently:
-
-1. **Exactness.** A price that is off-tick by a float artifact
-   (``7443 * 0.05 == 372.15000000000003``) looks right in a log and is rejected on
-   the wire. The snapped value is asserted to be an exact tick multiple and the
-   wire string is asserted to parse back to it.
-2. **Direction.** This is the safety-relevant one. The resting probes (P-2, P-5,
-   P-8, P-FQP, P-NMPR) depend on the order NOT filling, so a snap toward the touch
-   narrows the ``--price-offset-pct`` gap that keeps it resting; P-11 is the mirror
-   case and must stay marketable. The rule is derived inside
-   :func:`~tools.broker_probes.probes_order.snap_to_tick` from ``side``/
-   ``marketable`` rather than passed in, and the full truth table is asserted.
-3. **Provenance.** A tick that came from a literal in the probe would keep working
-   right up until the contract changed. The futures tick is therefore asserted to
-   follow ``config/execution.yaml`` when that file says something else, and the
-   stock tick to come from the broker's own response — with a hard refusal, not a
-   guess, when the broker does not report one.
-
-No test here opens a socket: ``probes_order.http_json`` is replaced by a recorder.
-"""
+"""Unit tests for limit-price tick discipline (``tools/broker_probes``)."""
 
 from __future__ import annotations
 
@@ -53,7 +24,6 @@ from tools.broker_probes.probes_order import (
 
 _ACCOUNT = "1234567890"
 
-#: A symbol per registered ``symbol_prefix``, so prefix mapping is observable.
 _FULL_SYMBOL = "A01609"
 _MINI_SYMBOL = "A05603"
 
@@ -102,9 +72,6 @@ def _args(**overrides: object) -> argparse.Namespace:
         "late_window_s": 120.0,
         "max_pages": 10,
         "allow_fill": True,
-        # Mirrors the real CLI defaults (add_order_args): P-11 sends a 시장가
-        # order unless a caller opts out. Every tick assertion in this file is
-        # about the 지정가 path, so those tests pass stock_order_type="limit".
         "stock_order_type": "market",
         "balance_timeout_s": 120.0,
         "pace_s": 0.0,
@@ -122,11 +89,6 @@ def _yaml_tick(spec_name: str) -> Decimal:
     return Decimal(str(data["futures_contract_spec"][spec_name]["tick_size_points"]))
 
 
-# ---------------------------------------------------------------------------
-# futures tick provenance — config/execution.yaml, never a literal
-# ---------------------------------------------------------------------------
-
-
 def test_futures_tick_matches_the_declared_contract_spec() -> None:
     """The resolved tick equals what the YAML says, for both products."""
     assert _futures_tick(_FULL_SYMBOL).size == _yaml_tick("kospi200_full")
@@ -139,8 +101,6 @@ def test_futures_tick_follows_the_symbol_prefix() -> None:
     mini = _futures_tick(_MINI_SYMBOL)
 
     assert full.size != mini.size
-    # The continuous backtest code and the live front-month code are both
-    # registered on the full contract (symbol_prefix "101,A01").
     assert _futures_tick("101S6000").size == full.size
     assert "kospi200_full" in full.source
     assert "kospi200_mini" in mini.source
@@ -149,12 +109,7 @@ def test_futures_tick_follows_the_symbol_prefix() -> None:
 def test_futures_tick_is_read_from_the_config_file_not_hardcoded(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """Point the loader at a different contract spec; the tick must follow it.
-
-    This is the test a literal ``0.05`` in the probe could not pass. It is also
-    the regression guard for the annotation on the YAML block itself — "모든 계약
-    상수는 여기서 로드 — 코드에 하드코딩 금지".
-    """
+    """Point the loader at a different contract spec; the tick must follow it."""
     other = tmp_path / "execution.yaml"
     other.write_text(
         yaml.safe_dump(
@@ -194,11 +149,6 @@ def test_futures_tick_source_names_the_config_path() -> None:
     assert "tick_size_points" in source
 
 
-# ---------------------------------------------------------------------------
-# stock tick provenance — the broker's own 호가단위, or a hard refusal
-# ---------------------------------------------------------------------------
-
-
 def test_stock_tick_uses_the_broker_reported_quote_unit() -> None:
     """``output.aspr_unit`` of TR FHKST01010100 is the only accepted source."""
     tick = _stock_tick({"aspr_unit": "50", "stck_prpr": "12345"}, "005930")
@@ -217,19 +167,13 @@ def test_stock_tick_uses_the_broker_reported_quote_unit() -> None:
         pytest.param({"aspr_unit": "0"}, id="zero"),
         pytest.param({"aspr_unit": "-100"}, id="negative"),
         pytest.param({"aspr_unit": "N/A"}, id="non-numeric"),
-        # ORD_UNPR is int-truncated on the wire (Q-WIRE-1), so a sub-won unit
-        # could not survive the encoding — refuse rather than truncate it.
         pytest.param({"aspr_unit": "0.5"}, id="fractional"),
     ],
 )
 def test_stock_tick_without_a_usable_quote_unit_is_blocked(
     output: dict[str, Any],
 ) -> None:
-    """No KRX price-band table exists in this repo and none may be invented.
-
-    The required outcome is a loud ``ProbeError`` so P-11 reports a blocked
-    precondition, never an order at a guessed granularity.
-    """
+    """No KRX price-band table exists in this repo and none may be invented."""
     with pytest.raises(ProbeError, match="호가단위"):
         _stock_tick(output, "005930")
 
@@ -268,11 +212,6 @@ def test_stock_quote_blocks_when_the_broker_reports_no_quote_unit(
         _client(stock_creds).stock_quote("005930")
 
 
-# ---------------------------------------------------------------------------
-# exactness — the wire value is a clean multiple, artifacts never escape
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("marketable", [False, True], ids=["resting", "marketable"])
 @pytest.mark.parametrize(
     "unrounded",
@@ -297,19 +236,12 @@ def test_snapped_stock_price_is_an_exact_whole_won_multiple(unrounded: float) ->
     snapped = snap_to_tick(unrounded, tick, side="BUY", marketable=False)
 
     assert Decimal(snapped.wire) % tick.size == 0
-    # Stock ORD_UNPR is an integer string; a "63100.0" would not mirror the
-    # runtime's ``str(int(price))`` at executor.py:393.
     assert "." not in snapped.wire
 
 
 def test_float_artifact_never_reaches_the_wire() -> None:
-    """The concrete artifact the Decimal arithmetic exists to prevent.
-
-    ``7443 * 0.05`` is ``372.15000000000003`` in binary floating point. Snapping
-    372.13 up to a 0.05 tick lands on multiple 7443, so a float implementation
-    would put that string in ``UNIT_PRICE``.
-    """
-    assert str(7443 * 0.05) == "372.15000000000003"  # the hazard, made explicit
+    """The concrete artifact the Decimal arithmetic exists to prevent."""
+    assert str(7443 * 0.05) == "372.15000000000003"
 
     snapped = snap_to_tick(
         372.13, _futures_tick(_FULL_SYMBOL), side="BUY", marketable=True
@@ -341,11 +273,6 @@ def test_unknown_side_is_refused() -> None:
         snap_to_tick(300.0, _futures_tick(_FULL_SYMBOL), side="LONG", marketable=False)
 
 
-# ---------------------------------------------------------------------------
-# direction — away from the touch, in every combination
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("side", "marketable", "rounding"),
     [
@@ -358,11 +285,7 @@ def test_unknown_side_is_refused() -> None:
 def test_rounding_direction_is_always_away_from_the_touch(
     side: str, marketable: bool, rounding: str
 ) -> None:
-    """A resting order must move further out; a marketable one further in.
-
-    Getting a single cell of this table backwards is the failure with a trading
-    consequence: it narrows the gap a resting probe relies on to stay unfilled.
-    """
+    """A resting order must move further out; a marketable one further in."""
     tick = _futures_tick(_FULL_SYMBOL)
 
     snapped = snap_to_tick(372.13, tick, side=side, marketable=marketable)
@@ -425,11 +348,6 @@ def test_resting_price_snaps_the_stock_touch_down(
     assert price.wire == "63100"
 
 
-# ---------------------------------------------------------------------------
-# the wire — request bodies carry the snapped string
-# ---------------------------------------------------------------------------
-
-
 def test_futures_order_body_carries_the_snapped_wire_string(
     stock_creds: ProbeCredentials,
 ) -> None:
@@ -473,16 +391,6 @@ def test_amend_without_a_price_is_refused(stock_creds: ProbeCredentials) -> None
         _client(stock_creds)._rvsecncl("ODNO0001", 1, dvsn="01", price=None)
 
 
-# ---------------------------------------------------------------------------
-# P-11 — the marketable LIMIT path (--stock-order-type limit)
-#
-# This is the opt-out path, not the default: P-11 defaults to 시장가 because a
-# marketable limit was accepted and never filled on 모의투자
-# (P-11-20260730T002715Z). The limit path is kept reachable for comparison, so its
-# tick discipline still has to hold — hence stock_order_type="limit" below.
-# ---------------------------------------------------------------------------
-
-
 def test_p11_submits_a_tick_valid_marketable_price(
     monkeypatch: pytest.MonkeyPatch, stock_env: None
 ) -> None:
@@ -516,13 +424,7 @@ def test_p11_records_the_tick_and_its_source_in_the_artifact(
 def test_p11_reports_a_blocked_precondition_without_a_quote_unit(
     monkeypatch: pytest.MonkeyPatch, stock_env: None
 ) -> None:
-    """No 호가단위 => no order. The probe must not fall back to 1원 granularity.
-
-    This precondition belongs to the limit path alone. The 시장가 default sends no
-    price and so never asks for a tick — see
-    ``test_market_path_needs_no_broker_quote_unit`` in
-    ``test_broker_probes_p11_fill.py``, which is the payoff of that default.
-    """
+    """No 호가단위 => no order. The probe must not fall back to 1원 granularity."""
     calls = _install_stock_recorder(monkeypatch, aspr_unit=None, with_trading=True)
     install_stub_auth(monkeypatch)
 
@@ -530,11 +432,6 @@ def test_p11_reports_a_blocked_precondition_without_a_quote_unit(
         probe_p11(_args(stock_order_type="limit"))
 
     assert not [c for c in calls if "trading/order-cash" in c["url"]]
-
-
-# ---------------------------------------------------------------------------
-# transport recorders
-# ---------------------------------------------------------------------------
 
 
 def _install_futures_recorder(
@@ -573,15 +470,7 @@ def _install_stock_recorder(
     aspr_unit: str | None,
     with_trading: bool = False,
 ) -> list[dict[str, Any]]:
-    """Serve a stock quote at 70,200원, plus the order/balance/ccld set for P-11.
-
-    The first balance read is the baseline (flat) and every later one reports the
-    holding, so P-11's reflection loop terminates on its first poll and the test
-    needs no wall-clock wait. P-11 also confirms the fill through one read-only
-    주식일별주문체결조회 (``VTTC0081R``), so that path is served with a filled row for
-    the ODNO the order accept returns — otherwise these tick tests would fail on a
-    fill the harness could not confirm rather than on anything about ticks.
-    """
+    """Serve a stock quote at 70,200원, plus the order/balance/ccld set for P-11."""
     calls: list[dict[str, Any]] = []
     quote: dict[str, Any] = {"stck_prpr": "70200"}
     if aspr_unit is not None:

@@ -1,25 +1,4 @@
-"""Repo-wide gate: only one module may read a ``.env`` (#698).
-
-``shared.config.dotenv_guard.load_project_dotenv`` bounds ``.env`` loading to
-two exact paths and honours the hermetic switch. That is worth nothing if the
-next script added to ``scripts/analysis/`` calls ``load_dotenv()`` directly:
-python-dotenv's ``find_dotenv()`` walks out of a worktree into the primary
-checkout exactly as it did on 2026-09-15, and the runtime guard installed by
-``tests/conftest.py`` only fires for modules a test happens to import — which
-is almost no script under ``scripts/analysis/``.
-
-So the rule is checked structurally rather than stated in a doc. Two halves:
-
-* **No direct python-dotenv use.** An AST walk over every ``.py`` file in the
-  repository rejects a call to, or an import of, ``load_dotenv`` /
-  ``dotenv_values`` / ``find_dotenv`` outside the modules listed in
-  :data:`DOTENV_API_ALLOWED`.
-* **Hand-rolled parsers stay registered.** Three helpers read ``.env`` with
-  their own line loop, which no dotenv-shaped check can see. Each is listed in
-  :data:`HAND_ROLLED_READERS` with a reason, and each must still consult
-  ``hermetic_mode_enabled`` — the allowlist is a claim the gate verifies, not
-  a place to park an exemption.
-"""
+"""Repo-wide gate: only one module may read a ``.env`` (#698)."""
 
 from __future__ import annotations
 
@@ -31,10 +10,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-#: The python-dotenv entry points that can read a file off disk.
 DOTENV_API = frozenset({"load_dotenv", "dotenv_values", "find_dotenv"})
 
-#: The only modules allowed to touch that API, each for a stated reason.
 DOTENV_API_ALLOWED: dict[str, str] = {
     "shared/config/dotenv_guard.py": (
         "the single bounded loader every entrypoint calls"
@@ -48,35 +25,11 @@ DOTENV_API_ALLOWED: dict[str, str] = {
     "tests/unit/config/test_dotenv_call_gate.py": "this gate names the API",
 }
 
-#: Helpers that parse ``.env`` themselves, as ``path -> (function, reason)``.
-#: Each named function must *call* ``hermetic_mode_enabled``; nothing else can
-#: see these, so the registration is a claim the gate verifies rather than an
-#: exemption to park things in.
-#:
-#: Empty since the legacy removal L3
-#: (``docs/plans/2026-11-07-legacy-removal-plan.md``): the three registered
-#: readers all lived under ``scripts/analysis/`` and went with that tree. The
-#: parametrised check below therefore reports "empty parameter set" — that is
-#: the honest reading, not a silently passing gate. Register the next
-#: hand-rolled reader here and it is checked again.
 HAND_ROLLED_READERS: dict[str, tuple[str, str]] = {}
 
 
 def tracked_python_files(root: Path) -> list[Path]:
-    """Every ``.py`` file git tracks in ``root``.
-
-    Tracked files, not an ``rglob``, because this repository's own worktree
-    layout lives *inside* the checkout: ``.claude/worktrees/<name>/`` is the
-    exact arrangement #698 describes. An rglob walks into it and reports the
-    nested copy's ``shared/config/dotenv_guard.py`` as an unallowlisted
-    offender, so the gate would fail on the primary checkout with no code
-    change at all — and a worktree on a pre-fix branch would re-report the old
-    ``cli/commands/common.py`` as well. It also doubles the parse cost per
-    nested checkout.
-
-    The trade: a brand-new file is gated only once ``git add``-ed. CI always
-    runs on committed trees, so nothing reaches main unchecked.
-    """
+    """Every ``.py`` file git tracks in ``root``."""
     result = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z", "--", "*.py"],
         capture_output=True,
@@ -108,13 +61,7 @@ def _dotenv_api_uses(tree: ast.AST) -> set[str]:
 
 @pytest.fixture(scope="module")
 def python_files(requires_repo_checkout):
-    """The tracked ``.py`` files this gate scans.
-
-    ``requires_repo_checkout`` skips in exactly one place — the
-    ``Dockerfile.test`` image, whose ``.dockerignore`` drops ``.git`` — and
-    nowhere else, so a broken checkout fails loudly instead of reading as a
-    green skip (#835).
-    """
+    """The tracked ``.py`` files this gate scans."""
     files = tracked_python_files(REPO_ROOT)
     assert len(files) > 500, (
         f"only {len(files)} tracked python files found under {REPO_ROOT} — "
@@ -185,14 +132,7 @@ def _calls(node: ast.AST, name: str) -> bool:
 
 @pytest.mark.parametrize("rel", sorted(HAND_ROLLED_READERS))
 def test_hand_rolled_dotenv_readers_honour_the_hermetic_switch(rel):
-    """Each registered reader must *call* the switch, not merely name it.
-
-    A substring check passes on the import line alone, or on a docstring that
-    says "#698" — so deleting the early return would leave the gate green
-    while the reader goes back to reading the operator's real ``.env``. That
-    is the "guard that admits what it names" shape this project keeps hitting,
-    so the check is an AST one: the registered function must contain a call.
-    """
+    """Each registered reader must *call* the switch, not merely name it."""
     function, reason = HAND_ROLLED_READERS[rel]
     path = REPO_ROOT / rel
     assert path.is_file(), f"{rel} is registered but missing"
@@ -209,12 +149,7 @@ def test_hand_rolled_dotenv_readers_honour_the_hermetic_switch(rel):
 
 
 def test_nested_checkout_is_not_scanned(tmp_path):
-    """A worktree under the checkout must not become a false offender.
-
-    ``.claude/worktrees/<name>/`` is where this project puts worktrees — the
-    exact layout #698 is about. An rglob-based scan walks into it and reports
-    the nested copy of every allowlisted module as unallowlisted.
-    """
+    """A worktree under the checkout must not become a false offender."""
     repo = tmp_path / "primary"
     (repo / "shared" / "config").mkdir(parents=True)
     repo.joinpath("shared", "config", "dotenv_guard.py").write_text("x = 1\n")

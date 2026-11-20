@@ -1,16 +1,4 @@
-"""Issue #1096: a dateless ACK's trading date is recovered from the broker, or stays refused.
-
-The incident (2026-11-13, stock MOCK R4): order ``0000007012`` filled in full at the broker, but
-its ``EGRESS_RESULT_CONSUMED`` ACK row carried no ``trading_date`` key, so every boot dropped the
-attempt from the tracked set (``FILL_OBSERVER_ACK_UNTRACKABLE no_trading_date``), its entry
-reservation stayed ``COMMITTED_UNBOUND`` and the ARE limit of 1 stayed saturated. These tests fix
-the shape: the broker's 주식일별주문체결조회 over a bounded window of trading dates carries that
-ODNO on exactly one date, so the date is recovered and the fill is observed; zero matches, more
-than one, a date another attempt's dated receipt already owns, a quantity that is not the seal's,
-or any failed read inside the window all keep the old refusal.
-
-The window is read ONE date per pass (review-1105 M1/M2), so a scan of N dates takes N polls.
-"""
+"""Issue #1096: a dateless ACK's trading date is recovered from the broker, or stays refused."""
 
 from __future__ import annotations
 
@@ -52,7 +40,6 @@ _QTY = Decimal(1)
 
 _TODAY = "20261116"
 _ACK_DATE = "20261113"
-#: The tenant calendar's five most recent trading dates ending at ``_TODAY`` (11-14 Sat, 11-15 Sun).
 _WINDOW = ("20261110", "20261111", "20261112", _ACK_DATE, _TODAY)
 
 _LOOKBACK = 5
@@ -212,7 +199,6 @@ def test_one_matching_date_recovers_the_ack_and_the_fill_is_then_observed(
     assert verdict["attempt_id"] == _ATTEMPT
     assert verdict["broker_execution_id"] == _ODNO
     assert verdict["scanned_dates"] == list(_WINDOW)
-    # The scan's own rows are never mistaken for orphan orders.
     assert _rows(undated, FILL_OBSERVER_UNATTRIBUTED_KIND) == []
 
     report = observer.poll_once()
@@ -241,11 +227,7 @@ def test_one_date_is_read_per_pass_and_no_verdict_lands_before_the_window_closes
 
 
 def test_a_pass_with_fill_work_to_do_does_not_also_scan(tmp_path: Path) -> None:
-    """review-1105 M1: a scan read in a FETCH that also reads fills would age the release
-
-    snapshot that FETCH prefetches (6 s bound) and hold a perfectly good fill's release. The scan
-    is planned only into an otherwise-idle FETCH, so the two never share a pass.
-    """
+    """review-1105 M1: a scan read in a FETCH that also reads fills would age the release"""
     store = _undated_store(
         tmp_path, extra=[_ack(attempt_id="attempt-live", trading_date=_TODAY)]
     )
@@ -267,10 +249,7 @@ def test_a_pass_with_fill_work_to_do_does_not_also_scan(tmp_path: Path) -> None:
 def test_a_pass_whose_holdings_refresh_is_due_does_not_also_scan(
     undated: SqliteEvidenceStore,
 ) -> None:
-    """review-1105 M2: the holdings proof's validity (20 s) leaves no room for a scan to defer
-
-    its refresh, so a due refresh wins the pass outright and the scan waits for an idle one.
-    """
+    """review-1105 M2: the holdings proof's validity (20 s) leaves no room for a scan to defer"""
     broker = _Broker({_ACK_DATE: (_row(ord_dt=_ACK_DATE),)})
     observer = _observer(undated, broker)
     observer.config = replace(
@@ -287,7 +266,6 @@ def test_a_pass_whose_holdings_refresh_is_due_does_not_also_scan(
     assert broker.read_dates == []
     assert _rows(undated, FILL_OBSERVER_ACK_DATE_RECOVERY_KIND) == []
 
-    # Once the refresh is no longer due, the very next pass starts the scan.
     observer.held_position_eligible = lambda: False
     assert observer.poll_once().polled is False
     assert broker.read_dates == [_WINDOW[0]]
@@ -306,11 +284,7 @@ def _holdings_polling(observer: KisMockFillObserver, *, eligible: bool) -> None:
 def test_a_scan_waits_for_the_reserve_the_next_holdings_refresh_needs(
     undated: SqliteEvidenceStore,
 ) -> None:
-    """review-1105 L1 (#1107): a scan GET is not preemptible, so it must not start when the next
-
-    holdings refresh is close enough that one paced GET plus this FETCH's deadline would push the
-    refresh past the proof's expiry (held_position_max_age_ms carries ~800 ms over its period).
-    """
+    """review-1105 L1 (#1107): a scan GET is not preemptible, so it must not start when the next"""
     broker = _Broker({_ACK_DATE: (_row(ord_dt=_ACK_DATE),)})
     observer = _observer(undated, broker)
     _holdings_polling(observer, eligible=True)
@@ -319,19 +293,16 @@ def test_a_scan_waits_for_the_reserve_the_next_holdings_refresh_needs(
         held_position_poll_interval_ms=5_000,
         held_position_max_age_ms=50_000,
     )
-    # Polled just now: the next refresh is due in ~5 s, inside the 2000 + 4000 reserve.
     observer._last_held_position_poll_ms = observer.monotonic.now_ms()
 
     assert observer.poll_once().polled is False
     assert broker.read_dates == []
     assert _rows(undated, FILL_OBSERVER_ACK_DATE_RECOVERY_KIND) == []
 
-    # A period with room for the reserve: the very next pass starts the window.
     observer.config = replace(observer.config, held_position_poll_interval_ms=60_000)
     assert observer.poll_once().polled is False
     assert broker.read_dates == [_WINDOW[0]]
 
-    # And the reserve gates each CONTINUATION date too, not just the window's first.
     observer.config = replace(observer.config, held_position_poll_interval_ms=5_000)
     observer._last_held_position_poll_ms = observer.monotonic.now_ms()
     assert observer.poll_once().polled is False
@@ -341,15 +312,7 @@ def test_a_scan_waits_for_the_reserve_the_next_holdings_refresh_needs(
 def test_losing_the_close_observation_purpose_does_not_freeze_the_idle_reads(
     undated: SqliteEvidenceStore,
 ) -> None:
-    """review-1132 r1 HIGH: a reserve owed to a refresh that is never coming blocks forever.
-
-    ``_last_held_position_poll_ms`` advances only on a pass that PLANNED a holdings refresh, and
-    planning one needs the RCL's CLOSE-observation purpose. When that purpose goes away (the
-    CLOSE went out and is uncertain, the reservation was released, a second one appeared) the
-    watermark freezes: ``interval - (now - last)`` keeps shrinking past zero, and a guard that
-    only did the arithmetic would report "too close" for the rest of the process — silencing the
-    ack-date scan AND the uncertain-send read, the two paths that exist to unstick such a tenant.
-    """
+    """review-1132 r1 HIGH: a reserve owed to a refresh that is never coming blocks forever."""
     broker = _Broker({_ACK_DATE: (_row(ord_dt=_ACK_DATE),)})
     observer = _observer(undated, broker)
     _holdings_polling(observer, eligible=True)
@@ -360,17 +323,13 @@ def test_losing_the_close_observation_purpose_does_not_freeze_the_idle_reads(
     )
     observer._last_held_position_poll_ms = observer.monotonic.now_ms() - 33_000
 
-    # Still eligible and the refresh is ~3 s out: the reserve holds, as it should.
     assert observer.poll_once().polled is False
     assert broker.read_dates == []
 
-    # The purpose is gone — no refresh is coming, so nothing is owed the reserve.
     observer.held_position_eligible = lambda: False
     assert observer.poll_once().polled is False
     assert broker.read_dates == [_WINDOW[0]]
 
-    # The frozen watermark itself: past its own interval, the arithmetic no longer blocks
-    # even while the tenant is eligible again (that pass plans the refresh instead).
     observer.held_position_eligible = lambda: True
     observer._last_held_position_poll_ms = observer.monotonic.now_ms() - 40_000
     assert (
@@ -382,10 +341,7 @@ def test_losing_the_close_observation_purpose_does_not_freeze_the_idle_reads(
 def test_a_tenant_that_has_never_polled_holdings_is_not_held_back(
     undated: SqliteEvidenceStore,
 ) -> None:
-    """#1107: with no CLOSE-observation purpose granted there is no proof to invalidate — the
-
-    first one has no predecessor whose validity window the scan could open a hole in.
-    """
+    """#1107: with no CLOSE-observation purpose granted there is no proof to invalidate — the"""
     broker = _Broker({_ACK_DATE: (_row(ord_dt=_ACK_DATE),)})
     observer = _observer(undated, broker)
     _holdings_polling(observer, eligible=False)
@@ -430,7 +386,6 @@ def test_no_matching_date_keeps_the_attempt_refused(
     (untrackable,) = _rows(undated, FILL_OBSERVER_ACK_UNTRACKABLE_KIND)
     assert untrackable["reason"] == "no_trading_date"
 
-    # A later boot rescans and reaches the same verdict — recorded once, not once per scan.
     rescan = _observer(undated, _Broker({}))
     _scan(rescan)
     assert rescan.poll_once().emitted == ()
@@ -463,13 +418,7 @@ def test_the_same_odno_on_two_dates_is_ambiguous_and_stays_refused(
 def test_a_day_another_attempts_dated_receipt_owns_is_not_a_candidate(
     tmp_path: Path,
 ) -> None:
-    """review-1105 M3: a KIS mock ODNO is a daily counter, so the same digits recur on other days.
-
-    Here the true date (11-10) is the ONLY unclaimed one: 11-12 carries the same digits but a
-    DATED ACK of another attempt already owns that (odno, day), so recovering onto it would have
-    bound this reservation to that attempt's order and orphaned it. The claimed day is dropped,
-    the remaining match is unique, and the recovery lands on the right day.
-    """
+    """review-1105 M3: a KIS mock ODNO is a daily counter, so the same digits recur on other days."""
     other = "attempt-other"
     store = _undated_store(
         tmp_path,
@@ -527,7 +476,6 @@ def test_a_date_that_cannot_be_read_records_no_verdict_at_all(
     observer = _observer(undated, broker)
     _scan(observer)
     assert _rows(undated, FILL_OBSERVER_ACK_DATE_RECOVERY_KIND) == []
-    # The abandoned window stops reading rather than limping on with a hole in it.
     assert broker.read_dates == ["20261110", "20261111"]
 
 

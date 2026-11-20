@@ -43,18 +43,10 @@ class FillObserverConfig:
     broker_flat_release_settle_ms: int | None = None
     uncertain_send_reconcile: bool = False
     uncertain_send_settle_ms: int | None = None
-    #: How far before our own send start a broker 주문시각 may still be this send's own order
-    #: (issue #1127). Config, not a constant: it is a tolerance on two clocks we do not own.
     uncertain_send_ord_tmd_tolerance_s: int | None = None
-    #: How much OLDER than our send start a row must be before it is somebody else's rather
-    #: than clock error. Strictly greater than the tolerance; between the two, a row holds.
     uncertain_send_foreign_min_age_s: int | None = None
-    #: ``outbound_side`` token -> the ``sll_buy_dvsn_cd`` the broker prints for it. Config, not
-    #: a constant: a side is a policy-carried token in this runtime, never one it authors.
     uncertain_send_side_codes: dict[str, str] = field(default_factory=dict)
     loop_witness_request_timeout_s: float | None = None
-    #: The loop-side walk deadline for a ONE-date scope; each further receipt date in the scope
-    #: adds one app-key pacing interval, up to :attr:`loop_witness_deadline_max_ms` (#1115 N1).
     loop_witness_deadline_ms: int | None = None
     loop_witness_deadline_max_ms: int | None = None
 
@@ -240,12 +232,7 @@ def _uncertain_send(raw: dict[str, Any], path: Path) -> tuple[bool, dict[str, st
 
 
 def _refuse_overlapping_time_thresholds(raw: dict[str, Any], path: Path) -> None:
-    """``foreign_min_age_s`` must be STRICTLY older than the tolerance (#1127 review r1).
-
-    Equal or inverted leaves no unprovable band at all: every row the tolerance refuses is
-    immediately "somebody else's", which is exactly the release-on-skew the band exists to
-    prevent. Refusing at load is the only place this is visible before a send goes blind.
-    """
+    """``foreign_min_age_s`` must be STRICTLY older than the tolerance (#1127 review r1)."""
     tolerance = raw.get("uncertain_send_ord_tmd_tolerance_s")
     foreign_min_age = raw.get("uncertain_send_foreign_min_age_s")
     if (
@@ -254,8 +241,6 @@ def _refuse_overlapping_time_thresholds(raw: dict[str, Any], path: Path) -> None
         or not isinstance(tolerance, int)
         or not isinstance(foreign_min_age, int)
     ):
-        # A non-int (or absent) value is `_optional_positive_int`'s refusal to make, with its
-        # own message; this check only compares two numbers that are already numbers.
         return
     if foreign_min_age <= tolerance:
         raise FillObserverConfigError(

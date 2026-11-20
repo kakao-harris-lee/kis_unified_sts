@@ -1,11 +1,4 @@
-"""The gated ops: read-before-append, ``sample_when`` gating, warmup ``None``.
-
-These three are the whole risk of the P2 port (plan §6, risk 1: "a difference in
-``sample_when`` meaning makes ``hi_vol`` diverge from the warmup onward"), so
-they are tested on the base class AND through a declaration, and the percentile
-is pinned against the exact ``np.percentile`` call the legacy
-``_vol_reference`` makes.
-"""
+"""The gated ops: read-before-append, ``sample_when`` gating, warmup ``None``."""
 
 from __future__ import annotations
 
@@ -30,20 +23,13 @@ from shared.indicators.fields import (
 
 from .conftest import bar, document, parsed
 
-# ---------------------------------------------------------------------------
-# The base class invariants, directly
-# ---------------------------------------------------------------------------
-
 
 class TestReadBeforeAppend:
     def test_first_read_is_none_and_the_bar_is_not_in_its_own_window(self) -> None:
         gate = GatedMax(window=3, warmup=1, field="probe")
-        # Bar 0: nothing sampled yet -> None, and 5.0 enters AFTER the read.
         assert gate.step(5.0, sample=True) is None
         assert gate.sample_count == 1
-        # Bar 1 sees only bar 0.
         assert gate.step(1.0, sample=True) == 5.0
-        # Bar 2 sees bars 0..1.
         assert gate.step(2.0, sample=True) == 5.0
 
     def test_min_mirrors_max(self) -> None:
@@ -56,7 +42,7 @@ class TestReadBeforeAppend:
         gate = GatedMax(window=2, warmup=1, field="probe")
         gate.step(9.0, sample=True)
         gate.step(1.0, sample=True)
-        gate.step(2.0, sample=True)  # window is now [1.0, 2.0]; 9.0 dropped
+        gate.step(2.0, sample=True)
         assert gate.step(0.0, sample=True) == 2.0
 
     def test_lag_is_the_last_sample_before_this_bar(self) -> None:
@@ -70,18 +56,18 @@ class TestReadBeforeAppend:
 class TestWarmup:
     def test_none_until_warmup_samples_exist(self) -> None:
         gate = GatedPercentile(q=50.0, window=10, warmup=3, field="probe")
-        assert gate.step(1.0, sample=True) is None  # 0 samples
-        assert gate.step(2.0, sample=True) is None  # 1 sample
-        assert gate.step(3.0, sample=True) is None  # 2 samples
-        assert gate.step(4.0, sample=True) == 2.0  # 3 samples: median of 1,2,3
+        assert gate.step(1.0, sample=True) is None
+        assert gate.step(2.0, sample=True) is None
+        assert gate.step(3.0, sample=True) is None
+        assert gate.step(4.0, sample=True) == 2.0
 
     def test_warmup_counts_samples_not_bars(self) -> None:
         gate = GatedMax(window=10, warmup=2, field="probe")
         for _ in range(5):
             assert gate.step(1.0, sample=False) is None
-        assert gate.step(7.0, sample=True) is None  # still 0 samples
-        assert gate.step(3.0, sample=True) is None  # 1 sample
-        assert gate.step(0.0, sample=True) == 7.0  # 2 samples
+        assert gate.step(7.0, sample=True) is None
+        assert gate.step(3.0, sample=True) is None
+        assert gate.step(0.0, sample=True) == 7.0
 
 
 class TestSampleGating:
@@ -90,7 +76,7 @@ class TestSampleGating:
         gate.step(5.0, sample=True)
         assert gate.step(100.0, sample=False) == 5.0
         assert gate.sample_count == 1
-        assert gate.step(1.0, sample=True) == 5.0  # 100.0 never entered
+        assert gate.step(1.0, sample=True) == 5.0
         assert gate.step(0.0, sample=True) == 5.0
 
     def test_a_sampled_missing_value_is_refused(self) -> None:
@@ -107,17 +93,11 @@ class TestSampleGating:
 class TestPercentileMatchesTheLegacyCall:
     @pytest.mark.parametrize("q", [0.0, 25.0, 50.0, 90.0, 100.0])
     def test_same_function_same_input_order(self, q: float) -> None:
-        """``np.percentile(window, q)`` with its default interpolation.
-
-        The legacy reference is ``np.percentile(self._atr_window,
-        self.config.vol_percentile)``; the plan forbids a tolerance here (§6,
-        risk 2), so this asserts bit equality against that same call.
-        """
+        """``np.percentile(window, q)`` with its default interpolation."""
         samples = [0.31, 0.12, 0.44, 0.07, 0.29, 0.55, 0.18]
         gate = GatedPercentile(q=q, window=len(samples), warmup=1, field="probe")
         for value in samples:
             gate.step(value, sample=True)
-        # One more bar reads the full window without changing it.
         observed = gate.step(0.99, sample=False)
         assert observed == float(np.percentile(samples, q))
 
@@ -131,11 +111,7 @@ class TestPercentileMatchesTheLegacyCall:
 
 
 class TestMomentumWarmupAndState:
-    """``rsi`` / ``williams_r``: warmup, window cap, and no look-back rewrite.
-
-    The reference values live in ``test_talib_reference.py`` (skipped without
-    TA-Lib); these are the structural properties, which must hold regardless.
-    """
+    """``rsi`` / ``williams_r``: warmup, window cap, and no look-back rewrite."""
 
     @staticmethod
     def _walk(op: WilliamsR, count: int, *, base: float = 100.0) -> list[float | None]:
@@ -156,7 +132,7 @@ class TestMomentumWarmupAndState:
         values = self._walk(op, 5)
         assert values[:2] == [None, None]
         assert values[2] is not None
-        assert op.sample_count == 3  # capped at `period`
+        assert op.sample_count == 3
 
     def test_a_later_bar_never_changes_an_earlier_value(self) -> None:
         """Look-ahead, at the class level: the prefix of a longer run matches."""
@@ -181,9 +157,7 @@ class TestMomentumWarmupAndState:
         """Bar 0's extreme low leaves the 2-bar window and stops counting."""
         op = WilliamsR(period=2, field="probe")
         assert op.update(high=200.0, low=0.0, close=150.0) is None
-        # Bars 0..1: hh 200, ll 0 -> (200-150) / (200/-100) = -25.0
         assert op.update(high=200.0, low=100.0, close=150.0) == -25.0
-        # Bars 1..2: bar 0's low of 0 is gone -> ll 100 -> -50.0
         assert op.update(high=200.0, low=100.0, close=150.0) == -50.0
 
     @pytest.mark.parametrize("period", [0, 1, -3])
@@ -195,20 +169,13 @@ class TestMomentumWarmupAndState:
             WilliamsR(period=period, field="probe")
 
     def test_rsi_value_depends_on_where_the_stream_started(self) -> None:
-        """Wilder smoothing never forgets — the reason for the catalog's bound.
-
-        Two runs over the same bars from different starts are NOT equal while
-        the late one is still inside roughly ``35 * period`` bars. This is the
-        measurement `catalog.RSI_MAX_PERIOD` rests on, in miniature: at
-        ``period=14`` a 40-bar head start still shows at bar 300.
-        """
+        """Wilder smoothing never forgets — the reason for the catalog's bound."""
         closes = [100.0 + ((index * 37) % 23 - 11) * 0.25 for index in range(400)]
         early = WilderRsi(period=14, field="probe")
         late = WilderRsi(period=14, field="probe")
         early_values = [early.update(value) for value in closes]
         late_values = [late.update(value) for value in closes[40:]]
         assert early_values[100] != late_values[100 - 40]
-        # williams_r forgets after `period` bars, so the same comparison agrees.
         early_wr = WilliamsR(period=14, field="probe")
         late_wr = WilliamsR(period=14, field="probe")
         bars = [(value + 1.0, value - 1.0, value) for value in closes]
@@ -235,13 +202,6 @@ class TestConstructionRefusals:
             GatedPercentile(q=101.0, window=5, warmup=1, field="probe")
 
 
-# ---------------------------------------------------------------------------
-# The same invariants through a declaration
-# ---------------------------------------------------------------------------
-
-#: A declaration shaped like the legacy high-vol gate: the window only advances
-#: on bars the chain would have reached (``usable``), the reference is ``None``
-#: during warmup, and ``permissive`` is what makes the gate non-blocking then.
 _HI_VOL_FIELDS: list[dict[str, Any]] = [
     {"name": "close", "op": "bar.close"},
     {"name": "atr", "op": "atr", "params": {"period": 2}},
@@ -303,20 +263,16 @@ class TestDeclaredGate:
     def test_warmup_bars_are_permissive_not_blocked(self) -> None:
         """The legacy promise: the gate is never silently dead during warmup."""
         records = FieldEvaluator(parsed(_HI_VOL_FIELDS)).run(_ladder())
-        # 09:00 and 09:01 are outside the entry window (lo=2) or pre-warmup.
         assert records[0].values["vol_ref"] is None
         assert records[0].values["vol_ok_raw"] is None
         assert records[0].values["vol_ok"] is True
 
     def test_the_window_only_advances_on_gated_bars(self) -> None:
-        """Bars 09:00 and 09:01 fail ``entry_window`` (lo=2), so they are
-        read but never sampled — the reference therefore stays ``None`` two
-        bars longer than a bar count would suggest."""
+        """Bars 09:00 and 09:01 fail ``entry_window`` (lo=2), so they are"""
         records = FieldEvaluator(parsed(_HI_VOL_FIELDS)).run(_ladder())
         gated = [bool(record.values["usable"]) for record in records]
         assert gated == [False, False, True, True, True, True, True, True]
         refs = [record.values["vol_ref"] for record in records]
-        # Samples enter at 09:02 and 09:03; warmup=2 is first met at 09:04.
         assert refs[:4] == [None, None, None, None]
         assert refs[4] is not None
 
@@ -346,8 +302,7 @@ class TestDeclaredGate:
         assert records[0].values["vol_ok"] is True
 
     def test_dropping_the_permissive_is_refused_at_load(self) -> None:
-        """Without the ``permissive``, ``all`` reads a field that is ``None``
-        during warmup — and the loader refuses it, so it never reaches a bar."""
+        """Without the ``permissive``, ``all`` reads a field that is ``None``"""
         fields = [
             spec for spec in _HI_VOL_FIELDS if spec["name"] not in {"vol_ok", "hi_vol"}
         ]
