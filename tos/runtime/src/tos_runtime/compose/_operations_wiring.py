@@ -268,6 +268,7 @@ def _run_boot_unsent_release(composed: ComposedRuntime) -> None:
         return
     if composed.recovery is None or not composed.recovery.ready:
         return
+    composed.unsent_release.finish_interrupted_intent()
     composed.unsent_release.run()
 
 

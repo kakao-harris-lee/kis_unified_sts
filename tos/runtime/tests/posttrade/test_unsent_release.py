@@ -30,7 +30,6 @@ from tos_runtime.evidence.sinks import EngineEvidenceSinkAdapter
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade import unsent_release
 from tos_runtime.posttrade.close_history import (
-    _UNSENT_RELEASE_CAUSE,
     _UNSENT_RELEASE_COMMAND_PREFIX,
     _never_sent_release_ids,
     _never_sent_release_proven,
@@ -38,6 +37,7 @@ from tos_runtime.posttrade.close_history import (
 from tos_runtime.posttrade.unsent_release import (
     _DISCARDABLE_CAPACITY_STATES,
     CAPACITY_RELEASE_INTENT_KIND,
+    NEVER_SENT_RELEASE_CAUSES,
     SEND_EVIDENCE_KINDS,
     UNSENT_RELEASE_CAUSE,
     UNSENT_RELEASE_COMMAND_PREFIX,
@@ -707,7 +707,11 @@ def test_an_empty_scope_is_the_cheap_short_circuit(
 
 def test_the_close_history_literals_stay_in_lockstep_with_this_module() -> None:
     """``close_history`` redeclares both strings (its own lockstep-literal convention); this is"""
-    assert _UNSENT_RELEASE_CAUSE == UNSENT_RELEASE_CAUSE
+    expected = {
+        UNSENT_RELEASE_CAUSE,
+        UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT.value,
+    }
+    assert expected == NEVER_SENT_RELEASE_CAUSES
     assert _UNSENT_RELEASE_COMMAND_PREFIX == UNSENT_RELEASE_COMMAND_PREFIX
     assert UnsentDiscardReason.UNSENT_FLOW_NON_EXECUTION.value == UNSENT_RELEASE_CAUSE
 

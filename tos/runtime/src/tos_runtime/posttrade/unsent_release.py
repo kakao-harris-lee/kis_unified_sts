@@ -34,6 +34,7 @@ from tos_runtime.rcl.reservation_identity import permit_reservation_id
 __all__ = [
     "CAPACITY_RELEASE_INTENT_KIND",
     "HALT_STEPS_BEFORE_THE_SEND_BOUNDARY",
+    "NEVER_SENT_RELEASE_CAUSES",
     "REFUSED_BEFORE_TRANSPORT_CAUSE",
     "SEND_EVIDENCE_KINDS",
     "TRANSPORT_ENTRY_EVIDENCE_KINDS",
@@ -67,6 +68,12 @@ SEND_EVIDENCE_KINDS: tuple[str, ...] = (
 UNSENT_RELEASE_CAUSE = UnsentDiscardReason.UNSENT_FLOW_NON_EXECUTION.value
 
 REFUSED_BEFORE_TRANSPORT_CAUSE = UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT.value
+
+# Every ``CAPACITY_RELEASE_INTENT`` cause this module writes: a release with no proof id and no
+# broker effect. Readers that skip / collect never-sent releases use THIS set, never a literal.
+NEVER_SENT_RELEASE_CAUSES: frozenset[str] = frozenset(
+    reason.value for reason in UnsentDiscardReason
+)
 
 # Every row the gateway or a transport writes once an attempt is sealed, claimed, or sent.
 # The gateway writes SEND_SEALED / SEND_STARTED / NETWORK_CALL_ENTERED in that order BEFORE
@@ -597,6 +604,47 @@ class UnsentReleasePass:
             kind=RESERVATION_DISCARDED_UNSENT_KIND,
             record_class=RESERVATION_DISCARDED_UNSENT_KIND,
         )
+        self._append_intent(candidate, reservation_id=reservation_id)
+        return True
+
+    def finish_interrupted_intent(self) -> bool:
+        """Boot only: write the ``CAPACITY_RELEASE_INTENT`` a crash lost after the discard row."""
+        try:
+            conn = self.evidence_store.connection
+            last = conn.execute(
+                "SELECT seq, payload_json FROM entries WHERE kind = ? "
+                "ORDER BY seq DESC LIMIT 1",
+                (RESERVATION_DISCARDED_UNSENT_KIND,),
+            ).fetchone()
+            if last is None:
+                return False
+            discard_seq, discard_json = last
+            candidate = evaluate_unsent_release(
+                self.evidence_store, account=self.account, instrument=self.instrument
+            ).candidate
+            if candidate is None or (
+                candidate.proposal_id != _payload(discard_json).get("proposal_id")
+            ):
+                return False
+            reservation_id = permit_reservation_id(
+                self.account, self.instrument, candidate.permit_identity
+            )
+            if self._reservation_state(reservation_id) is not CapacityState.RELEASED:
+                return False
+            for (payload_json,) in conn.execute(
+                "SELECT payload_json FROM entries WHERE kind = ? AND seq > ?",
+                (CAPACITY_RELEASE_INTENT_KIND, int(discard_seq)),
+            ):
+                if _payload(payload_json).get("reservation_id") == reservation_id:
+                    return False
+        except (sqlite3.Error, ValueError, TypeError, KeyError):
+            return False
+        self._append_intent(candidate, reservation_id=reservation_id)
+        return True
+
+    def _append_intent(
+        self, candidate: UnsentReleaseCandidate, *, reservation_id: str
+    ) -> None:
         self.evidence_store.append(
             {
                 "attempt_id": candidate.attempt_id,
@@ -611,4 +659,3 @@ class UnsentReleasePass:
             kind=CAPACITY_RELEASE_INTENT_KIND,
             record_class=CAPACITY_RELEASE_INTENT_KIND,
         )
-        return True

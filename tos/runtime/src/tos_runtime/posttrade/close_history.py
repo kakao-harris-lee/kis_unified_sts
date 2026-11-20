@@ -13,6 +13,7 @@ from tos.engine.vocabulary import EgressResultKind
 from tos.rcl import CapacityState, CommandType, TransitionCause
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.unsent_release import NEVER_SENT_RELEASE_CAUSES
 from tos_runtime.rcl.log import (
     ReservationTransitionHistory,
     ReservationTransitionRecord,
@@ -33,7 +34,6 @@ __all__ = [
 _RELEASE_INTENT_KIND = "CAPACITY_RELEASE_INTENT"
 _RELEASE_HELD_KIND = "CAPACITY_RELEASE_HELD"
 _RELEASE_COMMAND_PREFIX = "release-"
-_UNSENT_RELEASE_CAUSE = "UNSENT_FLOW_NON_EXECUTION"
 _UNSENT_RELEASE_COMMAND_PREFIX = "release-unsent-"
 _FINAL_QUANTITY_PROOF = TransitionCause.FINAL_QUANTITY_PROOF
 _RELEASED = CapacityState.RELEASED
@@ -236,8 +236,9 @@ def _release_evidence(store: SqliteEvidenceStore) -> tuple[_ReleaseEvidence, ...
             raise ValueError("release evidence payload is malformed")
         attempt_id = payload.get("attempt_id")
         reservation_id = payload.get("reservation_id")
-        if kind == _RELEASE_INTENT_KIND and payload.get("cause") == (
-            _UNSENT_RELEASE_CAUSE
+        if (
+            kind == _RELEASE_INTENT_KIND
+            and payload.get("cause") in NEVER_SENT_RELEASE_CAUSES
         ):
             continue
         if not isinstance(attempt_id, str) or not attempt_id:
@@ -306,7 +307,7 @@ def _never_sent_release_ids(store: SqliteEvidenceStore) -> frozenset[str]:
         payload = value.get("payload") if isinstance(value, dict) else None
         if not isinstance(payload, dict):
             raise ValueError("release evidence payload is malformed")
-        if payload.get("cause") != _UNSENT_RELEASE_CAUSE:
+        if payload.get("cause") not in NEVER_SENT_RELEASE_CAUSES:
             continue
         reservation_id = payload.get("reservation_id")
         if not isinstance(reservation_id, str) or not reservation_id:

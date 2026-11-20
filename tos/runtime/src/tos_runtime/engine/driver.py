@@ -485,6 +485,7 @@ class EngineDriver:
             if held is None or held.attempt_id != attempt_id:
                 # The projection no longer holds this attempt (e.g. a send the gateway
                 # refused before transport was discarded): a TIMEOUT could not apply.
+                self._timeouts.observe_result(key, attempt_id=attempt_id)
                 continue
             payload = EgressResultPayload(
                 instrument_key=key, attempt_id=attempt_id, kind=EgressResultKind.TIMEOUT

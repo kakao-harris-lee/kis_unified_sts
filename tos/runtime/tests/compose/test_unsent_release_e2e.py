@@ -432,3 +432,100 @@ def test_a_crash_before_the_refused_release_is_released_at_boot_and_replays_clea
         assert list(states.values()) == [CapacityState.POSITION_CONSUMED]
     finally:
         _close_runtime(third)
+
+
+def _refusing(runtime: Any) -> Any:
+    """Make item 12's tradability fact None (the 11-20 shape); returns the original reader."""
+    resolver = runtime.context_resolver
+    original = resolver.tradability_facts_current_reader
+    resolver.tradability_facts_current_reader = lambda: None
+    return original
+
+
+def _close_fills_and_everything_releases(
+    runtime: Any, custody_root: Path, *, seq: int
+) -> None:
+    discovery, closed = _approve_and_run(
+        runtime, custody_root, fx.crossing_event(seq=seq, close=fx.UPPER_BAND + 1_000)
+    )
+    proposal = discovery.pipeline.proposal
+    assert (proposal.position_effect, proposal.direction) == ("CLOSE", "SHORT")
+    assert closed.flow is not None and closed.flow.handed_off is True
+    assert closed.flow.halt_step is None, closed.flow
+    for _ in range(3):
+        runtime.run_once(())
+    assert set(dict(_reservations(runtime)).values()) == {CapacityState.RELEASED}
+    instrument_key = runtime.context_resolver.instrument_key
+    witness = runtime.venue_ledger.witness
+    assert witness is not None
+    snapshot = witness.observe(
+        WitnessScope(account=instrument_key.account, instrument_keys=(instrument_key,))
+    )
+    assert snapshot.positions == (), snapshot.positions
+
+
+def test_a_refused_open_then_a_filled_open_still_closes_and_releases(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """review-1122 HIGH (a): the refused release's intent row must not poison the close history."""
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+    turn_the_venue_ledger_on(config_dir_with_risk_state)
+    runtime = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        _refused_open(runtime, custody_root)
+        _open_fills(runtime, custody_root, seq=1)
+        _close_fills_and_everything_releases(runtime, custody_root, seq=2)
+    finally:
+        _close_runtime(runtime)
+
+
+def test_a_refused_close_is_released_and_the_next_close_fills(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """review-1122 HIGH (b): entry fills -> CLOSE refused before transport -> released -> CLOSE."""
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+    turn_the_venue_ledger_on(config_dir_with_risk_state)
+    runtime = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        _reach_trusted(runtime)
+        _open_fills(runtime, custody_root, seq=0)
+        (entry_id,) = dict(_reservations(runtime))
+
+        original = _refusing(runtime)
+        try:
+            _, refused = _approve_and_run(
+                runtime,
+                custody_root,
+                fx.crossing_event(seq=1, close=fx.UPPER_BAND + 1_000),
+            )
+        finally:
+            runtime.context_resolver.tradability_facts_current_reader = original
+        assert refused.flow is not None and refused.flow.handed_off is True
+        assert refused.flow.attempt is not None
+        refused_attempt = refused.flow.attempt.attempt_id
+        assert [row["attempt_id"] for row in _rows(runtime, "SEND_REFUSED")] == [
+            refused_attempt
+        ]
+        assert all(
+            row["attempt_id"] != refused_attempt
+            for row in _rows(runtime, "NETWORK_CALL_ENTERED")
+        )
+        states = dict(_reservations(runtime))
+        assert states.pop(entry_id) is CapacityState.POSITION_CONSUMED
+        assert list(states.values()) == [CapacityState.RELEASED]
+        (discard,) = _rows(runtime, _DISCARD_KIND)
+        assert discard["reason"] == REFUSED_BEFORE_TRANSPORT_CAUSE
+
+        _close_fills_and_everything_releases(runtime, custody_root, seq=2)
+    finally:
+        _close_runtime(runtime)

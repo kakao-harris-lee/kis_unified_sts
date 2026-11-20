@@ -402,3 +402,58 @@ def test_a_crash_after_the_rcl_release_finishes_only_the_engine_half(
         if row.to_state is CapacityState.RELEASED
     ]
     assert len(releases) == 1
+
+
+def test_a_crash_between_the_discard_row_and_the_intent_row_is_finished_at_boot(
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    emergency_log: EmergencyAppendLog,
+    rcl_log: SqliteCommitLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """review-1122 LOW: the boot pass writes the CAPACITY_RELEASE_INTENT a crash lost."""
+    transmit = _Transmit(_refusing_gateway(evidence_store))
+    core, driver, release, _ = _runtime(
+        evidence_store, inbox, emergency_log, rcl_log, transmit, bind_release=False
+    )
+    driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+
+    def _killed(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("kill -9 between the discard row and the intent row")
+
+    monkeypatch.setattr(UnsentReleasePass, "_append_intent", _killed)
+    with pytest.raises(RuntimeError):
+        release.run()
+    monkeypatch.undo()
+    assert len(_payloads(evidence_store, RESERVATION_DISCARDED_UNSENT_KIND)) == 1
+    assert _payloads(evidence_store, CAPACITY_RELEASE_INTENT_KIND) == []
+    assert _state(rcl_log) is CapacityState.RELEASED
+
+    boot = _pass(
+        rcl_log,
+        evidence_store,
+        ProvisionalReservationLedger(max_unresolved_send_per_scope=1),
+    )
+    assert boot.finish_interrupted_intent() is True
+    (intent,) = _payloads(evidence_store, CAPACITY_RELEASE_INTENT_KIND)
+    assert intent["cause"] == REFUSED_BEFORE_TRANSPORT_CAUSE
+    assert intent["reservation_id"] == _RESERVATION_ID
+    assert boot.finish_interrupted_intent() is False
+    assert len(_payloads(evidence_store, CAPACITY_RELEASE_INTENT_KIND)) == 1
+    assert core.ledger.outstanding(fx.instrument_key()) is None
+
+
+def test_no_intent_is_written_without_a_discard_row(
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    emergency_log: EmergencyAppendLog,
+    rcl_log: SqliteCommitLog,
+) -> None:
+    """The repair never fabricates a release: no discard row (and RCL not RELEASED) -> nothing."""
+    transmit = _Transmit(_refusing_gateway(evidence_store))
+    _, driver, release, _ = _runtime(
+        evidence_store, inbox, emergency_log, rcl_log, transmit, bind_release=False
+    )
+    driver.enqueue_and_run(fx.decision_tick_event(seq=1))
+    assert release.finish_interrupted_intent() is False
+    assert _payloads(evidence_store, CAPACITY_RELEASE_INTENT_KIND) == []
