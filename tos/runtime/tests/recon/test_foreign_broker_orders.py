@@ -131,13 +131,15 @@ def _order(
     *,
     attempt_id: str | None = None,
     order_time: str | None = FOREIGN_TIME,
+    state: WitnessOrderState = WitnessOrderState.FILLED,
+    remaining: Decimal | None = Decimal("0"),
 ) -> WitnessOrder:
     return WitnessOrder(
         attempt_id=attempt_id,
         broker_execution_id=odno,
         quantity=Decimal("1"),
-        remaining=Decimal("0"),
-        state=WitnessOrderState.FILLED,
+        remaining=remaining,
+        state=state,
         order_date=DATE,
         order_time=order_time,
     )
@@ -344,6 +346,57 @@ def test_an_orphan_not_stamped_before_our_first_order_withholds(
 
     assert report.permits_capacity_release is False, label
     assert report.permits_rearm is False, label
+
+
+@pytest.mark.parametrize(
+    ("state", "remaining", "label"),
+    [
+        (
+            WitnessOrderState.ACKED,
+            Decimal("1"),
+            "ACKED with its whole quantity outstanding",
+        ),
+        (WitnessOrderState.PARTIAL, Decimal("1"), "PARTIAL, half of it still working"),
+        (
+            WitnessOrderState.UNKNOWN,
+            Decimal("0"),
+            "a state the broker row did not settle",
+        ),
+        (WitnessOrderState.FILLED, None, "terminal but with no rmn_qty printed"),
+    ],
+)
+def test_an_earlier_orphan_that_is_not_finished_withholds(
+    fresh, state: WitnessOrderState, remaining: Decimal | None, label: str
+) -> None:
+    """An earlier stamp proves the order is not ours; it does not prove the order is over (#1128).
+
+    The 10:00 limit BUY an archived leaf left hanging — or an operator's resting order — is
+    stamped before this leaf's first order and can still fill after the release, buying a lot no
+    reservation covers. Only a terminal state with an exhausted ``rmn_qty`` earns the exemption.
+    """
+    report = _reconcile(
+        fresh,
+        orders=(_order("0000099999", state=state, remaining=remaining),),
+    )
+
+    assert report.permits_capacity_release is False, label
+    assert report.permits_rearm is False, label
+    assert ReconciliationClass.ORPHAN_BROKER_ORDER in _classes(report), label
+
+
+def test_an_earlier_cancelled_orphan_with_nothing_left_does_not_withhold(fresh) -> None:
+    """A cancelled order with no residual is as over as a filled one, so it still exempts."""
+    report = _reconcile(
+        fresh,
+        orders=(
+            _order(
+                "0000099999", state=WitnessOrderState.CANCELLED, remaining=Decimal("0")
+            ),
+        ),
+    )
+
+    assert report.permits_capacity_release is True
+    assert report.permits_rearm is True
 
 
 @pytest.mark.parametrize("other_date", ["20261119", "20261121"])

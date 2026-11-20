@@ -475,6 +475,41 @@ sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,json_extract(payload_json,'\$
 **정지 · 킬스위치.** 새 셸이면 먼저 `ST=~/.local/state/tos D=<YYYYMMDD> RUN=<n> SYM=<종목>; case $SYM in 005930) LC=stock ;; *) LC=stock-$SYM ;; esac; TOS_STOCK_SESSION_ROOT=$ST/cp3-sessions/$LC-r$RUN-$D`. 정상: `TENANT_STOP_AT` 에 러너가 스스로 멎는다(rc 0/143). 손 정지 = `kill -TERM $(cat $TOS_STOCK_SESSION_ROOT/runner.pid)`(러너가 런타임 → 생산자 순으로 멈춘다).
 러너가 죽었는데 런타임이 남았으면 `pkill -TERM -f "$LC-r$RUN-$D/render"`. `AUTHORITY_WITNESS_LOST` 는 그 프로세스에서 영구다 — 회복은 재기동(시작 블록을 `RUN=2` 로)뿐. ⛔ **이미 나간 모의 주문의 취소는 런타임에 없다(#948) — KIS 모의투자 HTS 에서 손으로.**
 
+##### 장중 모의 tenant 재시작 (운영자 상시 승인 2026-11-20)
+
+**언제.** 그날 한 tenant 가 못 쓰게 됐을 때 — 토큰 발급 실패로 `SEND_REFUSED` 가 계속되거나,
+부팅이 `EngineReplayDiverged` 로 거부되거나, 머지된 고침을 그날 안에 태워야 할 때. 모의 tenant 는
+장중에 묻지 않고 고친다(커널 코드 변경만 15:40 뒤). 선물·상주 세션에는 쓰지 않는다.
+
+```bash
+MAIN=/home/deploy/project/kis_unified_sts
+# 계좌 지문은 필수다. 한 번 구해 두고 재사용한다 (계좌번호의 sha256 앞 12자 · 비밀값 아님):
+export CP3_EXPECT_ACCOUNT_FP=$(set -a; . $MAIN/.env.mock; set +a; $MAIN/.venv/bin/python -c \
+  "import os;from tools.broker_probes.common import account_fingerprint;print(account_fingerprint(os.environ['KIS_STOCK_ACCOUNT_NO']))")
+bash $MAIN/tools/tos_cp3/ops/restart_stock_tenant.sh <종목> [태그]   # 정지 → 평탄 확인 → 잎 보관 → origin/main 새 run
+```
+
+- **잎은 평탄할 때만 보관한다.** 스크립트는 보관 전에 `tools/tos_cp3/ops/mock_flat_check.py`
+  (GET 전용)로 그 종목 보유를 읽고, 보유가 있거나 잔고를 못 읽으면 **rc 2 로 멈추고 잎을 그대로
+  둔다**. 포지션이 열린 잎을 보관하면 그 포지션은 어느 증거 사슬의 것도 아니게 된다. 청산은
+  런타임이 못 한다(승인은 1주 진입 BUY 만 · #960) — `mock_flatten.py <종목>`(모의 전용 시장가
+  전량 매도)로 평탄하게 한 뒤 다시 돌리거나, 모의투자 HTS 에서 손으로 판다.
+- **승인은 시작 «전에» 치우고 `render ok` «뒤에» 쓴다.** 런타임은 부팅 시점에 그 경로에 있던
+  승인을 결속하므로(`bind_at_boot`), 나중에 쓴 파일은 `digest_changed_since_bound` 로 거부되고
+  그 세션은 송신 0 이다 — 그래서 스크립트는 러너를 띄우기 전에 옛 파일을 `approvals-archive/`
+  로 옮긴다. 그리고 승인은 **렌더된 설정의 코드 digest** 에 묶이므로 머지 뒤의 어제·오늘 승인은
+  `code_digest_mismatch` 다 — 그래서 재시작마다 `render ok` 를 기다려 다시 쓴다(rc 는
+  `$SESSION/approval.out`). 둘 중 하나를 건너뛰면 세션은 떠 있는데 송신이 0 이다.
+- **정지 시각은 그 트리의 달력에서 읽는다**(`session_day stop-at` · 개장 지연일 #924 포함).
+  강제하려면 `CP3_DAILY_STOP_AT=HH:MM`. 경로 손잡이는 러너와 같은 이름이다
+  (`CP3_DAILY_MAIN` · `CP3_DAILY_STATE` · `TOS_ENV_MOCK`).
+- **평탄 확인은 공용 앱 키로 토큰을 한 장 발급한다.** 그 시점에 이 tenant 는 이미 멈춰 있지만
+  다른 주식 tenant 는 돌고 있으니, 분당 1회 한도에 걸려 새 세션의 첫 발급이 쿨다운
+  (`token_reissue_min_interval_s`)만큼 늦어질 수 있다 — 캐시 토큰이 유효하면 그대로 쓴다(#1125).
+- rc: 0 시작됨 · 1 실패(정지 안 됨 · fetch · 워크트리 · 승인 쓰기) · 2 거부(지문·종목·평탄 아님) ·
+  4 `render ok` 전에 끝났다(승인 없음 = 송신 0). 시험 `tests/tools/test_cp3_ops_restart.py` ·
+  `tests/tools/test_cp3_ops_mock_tools.py`.
+
 **장 마감 뒤 수용.** 같은 attempt 하나에 아래가 모두 있으면 M2 수용 — 승인(`APPROVAL_STANDING_CONSUMED` 의 `rcl_command_id` = RCL `ConsumeApprovalDecision` `iap-consumption:standing-approval:<YYYYMMDD>:…`) · `CommitReservation` · VERIFY_ITEM 17 · `SEND_SEALED`/`TRANSPORT_SEND` · `ACK` · `FILL_OBSERVED` + `FULL_FILL|PARTIAL_FILL` · `POSTTRADE_FINALITY_PROOF`(`broker-fqp-proof:<attempt>`) · RCL `release-<attempt>` · `ENGINE_PROJECTION_RELEASED`. 질의는 종류·개수·id 접두만 찍는다(예약 id·payload 에는 계좌가 있다 — 옮겨 적지 않는다).
 ```bash
 sqlite3 -readonly $L/evidence.sqlite3 "SELECT COALESCE(json_extract(payload_json,'\$.payload.attempt_id'),replace(json_extract(payload_json,'\$.payload.idempotency_key'),'broker-fqp-proof:','')) a,kind,COUNT(*),group_concat(DISTINCT json_extract(payload_json,'\$.payload.egress_result_kind')) FROM entries WHERE kind IN ('VERIFY_ITEM','SEND_SEALED','TRANSPORT_SEND','EGRESS_RESULT_CONSUMED','FILL_OBSERVED','POSTTRADE_FINALITY_PROOF','ENGINE_PROJECTION_RELEASED') GROUP BY a,kind ORDER BY a,MIN(seq)"
