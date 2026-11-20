@@ -302,3 +302,126 @@ def test_the_committed_loop_side_bounds_are_tighter_than_the_worker_ones() -> No
     assert config.loop_witness_request_timeout_s is not None
     assert config.loop_witness_deadline_ms is not None
     assert config.loop_witness_request_timeout_s < config.witness_request_timeout_s
+    # #1115 N1: the cap exists and leaves room above the one-date deadline for more dates.
+    assert config.loop_witness_deadline_max_ms is not None
+    assert config.loop_witness_deadline_max_ms > config.loop_witness_deadline_ms
+
+
+class _StepClock:
+    """A monotonic_ns source the test moves by hand."""
+
+    def __init__(self) -> None:
+        self.ms = 0
+
+    def __call__(self) -> int:
+        return self.ms * 1_000_000
+
+
+def _multi_date_scope(*dates: str) -> WitnessScope:
+    return WitnessScope(
+        account=_ACCOUNT,
+        instrument_keys=(InstrumentKey(account=_ACCOUNT, instrument="005930"),),
+        order_dates=dates,
+    )
+
+
+def test_the_loop_deadline_admits_one_paced_page_per_receipt_date() -> None:
+    """#1115 N1: the release reconciliation reads every receipt date, so a 3-date scope needs
+
+    four paced GETs and its last page starts at ~6 s. The one-date deadline (3000) refused it on
+    every pass, which made the loop fallback WitnessUnavailable by construction on a leaf older
+    than one trading date. The deadline now scales per date, capped.
+    """
+    clock = _StepClock()
+    witness = DeferredKisWitness(
+        lambda: "20261119",
+        loop_deadline_ms=3_000,
+        loop_deadline_max_ms=9_000,
+        loop_deadline_per_date_ms=2_000,
+        monotonic_ns=clock,
+    )
+    loop = _DeadlineWitness()
+    witness.loop_inner = loop  # type: ignore[assignment]
+
+    three_dates = _multi_date_scope("20261117", "20261118", "20261119")
+    assert witness.loop_deadline_ms_for(three_dates) == 7_000
+    witness.observe(three_dates)
+    (deadline,) = loop.deadlines
+    assert deadline is not None
+    clock.ms = 6_000  # the third order page's pacer grant
+    assert deadline() is False
+    clock.ms = 7_000
+    assert deadline() is True
+
+    # One date is unchanged, and the cap bounds the stall rather than the date count.
+    assert witness.loop_deadline_ms_for(_multi_date_scope("20261119")) == 3_000
+    assert witness.loop_deadline_ms_for(_multi_date_scope()) == 3_000
+    assert (
+        witness.loop_deadline_ms_for(
+            _multi_date_scope("1", "2", "3", "4", "5", "6", "7")
+        )
+        == 9_000
+    )
+    # A repeated date is one page, not two (the snapshot key dedupes them the same way).
+    assert witness.loop_deadline_ms_for(_multi_date_scope("1", "1")) == 3_000
+
+
+def test_a_walk_the_cap_cannot_finish_is_refused_before_its_first_get() -> None:
+    """review-1132 r1 MEDIUM: past the cap the read can only end unavailable, so the session
+
+    loop must not spend ~13 s (cap + a pacer wait + a GET in flight) arriving at that.
+    """
+    clock = _StepClock()
+    witness = DeferredKisWitness(
+        lambda: "20261119",
+        loop_deadline_ms=3_000,
+        loop_deadline_max_ms=9_000,
+        loop_deadline_per_date_ms=2_000,
+        monotonic_ns=clock,
+    )
+    loop = _DeadlineWitness()
+    witness.loop_inner = loop  # type: ignore[assignment]
+
+    # Four dates: five paced GETs, the last granted at 8000 < the 9000 the cap allows — read.
+    witness.observe(_multi_date_scope("1", "2", "3", "4"))
+    assert len(loop.deadlines) == 1
+
+    # Five: the last would be granted at 10000, past the cap. No GET is attempted at all.
+    with pytest.raises(WitnessUnavailable, match="refused before its first GET"):
+        witness.observe(_multi_date_scope("1", "2", "3", "4", "5"))
+    assert len(loop.deadlines) == 1
+    assert clock.ms == 0
+
+    # Without the pacing interval the page starts are unknowable, so nothing is refused up front.
+    unscaled = DeferredKisWitness(lambda: "20261119", loop_deadline_ms=3_000)
+    unscaled.loop_inner = loop  # type: ignore[assignment]
+    unscaled.observe(_multi_date_scope("1", "2", "3", "4", "5"))
+    assert len(loop.deadlines) == 2
+
+
+def test_without_a_cap_or_a_pacing_interval_the_base_deadline_is_used_unchanged() -> (
+    None
+):
+    """The pre-#1115 shape stays reachable: no cap configured, no scaling."""
+    witness = DeferredKisWitness(lambda: "20261119", loop_deadline_ms=3_000)
+    assert witness.loop_deadline_ms_for(_multi_date_scope("1", "2", "3")) == 3_000
+    assert (
+        DeferredKisWitness(lambda: "x").loop_deadline_ms_for(_multi_date_scope("1"))
+        is None
+    )
+
+
+def test_a_deadline_cap_below_its_base_is_refused(tmp_path: Path) -> None:
+    """A cap that would SHORTEN the one-date deadline is a misconfiguration, not a tightening."""
+    raw = yaml.safe_load((_STOCK / "fill_observer.yaml").read_text("utf-8"))
+    raw["loop_witness_deadline_max_ms"] = raw["loop_witness_deadline_ms"] - 1
+    path = tmp_path / "fill_observer.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(FillObserverConfigError, match="below loop_witness_deadline_ms"):
+        load_fill_observer_config(path)
+
+    raw.pop("loop_witness_deadline_ms")
+    raw["loop_witness_deadline_max_ms"] = 9_000
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(FillObserverConfigError, match="needs it"):
+        load_fill_observer_config(path)

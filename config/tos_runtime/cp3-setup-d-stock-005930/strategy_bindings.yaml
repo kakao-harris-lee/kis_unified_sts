@@ -27,8 +27,14 @@
 # 없으므로(DSL-G1) 양변 중 **방향에 맞는 한 변**만 비교한다 — SHORT 배포는
 # `z_x1000 >= +1800` 을 쓰는 자기 파일을 갖는다(결정 4: 방향마다 따로 렌더).
 # 이 등식은 테스트로 고정돼 있다:
-#   tos/runtime/cp3/tests/test_cp3_strategy_content.py
-#   ::test_z_entry_binding_is_trunc_extreme_atr_mult_times_1000
+#   tests/tools/test_cp3_tenant_z_entry_binding.py
+#   ::test_binding_is_trunc_of_its_own_tree_fields_const_times_1000
+# 그 테스트는 등식의 좌변을 **이 트리 `fields.yaml` 의 const** 에서 읽는다 — P2-c 뒤
+# 생산자가 실제로 읽는 선언이 그것이다(#1067/#1068) — 그리고 레거시 `extreme_atr_mult`
+# 와의 연결은 `tests/tools/test_cp3_fields_equivalence.py` 가 따로 잇는다.
+# ⚠ 전 인용 `tos/runtime/cp3/tests/test_cp3_strategy_content.py
+# ::test_z_entry_binding_is_trunc_extreme_atr_mult_times_1000` 은 #1076 에서 삭제됐다
+# (git 이력). 그 뒤 이 -1800 은 #1111 이 위 테스트를 복원할 때까지 아무도 읽지 않았다(#1080).
 #
 # ⚠ quantization 은 truncate_toward_zero 이므로 -1800 은 **보수적**이다:
 # 레거시가 z = -1.7999 를 진입으로 보지 않는 것과 같이, x1000 정수 -1799 는

@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 
+from tools.tos_cp3 import inspect_session as insp
 from tools.tos_cp3 import perf
 from tools.tos_cp3 import session_inputs as si
 
@@ -165,6 +166,10 @@ sts tos perf — 종목·날짜별 체결·손익 (읽기 전용)
   그 키가 없는 체결은 SEND_SEALED 의 send_seal.outbound_price —
     보낸 주문의 지정가(ORD_UNPR × price_scale) — 로 떨어진다.
   손익에 «*» 가 붙은 줄은 그 지정가가 섞여 있다는 뜻이다.
+
+집계 규칙:
+  손익은 수수료·세금·슬리피지 전이다 — 증거에 그 값이 없다.
+  왕복·승은 FIFO 로 닫힌 lot 조각마다 센다 — 매수 둘을 한 번에 턴 매도는 왕복 2 다.
 
 읽은 잎:
   005930   {leaf}  (price_scale=100, 체결 2건)
@@ -335,6 +340,154 @@ def test_an_acked_order_with_no_fill_observation_is_reported_unresolved(
     assert "미해결 BUY 1주" in text
     assert "odno=0000007012" in text
     assert code == 0
+
+
+def test_a_cancelled_order_that_partially_filled_says_so(tmp_path: Path) -> None:
+    """#1120 MEDIUM-1: BUY 2 · 부분 체결 1 · 취소 — 계좌에는 1주가 남는다.
+
+    부분 체결 관측을 버리면 이 주문은 비체결 종료(CANCEL_ACK)라서 집계에서 아예 사라지고,
+    보고서는 그 1주를 어디에도 적지 않는다.
+    """
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-partial", "BUY", 193_400, quantity=2)),
+        ("EGRESS_RESULT_CONSUMED", _ack("attempt-partial", "0000008200", "20261118")),
+        (
+            "FILL_OBSERVED",
+            {
+                "attempt_id": "attempt-partial",
+                "broker_execution_id": "0000008200",
+                "trading_date": "20261118",
+                "kind": "PARTIAL_FILL",
+                "filled_quantity": "1",
+                "remaining_quantity": "1",
+                "reason": "partially_filled",
+            },
+        ),
+        (
+            "EGRESS_RESULT_CONSUMED",
+            {
+                "attempt_id": "attempt-partial",
+                "broker_execution_id": "0000008200",
+                "egress_result_kind": "CANCEL_ACK",
+                "trading_date": "20261118",
+            },
+        ),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, code = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    assert code == 0
+    (symbol,) = document["symbols"]
+    # 부분 체결은 FIFO 에 들어가지 않는다 — 집계 수량은 그대로 0 이다.
+    assert symbol["days"] == []
+    (attempt,) = symbol["unresolved_attempts"]
+    assert attempt["status"] == perf.STATUS_NO_FILL
+    assert attempt["partial_filled_quantity"] == "1"
+    assert "비체결 종료 BUY 2주" in text
+    assert "부분 체결 1주 관측" in text
+    assert "체결 관측 없음" not in text
+
+
+def test_a_broker_fill_the_engine_did_not_hold_is_named_as_such(tmp_path: Path) -> None:
+    """#1120 MEDIUM-2: ENGINE_RESERVATION_ABSENT{FULL_FILL} 은 «체결 관측 없음» 이 아니다."""
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-absent", "BUY", 193_400)),
+        ("EGRESS_RESULT_CONSUMED", _ack("attempt-absent", "0000008300", "20261118")),
+        (
+            "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT",
+            {
+                "attempt_id": "attempt-absent",
+                "broker_execution_id": "0000008300",
+                "trading_date": "20261118",
+                "kind": "FULL_FILL",
+                "filled_quantity": "1",
+                "remaining_quantity": "0",
+                "reason": "filled",
+            },
+        ),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, _ = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    (symbol,) = document["symbols"]
+    (attempt,) = symbol["unresolved_attempts"]
+    assert attempt["engine_reservation_absent"]["kind"] == "FULL_FILL"
+    assert "브로커 체결 관측 · 엔진 미보유(FULL_FILL 1주)" in text
+    assert "체결 관측 없음" not in text
+
+
+def test_a_cancel_hold_is_named_as_the_cause(tmp_path: Path) -> None:
+    """#1120 MEDIUM-2: FILL_OBSERVER_CANCEL_UNSUPPORTED 도 사유로 읽힌다."""
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-cancel", "BUY", 193_400)),
+        ("EGRESS_RESULT_CONSUMED", _ack("attempt-cancel", "0000008400", "20261118")),
+        (
+            "FILL_OBSERVER_CANCEL_UNSUPPORTED",
+            {
+                "attempt_id": "attempt-cancel",
+                "broker_execution_id": "0000008400",
+                "trading_date": "20261118",
+                "reason": "cancelled_at_broker",
+                "observed_rows": [],
+            },
+        ),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, _ = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    (symbol,) = document["symbols"]
+    (attempt,) = symbol["unresolved_attempts"]
+    assert attempt["cancel_unsupported_reason"] == "cancelled_at_broker"
+    assert attempt["trading_date"] == "20261118"
+    assert "사유 취소 보류(cancelled_at_broker)" in text
+
+
+def test_the_same_leaf_twice_is_counted_once(round_trip_leaf: Path) -> None:
+    """#1120 LOW: 같은 잎을 두 번 주면 체결이 두 번 집계됐다 — resolve 한 경로로 지운다."""
+    once = json.loads(perf.run(leaf_paths=(str(round_trip_leaf),), as_json=True)[0])
+    twice = json.loads(
+        perf.run(
+            leaf_paths=(str(round_trip_leaf), str(round_trip_leaf) + "/."),
+            as_json=True,
+        )[0]
+    )
+
+    assert len(twice["leaves"]) == 1
+    assert twice["symbols"] == once["symbols"]
+    assert twice["symbols"][0]["totals"]["pnl_krw"] == "-1100"
+
+
+def test_a_leaf_whose_symbol_is_unknown_is_not_named_after_its_directory(
+    tmp_path: Path,
+) -> None:
+    """#1120 LOW: 보관된 잎의 디렉터리 이름은 운영자 라벨이지 종목이 아니다."""
+    rows = [
+        _policy(),
+        ("FILL_OBSERVED", _fill("attempt-orphan-fill", "0000011111", "20261118")),
+    ]
+    leaf = _write_leaf(tmp_path / "005930.stuck-20261105" / "005930.pre-r4", rows)
+
+    text, _ = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    (symbol,) = document["symbols"]
+    assert symbol["symbol"] == perf.UNKNOWN_SYMBOL
+    assert "005930.pre-r4 집계 못 한 체결" not in text
+    assert f"{perf.UNKNOWN_SYMBOL} 집계 못 한 체결 1주" in text
+
+
+def test_the_data_parent_suffix_is_the_inspect_sessions_own(tmp_path: Path) -> None:
+    """#1120 LOW: 규약은 한 곳에만 있다 — 두 도구가 다른 디렉터리를 보면 둘 다 조용히 빈다."""
+    assert perf.TENANT_DATA_PARENT_SUFFIX is insp.TENANT_DATA_PARENT_SUFFIX
 
 
 def test_a_rejected_order_is_not_unresolved(tmp_path: Path) -> None:

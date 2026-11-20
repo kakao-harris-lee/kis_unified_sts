@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
+from tos.engine.records import InstrumentKey
 from tos.engine.vocabulary import EgressResultKind
 from tos.rcl import CapacityState
 from tos_runtime.compose._broker_posttrade_wiring import (
@@ -24,6 +25,7 @@ from tos_runtime.posttrade.fill_observer import (
     FILL_OBSERVER_CONFIG_NAME,
     load_fill_observer_config,
 )
+from tos_runtime.recon.ports import WitnessScope
 
 from ..transport.kis_mock._fake_kis_server import FakeKisServer
 from . import _fixtures as fx
@@ -425,6 +427,49 @@ def test_the_observer_get_is_bounded_by_its_own_timeout_not_the_order_paths(
             (config_dir / "kis_mock_transport.yaml").read_text(encoding="utf-8")
         )["request_timeout_s"]
     )
+    _close(runtime)
+
+
+def test_the_loop_deadline_is_wired_to_the_app_keys_pacing_interval(
+    tmp_path: Path,
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch,
+    server,
+) -> None:
+    """#1115 N1: the per-date increment is the TRANSPORT's pacing, so compose must pass it.
+
+    Nothing else here would notice if it arrived as ``None`` — the base deadline would simply be
+    used for every scope, which is the defect this fixes.
+    """
+    _deploy(config_dir, custody_root, server, monkeypatch)
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    observer = runtime.fill_observer
+    assert observer is not None
+    config = load_fill_observer_config(config_dir / FILL_OBSERVER_CONFIG_NAME)
+    pacing = yaml.safe_load(
+        (config_dir / "kis_mock_transport.yaml").read_text(encoding="utf-8")
+    )["min_send_interval_ms"]
+    assert pacing == _LOOP_TEST_APP_KEY_INTERVAL_MS
+    witness = observer.orders
+    assert isinstance(witness, DeferredKisWitness)
+    base = config.loop_witness_deadline_ms
+    assert base is not None and config.loop_witness_deadline_max_ms is not None
+
+    def _scope(*dates: str) -> Any:
+        return WitnessScope(
+            account=fx.ACCOUNT,
+            instrument_keys=(
+                InstrumentKey(account=fx.ACCOUNT, instrument=fx.INSTRUMENT),
+            ),
+            order_dates=dates,
+        )
+
+    assert witness.loop_deadline_ms_for(_scope("1")) == base
+    assert witness.loop_deadline_ms_for(_scope("1", "2", "3")) == base + 2 * pacing
+    # And the app-key pacing is also what the observer reserves for the holdings refresh (#1107).
+    assert observer.app_key_min_send_interval_ms == pacing
     _close(runtime)
 
 

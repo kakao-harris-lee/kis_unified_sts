@@ -157,8 +157,9 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
    ⚠ **이 트리의 전략 파일이 직접 실행된 것은 아니다** — 실행된 것은 B1b 쪽 사본
    `tos/runtime/cp3/short/strategies/setup_d_short.strategy.yaml` 이고(이 파일은 좌표가
    `"TBD"` 라 적재되지 않는다, §5 1), 둘이 **좌표 정규화 뒤 같은 파싱 YAML** 이라는 것은
-   `tos/runtime/cp3/tests/test_cp3_short_strategy_content.py` 의 드리프트 가드가 고정한다
+   `tos/runtime/cp3/tests/test_cp3_short_strategy_content.py` 의 드리프트 가드가 고정했다
    (레드 증명 다섯). 그 가드는 이 PR 전까지 **LONG 쪽에도 없었다**.
+   ⚠ **그 가드는 #1076 에서 삭제됐다**(git 이력) — 두 사본을 대조하는 테스트는 지금 없다.
 2. **레거시의 SHORT 전용 가드가 삭제됐다 — 결정 5 의 의도된 차이.** 레거시
    `config/strategies/futures/setup_d_vwap_reversion.yaml` 은
    `short_blocked_regimes: ["BULL_STRONG"]` 를 들고 있고(`long_blocked_regimes` 는 **빈
@@ -185,7 +186,8 @@ FLAT 규칙의 `direction` 은 **닫는 액션의 방향**이고(`tos/src/tos/ds
    닫으려면 B2 가 어댑터의 판정을 공개해야 하고 그것은 B2 변경이다. 배포(paper/live)는
    어댑터를 타므로 차이는 **거기서** 실재한다. 이 문단은 `B1b-D8` 의 note 와
    `test_cp3_short_strategy_content.py::test_the_regime_guard_difference_says_why_it_cannot_show_up`
-   이 고정한다 — 그 테스트는 어댑터에서 `check()` 가 블록보다 **앞**인지, 그리고
+   이 고정했다(그 테스트도 #1076 에서 삭제 — git 이력) — 그 테스트는 어댑터에서
+   `check()` 가 블록보다 **앞**인지, 그리고
    `shared/decision/setups/vwap_reversion.py` 안에 regime 블록이 **없는지**(음의 단언)까지
    읽는다.
 3. **ATR 스톱(1.5×)과 `min_confidence` 는 LONG 과 같은 이유로 없다** — 결정 6 · B1a-D1.

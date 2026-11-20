@@ -63,13 +63,37 @@ poll_interval_ms: 9000
 # fallback read (a reconciliation no prefetched snapshot serves) still costs up to this per GET.
 witness_request_timeout_s: 5.0
 # The SESSION-LOOP fallback read (a reconciliation no prefetched snapshot serves) keeps the old
-# 2 s per GET on its own witness client, plus a whole-walk deadline: once 3000 ms have passed no
-# further page starts (WitnessUnavailable, fail-closed). 3000 lets the balance page and the
-# order page — paced kis_mock_transport.yaml::min_send_interval_ms (2000) apart — both start.
-# Worst-case loop stall ≈ 3000 + one pacer wait (≤ min_send_interval_ms) + one GET in flight
-# (2 s per socket operation) ≈ 7 s, against ~28 s unbounded with 5 s GETs (review-1114 M2).
+# 2 s per GET on its own witness client, plus a whole-walk deadline: once it has passed no
+# further page starts (WitnessUnavailable, fail-closed).
+#
+# The deadline is **per scope**, because the walk is: the release reconciliation reads the
+# balance page plus ONE ORDER PAGE PER RECEIPT DATE in its scope
+# (release_consumer::_scope_receipt_dates), every request on the app key is paced
+# kis_mock_transport.yaml::min_send_interval_ms (2000) apart, and so an N-date scope's last page
+# does not START until N x 2000. `loop_witness_deadline_ms` below is the ONE-DATE value (3000
+# lets the balance page at 0 and the order page at 2000 both start); each date past the first
+# adds one pacing interval, up to `loop_witness_deadline_max_ms`.
+#
+# ⚠ **A fixed 3000 could not read a 2-date scope at all** (#1115 N1): its second order page
+# starts at 4000 and the deadline refused it, so on any leaf that outlived one trading date —
+# the 11-17..11-19 leaf carried three — the loop fallback was WitnessUnavailable by construction
+# and the release held until the FETCH worker reprojected it (60 s cadence). Scaled: 3000 /
+# 5000 / 7000 / 9000 for 1 / 2 / 3 / 4 dates.
+#
+# 9000 (the cap) is the operator's stall budget, not a broker fact. Worst-case session-loop stall
+# ≈ this deadline + one pacer wait (≤ min_send_interval_ms 2000) + one GET in flight
+# (loop_witness_request_timeout_s 2 s) — i.e. ~7 s at one date and ~13 s at the cap, against
+# ~28 s unbounded with 5 s GETs (review-1114 M2). The 2026-11-14 comment that called ~7 s the
+# worst case counted only one pacer wait for the whole walk and only one date (#1115 N2); the
+# bound is the one written here. A scope with MORE dates than the cap admits (5+) is
+# `WitnessUnavailable` as it was before, but now it is refused BEFORE the first GET: the last
+# page's pacer grant lands past the deadline whatever the broker does, so the verdict was certain
+# and the loop does not spend the ~13 s arriving at it (review-1132 r1). The release holds exactly
+# as it would have and the FETCH worker's reprojection still resolves it. Raise the cap only
+# against a measured stall — the loop is also the thing that produces decisions.
 loop_witness_request_timeout_s: 2.0
 loop_witness_deadline_ms: 3000
+loop_witness_deadline_max_ms: 9000
 # The WHOLE poll's bound, in ms, across every trading date and every continuation page it
 # reads (#949 review HIGH). Once it is past, no further read starts and no further page is
 # fetched: that read is WitnessUnavailable — recorded, fail-closed, retried at the next due
@@ -214,15 +238,41 @@ held_position_max_age_ms: 44000
 # (kis_mock_transport.yaml::min_send_interval_ms 2000 + ~0.2 s, P-11 2026-08-05) in an otherwise
 # idle pass, bounded by poll_deadline_ms like every other read. It therefore cannot age the
 # release snapshot (release_snapshot_max_age_ms 6000, measured from that snapshot's own read
-# start — the scan read is issued BEFORE it) and cannot defer the holdings refresh
-# (held_position_poll_interval_ms 12000 / held_position_max_age_ms 20000), whose plan wins the
-# pass outright. Raising this number costs one more such pass, not a longer one.
+# start — the scan read is issued BEFORE it). Raising this number costs one more such pass, not
+# a longer one.
+#
+# ⚠ **It CAN delay the next holdings refresh, and that is why it also waits for it**
+# (review-1105 L1, fixed in #1107). An idle FETCH is not `risk_only`, so nothing preempts it
+# once the worker holds it: a scan GET issued just before the refresh becomes due pushes that
+# refresh up to min_send_interval_ms (2000) + poll_deadline_ms (4000) later, and
+# held_position_max_age_ms carries only ~800 ms over its own poll period (see the held-position
+# block above) — the CLOSE proposed in that hole reads PROOF_UNAVAILABLE after spending its one
+# standing-approval use. So an idle read starts only while at least that 6000 ms reserve remains
+# until the next refresh is due (held_position_poll_interval_ms 36000 - time since the last one),
+# i.e. in the first 30 s of each 36 s holdings cycle. A tenant that has never polled holdings
+# (the RCL has granted no CLOSE-observation purpose) has no proof to invalidate and is not held
+# back. The same reserve gates the uncertain-send read below — one paced GET is one paced GET.
 #
 # Each date's rows are held until the whole window has answered; only then is a verdict reached.
 # A failed read anywhere in the window abandons the scan with NO verdict (a window with a hole
 # cannot tell "this ODNO is on no other date" from "we did not look"), and the whole window is
 # retried one attempt-cadence later — prior_day_poll_interval_ms (10 min), the same cadence an
 # unresolved earlier-day ACK gets.
+#
+# ⚠ **A date whose rows need a THIRD paced GET is never read** (review-1105 L2). One date's walk
+# starts its first page at 0 ms and a continuation page one pacing interval later (2000), both
+# inside poll_deadline_ms 4000; a second continuation page would start at 4000 and the deadline
+# refuses it, which abandons the window with no verdict and retries it 10 min later — forever, if
+# the page count does not change. 모의 VTTC0081R prints 15 rows per page for one symbol's day, and
+# this tenant sends ~2 orders a day, so three pages is unreachable here; a tenant that trades
+# enough to need them must raise poll_deadline_ms by one pacing interval per extra page.
+#
+# ⚠ **A scan needs an IDLE FETCH, so an attempt that stays pending all session starves it**
+# (review-1105 L3). Today's unresolved ACKs are read every poll_interval_ms, and that is fill
+# work: while one sits there the scan is never planned, and a dateless ACK from an earlier date
+# waits for the session to quiet down (or for the next boot). Liveness only, fail-closed — the
+# untracked attempt's reservation stays held either way, which is the state the scan exists to
+# repair, not one it can make worse. Recorded as a limit; no fix.
 ack_date_recovery_lookback_trading_days: 5
 
 # Broker-flat entry release (operator decision 2026-11-19, option B). An entry reservation in

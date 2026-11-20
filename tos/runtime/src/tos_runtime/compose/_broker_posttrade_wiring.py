@@ -113,12 +113,18 @@ class DeferredKisWitness:
         trading_date_now: Callable[[], str | None] = lambda: None,
         *,
         loop_deadline_ms: int | None = None,
+        loop_deadline_max_ms: int | None = None,
+        loop_deadline_per_date_ms: int | None = None,
+        monotonic_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         self.inner: KisStockBrokerWitness | None = None
         #: The session-loop fallback read's own witness (``loop_witness_request_timeout_s``) and
         #: walk deadline (``loop_witness_deadline_ms``); ``None`` keeps ``inner`` / no deadline.
         self.loop_inner: KisStockBrokerWitness | None = None
         self._loop_deadline_ms = loop_deadline_ms
+        self._loop_deadline_max_ms = loop_deadline_max_ms
+        self._loop_deadline_per_date_ms = loop_deadline_per_date_ms
+        self._monotonic_ns = monotonic_ns
         self._trading_date_now = trading_date_now
         self._served: PrefetchedSnapshot | None = None
         self._served_thread: int | None = None
@@ -167,14 +173,70 @@ class DeferredKisWitness:
             raise WitnessUnavailable("required prefetched snapshot does not match")
         return self._loop_observe(scope)
 
+    def loop_deadline_ms_for(self, scope: WitnessScope) -> int | None:
+        """The loop-side walk deadline for ``scope``: one page start per receipt date (#1115 N1).
+
+        ``loop_witness_deadline_ms`` was measured for a ONE-date scope (the balance page plus one
+        order page, one app-key pacing interval apart). The release reconciliation reads EVERY
+        receipt date in its scope (``release_consumer._scope_receipt_dates``), so an N-date scope
+        needs N+1 paced GETs and its last page does not start until N intervals in — with a fixed
+        3000 ms deadline a 2-date scope already fails, every time, so the loop fallback was
+        ``WitnessUnavailable`` by construction on any leaf that outlived one trading date.
+
+        So each date past the first adds one pacing interval, up to
+        ``loop_witness_deadline_max_ms`` — the cap is what keeps the session-loop stall bounded,
+        and past it the behaviour is the old one (no verdict, fail-closed, recovered by the FETCH
+        worker's reprojection). Without the cap or the pacing interval the base is used unchanged.
+        """
+        base = self._loop_deadline_ms
+        per_date = self._loop_deadline_per_date_ms
+        cap = self._loop_deadline_max_ms
+        if base is None or per_date is None or cap is None:
+            return base
+        dates = len(frozenset(scope.order_dates))
+        return min(cap, base + max(0, dates - 1) * per_date)
+
+    def _refuse_a_walk_the_deadline_cannot_finish(
+        self, scope: WitnessScope, deadline_ms: int
+    ) -> None:
+        """Refuse BEFORE the first GET when the walk provably cannot finish (review-1132 r1).
+
+        Past what the cap admits the outcome is ``WitnessUnavailable`` either way — the last
+        order page's pacer grant lands after the deadline, so the walk is cut off. Spending the
+        whole cap plus a pacer wait and a GET in flight (~13 s at the committed numbers) on the
+        SESSION LOOP to arrive at a result that was certain before the first request is the one
+        cost worth avoiding: that thread is also the one that produces decisions. The release
+        holds exactly as it would have, and the FETCH worker's reprojection is still the path
+        that resolves it.
+
+        Only the scaled mode can say this. Without the pacing interval the page starts are not
+        knowable here, so nothing is refused up front and the read runs as it always did.
+        """
+        per_date = self._loop_deadline_per_date_ms
+        if per_date is None or self._loop_deadline_max_ms is None:
+            return
+        dates = len(frozenset(scope.order_dates))
+        last_page_starts_at = dates * per_date
+        if deadline_ms > last_page_starts_at:
+            return
+        raise WitnessUnavailable(
+            f"loop-side walk refused before its first GET: {dates} receipt date(s) need "
+            f"{dates + 1} paced GETs and the last starts at {last_page_starts_at} ms, past this "
+            f"scope's deadline {deadline_ms} ms (cap {self._loop_deadline_max_ms} ms, pacing "
+            f"{per_date} ms) — the read could only end unavailable, so the loop does not wait "
+            "for it; held, and the prefetching worker still covers this scope"
+        )
+
     def _loop_observe(self, scope: WitnessScope) -> WitnessSnapshot:
         """A live read no prefetched snapshot served — on the caller's (loop) thread, bounded."""
         witness = self._ready() if self.loop_inner is None else self.loop_inner
-        if self._loop_deadline_ms is None:
+        deadline_ms = self.loop_deadline_ms_for(scope)
+        if deadline_ms is None:
             return witness.observe(scope)
-        deadline_ns = time.monotonic_ns() + self._loop_deadline_ms * 1_000_000
+        self._refuse_a_walk_the_deadline_cannot_finish(scope, deadline_ms)
+        deadline_ns = self._monotonic_ns() + deadline_ms * 1_000_000
         return witness.observe(
-            scope, deadline_expired=lambda: time.monotonic_ns() >= deadline_ns
+            scope, deadline_expired=lambda: self._monotonic_ns() >= deadline_ns
         )
 
     def prefetch(
@@ -284,6 +346,10 @@ class BrokerPosttrade:
     release_consumer: FinalityConsumerPort | None = None
     held_position_bridge: HeldPositionBridge | None = None
     trading_date_now: Callable[[], str | None] = lambda: None
+    #: ``kis_mock_transport.yaml::min_send_interval_ms`` (the app-key pacer's spacing), carried
+    #: here because the observer's idle reads must reserve one such slot for the next holdings
+    #: refresh (#1107 L1) and ``attach_fill_observer`` has no transport config of its own.
+    app_key_min_send_interval_ms: int | None = None
 
 
 def _refuse_snapshot_age_below_two_intervals(
@@ -375,7 +441,10 @@ def build_broker_posttrade(
         )
     )
     witness = DeferredKisWitness(
-        trading_date_now, loop_deadline_ms=observer_config.loop_witness_deadline_ms
+        trading_date_now,
+        loop_deadline_ms=observer_config.loop_witness_deadline_ms,
+        loop_deadline_max_ms=observer_config.loop_witness_deadline_max_ms,
+        loop_deadline_per_date_ms=transport_config.min_send_interval_ms,
     )
     token_client = build_client(transport_config)
 
@@ -409,6 +478,7 @@ def build_broker_posttrade(
         witness=witness,
         observer_config=observer_config,
         trading_date_now=trading_date_now,
+        app_key_min_send_interval_ms=transport_config.min_send_interval_ms,
     )
 
 
@@ -474,6 +544,7 @@ def attach_fill_observer(
         account=instrument_key.account,
         instrument=instrument_key.instrument,
         snapshots=posttrade.witness,
+        app_key_min_send_interval_ms=posttrade.app_key_min_send_interval_ms,
         held_position_tip=None if bridge is None else bridge.tip_tuple,
         held_position_eligible=(
             None
