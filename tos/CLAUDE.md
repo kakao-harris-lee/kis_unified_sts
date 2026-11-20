@@ -29,10 +29,10 @@ tos work so agents do not scan the legacy runtime.
   uses none of the six (measured: 0 `shared` imports under `tos/src`); do not
   add an allowlist entry without a §6.1 revision-log line in the design doc.
 - The legacy runtime is not a reference implementation for tos. Do not port
-  `shared/kis`, `tools/broker_probes`, or service code into `tos/`; the safety
-  core is greenfield by spec. (`shared/execution` is down to `tr_ids.py` and
-  `contract_spec.py`, which the broker probes and the Setup D walk-forward script
-  import — not a porting source either.)
+  `shared/execution`, `shared/kis`, `tools/broker_probes`, or service code into
+  `tos/`; the safety core is greenfield by spec. (`shared/execution` is down to
+  `tr_ids.py` and `contract_spec.py`, which the broker probes and the Setup D
+  walk-forward script import; that is what remains of it, not an exemption.)
 - Repo split (strategy C) is deferred to the live gate by design §6.2; the
   eventual separation removes the legacy runtime from this repo, it does not
   move `tos/` out. Do not propose moving `tos/` to a new repo as a side effect
