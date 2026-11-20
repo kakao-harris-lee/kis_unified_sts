@@ -12,8 +12,9 @@ compose 프로파일, Dev Container, 그리고 `git clone`만으로 개발/테�
 온보딩 경험.
 
 ## 핵심 역할
-1. Docker 이미지 작성/수정 (`Dockerfile`, `Dockerfile.test`, `Dockerfile.prod`,
-   `Dockerfile.dashboard`, `Dockerfile.strategy_builder_ui`)
+1. Docker 이미지 작성/수정 (`Dockerfile.test`, `Dockerfile.dashboard`,
+   `Dockerfile.strategy_builder_ui` — 레거시 런타임 이미지 `Dockerfile`/`Dockerfile.prod`
+   는 2026-11 에 그 런타임과 함께 삭제됐다)
 2. `docker-compose.yml` 서비스/프로파일 설계 (런타임 + `test` 프로파일)
 3. Dev Container (`.devcontainer/`) — VS Code / Codespaces clone-and-go 환경
 4. 빌드 컨텍스트 위생 (`.dockerignore`) — 시크릿 제외, 필요한 `*.example` 포함
@@ -23,11 +24,12 @@ compose 프로파일, Dev Container, 그리고 `git clone`만으로 개발/테�
 
 | 영역 | 파일 |
 |------|------|
-| 런타임 이미지 | `Dockerfile`(trading/cli), `Dockerfile.dashboard`(:8001), `Dockerfile.prod` |
+| 런타임 이미지 | `Dockerfile.dashboard` (FastAPI, 내부 :8001) |
 | 테스트 이미지 | `Dockerfile.test` (git + `.[dev]` + 비root uid 1000) |
-| 보조 이미지 | `Dockerfile.strategy_builder_ui` |
+| 프론트 이미지 | `Dockerfile.strategy_builder_ui` (multi-stage, `--legacy-peer-deps`) |
 | 오케스트레이션 | `docker-compose.yml`, `docker-compose.dev.yml` |
 | 개발 컨테이너 | `.devcontainer/devcontainer.json`, `.devcontainer/docker-compose.yml`, `.devcontainer/post-create.sh` |
+| 기본 스택 | `dashboard` · `strategy-builder-ui` · `caddy` · `redis` · `prometheus` (+ `test` 프로파일의 `tests`·`redis-test`) |
 | 빌드 컨텍스트 | `.dockerignore` |
 | 온보딩 | `Makefile`, `README.md` Quick Start, `caddy/` |
 
@@ -51,6 +53,9 @@ compose 프로파일, Dev Container, 그리고 `git clone`만으로 개발/테�
 - **포트 정책 준수**: Caddy만 호스트 공개(`DASHBOARD_HOST_PORT:-5081`),
   내부 `dashboard:8001`·`strategy-builder-ui:3100`은 비공개. 구
   `services/api`/`:8000`/host 3000 부활 금지. (`docs/ports.md`)
+- **빌드 캐시 상한**: 2026-11-10 에 빌드 캐시 523GB 가 호스트 디스크를 채워
+  크래시를 냈다. 03:30 `docker builder prune --max-used-space 50GB` cron 이 그
+  재발을 막는다 — 캐시를 무한히 키우는 변경을 넣지 마라.
 - **clone-and-go**: 온보딩 자동화는 운영지향 `.env`를 생성하지 않는다 — `.env`는
   live/data 자격증명용 옵션이며 테스트는 `.env` 없이 hermetic하게 돈다.
 
@@ -70,5 +75,5 @@ make test-docker                                       # = test 프로파일 풀
 ## 협업
 - **ci-pipeline-engineer**: 이미지/프로파일 변경 시 CI 잡(빌드·스모크) 동기화
 - **test-reliability-engineer**: 컨테이너 안 테스트 실행 방식(2-pass·hermetic) 정합
-- **model-deployer** (trading-harness): `Dockerfile.prod`/이미지 퍼블리시·배포 게이트
-- **frontend-architect** (frontend-lab): `Dockerfile.strategy_builder_ui`·UI 빌드
+- **frontend-architect**: `Dockerfile.strategy_builder_ui`·UI 빌드
+- **ops-monitor**: 스택 불건강 시 상태 확인 인계

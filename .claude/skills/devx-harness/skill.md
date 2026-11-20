@@ -97,8 +97,7 @@ devx-harness: 차단/비차단 분류 + 우선순위 리포트
 
 | 상황 | devx-harness 에이전트 | 협력 대상 |
 |------|----------------------|----------|
-| 이미지 퍼블리시 → 배포/승격 | ci-pipeline-engineer | model-deployer (trading-harness) |
-| UI 빌드(Dockerfile.strategy_builder_ui) | container-engineer | frontend-architect (frontend-lab) |
+| UI 빌드(Dockerfile.strategy_builder_ui) | container-engineer | frontend-architect |
 | 런타임 헬스/장애(빌드 후 운영) | — (인계) | ops-monitor·incident-responder (ops-harness) |
 | 기능 테스트 *작성*/커버리지 | test-reliability-engineer | test-engineer (trading-harness) |
 | 종합 코드 감사의 성능/보안 렌즈 | test-reliability-engineer | performance-auditor·security-auditor (code-audit) |

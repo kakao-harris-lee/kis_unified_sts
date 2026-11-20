@@ -5,7 +5,7 @@
 Two projects in one repository. The **TOS kernel** (`tos/`, `tools/tos_*`)
 is the live one — read `tos/CLAUDE.md` before
 touching it. The legacy KIS trading runtime it replaced was deleted in
-2026-11 (`docs/plans/2026-11-07-legacy-removal-plan.md`, steps L1–L6); it last
+2026-11 (`docs/plans/2026-11-07-legacy-removal-plan.md`, steps L1–L7); it last
 existed at tag `legacy-final` (`6fc17c0f8d25`). What survives outside `tos/` is
 the CP-3 measurement path, the KIS broker probes, a read-only operator
 dashboard, and the `shared/` modules those import.
@@ -30,12 +30,15 @@ Config files live in `config/` with this structure:
 
 - `tos_runtime/` — TOS tenant trees (calendar, release, profile). Digest-bound —
   do not edit as a side effect of other work.
-- `tos_*.yaml` — TOS gates (completion, size budget, status board, CP-3 B3).
+- `tos_*.yaml` — TOS gates: `tos_size_budget.yaml`, `tos_status_board.yaml`,
+  `tos_named_tbd_guard.yaml`. (The completion gate and the CP-3 B3 gate retired
+  on 2026-11-12 / 2026-11-13.)
 - `tos_probes/`, `broker_probes/` — probe configs.
 - `kis/` — API authentication; `storage.yaml` / `streaming.yaml` /
   `execution.yaml` — what the surviving `shared/` reads.
 - `strategies/futures/setup_d_vwap_reversion.yaml` — the only strategy YAML
-  left; it is the CP-3 B3 witness's input.
+  left; it is the legacy Setup D witness's input. The live CP-3 producer reads
+  each tenant's declarative `fields.yaml` instead (P2-c, 2026-11-18).
 
 ### Strategy Pattern with Registry (retired)
 
@@ -64,14 +67,15 @@ witness's exit (below).
 
 | Area | Purpose |
 | --- | --- |
-| `shared/backtest/market_context_replay.py`, `shared/decision/` | the CP-3 producer and the **B3 witness** (legacy Setup D). Keep byte-identical until `TOS_PAPER_READY` |
+| `shared/backtest/market_context_replay.py`, `shared/decision/` | the **legacy Setup D witness**, driven by `tools/tos_cp3/legacy_setup_d_driver.py` for the offline dataset producer and the equivalence comparison only. Keep byte-identical until `TOS_PAPER_READY` — `tools/strip_prose.py` refuses the path to enforce it |
+| `shared/indicators/fields/` | the **declarative field catalog** the live CP-3 producer evaluates (P2-c). This is where a strategy's indicators live now |
 | `shared/strategy/exit/setup_target_exit.py` | the witness's exit, and the only exit implementation left — L7 deleted `three_stage`, `momentum_decay`, `trix_golden_exit` and `technical_consensus_exit` with the registry |
 | `shared/{models,indicators,resilience,utils,exceptions,determinism}/` | the six packages the tos import firewall allows; kept whole even where unused, because narrowing that surface is a boundary-design change |
 | `shared/instruments/` | futures contract specs the witness reads |
 | `shared/kis/auth.py` | KIS auth for the CP-3 quote client |
 | `shared/storage/{config,market_data_store}.py` | Parquet/DuckDB market-data store |
 | `shared/llm/{data_classes,market_context}.py` | the two type-hint modules `shared/strategy/base.py` still names; L7 deleted the other 35 |
-| `shared/execution/{tr_ids,contract_spec}.py` | the TR-ID SoT `tools/broker_probes/probes_real_order.py` imports and the contract specs `scripts/analysis/walkforward_setup_d_vwap_reversion.py` re-exports. `executor.py` and `shared/kis/client.py` — kept until 2026-11-13 only because `BROKER-TRANSPORT-SYMBOLS.csv` + `tos_spec_status --check` required those classes — went with that checker, and `shared/http/`, `shared/observability/` and `services/monitoring/` with them, since those two were their only importers. `shared/streaming/` stays: `.importlinter` names it in the forbidden set |
+| `shared/execution/{tr_ids,contract_spec}.py` | the TR-ID SoT `tools/broker_probes/probes_real_order.py` imports and the contract specs `scripts/analysis/walkforward_setup_d_vwap_reversion.py` re-exports. `executor.py` and `shared/kis/client.py` went on 2026-11-13 with the checker that was their only remaining reason to exist, and `shared/http/`, `shared/observability/` and `services/monitoring/` with them. `shared/streaming/` stays: `.importlinter` names it in the forbidden set |
 
 ### No Code Duplication
 
@@ -152,12 +156,24 @@ lint-imports
 | `KIS_STOCK_MARKET`, `KIS_FUTURES_MARKET`                                  | Trading mode (`real`/`mock`)        |
 | `KIS_CONFIG_DIR`                                                          | Override config directory path      |
 | `REDIS_*`                                                                 | Infrastructure settings (DB 1)      |
-| `OPENAI_API_KEY`, `KRX_API_KEY`, `DART_API_KEY`                           | LLM/data APIs                       |
-| `TELEGRAM_STOCK_*`, `TELEGRAM_FUTURES_*`, `TELEGRAM_BRIEFING_*`           | Telegram notifications              |
-| `API_KEY`, `PROMETHEUS_PORT`                                              | API/monitoring                      |
+| `DASHBOARD_API_KEY`, `DASHBOARD_REQUIRE_AUTH`, `DASHBOARD_HOST_PORT`      | Dashboard auth + the one host web port |
+| `TOS_OPERATOR_PROJECTION_DIR` / `_PATH`                                   | Host dir ↔ container path pair for the operator projection (set both or neither) |
 | `KIS_APP_KEY`, `KIS_APP_SECRET`                                           | Legacy single-account compatibility |
 
+`OPENAI_API_KEY`, `KRX_API_KEY`, `DART_API_KEY` and the `TELEGRAM_*` families are
+still declared in `shared/config/secrets.py` but **no surviving code consumes
+them** — the LLM briefing and notification paths went in L7. `PROMETHEUS_PORT` is
+read by nothing.
+
 Config YAML supports `${VAR_NAME}` / `${VAR_NAME:default}` syntax for secrets.
+
+## Comment convention
+
+A «why» that must survive is **one `# SAFETY:` line**. `tools/strip_prose.py`
+strips explanatory prose from `tools/` and `tests/`; its `KEEP_MARKERS` keeps any
+comment containing `safety:` (#1139). Write the reason a guard, an interlock or a
+counter-intuitive value exists next to it as a single `# SAFETY:` comment, not as
+a paragraph the next strip pass deletes.
 
 ## Removed in L7 — do not look for these
 

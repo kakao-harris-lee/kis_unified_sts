@@ -10,9 +10,17 @@ description: "GitHub Actions 워크플로우 작성/수정 절차. 경로 게이
 ## 워크플로우 지도
 | 파일 | 트리거 | 무엇을 검증 |
 |------|--------|-----------|
-| `test.yml` | push/PR, weekly | 정식 전체 스위트(2-pass) + lint + type-check + performance |
-| `devcontainer.yml` | 경로 게이트 | `Dockerfile.test` 빌드 + Dev Container 빌드 + unit 스모크 |
-| `docker.yml` | tag/release/dispatch | 이미지 빌드·퍼블리시 + 헬스 스모크 |
+| `test.yml` | push/PR (tos·docs 경로 제외), weekly | 정식 전체 스위트: 샤딩 병렬 `test-shard` + `test-serial` + 롤업 `test` + `lint` + `type-check` |
+| `ruff.yml` | push/PR, 경로 게이팅 없음 | **필수 체크** `ruff` |
+| `tos-gate.yml` | push/PR, 경로 게이팅 없음 | **필수 체크** `tos-gate` = `tools/tos_redigest.py --check` |
+| `tos-firewall.yml` | push/PR, 경로 게이팅 없음 | **필수 체크** `tos-firewall` — gates(AST + `lint-imports`) · tests · static(mypy) |
+| `ui.yml` | 경로 게이트 | 프론트: `npm run lint` · `npm test` · `npm run build` |
+| `devcontainer.yml` | 경로 게이트, 주간 cron | `Dockerfile.test` 빌드 + Dev Container 빌드 + unit 스모크 |
+| `docker.yml` | tag/release/dispatch | `Dockerfile.dashboard` 빌드·퍼블리시 + 헬스 스모크 |
+
+> **필수 체크 3종(`ruff` · `tos-gate` · `tos-firewall`)은 저장소 룰셋이 이름으로 요구한다.**
+> 잡 이름을 바꾸거나 삭제하거나 경로 게이팅을 추가하면 모든 PR 이 오지 않는 체크를 기다린다.
+> `test.yml` 이 tos·docs 경로에서 비껴가므로 `ruff` 가 별도 워크플로우로 존재한다.
 
 ## 새 잡/워크플로우 추가 절차
 
@@ -61,11 +69,11 @@ gh run view --job <id> --log-failed
 
 ## flaky 잡 운영
 1. 실패 잡 로그 확인: `gh run view --job <id> --log-failed`.
-2. 코드 변경과 무관 + 환경/러너 변동이면(예: `performance`가 전부 개선인데
-   "1 regression", "Test not found in current results") → flaky로 분류.
+2. 코드 변경과 무관 + 환경/러너 변동(공유 러너 경합, 타임아웃)이면 → flaky로 분류.
 3. `gh run rerun <run-id> --failed` 로 재실행해 그린 확인.
-4. 진짜 회귀와 구분되도록 근거(로그 발췌)를 남긴다. 반복되면 baseline/threshold나
-   수집 안정성을 test-reliability-engineer와 함께 손본다.
+4. 진짜 회귀와 구분되도록 근거(로그 발췌)를 남긴다. 반복되면 결정론·격리를
+   test-reliability-engineer와 함께 손본다.
+5. `gh` 2.45.0 에는 `gh pr checks --json` 이 없다 — 폴링 루프가 조용히 빈다.
 
 ## 출력 규칙
 - 워크플로우 diff + 트리거/게이트/캐시 근거

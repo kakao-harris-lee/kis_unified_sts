@@ -105,7 +105,8 @@ Use [system context](docs/architecture/tos-system-context.md) for these names:
 Adapters**; dashboard's TOS-facing surface = **Control Plane API (BFF)**;
 `strategy-builder-ui` = **Product / Operator UI**. Strategy DSL, profiles, and
 governed configuration are **Tenant Content**, not another execution authority.
-Dashboard still serves legacy APIs; its TOS surface is currently read-only.
+The dashboard's whole surface is `/api/tos/*`, `/health` and the OpenAPI docs;
+it is read-only and serves no legacy API.
 [Public interface catalog](docs/architecture/tos-public-interfaces.md) distinguishes
 external contracts from runtime-internal ports. These names do not change the
 import firewall or authorize trading.
@@ -153,11 +154,18 @@ What is still true and still enforced:
   `shared/strategy/exit/three_stage.py` itself went in L7; the rule is kept for
   future work.)
 - `shared/decision/setups/vwap_reversion.py` and its dependencies are the
-  **legacy Setup D witness**: `tools/tos_cp3/produce_fields.py` still drives this
-  implementation bar by bar to produce the CP-3 field stream, until the P2-c
-  producer switch lands. Keep it byte-identical until `TOS_PAPER_READY`
-  (`docs/plans/2026-11-07-legacy-removal-plan.md` §2, operator decision 3). The
-  post-session **B3 대조** that also read it retired on 2026-11-13
+  **legacy Setup D witness**. It no longer produces the live CP-3 field stream:
+  the P2-c producer switch landed 2026-11-18 (#1067 · #1068,
+  `docs/plans/2026-11-11-tos-p2-declarative-fields.md`), so the live producer
+  (`tools/tos_cp3/live_producer/line.py` → `produce_bars_declarative`) evaluates
+  the tenant's declarative `fields.yaml` and imports no legacy strategy. What
+  still drives the witness bar by bar is `tools/tos_cp3/legacy_setup_d_driver.py`,
+  read only by the offline dataset producer (`produce_fields.py` `run()` /
+  `--measure-d7`) and the equivalence comparison
+  (`tools/tos_cp3/fields_equivalence.py`). Keep the witness **byte-identical**
+  until `TOS_PAPER_READY` (`docs/plans/2026-11-07-legacy-removal-plan.md` §2,
+  operator decision 3) — `tools/strip_prose.py` refuses that path to enforce it.
+  The post-session **B3 대조** that also read it retired on 2026-11-13
   (`docs/plans/2026-11-11-tos-platform-roadmap.md` §7 결정 3), its condition —
   P2-b 동등성(626,745 셀 0 불일치, #1065 · #1066) — being met.
 - The retired cutover runbooks (`stock-pipeline-cutover-m5d.md`,
@@ -213,6 +221,11 @@ Execution authority today is the TOS kernel, where a strategy is Tenant Content
      Routine fixes, config edits, and doc changes go straight to implementation.
 - **Do not reinvent the wheel.** A bespoke parser/tokenizer/checker is the
   last resort, not the first move; prefer proven tooling and existing modules.
+- **A «why» that must survive is one `# SAFETY:` line.** `tools/strip_prose.py`
+  removes explanatory prose from `tools/` and `tests/`; its `KEEP_MARKERS` keeps
+  any comment containing `safety:` (merged in #1139). Write the reason a guard,
+  an interlock or a counter-intuitive value exists as a single `# SAFETY:`
+  comment next to it, not as a paragraph that the next strip pass deletes.
 - **Phase-0 판정 장치는 퇴역했다 (2026-11-12,
   `docs/plans/2026-11-12-phase0-retirement-plan.md`).** 완료 계약서, 그 인덱스
   도구(`tos_contract_index.py`), 완료/계약 검사기(`tos_completion_status.py` ·
@@ -232,6 +245,8 @@ mypy shared/ --ignore-missing-imports --no-error-summary
 docker compose up -d              # dashboard + strategy-builder-ui + caddy + redis + prometheus
 sts tos status                    # the one-page operator status board
 sts tos inspect <session>         # per-bar: fields, per-compare pass/fail, decision, halt
+sts tos perf                      # fills and PnL per symbol/date, from tenant leaf evidence
+sts tos export-bars               # per-bar review as the dashboard's JSON
 ```
 
 TOS checkers (what CI gates on — see `.github/workflows/tos-{gate,firewall}.yml`):
@@ -260,13 +275,14 @@ npm test
 
 ## Harness: Trading Platform Agent Team
 
-**Goal:** Route platform work to specialist agents, and keep adjudication (code and
-plan review) in an independent model lane.
+**Goal:** Route platform work to specialist agents, and keep review a pass separate
+from authoring. The Claude-side lane is the default reviewer (R1); Codex is an extra
+lane for hard-to-reverse paths the operator has approved.
 
 **Triggers:**
 
-- Platform work (strategy, ops, frontend, DevX, data, execution) → use the
-  `trading-harness` skill.
+- Platform work (indicators/fields, KIS probes, frontend, ops, DevX) → use the
+  `trading-harness` skill. tos kernel/runtime work starts from `tos/CLAUDE.md`.
 - **Codex code scope is limited to hard-to-reverse paths (operator directive
   2026-09-11; supersedes the blanket exclusion of 2026-09-04).** Live order paths,
   money movement, risk limits, auth and credential handling, DB migrations, and data
@@ -318,34 +334,36 @@ the thing it judges. These rules govern every PR in this repo, TOS included.
   command, resulting numbers, log path. Citing log line numbers is not required.
 
 **Model lanes (cost discipline):** orchestration and `deep-reasoner` run on Opus;
-every implementation, test, debugging, and frontend agent runs on Sonnet 5, and so
-do the audit lenses except `architecture-auditor` and `security-auditor`, which
-stay on Opus along with the fallback review lane (`code-reviewer`,
-`review-synthesizer`) (`model:` in each `.claude/agents/*.md` file governs — do not
-override at call time); `runner`-class chores run on Haiku; the Codex forwarders
-stay on Haiku because they only relay Codex stdout. Opus for a coding agent is an exception that
-needs a stated reason (sonnet actually failed, or the change is hard to reverse).
-The `sonnet -> Opus` env remap in `~/.claude/fable/env.sh` was removed — sonnet
-means sonnet.
+every implementation, test, debugging and frontend agent runs on Sonnet 5, and so do
+the audit lenses except `architecture-auditor` and `security-auditor`, which stay on
+Opus along with the review lane (`code-reviewer`, `review-synthesizer`);
+`runner`-class chores run on Haiku, and the Codex forwarders stay on Haiku because
+they only relay Codex stdout. `model:` in each `.claude/agents/*.md` file governs —
+do not override at call time. Opus for a coding agent is an exception that needs a
+stated reason (sonnet actually failed, or the change is hard to reverse). The
+`sonnet -> Opus` env remap in `~/.claude/fable/env.sh` was removed — sonnet means
+sonnet.
 
 Agent roster, skill list, directory layout, and execution detail live under
-`.claude/` — not here.
+`.claude/` — not here. As of 2026-11-20 that is 18 agents and 8 skills; the ones
+that described the deleted legacy runtime were removed rather than left to mislead.
 
 ### Harness Change Log
 
-| Date | Change | Scope | Reason |
-| --- | --- | --- | --- |
-| 2026-03-12 | Initial harness setup (commit `531ec227`) | all | - |
-| 2026-08-11 | Adjudication moved to Codex — added `codex-reviewer` / `codex-plan-reviewer` / `codex-gate`; demoted `code-reviewer` and `review-synthesizer` to fallback-only; replaced the `code-audit` fan-in | `agents/`, `skills/` | Prevent self-approval and secure cross-model independent adjudication |
-| 2026-08-21 | Disabled per-turn Codex stop review; kept explicit scoped `codex-gate` reviews and moved thin reviewer forwarders to Haiku | review harness | Prevent duplicate fresh Codex tasks, long Stop-hook stalls, and avoidable Claude token use |
-| 2026-08-25 | Cost rebalance — pinned `model:` per agent (Sonnet 5 for execution/audit lenses, Opus only for `architecture-auditor`, `security-auditor`, and the fallback review lane), removed the global `sonnet -> Opus` env remap, made Codex adjudication explicitly operator-triggered | `agents/`, `~/.claude/fable/`, harness docs | Every subagent was silently running on Opus; review ran more often than it was asked for |
-| 2026-09-04 | **Codex review excludes code** — `codex-gate` / `codex-reviewer` return `SCOPE_EXCLUDED` for code diffs; code review is the Claude-side fallback lane; Codex plan critique stays available on explicit operator request · **plans/specs/roadmaps authored solo by the session model (Opus 5 [1m] / Fable 5.1 [1m])**, no planner/deep-reasoner pipeline | CLAUDE.md, codex-gate, codex-reviewer, codex-plan-reviewer | Operator directive — paid external calls too frequent, spec authoring too slow |
-| 2026-09-11 | **Codex code scope reopened, bounded** — hard-to-reverse paths (live order paths, money movement, risk limits, auth/credentials, DB migrations, data purge) may go to `codex-gate` / `codex-reviewer` once the operator approves scope and cost; every other code diff stays with the Claude-side lane. Supersedes the 2026-09-04 blanket exclusion | CLAUDE.md, codex-gate, codex-reviewer, codex-plan-reviewer | A week with zero cross-model review of code left Claude approving its own code; cost is bounded by scope, not by prohibition |
-| 2026-10-22 | **Review policy R1–R7** — review by risk grade (A/B/C, docs and evidence PRs need no review lane), at most two rounds, only a HIGH with a concrete failing input blocks, plans ≤300 lines, a new guard needs a real incident, no meta-judgment, one-table measurement records · Phase-0 contract becomes a historical record (TOS rescope) | CLAUDE.md | Three months of TOS work moved zero Evidence rows; the Phase-0 contract grew to 10,723 lines over 81 reviews and one docs PR took four rounds — the review process, not the code, was the bottleneck |
-| 2026-08-30 | Doc-only fix to the model-lanes paragraph: it claimed every audit lens runs on Sonnet 5, contradicting the 2026-08-25 row and the actual frontmatter (`architecture-auditor`/`security-auditor` are Opus) | CLAUDE.md | Cost audit found the prose had drifted from the pinned `model:` values; agent files unchanged |
-| 2026-11-12 | **Phase-0 판정 장치 퇴역** — 완료 계약서·인덱스 도구·완료/계약 검사기·U-17 예방 통제와 그 CI 단계를 삭제. 필수 체크 `tos-gate` 는 이름을 유지하고 내용만 `tos_redigest --check`(살아 있는 핀 게이트)로 교체 | CLAUDE.md, tos/CLAUDE.md, `.github/workflows/tos-{gate,firewall,test}.yml`, `tools/`, `tos-spec/`, `docs/` | Phase 0 는 2026-10-22 서명(#920)으로 닫혔고 완료 기준은 `TOS_PAPER_READY` 다. 역사 기록이 된 판정 장치가 PR 마다 수 분의 CI 와 저장소 부피의 큰 몫을 계속 먹었다 (계획: `docs/plans/2026-11-12-phase0-retirement-plan.md`) |
-| 2026-11-13 | **명세·증거 코퍼스 은퇴 (S3)** — `tos-spec/`(66k 줄) · `tos-evidence/`(25k) 전체와 그들만 읽던 도구(`tos_spec_status` · `tos_evidence_run` · `tos_profile_census`)·테스트·CI 단계(mdBook 빌드, 코퍼스 무결성), `BROKER-TRANSPORT-SYMBOLS.{csv,md}`, 명세 앵커 커널 테스트를 삭제. 그 검사기가 유일한 존속 이유였던 `shared/execution/executor.py` · `shared/kis/client.py` 와 그 폐쇄(`shared/http` · `shared/observability` · `services/monitoring`)도 함께 삭제 | CLAUDE.md, tos/CLAUDE.md, `.github/workflows/tos-{firewall,test}.yml`, `tools/`, `tos-spec/`, `tos-evidence/`, `shared/`, `services/`, `docs/` | 운영자 지시: 코드·문서 부피 절반화 (계획: `docs/plans/2026-11-13-tos-code-halving-plan.md` §S3) |
-| 2026-11-14 | **역사 계획·증거 은퇴 (S3/§4)** — 끝난 계획 35건과 측정 캠페인 증거 5건, 그리고 「historical rationale 는 `docs/plans/` 에 둔다」는 문장을 「끝난 근거는 git 이력에 둔다」로 교체 | CLAUDE.md, `docs/` | 운영자 지시: 문서 부피 절반화. `docs/` 68,135 → 38,485 줄 (계획: `docs/plans/2026-11-13-tos-code-halving-plan.md` §S3/§4) |
+What is in force today. Superseded rows were dropped on 2026-11-20; the full log is
+in git history (`git log -- CLAUDE.md`).
+
+| In force since | Rule |
+| --- | --- |
+| 2026-08-21 | The Codex plugin's stop-time review gate stays **disabled**. Scoped reviews run explicitly through `codex-gate`. |
+| 2026-08-25 | `model:` is pinned per agent and governs — do not override at call time. Sonnet means sonnet (the `sonnet -> Opus` env remap is gone). |
+| 2026-09-04 | Plans, specs, roadmaps and goals are authored **solo by the session model**. No planner / architect / deep-reasoner pipeline. |
+| 2026-09-11 | Codex code scope is bounded to hard-to-reverse paths, on operator-approved scope and cost. Every other code diff stays with the Claude-side lane. |
+| 2026-10-22 | **Review policy R1–R7** (above). The Claude-side lane is the default reviewer; two rounds at most; only a HIGH naming a concrete failing input blocks. |
+| 2026-11-12 | Phase-0 판정 장치 퇴역. `tos-gate` keeps its name; its content is `tools/tos_redigest.py --check`. |
+| 2026-11-13 | 명세·증거 코퍼스(`tos-spec/` · `tos-evidence/`)와 그 검사기, `shared/execution/executor.py` · `shared/kis/client.py` 와 그 폐쇄 삭제. |
+| 2026-11-14 | 끝난 계획·증거는 `docs/` 가 아니라 git 이력에 둔다. |
+| 2026-11-20 | Agent/skill roster trimmed to what exists: 18 agents, 8 skills. The removed ones described deleted runtimes. |
 
 ## Documentation Map
 

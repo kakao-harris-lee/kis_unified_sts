@@ -29,8 +29,10 @@ tos work so agents do not scan the legacy runtime.
   uses none of the six (measured: 0 `shared` imports under `tos/src`); do not
   add an allowlist entry without a §6.1 revision-log line in the design doc.
 - The legacy runtime is not a reference implementation for tos. Do not port
-  `shared/execution`, `shared/kis`, or service code into `tos/`; the safety
-  core is greenfield by spec (IMPLEMENTATION-PLAN-002 §2).
+  `shared/kis`, `tools/broker_probes`, or service code into `tos/`; the safety
+  core is greenfield by spec. (`shared/execution` is down to `tr_ids.py` and
+  `contract_spec.py`, which the broker probes and the Setup D walk-forward script
+  import — not a porting source either.)
 - Repo split (strategy C) is deferred to the live gate by design §6.2; the
   eventual separation removes the legacy runtime from this repo, it does not
   move `tos/` out. Do not propose moving `tos/` to a new repo as a side effect
@@ -46,7 +48,7 @@ tos work so agents do not scan the legacy runtime.
 | Application Runtime + Infrastructure Adapters (ratified by the operator 2026-09-08, design #40 D1) | `tos/runtime/` — SEPARATE distribution `tos-runtime` / `tos_runtime` (own `pyproject.toml`, src-layout `tos/runtime/src/tos_runtime/`), the composition root + I/O adapters for the kernel. `tos_runtime -> tos` allowed; `tos -> tos_runtime` FORBIDDEN (firewall rule (g) + `.importlinter` contract `tos-kernel-must-not-import-runtime`). Application Runtime + Infrastructure Adapters: composition, durable event processing, SQLite evidence/state, custody, market intake, synthetic/KIS mock transport, recovery, and operations CLI are implemented. `compose/cli.py` dispatches `run` through `_run_dispatch.py`; this is no longer a skeleton. Implementation is not live authorization. See `docs/architecture/tos-system-context.md` and `docs/architecture/tos-public-interfaces.md` for layer names, integration surfaces, and remaining gaps. Hermetic tests: `tos/runtime/tests/` (D1.4 — zero external network/ambient env/writes outside `tmp_path`; `127.0.0.1`/`::1` and `tmp_path` sqlite files are the one exception, guarded by an autouse fixture in `tos/runtime/tests/conftest.py`) |
 | Governance tools | `tools/tos_*.py` |
 | Governance tests | `tests/tools/test_tos_*.py`, `tests/tos_l3/` |
-| Architecture / integration docs | `docs/architecture/tos-*.md`, `docs/migration/legacy-disposition.md`, `docs/PROJECT_STATUS.md` (TOS snapshot) |
+| Architecture / integration docs | `docs/architecture/tos-system-context.md`, `docs/architecture/tos-public-interfaces.md`, `docs/migration/legacy-disposition.md`, `docs/PROJECT_STATUS.md` (TOS snapshot) |
 | Design docs / errata | `docs/plans/*tos*` |
 | CI | `.github/workflows/tos-firewall.yml`, `.github/workflows/tos-gate.yml` |
 
@@ -54,9 +56,11 @@ The runtime must not import any `shared.*` package (including the six kernel
 commons exceptions); code outside `tos/` must not import either `tos` or
 `tos_runtime`. Product integration uses serialized process boundaries.
 
-Everything else in the repo (`shared/`, `services/`, `strategy-builder-ui/`,
-`config/strategies/`, `tests/unit/`, Docker files) is the legacy runtime and
-is out of scope for tos work unless the task says otherwise.
+Everything else in the repo is out of scope for tos work unless the task says
+otherwise: `services/dashboard/` (read-only BFF), `strategy-builder-ui/`,
+`tools/broker_probes/`, `config/strategies/`, `tests/unit/`, Docker files, and
+`shared/` — which is no longer "the legacy runtime" but the CP-3 producer's
+support modules plus the six pure-commons packages the firewall allows.
 
 ## Commands
 
@@ -102,4 +106,8 @@ python tools/tos_size_budget.py --check
   `tos-spec/src/...` 인용은 S4 산문 걷어내기(docstring 첫 줄만)에서 함께 사라졌다.
 - `.github/workflows/tos-gate.yml` 은 삭제하거나 잡 이름을 바꾸지 않는다 —
   룰셋이 `tos-gate` 체크를 필수로 요구하므로, 사라지면 모든 PR 이 오지 않는
-  체크를 기다린다. 내용은 `tools/tos_redigest.py --check` 다.
+  체크를 기다린다. 내용은 `tools/tos_redigest.py --check` 다. 같은 이유로
+  `ruff` 와 `tos-firewall` 잡 이름도 고정이다.
+- 지워지면 안 되는 «왜» 는 한 줄 `# SAFETY:` 주석으로 적는다 —
+  `tools/strip_prose.py` 의 `KEEP_MARKERS` 가 `safety:` 를 담은 주석을 보존한다
+  (#1139). 산문 단락으로 적으면 다음 strip 패스가 지운다.

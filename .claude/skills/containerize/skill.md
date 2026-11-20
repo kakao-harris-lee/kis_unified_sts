@@ -11,9 +11,12 @@ description: "컨테이너/개발환경 작업 절차. Dockerfile·docker-compos
 ## 워크플로우
 
 ### 1. 범위 파악
-- 무엇을 바꾸나: 런타임 이미지 / 테스트 이미지 / compose 프로파일 / Dev Container / `.dockerignore`
+- 무엇을 바꾸나: `Dockerfile.dashboard` / `Dockerfile.test` / `Dockerfile.strategy_builder_ui` /
+  compose 프로파일 / Dev Container / `.dockerignore`
+  (레거시 런타임 이미지 `Dockerfile`·`Dockerfile.prod` 는 2026-11 에 삭제됐다)
+- 기본 스택 5개: `dashboard` · `strategy-builder-ui` · `caddy` · `redis` · `prometheus`.
+  `test` 프로파일에 `tests` · `redis-test`.
 - 영향 받는 파일과 의존 서비스(Redis, Caddy, dashboard) 확인
-- 기존 `docker-compose.yml` 앵커(`x-*-env`, `&pipeline-service`) 재사용 여부
 
 ### 2. 변경
 - **레이어 캐시 우선**: `COPY pyproject.toml README.md` → `pip install` 먼저, `COPY . .` 나중.
