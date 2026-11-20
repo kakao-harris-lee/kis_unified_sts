@@ -24,7 +24,10 @@ client is built.
 Exit codes:
 
     0  nothing was held, or the holding reached 0      (flat)
-    1  the sell was rejected by the broker
+    1  the broker's answer is not one to act on: the sell was rejected, OR a
+       balance read failed — which, after the sell went out, means the position
+       is unknown rather than unchanged. Read the balance in the 모의투자 HTS
+       before running this again.
     2  refused before any broker call                  (fail closed)
     3  sent and acknowledged, but still holding when the poll bound ran out
 

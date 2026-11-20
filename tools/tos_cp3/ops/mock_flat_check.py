@@ -62,10 +62,14 @@ BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 #: 주식잔고조회 (모의). ``trading_call`` refuses a TR that is not a mock one.
 BALANCE_TR_ID = "VTTC8434R"
 
-#: One page is enough: the mock account holds a handful of symbols, and a
-#: continuation would only matter if it held ~50. A truncated page cannot hide a
-#: holding of the queried symbol from the archive decision, because an unreadable
-#: or absent row is not treated as flat anywhere below.
+#: ONE PAGE, and that bound is load-bearing: a holding that fell past page 1 would
+#: read as "no row for this symbol", which this tool reports as flat. It is sound
+#: here because ``INQR_DVSN: "02"`` returns up to 50 rows and this account holds one
+#: share of each stock tenant's symbol — three rows today, and `STOCK_SYMBOLS` is
+#: what would have to reach dozens for it to matter. If it ever does, follow the
+#: continuation (``ctx_area_fk100`` / ``ctx_area_nk100`` echoed back with
+#: ``tr_cont``) instead of widening this dict; do not leave the single page in
+#: place with more symbols than it can carry.
 BALANCE_PARAMS: dict[str, str] = {
     "AFHR_FLPR_YN": "N",
     "OFL_YN": "",
