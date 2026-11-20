@@ -22,6 +22,7 @@ from tos_runtime.compose._engine_wiring import (
 from tos_runtime.compose._kis_credential_wiring import (
     KisCredentialSessionsCell,
     build_kis_credential_sessions,
+    kis_shared_app_key_gate,
     kis_shared_token_cache,
 )
 from tos_runtime.compose._preconditions import (
@@ -102,9 +103,11 @@ def _kis_credential_sessions(
         custody=infra.custody,
         monotonic=infra.monotonic_source,
         evidence_sink=evidence_recorder(infra.evidence_store, identity),
-        # #1124: and one token across the BOOTS that share this app key, when the transport
-        # config names a cache file. Three stock tenants are three processes, one app key.
+        # #1124: and one token — plus one request queue — across the BOOTS that share this
+        # app key, when the transport config names those files. Three stock tenants are
+        # three processes, one app key: KIS counts them together, so they must too.
         token_cache=kis_shared_token_cache(transport_config),
+        shared_gate=kis_shared_app_key_gate(transport_config),
     )
 
 

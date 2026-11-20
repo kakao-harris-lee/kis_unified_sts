@@ -16,16 +16,20 @@ in an exception message or an evidence row.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
-import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from tos_runtime.transport.kis_mock.file_lock import (
+    FileLockRefused,
+    atomic_private_write,
+    exclusive_file_lock,
+)
 
 __all__ = [
     "CachedToken",
@@ -35,9 +39,6 @@ __all__ = [
 ]
 
 _CACHE_VERSION = 1
-_DIR_MODE = 0o700
-_FILE_MODE = 0o600
-_LOCK_POLL_S = 0.02
 # An entry dated this far into the future is not an entry this host wrote a moment ago; it is
 # a clock that moved. Treat it as unusable rather than trusting its remaining lifetime.
 _FUTURE_TOLERANCE_S = 60
@@ -105,32 +106,11 @@ class SharedTokenCache:
     @contextmanager
     def exclusive(self) -> Iterator[None]:
         """Hold the cache's exclusive lock for the block, or refuse within the wait budget."""
-        self._ensure_dir()
-        fd = os.open(self._lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, _FILE_MODE)
         try:
-            self._flock_within_budget(fd)
-            try:
+            with exclusive_file_lock(self._lock_path, wait_s=self._lock_wait_s):
                 yield
-            finally:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
-
-    def _flock_within_budget(self, fd: int) -> None:
-        """Poll for the exclusive lock until the budget runs out. The budget is spent on a"""
-        deadline = time.monotonic() + self._lock_wait_s
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return
-            except OSError as exc:
-                if time.monotonic() >= deadline:
-                    raise SharedTokenCacheRefused(
-                        f"SharedTokenCache: another process held {self._lock_path} for the "
-                        f"whole {self._lock_wait_s:.1f}s wait budget — nothing was issued "
-                        "or sent"
-                    ) from exc
-                time.sleep(_LOCK_POLL_S)
+        except FileLockRefused as exc:
+            raise SharedTokenCacheRefused(f"SharedTokenCache: {exc}") from exc
 
     def read(self, fingerprint: str) -> tuple[CachedToken | None, str]:
         """This app key's entry and why it is (not) usable. Never raises: an unreadable or"""
@@ -164,17 +144,6 @@ class SharedTokenCache:
         }
         self._write_document({"version": _CACHE_VERSION, "entries": entries})
 
-    def _ensure_dir(self) -> None:
-        """Create the cache directory 0700 if it is not there (the token lives in it)."""
-        parent = self._path.parent
-        if parent.is_dir():
-            return
-        parent.mkdir(mode=_DIR_MODE, parents=True, exist_ok=True)
-        try:
-            os.chmod(parent, _DIR_MODE)
-        except OSError:  # pragma: no cover - a parent we cannot chmod is still usable
-            pass
-
     def _read_document(self) -> tuple[dict[str, Any] | None, str]:
         """Parse the cache file, or say why it could not be used. A cache that cannot be"""
         try:
@@ -193,23 +162,7 @@ class SharedTokenCache:
 
     def _write_document(self, document: dict[str, Any]) -> None:
         """tmp + rename, so a reader never sees a half-written cache."""
-        self._ensure_dir()
-        tmp_path = self._path.with_name(f"{self._path.name}.{os.getpid()}.tmp")
-        fd = os.open(
-            tmp_path,
-            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC,
-            _FILE_MODE,
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(document, handle, separators=(",", ":"))
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(tmp_path, _FILE_MODE)
-            os.replace(tmp_path, self._path)
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)
-            raise
+        atomic_private_write(self._path, json.dumps(document, separators=(",", ":")))
 
 
 def _parse_entry(entry: Any) -> CachedToken | None:

@@ -525,3 +525,44 @@ def test_a_null_token_cache_field_refuses(tmp_path: Path, field: str) -> None:
     raw[field] = None
     with pytest.raises(KisMockTransportConfigError, match="named-TBD"):
         _load(_write(tmp_path, raw))
+
+
+def test_a_config_without_a_shared_pacer_paces_only_itself(tmp_path: Path) -> None:
+    """#1124: absent means the pre-11-20 per-process pacing, which is what let three"""
+    config = _load(_write(tmp_path, _valid_raw()))
+    assert config.shared_pacer_path is None
+    assert config.shared_max_rps is None
+
+
+def test_a_shared_pacer_path_and_rate_load(tmp_path: Path) -> None:
+    raw = _valid_raw()
+    raw["shared_pacer_path"] = "/var/lib/tos/kis-mock-token/stock-mock.pace"
+    raw["shared_max_rps"] = 2.0
+    config = _load(_write(tmp_path, raw))
+    assert config.shared_pacer_path == "/var/lib/tos/kis-mock-token/stock-mock.pace"
+    assert config.shared_max_rps == 2.0
+
+
+def test_a_relative_shared_pacer_path_refuses(tmp_path: Path) -> None:
+    raw = _valid_raw()
+    raw["shared_pacer_path"] = "state/stock-mock.pace"
+    raw["shared_max_rps"] = 2.0
+    with pytest.raises(KisMockTransportConfigError, match="not absolute"):
+        _load(_write(tmp_path, raw))
+
+
+@pytest.mark.parametrize("present", ["shared_pacer_path", "shared_max_rps"])
+def test_half_a_shared_pacer_setting_refuses(tmp_path: Path, present: str) -> None:
+    raw = _valid_raw()
+    raw[present] = 2.0 if present == "shared_max_rps" else "/var/lib/tos/p.pace"
+    with pytest.raises(KisMockTransportConfigError, match="one setting"):
+        _load(_write(tmp_path, raw))
+
+
+@pytest.mark.parametrize("rate", [0, -1.0])
+def test_a_non_positive_shared_rate_refuses(tmp_path: Path, rate: float) -> None:
+    raw = _valid_raw()
+    raw["shared_pacer_path"] = "/var/lib/tos/stock-mock.pace"
+    raw["shared_max_rps"] = rate
+    with pytest.raises(KisMockTransportConfigError, match="must be positive"):
+        _load(_write(tmp_path, raw))

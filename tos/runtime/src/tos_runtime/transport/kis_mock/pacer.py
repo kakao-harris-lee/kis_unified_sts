@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from time import sleep
 
 from tos_runtime.time.sources import MonotonicSource
+from tos_runtime.transport.kis_mock.shared_pacer import (
+    SharedAppKeyGate,
+    SharedPacingRefused,
+)
 
 __all__ = [
     "KisAppKeyPacer",
@@ -66,9 +70,18 @@ class KisPacing:
 class KisAppKeyPacer:
     """Grants request slots on one app key (module docstring). Thread-safe."""
 
-    def __init__(self, *, pacing: KisPacing, monotonic: MonotonicSource) -> None:
+    def __init__(
+        self,
+        *,
+        pacing: KisPacing,
+        monotonic: MonotonicSource,
+        shared_gate: SharedAppKeyGate | None = None,
+    ) -> None:
         self._pacing = pacing
         self._monotonic = monotonic
+        # #1124: this pacer spaces THIS process's requests; the gate spaces the app key's,
+        # across every tenant process holding it. A request passes both or is not sent.
+        self._shared_gate = shared_gate
         self._lock = threading.Lock()
         self._last_grant_ms: int | None = None
 
@@ -101,6 +114,7 @@ class KisAppKeyPacer:
                 )
             if wait_ms > 0:
                 sleep(wait_ms / 1000.0)
+            self._acquire_shared_slot(arrived_ms=arrived_ms, budget_ms=budget_ms)
             granted_ms = self._monotonic.now_ms()
             self._last_grant_ms = granted_ms
             tap = getattr(_taps, "tap", None)
@@ -109,3 +123,14 @@ class KisAppKeyPacer:
             return granted_ms
         finally:
             self._lock.release()
+
+    def _acquire_shared_slot(self, *, arrived_ms: int, budget_ms: int) -> None:
+        """Spend what is left of this caller's budget on the app key's cross-process queue."""
+        if self._shared_gate is None:
+            return
+        spent_ms = self._monotonic.now_ms() - arrived_ms
+        remaining_s = max(0.0, (budget_ms - spent_ms) / 1000.0)
+        try:
+            self._shared_gate.acquire(wait_budget_s=remaining_s)
+        except SharedPacingRefused as exc:
+            raise KisPacingRefused(str(exc)) from exc

@@ -933,7 +933,7 @@ def _package_files() -> list[Path]:
 # which is what this guard exists to forbid. Anything else that loops or sleeps is an offender.
 _PACING_WAIT_FUNCTIONS = {
     "pacer.py": {"acquire"},
-    "token_cache.py": {"_flock_within_budget"},
+    "file_lock.py": {"_flock_within_budget"},
 }
 
 

@@ -13,6 +13,7 @@ from tos_runtime.transport.kis_mock.credential_session import (
     KisCredentialSessions,
 )
 from tos_runtime.transport.kis_mock.pacer import KisPacing
+from tos_runtime.transport.kis_mock.shared_pacer import SharedAppKeyGate
 from tos_runtime.transport.kis_mock.token import EvidenceRecorder, TokenIssuingClient
 from tos_runtime.transport.kis_mock.token_cache import SharedTokenCache
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfig
@@ -26,6 +27,7 @@ __all__ = [
     "kis_mock_credential_session",
     "kis_quote_pacing",
     "kis_transport_pacing",
+    "kis_shared_app_key_gate",
     "kis_shared_token_cache",
 ]
 
@@ -105,12 +107,25 @@ def kis_shared_token_cache(
     )
 
 
+def kis_shared_app_key_gate(
+    config: KisMockTransportConfig | None,
+) -> SharedAppKeyGate | None:
+    """The cross-process request gate ``kis_mock_transport.yaml`` declares, or ``None``."""
+    if config is None or config.shared_pacer_path is None:
+        return None
+    assert config.shared_max_rps is not None  # the loader pairs the two
+    return SharedAppKeyGate(
+        path=Path(config.shared_pacer_path), max_rps=config.shared_max_rps
+    )
+
+
 def build_kis_credential_sessions(
     *,
     custody: CredentialCustody,
     monotonic: MonotonicSource,
     evidence_sink: EvidenceRecorder,
     token_cache: SharedTokenCache | None = None,
+    shared_gate: SharedAppKeyGate | None = None,
 ) -> KisCredentialSessions:
     """This boot's one-session-per-KIS-app-key registry (module docstring)."""
     return KisCredentialSessions(
@@ -118,6 +133,7 @@ def build_kis_credential_sessions(
         monotonic=monotonic,
         evidence_sink=evidence_sink,
         token_cache=token_cache,
+        shared_gate=shared_gate,
     )
 
 
