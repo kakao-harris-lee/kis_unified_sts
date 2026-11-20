@@ -215,9 +215,10 @@ N-17 메모의 추가 관측(`STTN1101U`, `CTFO6118R`)이 전부 이 형상을 �
   order_cash/order_cash.py`, `open-trading-api/examples_llm/auth/auth_token/auth_token.py`,
   `open-trading-api/examples_llm/kis_auth.py`(헤더 규약: `authorization`/`appkey`/`appsecret`/
   `tr_id`/`custtype`).
-- N-17 수집 메모: `docs/plans/2026-07-29-tos-p02-n17-spec-collation.md`.
-- P-13/N-15 실측: `docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md`,
-  `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`.
+- N-17 수집 메모: `docs/plans/2026-07-29-tos-p02-n17-spec-collation.md` (2026-11-14 삭제 —
+  git 이력: `git log --diff-filter=D -- docs/plans/`).
+- P-13/N-15 실측: `docs/plans/2026-08-06-tos-phase0-p01-residual-17key-disposition-draft.md`
+  (같은 날 삭제 — git 이력), `docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml`.
 - INSTANCE MOCK_VTS/REAL_PROD rest_base: 같은 파일 각각 `_kis.endpoints.rest_base`
   (MOCK ~line 384, REAL ~line 3579).
 - 컴포즈 컨텍스트의 STAND-IN 다이제스트: `tos_runtime/compose/context.py:368`,

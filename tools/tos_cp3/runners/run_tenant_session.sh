@@ -69,8 +69,7 @@
 #
 # This script never deletes itself and touches no crontab.
 #
-# See docs/runbooks/tos-paper-boot-history.md §7.2-c for the superseded recipe; today's procedure is
-# docs/runbooks/tos-paper-boot.md §7.2-d.
+# Today's procedure is docs/runbooks/tos-paper-boot.md §7.2-d.
 
 set -u
 
