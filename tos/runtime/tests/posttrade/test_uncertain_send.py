@@ -50,17 +50,21 @@ _QTY = Decimal(2)
 _SETTLE_MS = 30_000
 _T0 = 1_700_000_000_000
 _TOLERANCE_S = 5
+_FOREIGN_MIN_AGE_S = 120
 
 #: The tenant tree's own ``uncertain_send_side_codes``: 매수 ``02`` / 매도 ``01``.
 _SIDE_CODES = {"BUY": "02", "SELL": "01"}
 _BUY = _SIDE_CODES["BUY"]
 
 #: 11:20:15 KST — the wall time this send's POST started at, as the transport stamped it, and
-#: ``_LATER`` / ``_EARLIER``: one broker 주문시각 after it, and one far enough before it to be
-#: outside :data:`_TOLERANCE_S` (issue #1127). Any row this send could own carries one of the
-#: two, because the rows the real VTTC0081R prints always do.
+#: the three bands a broker 주문시각 can fall in against it (issue #1127, review r1):
+#: ``_LATER`` is after it, ``_SKEWED`` is inside the unprovable band (older than
+#: :data:`_TOLERANCE_S`, younger than :data:`_FOREIGN_MIN_AGE_S` — the shape a drifted host
+#: clock gives OUR OWN accepted order), and ``_EARLIER`` is older than both. Any row this send
+#: could own carries one of them, because the rows the real VTTC0081R prints always do.
 _SEND_STARTED = "112015"
 _LATER = "112017"
+_SKEWED = "112009"
 _EARLIER = "093012"
 
 
@@ -137,7 +141,10 @@ def _store(
 
 
 def _reconciler(
-    store: SqliteEvidenceStore, *, tolerance_s: int = _TOLERANCE_S
+    store: SqliteEvidenceStore,
+    *,
+    tolerance_s: int = _TOLERANCE_S,
+    foreign_min_age_s: int = _FOREIGN_MIN_AGE_S,
 ) -> UncertainSendReconciler:
     def _record(kind: str, fields: dict[str, Any]) -> None:
         store.append(fields, kind=kind, record_class=kind)
@@ -148,6 +155,7 @@ def _reconciler(
         instrument=_INSTRUMENT,
         settle_ms=_SETTLE_MS,
         ord_tmd_tolerance_s=tolerance_s,
+        foreign_min_age_s=foreign_min_age_s,
         side_codes=_SIDE_CODES,
         record=_record,
     )
@@ -366,6 +374,89 @@ def test_an_earlier_order_of_the_same_shape_is_not_this_sends_order(
 
     assert bound_sends(store) == {}, "an earlier order was adopted as ours"
     assert never_accepted_attempt_ids(store) == frozenset({_ATTEMPT})
+    # The row the release was granted OVER is on the record, not silently dropped (r1 MEDIUM).
+    (verdict,) = [row for row in _verdicts(store) if row["outcome"] == NEVER_ACCEPTED]
+    assert verdict["discarded_order_ids"] == ["0000001901"], verdict
+    assert verdict["discarded_order_times"] == [_EARLIER], verdict
+    assert verdict["foreign_min_age_s"] == _FOREIGN_MIN_AGE_S
+
+
+def test_a_row_just_outside_the_tolerance_holds_and_is_never_released_over(
+    store: SqliteEvidenceStore,
+) -> None:
+    """Review r1 HIGH: the skew case. Our OWN accepted order, stamped before our send start.
+
+    P-16 measured the KIS mock's clock behind this host, with no established bound, and this
+    host is WSL2 — a step after a sleep puts our ``send_started_time`` ahead of the 주문시각
+    the broker wrote for the order it DID accept. One threshold made that row "foreign",
+    dropped it, read the date as empty and released the reservation, so the next OPEN would
+    send a second order for a position already held. Between the tolerance and
+    ``foreign_min_age_s`` the row is unprovable instead: a hold, for as many reads as it takes.
+    """
+    reconciler = _reconciler(store)
+    send = reconciler.due(_T0)
+    assert send is not None
+    rows = (_row(odno="0000005101", ord_tmd=_SKEWED),)
+
+    for index in range(1, 5):
+        assert (
+            reconciler.apply_read(
+                send,
+                rows,
+                read_started_ms=_T0 + index * _SETTLE_MS,
+                claimed=frozenset(),
+            )
+            is None
+        )
+
+    assert bound_sends(store) == {}
+    assert (
+        never_accepted_attempt_ids(store) == frozenset()
+    ), "released over our own order"
+    verdicts = _verdicts(store)
+    assert [row["outcome"] for row in verdicts] == [UNPROVABLE_TIME]
+    assert verdicts[0]["candidate_order_times"] == [_SKEWED], verdicts[0]
+    assert verdicts[0]["discarded_order_ids"] == [], verdicts[0]
+
+
+@pytest.mark.parametrize(
+    ("age_s", "expected"),
+    [
+        (_FOREIGN_MIN_AGE_S + 1, NEVER_ACCEPTED),
+        (_FOREIGN_MIN_AGE_S, None),
+        (_TOLERANCE_S + 1, None),
+    ],
+)
+def test_where_the_foreign_edge_sits(
+    store: SqliteEvidenceStore, age_s: int, expected: str | None
+) -> None:
+    """Only STRICTLY older than ``foreign_min_age_s`` is somebody else's; the edge itself holds.
+
+    The same read at three ages: one second past the edge releases (the row is foreign and the
+    date is empty for this send), the edge itself and anything younger hold.
+    """
+    seconds = int(_SEND_STARTED[0:2]) * 3600 + int(_SEND_STARTED[2:4]) * 60
+    seconds += int(_SEND_STARTED[4:6]) - age_s
+    stamped = f"{seconds // 3600:02d}{seconds // 60 % 60:02d}{seconds % 60:02d}"
+    reconciler = _reconciler(store)
+    send = reconciler.due(_T0)
+    assert send is not None
+
+    outcomes = [
+        reconciler.apply_read(
+            send,
+            (_row(odno="0000001901", ord_tmd=stamped),),
+            read_started_ms=_T0 + index * _SETTLE_MS,
+            claimed=frozenset(),
+        )
+        for index in range(1, 3)
+    ]
+
+    assert outcomes[-1] == expected, (stamped, outcomes)
+    assert bound_sends(store) == {}
+    assert (never_accepted_attempt_ids(store) == frozenset({_ATTEMPT})) is (
+        expected == NEVER_ACCEPTED
+    )
 
 
 def test_a_tolerance_wide_enough_to_swallow_the_gap_admits_that_same_row(
@@ -379,7 +470,9 @@ def test_a_tolerance_wide_enough_to_swallow_the_gap_admits_that_same_row(
     tenant trees carry that number and not a generous one.
     """
     gap_s = (int(_SEND_STARTED[0:2]) - int(_EARLIER[0:2])) * 3600 + 3600
-    reconciler = _reconciler(store, tolerance_s=gap_s)
+    reconciler = _reconciler(
+        store, tolerance_s=gap_s, foreign_min_age_s=gap_s + _FOREIGN_MIN_AGE_S
+    )
     send = reconciler.due(_T0)
     assert send is not None
 
@@ -583,24 +676,27 @@ def test_the_reconciliation_is_off_when_its_keys_are_absent(tmp_path: Path) -> N
     assert config.uncertain_send_reconcile is False
     assert config.uncertain_send_settle_ms is None
     assert config.uncertain_send_ord_tmd_tolerance_s is None
+    assert config.uncertain_send_foreign_min_age_s is None
     assert config.uncertain_send_side_codes == {}
 
 
 def test_the_gate_needs_both_companions_and_a_bool(tmp_path: Path) -> None:
-    """A gate whose window, time tolerance or side table is missing would run with that check
-    silently off. The tolerance joined the required set with issue #1127."""
+    """A gate whose window, time thresholds or side table is missing would run with that check
+    silently off. The two time thresholds joined the required set with issue #1127."""
     on = load_fill_observer_config(
         _observer_yaml(
             tmp_path,
             uncertain_send_reconcile=True,
             uncertain_send_settle_ms=30_000,
             uncertain_send_ord_tmd_tolerance_s=_TOLERANCE_S,
+            uncertain_send_foreign_min_age_s=_FOREIGN_MIN_AGE_S,
             uncertain_send_side_codes=_SIDE_CODES,
         )
     )
     assert on.uncertain_send_reconcile is True
     assert on.uncertain_send_settle_ms == 30_000
     assert on.uncertain_send_ord_tmd_tolerance_s == _TOLERANCE_S
+    assert on.uncertain_send_foreign_min_age_s == _FOREIGN_MIN_AGE_S
     assert on.uncertain_send_side_codes == _SIDE_CODES
 
     with pytest.raises(FillObserverConfigError, match="uncertain_send_settle_ms"):
@@ -609,6 +705,7 @@ def test_the_gate_needs_both_companions_and_a_bool(tmp_path: Path) -> None:
                 tmp_path,
                 uncertain_send_reconcile=True,
                 uncertain_send_ord_tmd_tolerance_s=_TOLERANCE_S,
+                uncertain_send_foreign_min_age_s=_FOREIGN_MIN_AGE_S,
                 uncertain_send_side_codes=_SIDE_CODES,
             )
         )
@@ -620,6 +717,19 @@ def test_the_gate_needs_both_companions_and_a_bool(tmp_path: Path) -> None:
                 tmp_path,
                 uncertain_send_reconcile=True,
                 uncertain_send_settle_ms=30_000,
+                uncertain_send_foreign_min_age_s=_FOREIGN_MIN_AGE_S,
+                uncertain_send_side_codes=_SIDE_CODES,
+            )
+        )
+    with pytest.raises(
+        FillObserverConfigError, match="uncertain_send_foreign_min_age_s"
+    ):
+        load_fill_observer_config(
+            _observer_yaml(
+                tmp_path,
+                uncertain_send_reconcile=True,
+                uncertain_send_settle_ms=30_000,
+                uncertain_send_ord_tmd_tolerance_s=_TOLERANCE_S,
                 uncertain_send_side_codes=_SIDE_CODES,
             )
         )
@@ -630,11 +740,37 @@ def test_the_gate_needs_both_companions_and_a_bool(tmp_path: Path) -> None:
                 uncertain_send_reconcile=True,
                 uncertain_send_settle_ms=30_000,
                 uncertain_send_ord_tmd_tolerance_s=_TOLERANCE_S,
+                uncertain_send_foreign_min_age_s=_FOREIGN_MIN_AGE_S,
             )
         )
     with pytest.raises(FillObserverConfigError, match="true or false"):
         load_fill_observer_config(
             _observer_yaml(tmp_path, uncertain_send_reconcile="yes")
+        )
+
+
+@pytest.mark.parametrize("foreign_min_age_s", [_TOLERANCE_S, _TOLERANCE_S - 1])
+def test_a_foreign_edge_at_or_inside_the_tolerance_is_refused(
+    tmp_path: Path, foreign_min_age_s: int
+) -> None:
+    """The unprovable band must exist, so the loader refuses a pair that collapses it.
+
+    With ``foreign_min_age_s <= tolerance_s`` every row the tolerance refuses is immediately
+    somebody else's, which is the single-edge behaviour review r1 found releases our own
+    order under a host-clock skew — and a tree could reach it silently.
+    """
+    with pytest.raises(
+        FillObserverConfigError, match="uncertain_send_foreign_min_age_s"
+    ):
+        load_fill_observer_config(
+            _observer_yaml(
+                tmp_path,
+                uncertain_send_reconcile=True,
+                uncertain_send_settle_ms=30_000,
+                uncertain_send_ord_tmd_tolerance_s=_TOLERANCE_S,
+                uncertain_send_foreign_min_age_s=foreign_min_age_s,
+                uncertain_send_side_codes=_SIDE_CODES,
+            )
         )
 
 
