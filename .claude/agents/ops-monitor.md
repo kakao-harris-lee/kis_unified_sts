@@ -17,7 +17,7 @@ CP-3 tenant 세션들, 그리고 읽기 전용 운영자 표면(dashboard + UI)�
 | 한 장 상태판 | `sts tos status` (`--date`, `--json`) |
 | 종목·날짜별 체결/손익 | `sts tos perf` — tenant 잎 evidence 만 읽는다 |
 | 바별 «왜 이 결정이었나» | `sts tos inspect <session> --from --to` |
-| 바 내보내기 | `sts tos export-bars` |
+| 바 내보내기 | `sts tos export-bars <session>` |
 | Docker 스택 | `docker compose ps` — `dashboard`·`strategy-builder-ui`·`caddy`·`redis`·`prometheus` |
 | 웹 표면 | `http://localhost:${DASHBOARD_HOST_PORT:-5081}` · `GET /health` |
 | Redis | `redis-cli -n 1 INFO memory` (DB 1 전용) |

@@ -158,7 +158,13 @@ What is still true and still enforced:
   the P2-c producer switch landed 2026-11-18 (#1067 · #1068,
   `docs/plans/2026-11-11-tos-p2-declarative-fields.md`), so the live producer
   (`tools/tos_cp3/live_producer/line.py` → `produce_bars_declarative`) evaluates
-  the tenant's declarative `fields.yaml` and imports no legacy strategy. What
+  the tenant's declarative `fields.yaml` and drives **no legacy decision logic** —
+  `SetupDVWAPReversion.check()` is reached only through the driver below. It does
+  still **import the witness's config classes**: every `live_producer` module
+  imports `tools/tos_cp3/produce_fields.py`, which at module level imports
+  `SetupDConfig` (`shared/decision/setups/vwap_reversion.py`) and
+  `SetupTargetExitConfig` (`shared/strategy/exit/setup_target_exit.py`) to parse
+  the strategy YAML. The freeze therefore still binds the live path. What
   still drives the witness bar by bar is `tools/tos_cp3/legacy_setup_d_driver.py`,
   read only by the offline dataset producer (`produce_fields.py` `run()` /
   `--measure-d7`) and the equivalence comparison
@@ -251,7 +257,7 @@ docker compose up -d              # dashboard + strategy-builder-ui + caddy + re
 sts tos status                    # the one-page operator status board
 sts tos inspect <session>         # per-bar: fields, per-compare pass/fail, decision, halt
 sts tos perf                      # fills and PnL per symbol/date, from tenant leaf evidence
-sts tos export-bars               # per-bar review as the dashboard's JSON
+sts tos export-bars <session>     # that session's per-bar review as the dashboard's JSON
 ```
 
 TOS checkers (what CI gates on — see `.github/workflows/tos-{gate,firewall}.yml`):
