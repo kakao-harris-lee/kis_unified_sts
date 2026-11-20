@@ -5,6 +5,11 @@ Keeps the **first line** of every docstring and deletes comments, except
 comments that carry a tool marker (``noqa``, ``type:``, ``pragma``, ``fmt:``), a
 shebang, or an encoding cookie.
 
+``# SAFETY: ...`` survives too (matched case-insensitively, like every marker).
+That is the one durable way to keep a "why" here: one line, at the line it
+guards, naming the wrong outcome a reader would otherwise cause. Anything
+longer is prose and goes.
+
 The transformation is AST + tokenize based, idempotent (a second run is a
 no-op), and behaviour preserving: ``--verify`` re-parses each file before and
 after and compares ``ast.dump`` with every docstring constant normalised away,
@@ -78,6 +83,7 @@ KEEP_MARKERS: tuple[str, ...] = (
     "pragma",
     "fmt:",
     "direct-core-call:",
+    "safety:",
 )
 
 _ENCODING_COOKIE = re.compile(r"coding[:=]\s*([-\w.]+)")

@@ -284,6 +284,7 @@ def rows_by_send_time(
         elif row.ord_tmd < foreign_before:
             foreign.append(row)
         else:
+            # SAFETY: 증명 불가 행은 bind 도 never_accepted 도 막는다 — 우리 것일 수 있는 주문을 풀면 다음 OPEN 이 중복 송신한다 (#1127)
             unprovable.append(row)
     return tuple(eligible), tuple(unprovable), tuple(foreign)
 

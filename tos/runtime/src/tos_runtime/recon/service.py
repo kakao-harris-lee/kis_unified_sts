@@ -371,6 +371,7 @@ def _orphans_may_be_ours(
     our_orders: tuple[WitnessOrder, ...] = (),
 ) -> bool:
     """Whether an orphan broker order could be an order THIS runtime emitted (2026-11-20)."""
+    # SAFETY: 우리가 냈을 수 있거나 아직 살아 있는 고아 주문이면 거부를 유지한다 — 풀면 두 번째 물량을 산다 (#1128)
     if any(
         record.classification is not ReconciliationClass.MATCHED
         for record in attempt_records

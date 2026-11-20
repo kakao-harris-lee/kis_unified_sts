@@ -109,6 +109,7 @@ class BrokerFlatRelease:
         """One ``BROKER_FLAT_RELEASE_HELD`` row per verdict per process (an operator's why)."""
         if verdict.value in self._noted:
             return
+        # SAFETY: append 전에 표시한다 — 거부된 append 를 패스마다 재시도하면 예외 폭풍이 된다
         self._noted.add(verdict.value)
         self.evidence_store.append(
             {
@@ -163,6 +164,7 @@ class BrokerFlatRelease:
         self, reservation_id: str, snapshot: HeldPositionSnapshot, current: RclTip
     ) -> bool:
         """(d): settle after the entry was first seen consumed, then a second flat poll."""
+        # SAFETY: 모의 잔고는 진입 체결보다 늦을 수 있다 — 이른 flat 읽기로 풀면 두 번째 물량을 산다
         started = snapshot.first_balance_read_started_ms
         assert started is not None
         seen = self._consumed_seen_ms.setdefault(reservation_id, self.now_ms())

@@ -1,5 +1,7 @@
 """``SharedAppKeyGate`` — one request rate for the tenant PROCESSES that share a KIS app key."""
 
+# SAFETY: KIS 모의는 토큰 만료뿐 아니라 EGW00201 호출 한도에도 HTTP 500 을 준다 — 한도는 app key 단위로 프로세스를 가로지른다
+
 from __future__ import annotations
 
 import time

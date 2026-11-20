@@ -342,6 +342,15 @@ def test_the_repos_own_per_line_directive_comment_survives():
     assert marker in stripped
 
 
+def test_a_safety_line_survives_both_as_its_own_line_and_inline():
+    """The one durable «why»: one line, at the line it guards."""
+    own_line = "# SAFETY: releasing an unprovable row lets the next OPEN send a duplicate (#1127)"
+    inline = "# safety: mock balance lags the entry fill"
+    stripped = _roundtrip(f"{own_line}\nrelease(row)  {inline}\n")
+    assert own_line in stripped
+    assert inline in stripped
+
+
 def test_verify_equivalent_rejects_a_change_outside_docstrings():
     before = 'def f():\n    """Doc."""\n    return 1\n'
     after = 'def f():\n    """Doc."""\n    return 2\n'
