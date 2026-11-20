@@ -927,15 +927,25 @@ def _package_files() -> list[Path]:
     return list(Path(pkg.__file__).parent.glob("*.py"))
 
 
+# The only waits this package may contain, each named by the ONE function allowed to hold it:
+# the app key's slot wait, and (#1125) the wait for the cross-process token lock, which is the
+# same slot wait spread over the processes that share one app key. Neither re-sends anything,
+# which is what this guard exists to forbid. Anything else that loops or sleeps is an offender.
+_PACING_WAIT_FUNCTIONS = {
+    "pacer.py": {"acquire"},
+    "file_lock.py": {"_flock_within_budget"},
+}
+
+
 def _retry_primitive_offenders_excluding_pacing(source: str, path: Path) -> list[str]:
     tree = ast.parse(source)
     pacing_lines: set[int] = set()
-    if path.name == "pacer.py":
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "acquire":
-                pacing_lines = set(
-                    range(node.lineno, (node.end_lineno or node.lineno) + 1)
-                )
+    allowed = _PACING_WAIT_FUNCTIONS.get(path.name, set())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in allowed:
+            pacing_lines |= set(
+                range(node.lineno, (node.end_lineno or node.lineno) + 1)
+            )
     offenders: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -955,7 +965,7 @@ def _retry_primitive_offenders_excluding_pacing(source: str, path: Path) -> list
             offenders.append(
                 f"{path.name}:{node.lineno}: retry-named argument {node.arg!r}"
             )
-        elif isinstance(node, ast.While):
+        elif isinstance(node, ast.While) and node.lineno not in pacing_lines:
             offenders.append(f"{path.name}:{node.lineno}: while loop")
         elif (
             isinstance(node, ast.For)

@@ -22,6 +22,8 @@ from tos_runtime.compose._engine_wiring import (
 from tos_runtime.compose._kis_credential_wiring import (
     KisCredentialSessionsCell,
     build_kis_credential_sessions,
+    kis_shared_app_key_gate,
+    kis_shared_token_cache,
 )
 from tos_runtime.compose._preconditions import (
     COORDINATOR_PRECONDITIONS_CONFIG_NAME,
@@ -92,13 +94,20 @@ def _verify_boot_replay(
 
 
 def _kis_credential_sessions(
-    infra: _Infra, identity: RuntimeIdentity
+    infra: _Infra,
+    identity: RuntimeIdentity,
+    transport_config: KisMockTransportConfig | None,
 ) -> KisCredentialSessions:
     """C-2 decision (C): one KIS credential session per app key for this whole boot — the"""
     return build_kis_credential_sessions(
         custody=infra.custody,
         monotonic=infra.monotonic_source,
         evidence_sink=evidence_recorder(infra.evidence_store, identity),
+        # #1125: and one token — plus one request queue — across the BOOTS that share this
+        # app key, when the transport config names those files. Three stock tenants are
+        # three processes, one app key: KIS counts them together, so they must too.
+        token_cache=kis_shared_token_cache(transport_config),
+        shared_gate=kis_shared_app_key_gate(transport_config),
     )
 
 
@@ -131,7 +140,9 @@ def _finalize(
         config_dir / COORDINATOR_PRECONDITIONS_CONFIG_NAME
     )
     finality_config = load_finality_config(config_dir / _FINALITY_CONFIG_NAME)
-    kis_credential_sessions = _kis_credential_sessions(infra, identity)
+    kis_credential_sessions = _kis_credential_sessions(
+        infra, identity, transport_config
+    )
     if credential_sessions_cell is not None:
         credential_sessions_cell.fill(kis_credential_sessions)
     wired = wire_engine_and_driver(

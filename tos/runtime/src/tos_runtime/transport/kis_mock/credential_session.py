@@ -9,11 +9,13 @@ from dataclasses import dataclass
 from tos_runtime.custody.ports import CredentialCustody, CredentialHandle
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.pacer import KisAppKeyPacer, KisPacing
+from tos_runtime.transport.kis_mock.shared_pacer import SharedAppKeyGate
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
     KisTokenLifecycle,
     TokenIssuingClient,
 )
+from tos_runtime.transport.kis_mock.token_cache import SharedTokenCache
 
 __all__ = [
     "KisAppCredentials",
@@ -85,12 +87,16 @@ class KisCredentialSession:
         token_reissue_min_interval_s: int,
         evidence_sink: EvidenceRecorder,
         pacing: KisPacing,
+        token_cache: SharedTokenCache | None = None,
+        shared_gate: SharedAppKeyGate | None = None,
     ) -> None:
         """Wire the session (every argument but ``pacing`` is forwarded to the one"""
         self._custody = custody
         self._app_key_scope = app_key_scope
         self._app_secret_scope = app_secret_scope
-        self._pacer = KisAppKeyPacer(pacing=pacing, monotonic=monotonic)
+        self._pacer = KisAppKeyPacer(
+            pacing=pacing, monotonic=monotonic, shared_gate=shared_gate
+        )
         self._lifecycle = KisTokenLifecycle(
             client=client,
             custody=custody,
@@ -101,6 +107,7 @@ class KisCredentialSession:
             token_reissue_min_interval_s=token_reissue_min_interval_s,
             evidence_sink=evidence_sink,
             pacer=self._pacer,
+            token_cache=token_cache,
         )
 
     def ensure_token_string(self) -> str:
@@ -134,10 +141,18 @@ class KisCredentialSessions:
         custody: CredentialCustody,
         monotonic: MonotonicSource,
         evidence_sink: EvidenceRecorder,
+        token_cache: SharedTokenCache | None = None,
+        shared_gate: SharedAppKeyGate | None = None,
     ) -> None:
         self._custody = custody
         self._monotonic = monotonic
         self._evidence_sink = evidence_sink
+        # One cache and one cross-process gate for every session this boot builds: both are
+        # the app KEY's, and the processes that share an app key are what they serialize
+        # (#1125 — the token, so only one process issues; the gate, so only one process
+        # sends at a time).
+        self._token_cache = token_cache
+        self._shared_gate = shared_gate
         self._sessions: dict[
             tuple[str, str], tuple[_SessionTerms, KisCredentialSession]
         ] = {}
@@ -182,6 +197,8 @@ class KisCredentialSessions:
             token_reissue_min_interval_s=token_reissue_min_interval_s,
             evidence_sink=self._evidence_sink,
             pacing=pacing,
+            token_cache=self._token_cache,
+            shared_gate=self._shared_gate,
         )
         self._sessions[key] = (terms, session)
         return session

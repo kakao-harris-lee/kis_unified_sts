@@ -524,9 +524,23 @@ def write_kis_mock_transport_config(
     min_send_interval_ms: int = 1100,
     wire_codec: str | None | _Unset = _UNSET,
     app_key_request_wait_budget_ms: int | None = None,
+    shared_app_key_state_dir: Path | None = None,
 ) -> Path:
     """Write a fully-valued ``kis_mock_transport.yaml`` (T2 lane C test fixture) — every"""
     path = config_dir / "kis_mock_transport.yaml"
+    shared_state: dict[str, object] = (
+        {}
+        if shared_app_key_state_dir is None
+        else {
+            # #1125: the two optional pairs that make the tenant processes holding one app
+            # key share its token and its request queue. Absent by default, so every other
+            # fixture keeps the per-process behaviour it was written against.
+            "token_cache_path": str(shared_app_key_state_dir / "stock-mock.json"),
+            "token_cache_refresh_margin_s": 600,
+            "shared_pacer_path": str(shared_app_key_state_dir / "stock-mock.pace"),
+            "shared_max_rps": 2.0,
+        }
+    )
     path.write_text(
         yaml.safe_dump(
             {
@@ -557,6 +571,7 @@ def write_kis_mock_transport_config(
                     else app_key_request_wait_budget_ms
                 ),
                 "token_reissue_min_interval_s": 60,
+                **shared_state,
                 "request_timeout_s": 5.0,
                 "allow_plaintext_for_tests": allow_plaintext_for_tests,
             },

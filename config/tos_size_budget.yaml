@@ -499,11 +499,12 @@ exceptions:
     2026-09-26 egress 거래일 계획(docs/plans/2026-09-26-tos-egress-trading-date-plan.md T-3) — `trading_date_now` 매개변수 1줄 + `build_transport` 호출부 인자 1줄로 149→151(+2). 안전-부담 배선 관례상 압축 대신 재등재.
     2026-09-26 주기 평가·C-2 계획(docs/plans/2026-09-26-tos-periodic-time-eval-and-witness-wiring-plan.md W2) — `credential_sessions` 매개변수 1줄 + 도크스트링 2줄 + `build_transport` 호출부 인자 1줄로 151→155(+4). 앱키당 단일 자격증명 세션의 관통 배선이라 압축 대신 재등재.
 - target: tos/runtime/src/tos_runtime/compose/_finalize_wiring.py::_finalize
-  measured: 106
+  measured: 108
   owner: tos-runtime
   decomposition_order: 10
   expires_on: '2026-12-31'
   note: >-
+    **2026-11-20 #1125 공유 토큰 캐시 재등재 106→108(+2)**: `_kis_credential_sessions(...)` 호출이 `transport_config` 를 받아 세 줄로 줄바꿈됐다. 그 설정이 `token_cache_path` 를 선언하면 앱 키를 공유하는 tenant 프로세스들이 토큰 한 장을 함께 쓴다(11-20 005930 토큰 충돌). 호출 시퀀스 무변경.
     **2026-11-13 S4 산문 제거 재등재 124→106(-18)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
     **2026-10-31 #1011 P2 venue 원장 배선 재등재 124→128(+4)**: `venue_ledger` 파라미터 1줄 + `wire_engine_and_driver(...)` 호출에 전달 1줄 + 사유 주석 2줄. 전송을 만드는 경로가 root → _finalize → wire_engine_and_driver 하나라 원장 쓰기 객체도 그 경로로만 내려간다. 호출 시퀀스 무변경.
     **2026-10-23 PR-3b Codex r3 재등재 123→124(+1)**: `_verify_boot_replay(...)` 호출에 `rcl_log=rcl.rcl_log` 1줄 — 부팅 replay 가 기록된 엔진 투영 해제를 증거가 아니라 RCL 자신의 커밋 상태(`committed_command`)로 확인한다.

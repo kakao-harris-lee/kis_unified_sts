@@ -70,6 +70,16 @@ class KisMockTransportConfig:
     token_reissue_min_interval_s: int
     request_timeout_s: float
     allow_plaintext_for_tests: bool
+    # The file every tenant process sharing this app key reads its token from (#1125), and
+    # how long before real expiry a cached token is due for reissue. Absent = no sharing:
+    # this process issues and holds its own token, as every tenant did before 2026-11-20.
+    token_cache_path: str | None = None
+    token_cache_refresh_margin_s: int | None = None
+    # The file every tenant process sharing this app key takes its request slot from, and the
+    # aggregate rate it hands out (#1125). Absent = each process paces only itself, which is
+    # how three tenants put three requests into one second on 2026-11-20.
+    shared_pacer_path: str | None = None
+    shared_max_rps: float | None = None
 
 
 def _require_present(raw: Any, field: str, path: Path) -> Any:
@@ -291,6 +301,61 @@ def _require_positive_float(raw: Any, field: str, path: Path) -> float:
     return value
 
 
+def _require_shared_absolute_path(raw: Any, field: str, path: Path) -> str:
+    """A path every process that shares this app key must resolve to the SAME file."""
+    raw_path = _require_str(raw, field, path)
+    try:
+        resolved = Path(raw_path).expanduser()
+    except RuntimeError as exc:  # no home directory to expand '~' against
+        raise KisMockTransportConfigError(
+            f"{path}: {field}={raw_path!r} starts with '~' and this process has no home "
+            "directory to expand it against — name the absolute path"
+        ) from exc
+    if not resolved.is_absolute():
+        raise KisMockTransportConfigError(
+            f"{path}: {field}={raw_path!r} is not absolute — every process sharing this app "
+            "key must name the SAME file, and a relative path names a different one per "
+            "working directory"
+        )
+    return str(resolved)
+
+
+def _require_paired_keys(raw: Any, fields: tuple[str, str], path: Path) -> bool:
+    """Whether this optional two-key setting is declared. Half of it is a refusal: the"""
+    present = [field for field in fields if isinstance(raw, dict) and field in raw]
+    if not present:
+        return False
+    if len(present) != len(fields):
+        raise KisMockTransportConfigError(
+            f"{path}: {fields[0]!r} and {fields[1]!r} are one setting — declaring one "
+            "without the other would leave the missing half to this loader to invent; "
+            "declare both or neither"
+        )
+    return True
+
+
+def _load_token_cache(raw: Any, path: Path) -> tuple[str | None, int | None]:
+    """The optional shared-token-cache pair (path + early-refresh margin)."""
+    fields = ("token_cache_path", "token_cache_refresh_margin_s")
+    if not _require_paired_keys(raw, fields, path):
+        return None, None
+    return (
+        _require_shared_absolute_path(raw, fields[0], path),
+        _require_positive_int(raw, fields[1], path),
+    )
+
+
+def _load_shared_pacer(raw: Any, path: Path) -> tuple[str | None, float | None]:
+    """The optional cross-process pacer pair (grant file + aggregate rate for the app key)."""
+    fields = ("shared_pacer_path", "shared_max_rps")
+    if not _require_paired_keys(raw, fields, path):
+        return None, None
+    return (
+        _require_shared_absolute_path(raw, fields[0], path),
+        _require_positive_float(raw, fields[1], path),
+    )
+
+
 def load_kis_mock_transport_config(
     path: Path,
     *,
@@ -344,6 +409,8 @@ def load_kis_mock_transport_config(
         raw, "token_reissue_min_interval_s", path
     )
     request_timeout_s = _require_positive_float(raw, "request_timeout_s", path)
+    token_cache_path, token_cache_refresh_margin_s = _load_token_cache(raw, path)
+    shared_pacer_path, shared_max_rps = _load_shared_pacer(raw, path)
 
     return KisMockTransportConfig(
         mode=mode,  # type: ignore[arg-type]  # narrowed by the membership check above
@@ -360,4 +427,8 @@ def load_kis_mock_transport_config(
         token_reissue_min_interval_s=token_reissue_min_interval_s,
         request_timeout_s=request_timeout_s,
         allow_plaintext_for_tests=allow_plaintext_for_tests,
+        token_cache_path=token_cache_path,
+        token_cache_refresh_margin_s=token_cache_refresh_margin_s,
+        shared_pacer_path=shared_pacer_path,
+        shared_max_rps=shared_max_rps,
     )

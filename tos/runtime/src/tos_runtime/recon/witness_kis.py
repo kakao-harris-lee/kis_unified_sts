@@ -160,6 +160,28 @@ def _read_ctx_key(body: Mapping[str, Any], suffix: str, kind: str) -> str:
     return str(body.get(name) or "").strip()
 
 
+#: What a non-200 body may say about itself: KIS's own fault code and text, never a header,
+#: a token or a key. The KIS mock answers HTTP 500 both for an expired token and for
+#: `EGW00201` (초당 거래건수 초과), and on 2026-11-20 the two were indistinguishable from the
+#: refusal this witness recorded — `NOT_CORROBORATED … returned HTTP 500`, nothing more.
+_FAULT_FIELDS = ("msg_cd", "msg1", "rt_cd", "error_code", "error_description")
+_FAULT_MAX_CHARS = 200
+
+
+def _fault_hint(body: Mapping[str, Any] | None) -> str:
+    """KIS's own words for a response this witness refuses to trust, or why there are none."""
+    if body is None:
+        return "body did not parse as a JSON object"
+    named = {
+        field: str(body[field])[:_FAULT_MAX_CHARS]
+        for field in _FAULT_FIELDS
+        if body.get(field) is not None
+    }
+    if not named:
+        return f"body carried none of {list(_FAULT_FIELDS)}, keys={sorted(body)!r}"
+    return ", ".join(f"{field}={value!r}" for field, value in named.items())
+
+
 @dataclass(frozen=True)
 class _WalkOutcome:
     """The rows and (for the balance walk only) the ``output2`` block accumulated across"""
@@ -419,7 +441,8 @@ class KisStockBrokerWitness:
             if response.status != 200:
                 raise WitnessUnavailable(
                     f"KisStockBrokerWitness: page {index} of {tr_id} returned HTTP "
-                    f"{response.status} (expected 200) — refusing to trust its body"
+                    f"{response.status} (expected 200) — refusing to trust its body "
+                    f"[{_fault_hint(response.json)}]"
                 )
             if response.json is None:
                 raise WitnessUnavailable(
@@ -431,7 +454,7 @@ class KisStockBrokerWitness:
             if rt_cd != "0":
                 raise WitnessUnavailable(
                     f"KisStockBrokerWitness: page {index} of {tr_id} rejected "
-                    f"(rt_cd={rt_cd!r}, msg_cd={body.get('msg_cd')!r})"
+                    f"[{_fault_hint(body)}]"
                 )
             rows = body.get("output1")
             pages.append(rows if isinstance(rows, list) else None)

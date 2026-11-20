@@ -158,3 +158,31 @@ def test_rerun_refuses_to_overwrite(host: tuple[Path, Path]) -> None:
     again = _run(state, env_mock, "--apply")
     assert again.returncode != 0
     assert key.read_bytes() == before
+
+
+def test_every_tenant_is_pointed_at_one_shared_token_cache(
+    host: tuple[Path, Path],
+) -> None:
+    """#1125: one KIS app key, one token a minute, so one token FILE for every tenant.
+
+    2026-11-20 12:50 KST: 005930's own token issuance lost the per-minute race to 000660
+    and 005380 on every retry, which left its broker facts None and every signal at
+    SEND_REFUSED for the session.
+    """
+    state, env_mock = host
+    assert _run(state, env_mock, "--apply").returncode == 0
+    assert _run(state, env_mock, "000660", "--apply").returncode == 0
+    cache = state / "kis-mock-token" / "stock-mock.json"
+    pacer = state / "kis-mock-token" / "stock-mock.pace"
+    assert _mode(cache.parent) == 0o700
+    for ops in ("cp3-setup-d-stock-ops", "cp3-setup-d-stock-000660-ops"):
+        text = (state / ops / "kis_mock_transport.yaml").read_text(encoding="utf-8")
+        assert f'token_cache_path: "{cache}"' in text
+        assert "token_cache_refresh_margin_s: 600" in text
+        # One queue too: KIS counts requests per app key, so three tenants pacing
+        # themselves independently put three into one second (11-20 13:00 HTTP 500).
+        assert f'shared_pacer_path: "{pacer}"' in text
+        assert "shared_max_rps: 2.0" in text
+        # ≥65s, not 60: a 60s cooldown against a ~60s poll put every other retry
+        # 0.4s inside its own window (TokenStale at 59.6s on 11-20).
+        assert "token_reissue_min_interval_s: 65" in text
