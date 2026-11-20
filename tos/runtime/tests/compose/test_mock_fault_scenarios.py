@@ -18,7 +18,10 @@ Two of them are the order POST itself going blind — a timeout, and an HTTP 500
 same stuck state, which :func:`_assert_quarantined_unknown` pins, and both leave it only until
 the broker's own order history is read for the send's trading date
 (:mod:`tos_runtime.posttrade.uncertain_send`): one unclaimed matching row binds the attempt, an
-empty history twice over a settle window releases it, and anything less certain holds.
+empty history twice over a settle window releases it, and anything less certain holds. A
+matching row the broker stamped BEFORE our send started is a third thing — somebody else's
+order, scenario (g), issue #1127 — and binding it would have recorded an ACK for an order this
+tenant never sent.
 """
 
 from __future__ import annotations
@@ -73,10 +76,14 @@ _ODNO_PREFIX = "000000510"
 #: (f) asserts the release treats them as foreign, and a collision would make it vacuous.
 _FOREIGN_ODNO_PREFIX = "000000190"
 
-#: 주문시각 (``ord_tmd``, HHMMSS) the broker stamps on each side in scenario (f). The foreign
-#: orders are the morning's; the tenant's own start after the 12:48 reboot. Only a strictly
-#: earlier broker stamp makes an orphan provably not ours, so the gap here is the thing the
-#: scenario actually tests — not the ODNO prefixes.
+#: 주문시각 (``ord_tmd``, HHMMSS) the broker stamps on each side. The foreign orders are the
+#: morning's; the tenant's own start after the 12:48 reboot. Only a strictly earlier broker
+#: stamp makes an orphan provably not ours, so the gap here is the thing scenario (f) actually
+#: tests — not the ODNO prefixes. Both bases straddle this harness's fixed wall clock
+#: (``fx.DEFAULT_WALL_CLOCK_UNIX_MS`` = 10:00:00 KST, which is what every send here is stamped
+#: with): the tenant's own orders must be stamped at or after its send start or the
+#: uncertain-send reconciliation cannot prove them its own (issue #1127), and the foreign ones
+#: must be before it.
 _FOREIGN_ORD_TMD_BASE = 93000
 _OWN_ORD_TMD_BASE = 124800
 
@@ -154,8 +161,11 @@ class _Tenant:
     published: list[Any]
     rows: list[dict[str, str]] = field(default_factory=list)
     odno_serial: int = 0
-    #: Set by a scenario that needs the broker to stamp 주문시각 on this tenant's own orders.
-    ord_tmd_base: int | None = None
+    #: The base 주문시각 the broker stamps on this tenant's OWN orders. Stamped by default
+    #: because the real VTTC0081R always prints one, and since issue #1127 a row with no
+    #: placement time can never be bound to an uncertain send — an unstamped own order would
+    #: make scenario (d)'s recovery test vacuous rather than passing.
+    ord_tmd_base: int | None = _OWN_ORD_TMD_BASE
 
     def next_odno(self) -> str:
         """The broker order number the next order sent on this tenant answers with."""
@@ -164,10 +174,10 @@ class _Tenant:
 
     @property
     def own_ord_tmd(self) -> str | None:
-        """The broker's 주문시각 for this tenant's own orders, once a scenario has set a base.
+        """The broker's 주문시각 for this tenant's own orders, from :attr:`ord_tmd_base`.
 
-        ``None`` — the default — keeps every other scenario's rows exactly as they were, with
-        no placement time, so nothing about their orphan handling changes.
+        A scenario that sets the base to ``None`` gets rows with no placement time — what an
+        order the broker printed no 주문시각 for looks like.
         """
         if self.ord_tmd_base is None:
             return None
@@ -554,23 +564,26 @@ def test_c_http_500_on_the_balance_get_for_a_close_then_the_close_is_retried(
         _close(tenant.runtime)
 
 
-def _seed_prior_same_day_orders(tenant: _Tenant, *, count: int) -> tuple[str, ...]:
+def _seed_prior_same_day_orders(
+    tenant: _Tenant, *, count: int, quantity: Decimal = Decimal(1)
+) -> tuple[str, ...]:
     """Put ``count`` orders this tenant never placed into the broker's own daily-ccld history.
 
     They are on its account, its symbol and its trading date, they are fully filled, and they
     net flat — the 2026-11-20 shape, where an archived leaf's morning round trips plus an
     operator's manual market SELL were still in 주식일별주문체결조회 when a fresh leaf booted
-    at 12:48 against a flat account.
+    at 12:48 against a flat account. Each is stamped 주문시각 in the morning, before this
+    harness's own send start; ``quantity`` is what makes one of them look like a send of
+    THIS tenant's (scenario (g), issue #1127).
     """
-    tenant.ord_tmd_base = _OWN_ORD_TMD_BASE
     odnos = tuple(f"{_FOREIGN_ODNO_PREFIX}{serial}" for serial in range(1, count + 1))
     for serial, odno in enumerate(odnos, start=1):
         tenant.rows.append(
             _row(
                 odno=odno,
                 date=tenant.date,
-                ord_qty=Decimal(1),
-                filled=Decimal(1),
+                ord_qty=quantity,
+                filled=quantity,
                 remaining=Decimal(0),
                 ord_tmd=f"{_FOREIGN_ORD_TMD_BASE + serial:06d}",
             )
@@ -801,6 +814,48 @@ def test_d_ambiguous_two_broker_orders_this_send_could_own_stay_held(
         ], "an ambiguous verdict must never settle into a bind or a release"
         _assert_quarantined_unknown(tenant, transport_kind="TIMEOUT")
         assert tenant.order_posts() == posts
+    finally:
+        _close(tenant.runtime)
+
+
+def test_g_an_earlier_order_of_the_same_shape_is_not_bound_to_a_timed_out_send(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
+) -> None:
+    """Issue #1127: the two 11-20 shapes together — an order POST that went blind, on a day
+    whose 주식일별주문체결조회 already held ONE order of the same symbol, quantity and side
+    that this tenant never placed (a manual MOCK flatten, or an archived leaf's).
+
+    The identity rule alone saw exactly one candidate and bound it: an order we never sent
+    recorded as our ACK, with the reservation tied to a stranger's ODNO. The broker's own
+    주문시각 puts it before our POST started, so it is refused, the date reads empty for this
+    send, and the attempt settles as never-accepted — the capacity comes back and the tenant
+    trades again, which is what the reconciliation exists for.
+    """
+    tenant = _boot_tenant(
+        config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
+    )
+    try:
+        quantity, _odno = _open_that_times_out(tenant, seq=1)
+        posts = tenant.order_posts()
+        # The POST was never accepted; what the broker's history holds is the EARLIER order.
+        (foreign,) = _seed_prior_same_day_orders(tenant, count=1, quantity=quantity)
+        tenant.next_bar()
+
+        _reconciled(tenant, NEVER_ACCEPTED)
+        verdicts = _rows(tenant.runtime, UNCERTAIN_SEND_RECONCILED_KIND)
+        assert [row["outcome"] for row in verdicts] == [NEVER_ACCEPTED], verdicts
+        assert all(
+            row["broker_execution_id"] != foreign for row in verdicts
+        ), "the earlier order was adopted as ours"
+        assert tenant.order_posts() == posts, "reconciliation sent an order"
+
+        _assert_recovers_to_trading(tenant, first_seq=2)
+        discards = _rows(tenant.runtime, _DISCARD_KIND)
+        assert [row["reason"] for row in discards] == [NEVER_ACCEPTED_CAUSE], discards
     finally:
         _close(tenant.runtime)
 

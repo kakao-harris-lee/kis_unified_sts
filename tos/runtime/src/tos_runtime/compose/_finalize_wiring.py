@@ -131,6 +131,7 @@ def _finalize(
     transport_kind: TransportKind,
     transport_config: KisMockTransportConfig | None,
     trading_date_now: Callable[[], str | None] | None = None,
+    send_time_now: Callable[[], str | None] | None = None,
     credential_sessions_cell: KisCredentialSessionsCell | None = None,
     venue_ledger: SyntheticVenueLedger | None = None,
 ) -> ComposedRuntime:
@@ -170,6 +171,7 @@ def _finalize(
         transport_config=transport_config,
         credential_sessions=kis_credential_sessions,
         trading_date_now=trading_date_now,
+        send_time_now=send_time_now,
         venue_ledger=venue_ledger,
     )
 

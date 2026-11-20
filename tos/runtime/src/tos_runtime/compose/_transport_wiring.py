@@ -274,6 +274,7 @@ def build_transport(
     evidence_store: SqliteEvidenceStore,
     runtime_identity: RuntimeIdentity,
     trading_date_now: Callable[[], str | None] | None = None,
+    send_time_now: Callable[[], str | None] | None = None,
     credential_sessions: KisCredentialSessions,
     venue_ledger: SyntheticVenueLedger | None = None,
 ) -> Transport:
@@ -309,4 +310,5 @@ def build_transport(
         seal_lookup=seal_lookup,
         evidence_sink=_evidence_recorder(evidence_store, runtime_identity),
         trading_date_now=trading_date_now,
+        send_time_now=send_time_now,
     )

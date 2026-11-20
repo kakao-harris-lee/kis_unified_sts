@@ -14,6 +14,7 @@ from tos_runtime.calendar.config import CalendarConfig, calendar_bind_digest
 from tos_runtime.calendar.model import MaturityFact, PhaseFact, WallClockReading
 from tos_runtime.calendar.phase import (
     effective_phase_at,
+    local_time_at,
     maturity_at,
     trading_date_at,
 )
@@ -149,6 +150,18 @@ class SessionFactsOwner:
         if reading is None:
             return None
         return trading_date_at(reading.unix_ms, instrument_class, self._calendar)
+
+    def local_time_now(self) -> str | None:
+        """The calendar timezone's wall time (``HHMMSS``) now, or ``None`` (issue #1127).
+
+        The send-start stamp the KIS order transport writes beside its ``trading_date``, from
+        the SAME trusted clock that date comes from — one unreadable clock means both are
+        absent, and the uncertain-send reconciliation then binds nothing.
+        """
+        reading = self._trading_date_wall_clock.read()
+        return (
+            None if reading is None else local_time_at(reading.unix_ms, self._calendar)
+        )
 
     def session_context(self, instrument_class: str) -> SessionContext | None:
         """The kernel ``tos.time.SessionContext`` for ``instrument_class`` this"""

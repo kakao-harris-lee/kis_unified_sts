@@ -339,6 +339,7 @@ def compose_paper_runtime(
         trading_date_now=build_egress_trading_date_reader(
             trading_date_reader, time_service=boot.infra.time_service
         ),
+        send_time_now=session_facts_owner.local_time_now,
         credential_sessions_cell=credential_sessions_cell,
         venue_ledger=venue_ledger.ledger,
     )
