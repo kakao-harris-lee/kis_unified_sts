@@ -25,6 +25,10 @@ first request leaves the host:
     picks the mock base URL, ``MockTradingClient.trading_call`` re-asserts the
     mock host and a mock TR id, and a credential file that turned out to be the
     real one fails the fingerprint comparison above.
+  * the credential file is read through the one bounded loader
+    (``shared.config.dotenv_guard.read_explicit_dotenv``) — no ancestor search,
+    so it cannot walk out of a worktree into the primary checkout's real
+    ``.env`` (#698), and a hermetic test process reads nothing.
   * no secret is printed. Holdings are symbol codes and quantities; the account
     number appears nowhere, not even masked.
 
@@ -52,6 +56,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 EXPECT_FP_ENV = "CP3_EXPECT_ACCOUNT_FP"
 #: ``TOS_ENV_MOCK`` is ``setup_stock_mock_once.sh``'s name for the same file.
 ENV_FILE_ENV = "TOS_ENV_MOCK"
+
+#: The only keys read out of that file, and the only ones put in the environment.
+CREDENTIAL_KEYS = ("KIS_STOCK_APP_KEY", "KIS_STOCK_APP_SECRET", "KIS_STOCK_ACCOUNT_NO")
 
 EXIT_FLAT = 0
 EXIT_UNREADABLE = 1
@@ -159,8 +166,20 @@ def resolve_expected_fingerprint(flag: str | None) -> str:
 
 
 def load_env_file(path: str | None) -> Path:
-    """Load the mock credential file into the environment, overriding what is set."""
-    from dotenv import load_dotenv
+    """Put this file's mock credentials in the environment, overriding what is set.
+
+    Read through ``shared.config.dotenv_guard.read_explicit_dotenv``, the repo's
+    only sanctioned reader for an operator-named file (#698, enforced by
+    ``tests/unit/config/test_dotenv_call_gate.py``): no ancestor search, so it
+    cannot walk out of a worktree into the primary checkout's real ``.env``, and
+    a hermetic test process reads nothing at all — which lands here as "the file
+    does not carry …", never as credentials in a test.
+
+    Override is the point: the named file decides which account this run touches,
+    and the fingerprint gate in :func:`build_client` then checks that it is the
+    authorised one.
+    """
+    from shared.config.dotenv_guard import read_explicit_dotenv
 
     chosen = Path(path or os.environ.get(ENV_FILE_ENV) or ".env.mock").expanduser()
     if not chosen.is_file():
@@ -168,7 +187,12 @@ def load_env_file(path: str | None) -> Path:
             f"credential file not found: {chosen} — pass --env-file or export "
             f"${ENV_FILE_ENV} (runbook §7.2-f)"
         )
-    load_dotenv(chosen, override=True)
+    chosen = chosen.resolve()
+    values = read_explicit_dotenv(chosen, keys=CREDENTIAL_KEYS)
+    missing = [key for key in CREDENTIAL_KEYS if not values.get(key)]
+    if missing:
+        raise OpsRefusal(f"{chosen} does not carry {', '.join(missing)}")
+    os.environ.update(values)
     return chosen
 
 

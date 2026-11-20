@@ -13,6 +13,7 @@ mock account by hand (runbook §7.2-f).
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,31 @@ def test_fingerprint_comes_from_env_or_flag(monkeypatch: pytest.MonkeyPatch) -> 
     assert flat.resolve_expected_fingerprint("DEADBEEFCAFE") == "deadbeefcafe"
     with pytest.raises(flat.OpsRefusal):
         flat.resolve_expected_fingerprint("")
+
+
+def test_credentials_come_through_the_bounded_loader_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A test process reads no credential file at all, and says so (#698).
+
+    The hermetic switch is on for the whole pytest session, so
+    ``read_explicit_dotenv`` returns nothing and the tool refuses instead of
+    running with a half-filled environment. That is also the proof the file is
+    read through that loader rather than python-dotenv directly, which the
+    repo-wide gate (``tests/unit/config/test_dotenv_call_gate.py``) forbids.
+    """
+    env_file = tmp_path / ".env.mock"
+    env_file.write_text(
+        "KIS_STOCK_APP_KEY=FAKEKEY\n"
+        "KIS_STOCK_APP_SECRET=FAKESECRET\n"
+        "KIS_STOCK_ACCOUNT_NO=50000000-01\n",
+        encoding="utf-8",
+    )
+    for key in flat.CREDENTIAL_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    with pytest.raises(flat.OpsRefusal, match="does not carry"):
+        flat.load_env_file(str(env_file))
+    assert [key for key in flat.CREDENTIAL_KEYS if key in os.environ] == []
 
 
 def test_missing_credential_file_is_a_refusal(
