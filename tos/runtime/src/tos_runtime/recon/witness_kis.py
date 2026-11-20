@@ -40,6 +40,8 @@ _TR_CONT_MORE_CODES = ("M", "F")
 
 _YYYYMMDD = re.compile(r"[0-9]{8}")
 
+_HHMMSS = re.compile(r"[0-9]{6}")
+
 _TR_CONT_REQUEST_NEXT = "N"
 
 _CANCELLED = "Y"
@@ -250,6 +252,12 @@ class KisOrderRow:
     #: than a refused row.
     avg_prvs: Decimal | None = None
     tot_ccld_amt: Decimal | None = None
+    #: 주문시각 ``ord_tmd`` (HHMMSS, 1-second resolution) as the broker printed it, or ``None``
+    #: when absent or not HHMMSS-shaped. It is an ORDER PLACEMENT time, NOT a fill timestamp
+    #: (measured: ``tests/tools/test_broker_probes_p11_fill.py``), and the only thing that reads
+    #: it compares it with other rows of the SAME response — never with a local clock. It
+    #: defaults to ``None`` so a row built without one is simply unprovable, never an error.
+    ord_tmd: str | None = None
     #: 매도매수구분코드 ``sll_buy_dvsn_cd`` as the broker printed it (``01`` 매도 / ``02``
     #: 매수), or ``None`` when the row carried none. Read only by the uncertain-send
     #: reconciliation, which uses it to refuse a row on the opposite side of the send it is
@@ -265,10 +273,12 @@ class KisOrderRow:
             return value.strip() or None
 
         ord_dt = str(row.get("ord_dt") or "").strip()
+        ord_tmd = str(row.get("ord_tmd") or "").strip()
         return cls(
             odno=_text("odno"),
             orgn_odno=_text("orgn_odno"),
             ord_dt=ord_dt if _YYYYMMDD.fullmatch(ord_dt) is not None else None,
+            ord_tmd=ord_tmd if _HHMMSS.fullmatch(ord_tmd) is not None else None,
             pdno=_text("pdno"),
             ord_qty=_decimal_or_none(row.get("ord_qty")),
             tot_ccld_qty=_decimal_or_none(row.get("tot_ccld_qty")),
@@ -626,4 +636,5 @@ class KisStockBrokerWitness:
             remaining=remaining_qty,
             state=state,
             order_date=row.ord_dt,
+            order_time=row.ord_tmd,
         )

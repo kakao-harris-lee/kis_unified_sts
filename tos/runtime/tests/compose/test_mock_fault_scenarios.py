@@ -67,6 +67,19 @@ _DISCARD_KIND = "RESERVATION_DISCARDED_UNSENT"
 #: fail-closes on (``ambiguous_rows``) — a harness bug that reads like a product bug.
 _ODNO_PREFIX = "000000510"
 
+#: Orders the tenant under test never placed, on its own symbol and trading date: an earlier,
+#: archived leaf's round trips and an operator's manual flatten. A different prefix from
+#: :data:`_ODNO_PREFIX` so no foreign order can collide with one the tenant sends — scenario
+#: (f) asserts the release treats them as foreign, and a collision would make it vacuous.
+_FOREIGN_ODNO_PREFIX = "000000190"
+
+#: 주문시각 (``ord_tmd``, HHMMSS) the broker stamps on each side in scenario (f). The foreign
+#: orders are the morning's; the tenant's own start after the 12:48 reboot. Only a strictly
+#: earlier broker stamp makes an orphan provably not ours, so the gap here is the thing the
+#: scenario actually tests — not the ODNO prefixes.
+_FOREIGN_ORD_TMD_BASE = 93000
+_OWN_ORD_TMD_BASE = 124800
+
 #: The compressed waiting bounds this harness writes. An off-hours run must not spend the
 #: shipped ones, and this suite's virtual clock (``riskfx._PacedClock``) only moves when the
 #: KIS app-key pacer grants a slot — so every bound below is spent in pacer grants, not in
@@ -141,11 +154,24 @@ class _Tenant:
     published: list[Any]
     rows: list[dict[str, str]] = field(default_factory=list)
     odno_serial: int = 0
+    #: Set by a scenario that needs the broker to stamp 주문시각 on this tenant's own orders.
+    ord_tmd_base: int | None = None
 
     def next_odno(self) -> str:
         """The broker order number the next order sent on this tenant answers with."""
         self.odno_serial += 1
         return f"{_ODNO_PREFIX}{self.odno_serial}"
+
+    @property
+    def own_ord_tmd(self) -> str | None:
+        """The broker's 주문시각 for this tenant's own orders, once a scenario has set a base.
+
+        ``None`` — the default — keeps every other scenario's rows exactly as they were, with
+        no placement time, so nothing about their orphan handling changes.
+        """
+        if self.ord_tmd_base is None:
+            return None
+        return f"{self.ord_tmd_base + self.odno_serial:06d}"
 
     @property
     def observer(self) -> Any:
@@ -169,6 +195,7 @@ class _Tenant:
                 ord_qty=quantity,
                 filled=quantity,
                 remaining=Decimal(0),
+                ord_tmd=self.own_ord_tmd,
             )
         )
 
@@ -523,6 +550,75 @@ def test_c_http_500_on_the_balance_get_for_a_close_then_the_close_is_retried(
 
         tenant.next_bar()
         assert tenant.open_fills(seq=4) == opened
+    finally:
+        _close(tenant.runtime)
+
+
+def _seed_prior_same_day_orders(tenant: _Tenant, *, count: int) -> tuple[str, ...]:
+    """Put ``count`` orders this tenant never placed into the broker's own daily-ccld history.
+
+    They are on its account, its symbol and its trading date, they are fully filled, and they
+    net flat — the 2026-11-20 shape, where an archived leaf's morning round trips plus an
+    operator's manual market SELL were still in 주식일별주문체결조회 when a fresh leaf booted
+    at 12:48 against a flat account.
+    """
+    tenant.ord_tmd_base = _OWN_ORD_TMD_BASE
+    odnos = tuple(f"{_FOREIGN_ODNO_PREFIX}{serial}" for serial in range(1, count + 1))
+    for serial, odno in enumerate(odnos, start=1):
+        tenant.rows.append(
+            _row(
+                odno=odno,
+                date=tenant.date,
+                ord_qty=Decimal(1),
+                filled=Decimal(1),
+                remaining=Decimal(0),
+                ord_tmd=f"{_FOREIGN_ORD_TMD_BASE + serial:06d}",
+            )
+        )
+    tenant.broker_holds(Decimal(0))
+    return odnos
+
+
+def test_f_a_fresh_leaf_releases_over_orders_it_never_placed(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
+) -> None:
+    """2026-11-20, tenants 000660 / 005930: leaves archived mid-day and rebooted at 12:48 onto
+    a flat account could not release the OPEN they then filled. 주식일별주문체결조회 is keyed by
+    (account, symbol, date), not by leaf, so the morning's orders and a manual flatten came
+    back as witness orders the fresh leaf owned nothing of; each was an ORPHAN_BROKER_ORDER
+    whose veto made gate 3 answer NOT_CORROBORATED (~30 times on 000660, ~32 on 005930). The
+    capacity never came back, the engine never projected the fill, and every CLOSE was then
+    refused at CANDIDATE_COMMAND_CONSTRUCTION with "no held position was observed". 005380,
+    the one symbol with no earlier order that day, released on the same code at the same boot.
+    """
+    tenant = _boot_tenant(
+        config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
+    )
+    try:
+        foreign = _seed_prior_same_day_orders(tenant, count=6)
+
+        opened = tenant.open_fills(seq=1)
+        assert CapacityState.POSITION_CONSUMED in _reservation_states(tenant).values()
+
+        closed = tenant.close_fills(seq=2, held=opened)
+        assert closed == opened, (closed, opened)
+        assert set(_reservation_states(tenant).values()) == {
+            CapacityState.RELEASED
+        }, _diagnose(tenant)
+
+        tenant.next_bar()
+        assert tenant.open_fills(seq=3) == opened
+
+        held = _rows(tenant.runtime, "CAPACITY_RELEASE_HELD")
+        assert [row for row in held if row["reason"] == "NOT_CORROBORATED"] == [], held
+        unattributed = _rows(tenant.runtime, "FILL_OBSERVER_UNATTRIBUTED_ORDER")
+        assert {row["broker_execution_id"] for row in unattributed} == set(
+            foreign
+        ), "a foreign order must still be recorded as unattributed, not silently dropped"
     finally:
         _close(tenant.runtime)
 
