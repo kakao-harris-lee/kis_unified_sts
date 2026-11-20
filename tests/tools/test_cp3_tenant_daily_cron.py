@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import re
 import shutil
@@ -233,10 +234,17 @@ class Env:
         ):
             _write(seed / rel, "")
         _write(seed / "tos/runtime/src/tos_runtime/compose/cli.py", _STUB_COMPOSE_CLI)
-        shutil.copy(
-            _REPO_ROOT / "tools/tos_cp3/session_day.py",
-            seed / "tools/tos_cp3/session_day.py",
-        )
+        # The gate's own modules, with their `__init__.py` files: `$MAIN` is on the
+        # interpreter's path (editable install), so without them PEP 420 hands
+        # `tools.tos_cp3` to the real checkout and the wrapper would not be reading
+        # the tree it fetched.
+        for rel in (
+            "tools/tos_cp3/__init__.py",
+            "tools/tos_cp3/ops/__init__.py",
+            "tools/tos_cp3/session_day.py",
+            "tools/tos_cp3/ops/market_open.py",
+        ):
+            _write(seed / rel, (_REPO_ROOT / rel).read_text(encoding="utf-8"))
         _write(seed / "shared/__init__.py", "")
         _write(seed / "shared/instruments/__init__.py", "")
         shutil.copy(
@@ -666,6 +674,11 @@ def test_b1_a_python_that_cannot_import_yaml_is_a_failure_not_a_skip(env: Env) -
     r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
     _assert_alerted_failure(r)
     assert "holiday check failed (rc=1)" in r.stdout
+    # §7.2 좌표 규율: the gate's own output reaches the CRON LOG, never the telegram
+    # body — an unexpected fault there can carry a broker error body with it.
+    assert "market-open check output (rc=1): " in r.stdout
+    assert "ModuleNotFoundError" in r.stdout
+    assert "ModuleNotFoundError" not in r.stdout.split("notify-body: ", 1)[1]
     assert not (env.state / "cp3-sessions").exists()
     assert not (
         env.state / f"measure/wt-cp3-long-{_OPEN_DAY.replace('-', '')}"
@@ -680,13 +693,84 @@ def test_b1_an_impossible_date_is_a_failure_not_a_skip(env: Env) -> None:
     assert env.daily("SHORT", "--preflight", "2026-02-30").returncode == 2
 
 
-def test_n3_a_calendar_without_this_years_holidays_is_refused(env: Env) -> None:
+def test_1143_a_calendar_without_this_years_holidays_runs_the_day(env: Env) -> None:
+    """#1143: 2027-01-04 against 2026-only holidays used to be an ALERTED refusal, so"""
     _data_parents(env)
     r = env.daily("LONG", CP3_DAILY_TODAY="2027-01-04")
-    _assert_alerted_failure(r)
-    assert "lists no holiday in 2027" in r.stdout
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "일일 세션 실패" not in r.stdout
+    assert "market closed" not in r.stdout
+    # No credential file is reachable from this hermetic tree, so the gate takes the
+    # fallback the old refusal replaced: an unlisted weekday is a trading day.
+    assert "market open on 2027-01-04" in r.stdout
+    assert "calendar fallback" in r.stdout
+    assert (env.state / "cp3-sessions/long-20270104").is_dir()
     pre = env.daily("LONG", "--preflight", "2027-01-04")
-    assert pre.returncode == 2 and "no holiday in 2027" in pre.stdout
+    assert pre.returncode == 0 and "market=OPEN" in pre.stdout
+
+
+def test_1143_the_gate_asks_no_broker_on_a_weekend_or_a_listed_holiday(
+    env: Env,
+) -> None:
+    """A closed day costs no KIS call and writes no answer file (KIS: 「1일 1회」)."""
+    _data_parents(env)
+    for day in (_HOLIDAY, "2026-10-24"):
+        r = env.daily("SHORT", CP3_DAILY_TODAY=day)
+        assert f"market closed on {day} (source=calendar · " in r.stdout
+        assert "SKIP" in r.stdout
+        # No telegram: the operator already knows about a weekend or a listed holiday.
+        assert "notify-body" not in r.stdout
+    assert not (env.state / "market-open").exists()
+
+
+def _cache_closed(env: Env, day: str) -> Path:
+    """Pre-seed the day's broker answer as `N`, so the gate takes it without a call."""
+    cache = env.state / "market-open"
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / f"{day.replace('-', '')}.json"
+    path.write_text(
+        json.dumps({"bass_dt": day.replace("-", ""), "opnd_yn": "N"}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_1143_an_unlisted_broker_closure_telegrams_once_for_the_whole_host(
+    env: Env,
+) -> None:
+    """A weekday KRX did not open and no calendar lists: every tenant SKIPs silently,"""
+    _data_parents(env)
+    _cache_closed(env, _OPEN_DAY)
+    marker = env.state / f"market-open/{_OPEN_DAY.replace('-', '')}.notified"
+
+    first = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert f"market closed on {_OPEN_DAY} (source=broker · " in first.stdout
+    assert "opnd_yn=N" in first.stdout and "SKIP" in first.stdout
+    assert "일일 세션 실패" not in first.stdout
+    assert "KIS 휴장 응답, 달력에 없음" in first.stdout
+    assert marker.is_file()
+    assert not (env.state / "cp3-sessions").exists()
+
+    # The second tenant of the day: same SKIP, no second message.
+    second = env.daily("SHORT", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert f"market closed on {_OPEN_DAY} (source=broker · " in second.stdout
+    assert "이미 보냈다" in second.stdout
+    assert "notify-body" not in second.stdout
+
+    # The body carries the date, the cache path and the recovery — no gate output.
+    body = first.stdout.split("notify-body: ", 1)[1]
+    assert _OPEN_DAY in body
+    assert f"{env.state}/market-open/{_OPEN_DAY.replace('-', '')}.json" in body
+    assert "opnd_yn 을 Y 로" in body and "--catch-up" in body
+
+    # Read-only: `--preflight` reports CLOSED and spends no message of its own.
+    marker.unlink()
+    pre = env.daily("LONG", "--preflight", _OPEN_DAY)
+    assert pre.returncode == 0 and "market=CLOSED" in pre.stdout
+    assert not marker.exists()
+    assert "notify-body" not in pre.stdout
 
 
 def test_n1_a_non_kst_host_zone_is_refused_at_run_time(env: Env) -> None:
@@ -1712,8 +1796,11 @@ def test_the_hook_adds_nothing_to_the_state_tree(env: Env) -> None:
         TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
     )
     assert r.returncode == 0, r.stdout
+    # `market-open` is the gate's day-answer cache and its own token cache (#1143) —
+    # one directory, shared by every tenant on the host, and nothing else is new.
     assert {p.name for p in env.state.iterdir()} - before <= {
         "cp3-sessions",
+        "market-open",
         "measure",
     }
     assert (_long_session_dir(env) / "bars-export.out").exists()
