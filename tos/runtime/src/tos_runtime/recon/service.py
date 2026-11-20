@@ -21,6 +21,7 @@ from tos.recon import (
     is_corroborated,
 )
 
+from tos_runtime.rcl.projection import outstanding_reservations
 from tos_runtime.recon.ports import (
     BrokerWitness,
     EgressReceiptObservation,
@@ -325,6 +326,64 @@ def _join_orders_by_execution_id(
     return joined, tuple(orphans)
 
 
+def _orphans_may_be_ours(
+    *,
+    orphan_orders: tuple[WitnessOrder, ...],
+    receipts: tuple[EgressReceiptObservation, ...],
+    attempt_records: tuple[AttemptClassification, ...],
+    outstanding_reservation_ids: frozenset[str] | None,
+    matched_reservation_ids: frozenset[str],
+) -> bool:
+    """Whether an orphan broker order could be an order THIS runtime emitted (2026-11-20).
+
+    The broker's daily order inquiry is keyed by (account, symbol, trading date), not by
+    runtime: every order the account placed on the symbol today comes back, including the
+    ones an earlier, archived leaf placed and the ones an operator placed by hand. A leaf
+    booted mid-day inherits all of them as orphans, and an orphan's unconditional veto over
+    ``permits_capacity_release`` then wedges every release for the rest of the day — the
+    2026-11-20 incident, where 000660 and 005930 held ``NOT_CORROBORATED`` ~30 times each
+    while 005380, the one symbol with no earlier order that day, released normally.
+
+    The veto is kept for every orphan this runtime could itself have produced, because
+    releasing capacity against an order we may have sent and lost track of is how a second
+    lot gets bought. An orphan could be ours when ANY of these holds:
+
+    * some attempt in this report is not ``MATCHED`` — our own order may be the orphan, so
+      the orphan is not attributable to anyone else either;
+    * the RCL holds a non-``RELEASED`` reservation in this scope that no ``MATCHED`` attempt
+      in this report accounts for — the reservation strictly precedes transmission, so a
+      send we lost the receipt for still leaves one behind;
+    * the scope's reservations cannot be enumerated at all (no instrument key, or an
+      unreadable RCL) — an unprovable scope explains nothing;
+    * the orphan carries a broker execution id one of our OWN receipts carries — the
+      duplicate/ambiguous-order shape, where two broker orders answer to one attempt.
+
+    Only when none of those holds is the orphan provably not ours: every order we could have
+    produced is already matched to a different witness order, and this one's identity is one
+    we never recorded. It stays classified as ``ORPHAN_BROKER_ORDER`` in the report either
+    way. Position-level exposure is a separate question, answered by ``observed_positions``
+    / ``observed_positions_complete``, which this predicate does not touch.
+    """
+    if any(
+        record.classification is not ReconciliationClass.MATCHED
+        for record in attempt_records
+    ):
+        return True
+    if outstanding_reservation_ids is None:
+        return True
+    if outstanding_reservation_ids - matched_reservation_ids:
+        return True
+    own_execution_ids = {
+        execution_id
+        for receipt in receipts
+        if (execution_id := _execution_id(receipt.broker_execution_id)) is not None
+    }
+    return any(
+        _execution_id(order.broker_execution_id) in own_execution_ids
+        for order in orphan_orders
+    )
+
+
 class ReconciliationService:
     """Assembles the three observation paths and calls the kernel ``tos.recon``"""
 
@@ -348,6 +407,46 @@ class ReconciliationService:
             return attempt_id
         resolved = self._reservation_id_for_attempt(attempt_id)
         return attempt_id if resolved is None else resolved
+
+    def _outstanding_reservation_ids(
+        self, scope: WitnessScope
+    ) -> frozenset[str] | None:
+        """Every non-``RELEASED`` reservation id ``scope`` holds, or ``None`` when unknowable."""
+        if not scope.instrument_keys:
+            return None
+        reservation_ids: set[str] = set()
+        for key in scope.instrument_keys:
+            try:
+                rows = self._rcl_reader.scope_reservations(key)
+            except Exception:  # noqa: BLE001 - an unreadable RCL explains no orphan
+                return None
+            reservation_ids.update(
+                row.reservation_id for row in outstanding_reservations(rows)
+            )
+        return frozenset(reservation_ids)
+
+    def _orphans_withhold_release(
+        self,
+        scope: WitnessScope,
+        *,
+        orphan_orders: tuple[WitnessOrder, ...],
+        receipts: tuple[EgressReceiptObservation, ...],
+        attempt_records: tuple[AttemptClassification, ...],
+    ) -> bool:
+        """Whether ``orphan_orders`` withhold this scope's release (:func:`_orphans_may_be_ours`)."""
+        matched_reservation_ids = frozenset(
+            self._reservation_id_for(record.attempt_id)
+            for record in attempt_records
+            if record.attempt_id is not None
+            and record.classification is ReconciliationClass.MATCHED
+        )
+        return _orphans_may_be_ours(
+            orphan_orders=orphan_orders,
+            receipts=receipts,
+            attempt_records=attempt_records,
+            outstanding_reservation_ids=self._outstanding_reservation_ids(scope),
+            matched_reservation_ids=matched_reservation_ids,
+        )
 
     def _attempt_field_confidences_and_gates(
         self,
@@ -527,6 +626,12 @@ class ReconciliationService:
             capacity_flags.append(capacity_ok)
             disagreed = disagreed or attempt_disagreed
 
+        orphans_withhold = bool(orphan_orders) and self._orphans_withhold_release(
+            scope,
+            orphan_orders=orphan_orders,
+            receipts=receipts,
+            attempt_records=tuple(classifications),
+        )
         for order in orphan_orders:
             record, confidence = self._classify_orphan_order(
                 order,
@@ -535,8 +640,9 @@ class ReconciliationService:
             )
             classifications.append(record)
             field_confidences.append(confidence)
-            rearm_flags.append(False)
-            capacity_flags.append(False)
+            if orphans_withhold:
+                rearm_flags.append(False)
+                capacity_flags.append(False)
 
         reason = self._reason_for(
             capacity_flags=capacity_flags,

@@ -67,6 +67,12 @@ _DISCARD_KIND = "RESERVATION_DISCARDED_UNSENT"
 #: fail-closes on (``ambiguous_rows``) — a harness bug that reads like a product bug.
 _ODNO_PREFIX = "000000510"
 
+#: Orders the tenant under test never placed, on its own symbol and trading date: an earlier,
+#: archived leaf's round trips and an operator's manual flatten. A different prefix from
+#: :data:`_ODNO_PREFIX` so no foreign order can collide with one the tenant sends — scenario
+#: (f) asserts the release treats them as foreign, and a collision would make it vacuous.
+_FOREIGN_ODNO_PREFIX = "000000190"
+
 #: The compressed waiting bounds this harness writes. An off-hours run must not spend the
 #: shipped ones, and this suite's virtual clock (``riskfx._PacedClock``) only moves when the
 #: KIS app-key pacer grants a slot — so every bound below is spent in pacer grants, not in
@@ -523,6 +529,73 @@ def test_c_http_500_on_the_balance_get_for_a_close_then_the_close_is_retried(
 
         tenant.next_bar()
         assert tenant.open_fills(seq=4) == opened
+    finally:
+        _close(tenant.runtime)
+
+
+def _seed_prior_same_day_orders(tenant: _Tenant, *, count: int) -> tuple[str, ...]:
+    """Put ``count`` orders this tenant never placed into the broker's own daily-ccld history.
+
+    They are on its account, its symbol and its trading date, they are fully filled, and they
+    net flat — the 2026-11-20 shape, where an archived leaf's morning round trips plus an
+    operator's manual market SELL were still in 주식일별주문체결조회 when a fresh leaf booted
+    at 12:48 against a flat account.
+    """
+    odnos = tuple(f"{_FOREIGN_ODNO_PREFIX}{serial}" for serial in range(1, count + 1))
+    for odno in odnos:
+        tenant.rows.append(
+            _row(
+                odno=odno,
+                date=tenant.date,
+                ord_qty=Decimal(1),
+                filled=Decimal(1),
+                remaining=Decimal(0),
+            )
+        )
+    tenant.broker_holds(Decimal(0))
+    return odnos
+
+
+def test_f_a_fresh_leaf_releases_over_orders_it_never_placed(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
+) -> None:
+    """2026-11-20, tenants 000660 / 005930: leaves archived mid-day and rebooted at 12:48 onto
+    a flat account could not release the OPEN they then filled. 주식일별주문체결조회 is keyed by
+    (account, symbol, date), not by leaf, so the morning's orders and a manual flatten came
+    back as witness orders the fresh leaf owned nothing of; each was an ORPHAN_BROKER_ORDER
+    whose veto made gate 3 answer NOT_CORROBORATED (~30 times on 000660, ~32 on 005930). The
+    capacity never came back, the engine never projected the fill, and every CLOSE was then
+    refused at CANDIDATE_COMMAND_CONSTRUCTION with "no held position was observed". 005380,
+    the one symbol with no earlier order that day, released on the same code at the same boot.
+    """
+    tenant = _boot_tenant(
+        config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
+    )
+    try:
+        foreign = _seed_prior_same_day_orders(tenant, count=6)
+
+        opened = tenant.open_fills(seq=1)
+        assert CapacityState.POSITION_CONSUMED in _reservation_states(tenant).values()
+
+        closed = tenant.close_fills(seq=2, held=opened)
+        assert closed == opened, (closed, opened)
+        assert set(_reservation_states(tenant).values()) == {
+            CapacityState.RELEASED
+        }, _diagnose(tenant)
+
+        tenant.next_bar()
+        assert tenant.open_fills(seq=3) == opened
+
+        held = _rows(tenant.runtime, "CAPACITY_RELEASE_HELD")
+        assert [row for row in held if row["reason"] == "NOT_CORROBORATED"] == [], held
+        unattributed = _rows(tenant.runtime, "FILL_OBSERVER_UNATTRIBUTED_ORDER")
+        assert {row["broker_execution_id"] for row in unattributed} == set(
+            foreign
+        ), "a foreign order must still be recorded as unattributed, not silently dropped"
     finally:
         _close(tenant.runtime)
 
