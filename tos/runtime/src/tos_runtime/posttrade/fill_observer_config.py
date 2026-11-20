@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,9 @@ class FillObserverConfig:
     broker_flat_release_settle_ms: int | None = None
     uncertain_send_reconcile: bool = False
     uncertain_send_settle_ms: int | None = None
+    #: ``outbound_side`` token -> the ``sll_buy_dvsn_cd`` the broker prints for it. Config, not
+    #: a constant: a side is a policy-carried token in this runtime, never one it authors.
+    uncertain_send_side_codes: dict[str, str] = field(default_factory=dict)
     loop_witness_request_timeout_s: float | None = None
     loop_witness_deadline_ms: int | None = None
 
@@ -107,17 +110,7 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
             f"{path}: broker_flat_release needs broker_flat_release_settle_ms (the "
             "fill-to-balance reflection lag it waits out)"
         )
-    uncertain_send_reconcile = raw.get("uncertain_send_reconcile", False)
-    if not isinstance(uncertain_send_reconcile, bool):
-        raise FillObserverConfigError(
-            f"{path}: 'uncertain_send_reconcile' must be true or false, got "
-            f"{uncertain_send_reconcile!r}"
-        )
-    if uncertain_send_reconcile and "uncertain_send_settle_ms" not in raw:
-        raise FillObserverConfigError(
-            f"{path}: uncertain_send_reconcile needs uncertain_send_settle_ms (the window "
-            "an empty broker order history must stay empty before it proves a non-send)"
-        )
+    uncertain_send_reconcile, side_codes = _uncertain_send(raw, path)
     missing = [key for key in _WITNESS_KEYS if key not in raw]
     if missing:
         raise FillObserverConfigError(f"{path}: missing {missing}")
@@ -173,7 +166,52 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         uncertain_send_settle_ms=_optional_positive_int(
             raw, "uncertain_send_settle_ms", path
         ),
+        uncertain_send_side_codes=side_codes,
     )
+
+
+def _uncertain_send(raw: dict[str, Any], path: Path) -> tuple[bool, dict[str, str]]:
+    """The uncertain-send reconciliation's gate and its two companions (2026-11-20 d/e)."""
+    enabled = raw.get("uncertain_send_reconcile", False)
+    if not isinstance(enabled, bool):
+        raise FillObserverConfigError(
+            f"{path}: 'uncertain_send_reconcile' must be true or false, got {enabled!r}"
+        )
+    if enabled and "uncertain_send_settle_ms" not in raw:
+        raise FillObserverConfigError(
+            f"{path}: uncertain_send_reconcile needs uncertain_send_settle_ms (the window "
+            "an empty broker order history must stay empty before it proves a non-send)"
+        )
+    return enabled, _side_codes(raw, path, required=enabled)
+
+
+def _side_codes(raw: dict[str, Any], path: Path, *, required: bool) -> dict[str, str]:
+    """``uncertain_send_side_codes``: a non-empty mapping of side token -> broker code."""
+    key = "uncertain_send_side_codes"
+    value = raw.get(key)
+    if value is None:
+        if required:
+            raise FillObserverConfigError(
+                f"{path}: uncertain_send_reconcile needs {key} (the broker's own "
+                "sll_buy_dvsn_cd for each side token — a side this runtime may not author)"
+            )
+        return {}
+    if not isinstance(value, dict) or not value:
+        raise FillObserverConfigError(
+            f"{path}: {key!r} must be a non-empty mapping, got {value!r}"
+        )
+    for side, code in value.items():
+        if (
+            not isinstance(side, str)
+            or not side
+            or not isinstance(code, str)
+            or not code
+        ):
+            raise FillObserverConfigError(
+                f"{path}: {key!r} maps non-empty strings to non-empty strings, got "
+                f"{side!r} -> {code!r}"
+            )
+    return dict(value)
 
 
 def _optional_positive_int(raw: dict[str, Any], key: str, path: Path) -> int | None:

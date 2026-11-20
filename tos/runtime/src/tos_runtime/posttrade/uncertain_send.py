@@ -25,15 +25,16 @@ sealed:
   decision, the hold stands, and the next poll asks again.
 
 A candidate is more than "an order on that date": it must name this instrument, carry the
-attempt's own sealed outbound quantity, not be on the opposite side of the sealed send, and fall
-on an (ODNO, date) pair no OTHER attempt's dated receipt already claims — the same four-part
-rule issue #1096's dateless-ACK recovery uses, minus the ODNO it does not have.
+attempt's own sealed outbound quantity, not carry the ``sll_buy_dvsn_cd`` of the OTHER side
+(``uncertain_send_side_codes``; a row with no code is "unknown", never a refusal), and fall on
+an (ODNO, date) pair no OTHER attempt's dated receipt already claims — the same four-part rule
+issue #1096's dateless-ACK recovery uses, minus the ODNO it does not have.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -69,9 +70,6 @@ CONFIRMING_EMPTY_READS = 2
 #: The result kinds that establish no knowledge: an answer that named no order.
 _UNCERTAIN_RESULT_KINDS = frozenset({"TIMEOUT", "UNKNOWN"})
 
-#: ``sll_buy_dvsn_cd`` as the broker prints it, against the seal's own ``outbound_side``.
-_SIDE_BY_CODE = {"01": "SELL", "02": "BUY"}
-
 _CONSUMED_KIND = "EGRESS_RESULT_CONSUMED"
 _SEND_SEALED_KIND = "SEND_SEALED"
 _TRANSPORT_SEND_KIND = "TRANSPORT_SEND"
@@ -79,6 +77,11 @@ _TRANSPORT_SEND_KIND = "TRANSPORT_SEND"
 #: ``(odno_key, trading_date, attempt_id)`` of every DATED receipt, as the fill observer builds
 #: it. A pair another attempt claims is never a candidate for this one.
 ClaimedOrderDays = frozenset[tuple[str, str, str]]
+
+#: ``outbound_side`` token -> the ``sll_buy_dvsn_cd`` the broker prints for it. CONFIG, never a
+#: constant here: a side is a policy-carried token everywhere in this runtime
+#: (``tests/test_no_side_literals.py``), and the code is the broker's spelling of it, not ours.
+SideCodes = Mapping[str, str]
 
 Recorder = Callable[[str, dict[str, Any]], None]
 
@@ -243,6 +246,7 @@ def candidate_rows(
     *,
     instrument: str,
     claimed: ClaimedOrderDays,
+    side_codes: SideCodes,
 ) -> tuple[KisOrderRow, ...]:
     """The rows on ``send``'s date that this send could own (module docstring's four parts)."""
     taken = {
@@ -252,6 +256,7 @@ def candidate_rows(
     }
     if send.quantity is None:
         return ()
+    wanted_code = None if send.side is None else side_codes.get(send.side)
     matched: list[KisOrderRow] = []
     for row in rows:
         key = odno_key(row.odno)
@@ -259,8 +264,8 @@ def candidate_rows(
             continue
         if row.pdno != instrument or row.ord_qty != send.quantity:
             continue
-        row_side = _SIDE_BY_CODE.get((row.sll_buy_dvsn_cd or "").strip())
-        if row_side is not None and send.side is not None and row_side != send.side:
+        row_code = (row.sll_buy_dvsn_cd or "").strip()
+        if row_code and wanted_code is not None and row_code != wanted_code:
             continue
         if (key, send.trading_date) in taken:
             continue
@@ -296,6 +301,7 @@ class UncertainSendReconciler:
     account: str
     instrument: str
     settle_ms: int
+    side_codes: SideCodes
     record: Recorder
     _first_seen_ms: dict[str, int] = field(default_factory=dict, init=False)
     _empty_reads: dict[str, list[int]] = field(default_factory=dict, init=False)
@@ -329,7 +335,11 @@ class UncertainSendReconciler:
     ) -> str | None:
         """Judge one date's rows; the recorded outcome, or ``None`` when the hold stands."""
         matched = candidate_rows(
-            send, rows, instrument=self.instrument, claimed=claimed
+            send,
+            rows,
+            instrument=self.instrument,
+            claimed=claimed,
+            side_codes=self.side_codes,
         )
         if len(matched) > 1:
             self._empty_reads.pop(send.attempt_id, None)

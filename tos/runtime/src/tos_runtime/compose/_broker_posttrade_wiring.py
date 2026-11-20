@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
 from tos.engine.records import EgressResultPayload, EngineEvent
@@ -509,12 +510,17 @@ def _uncertain_send_reconciler(
         return None
     instrument_key = runtime.context_resolver.instrument_key
     store = runtime.evidence_store
+
+    def _record(kind: str, fields: dict[str, Any]) -> None:
+        store.append(fields, kind=kind, record_class=kind)
+
     return UncertainSendReconciler(
         evidence_store=store,
         account=instrument_key.account,
         instrument=instrument_key.instrument,
         settle_ms=config.uncertain_send_settle_ms,
-        record=lambda kind, fields: store.append(fields, kind=kind, record_class=kind),
+        side_codes=config.uncertain_send_side_codes,
+        record=_record,
     )
 
 

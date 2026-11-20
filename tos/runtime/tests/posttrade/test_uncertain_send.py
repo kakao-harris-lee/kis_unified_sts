@@ -11,6 +11,7 @@ history proves a non-send only after the settle window, and anything less certai
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -39,8 +40,9 @@ _QTY = Decimal(2)
 _SETTLE_MS = 30_000
 _T0 = 1_700_000_000_000
 
-#: 매수 — the side code a BUY row carries; its 매도 sibling is ``01``.
-_BUY = "02"
+#: The tenant tree's own ``uncertain_send_side_codes``: 매수 ``02`` / 매도 ``01``.
+_SIDE_CODES = {"BUY": "02", "SELL": "01"}
+_BUY = _SIDE_CODES["BUY"]
 
 
 def _row(
@@ -112,12 +114,16 @@ def _store(
 
 
 def _reconciler(store: SqliteEvidenceStore) -> UncertainSendReconciler:
+    def _record(kind: str, fields: dict[str, Any]) -> None:
+        store.append(fields, kind=kind, record_class=kind)
+
     return UncertainSendReconciler(
         evidence_store=store,
         account=_ACCOUNT,
         instrument=_INSTRUMENT,
         settle_ms=_SETTLE_MS,
-        record=lambda kind, fields: store.append(fields, kind=kind, record_class=kind),
+        side_codes=_SIDE_CODES,
+        record=_record,
     )
 
 
@@ -130,7 +136,7 @@ def _verdicts(store: SqliteEvidenceStore) -> list[dict[str, Any]]:
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> SqliteEvidenceStore:
+def store(tmp_path: Path) -> Iterator[SqliteEvidenceStore]:
     instance = _store(tmp_path)
     yield instance
     instance.close()
@@ -275,7 +281,11 @@ def test_a_candidate_seen_between_two_empty_reads_resets_the_window(
             frozenset(),
             "not the sealed quantity",
         ),
-        ((_row(odno="0000005101", side="01"),), frozenset(), "the opposite side"),
+        (
+            (_row(odno="0000005101", side=_SIDE_CODES["SELL"]),),
+            frozenset(),
+            "the opposite side",
+        ),
         (
             (_row(odno="0000005101"),),
             frozenset({("5101", _DATE, "attempt-someone-else")}),
