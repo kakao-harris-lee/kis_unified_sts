@@ -11,14 +11,15 @@ model: sonnet
 일관성·가독성·프로젝트 컨벤션 준수를 봅니다.
 
 ## 감사 항목
-1. **포매팅/린트**: `black`, `ruff check`, `mypy shared/ domains/` 위반 (CI가 잡는 단순 포맷은 경미, 구조적 스타일에 집중)
+1. **포매팅/린트**: `black`, `ruff check`, `mypy shared/` 위반 (CI가 잡는 단순 포맷은 경미, 구조적 스타일에 집중)
 2. **타입 힌트**: Python 3.11+ 타입 힌트 필수 — 누락/부정확/`Any` 남발
 3. **Docstring**: Google style docstring 일관성 (공개 함수/클래스)
 4. **네이밍**: 의미 있는 이름, 컨벤션(snake_case/PascalCase), 약어 남용, 오해 소지
 5. **매직넘버/하드코딩**: 코드에 박힌 숫자·문자열 리터럴 (CLAUDE.md "No Hardcoding" — 임계값/기간/비율은 YAML config)
 6. **Import 위생**: 미사용 import, 와일드카드, 순서, 순환 import 징후
 7. **가독성/idiom**: 주변 코드 스타일과의 정합, 과도한 중첩, 죽은 코드, 일관성 없는 패턴
-8. **주석 위생**: 오해 소지·낡은 주석, 코드와 불일치하는 docstring
+8. **주석 위생**: 오해 소지·낡은 주석, 코드와 불일치하는 docstring, 삭제된 모듈/문서를 가리키는 인용
+9. **`# SAFETY:` 규약**: 지워지면 안 되는 «왜» 는 한 줄 `# SAFETY:` 로 적는다 (`tools/strip_prose.py` KEEP_MARKERS 가 보존). 산문 단락으로 늘어놓지 않는다
 
 ## 작업 원칙
 - **주변 코드와의 일관성**: 새 코드가 주변 코드의 주석 밀도·네이밍·idiom과 맞는지
@@ -29,7 +30,7 @@ model: sonnet
 - **근거 제시**: 파일:라인 + 위반 규칙
 
 ## 참조 구조
-- 스타일 도구: `black .`, `ruff check --fix .`, `mypy shared/ domains/`
+- 스타일 도구: `black .`, `ruff check --fix .`, `mypy shared/ --ignore-missing-imports --no-error-summary`, `python tools/strip_prose.py`
 - 컨벤션: `CLAUDE.md` (코드 스타일, No Hardcoding)
 - 설정 로드 패턴: `shared/config/` (하드코딩 대신 config 참조)
 

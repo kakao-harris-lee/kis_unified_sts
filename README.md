@@ -8,9 +8,10 @@
 ## Overview
 
 KIS Unified STS is a configuration-driven trading platform for Korean stocks and
-KOSPI200 futures. It combines YAML-defined strategies, backtesting, paper/live
-runtime services, Redis Streams, SQLite runtime ledgers, Parquet/DuckDB market
-data, and a Next.js operator dashboard.
+KOSPI200 futures. What runs today is the **TOS kernel** (`tos/`) plus its
+application runtime, the CP-3 measurement path, the KIS broker probes, and a
+read-only Next.js operator page backed by a small FastAPI surface. Strategies are
+declarative Tenant Content (DSL + profile) under `config/tos_runtime/`, not code.
 
 For the current operational snapshot, read [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
 For the full documentation map, read [docs/INDEX.md](docs/INDEX.md).
@@ -23,13 +24,15 @@ For the full documentation map, read [docs/INDEX.md](docs/INDEX.md).
   Futures tenants are synthetic (they send nothing); the stock tenant sends to
   the KIS **mock** account only.
 - **Removed paths**: the legacy stock and futures runtimes — the orchestrator,
-  the decoupled stock/futures services, the strategy registry roster, the
-  backtest/optimize/mlflow CLI groups and the futures ML/RL/TFT code — are gone
-  (`docs/plans/2026-11-07-legacy-removal-plan.md`, L1–L6). They last existed at
-  tag `legacy-final` (`6fc17c0f8d25`).
-- **Storage**: Redis DB 1 for runtime streams/state, SQLite WAL for runtime
-  ledger, Parquet/DuckDB for historical market data. ClickHouse is not an active
-  runtime dependency.
+  the decoupled stock/futures services, the strategy registry and factory, the
+  order router and `shared/execution` executor, the backtest/optimize/mlflow CLI
+  groups, the no-code builder bridge, the Telegram/briefing crons and the futures
+  ML/RL/TFT code — are gone (`docs/plans/2026-11-07-legacy-removal-plan.md`,
+  L1–L7). They last existed at tag `legacy-final` (`6fc17c0f8d25`).
+- **Storage**: Redis DB 1 for runtime streams/state (new keys need a TTL),
+  Parquet/DuckDB for historical market data, and `tos_runtime`'s own per-session
+  SQLite stores. The legacy SQLite runtime ledger went in L7. ClickHouse is not an
+  active runtime, collection, backtest or compose dependency.
 
 ## Quick Start
 
@@ -128,6 +131,8 @@ sts --help
 
 # One-page operator status board (sessions, clean-day streaks)
 sts tos status
+sts tos inspect <session>   # per-bar: fields, per-compare pass/fail, decision, halt
+sts tos perf                # fills and PnL per symbol/date
 
 # Tests and checks
 pytest tests/ -q
@@ -137,6 +142,8 @@ mypy shared/ --ignore-missing-imports --no-error-summary
 
 # TOS checkers (what CI gates on)
 python tools/tos_firewall_check.py
+python tools/tos_redigest.py --check   # the `tos-gate` required check
+python tools/tos_size_budget.py --check
 # `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
 # an editable install of the root project and tos/runtime. Without that install
 # the contracts' root packages do not resolve; a local shortcut is
@@ -158,10 +165,11 @@ npm test
 
 ```text
 tos/                 TOS kernel + tos_runtime shell (see tos/CLAUDE.md)
-tools/tos_*          CP-3 producer, Setup D witness, firewall/digest/size checkers
+tools/tos_*          CP-3 producer + live producer, firewall/digest/size checkers
 tools/broker_probes/ KIS capability probes (GET reads; order probes interlocked)
-shared/              what the surviving roots import — replay/decision/indicators,
-                     KIS auth, config, storage, risk primitives, LLM
+shared/              what the surviving roots import — replay/decision/indicators
+                     (incl. the declarative field catalog), KIS auth, config,
+                     storage, risk primitives, determinism
 services/dashboard/  FastAPI app: /api/tos/*, /health, OpenAPI docs
 strategy-builder-ui/ Next.js frontend: the /tos operator page and the /api proxy
 config/              tos_runtime tenant trees, tos_* gates, KIS/execution/risk/
@@ -179,8 +187,11 @@ docs/                architecture, plans, runbooks, broker profiles
   `StrategyFactory` can build nothing. A strategy is Tenant Content (DSL +
   profile) under `config/tos_runtime/`, executed by the TOS kernel.
 - `config/strategies/futures/setup_d_vwap_reversion.yaml` is the one strategy
-  YAML left — it is the frozen legacy Setup D witness's input and is read by
-  `tools/tos_cp3/produce_fields.py`.
+  YAML left — it is the frozen legacy Setup D witness's input, read by the offline
+  dataset producer (`tools/tos_cp3/produce_fields.py`) and the equivalence
+  comparison. The **live** CP-3 producer evaluates each tenant's declarative
+  `fields.yaml` instead (P2-c, 2026-11-18). Keep the witness byte-identical until
+  `TOS_PAPER_READY`.
 - New thresholds, risk knobs, symbols, and feature flags should be added to
   config files, not hardcoded.
 - Futures strategies must support long and short symmetry.

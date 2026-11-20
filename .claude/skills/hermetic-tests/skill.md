@@ -20,9 +20,11 @@ description: "테스트 신뢰성/인프라 절차. hermetic(.env 비주입), �
 
 ## 2-pass 실행
 ```bash
-pytest tests/ --ignore=tests/performance -n auto -m "not serial" \
+pytest tests/ --ignore-glob='tests/tools/test_tos_*.py' --ignore=tests/tos_l3 \
+  -n auto -m "not serial" \
   --timeout=180 --timeout-method=thread -q
-pytest tests/ --ignore=tests/performance -m serial \
+pytest tests/ --ignore-glob='tests/tools/test_tos_*.py' --ignore=tests/tos_l3 \
+  -m serial \
   --timeout=180 --timeout-method=thread -q
 ```
 markers: `unit`, `integration`, `live_infra`, `slow`, `backtest`, `serial` (`pyproject.toml`).

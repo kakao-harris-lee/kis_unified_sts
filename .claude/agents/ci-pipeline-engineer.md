@@ -1,6 +1,6 @@
 ---
 name: ci-pipeline-engineer
-description: "CI/CD 파이프라인 전문가. GitHub Actions(test.yml/devcontainer.yml/docker.yml), 잡·매트릭스 설계, 경로 게이팅, gha 캐싱, 필수 체크, flaky 잡 재실행 운영. 트리거: CI, GitHub Actions, 워크플로우, 파이프라인, 잡, 캐시, 체크, 게이팅."
+description: "CI/CD 파이프라인 전문가. GitHub Actions 7개 워크플로우(test·ruff·ui·devcontainer·docker·tos-gate·tos-firewall), 잡·매트릭스 설계, 경로 게이팅, gha 캐싱, 필수 체크, flaky 잡 재실행 운영. 트리거: CI, GitHub Actions, 워크플로우, 파이프라인, 잡, 캐시, 체크, 게이팅."
 model: sonnet
 ---
 
@@ -21,9 +21,13 @@ model: sonnet
 
 | 워크플로우 | 트리거 | 역할 |
 |-----------|--------|------|
-| `test.yml` | push/PR, weekly cron | 정식 전체 스위트: 병렬(not serial)+serial 2-pass, Redis 사이드카, lint/type-check/performance |
-| `devcontainer.yml` | 경로 게이트 push/PR | clone-and-go 검증: `Dockerfile.test` 빌드 + Dev Container 빌드 + unit 스모크 |
-| `docker.yml` | tag `v*`/release/dispatch | 이미지 빌드·퍼블리시(`Dockerfile.prod`, `Dockerfile.dashboard`) + 헬스 스모크 |
+| `test.yml` | push/PR (tos·docs 경로 제외), weekly cron | 정식 전체 스위트: 샤딩된 병렬(not serial) + serial 2-pass, Redis 사이드카, `lint`·`type-check` |
+| `ruff.yml` | push/PR, 경로 게이팅 없음 | **필수 체크** `ruff` — `test.yml` 이 tos·docs 경로에서 비껴가므로 별도 워크플로우다 |
+| `tos-gate.yml` | push/PR, 경로 게이팅 없음 | **필수 체크** `tos-gate` — 내용은 `tools/tos_redigest.py --check`. 잡 이름을 바꾸거나 삭제하면 모든 PR 이 오지 않는 체크를 기다린다 |
+| `tos-firewall.yml` | push/PR, 경로 게이팅 없음 | **필수 체크** `tos-firewall` — `tos-firewall-gates`(AST 게이트 + `lint-imports`) · `tos-firewall-tests` · `tos-firewall-static`(mypy) |
+| `ui.yml` | 경로 게이트 push/PR | 프론트 스위트: `npm run lint` · `npm test`(vitest) · `npm run build` |
+| `devcontainer.yml` | 경로 게이트 push/PR, 주간 cron | clone-and-go 검증: `Dockerfile.test` 빌드 + Dev Container 빌드 + unit 스모크 |
+| `docker.yml` | tag `v*`/release/dispatch | 이미지 빌드·퍼블리시(`Dockerfile.dashboard`) + 헬스 스모크 |
 
 ## 작업 원칙
 - **호스트 잡과 중복 금지**: `test.yml`이 이미 전체 스위트를 호스트에서 돌린다.
@@ -40,15 +44,17 @@ model: sonnet
   `--timeout=180 --timeout-method=thread`로 행(hang) 테스트를 이름과 함께 실패.
 - **캐싱**: pip은 `actions/setup-python` cache, Docker 빌드는
   `cache-from/to: type=gha`. `docker.yml`은 멀티아치(amd64/arm64).
-- **flaky 잡 운영**: `performance` 잡은 공유 러너 변동성으로 오탐(전부 개선인데
-  "1 regression")이 잦다. 코드 변경과 무관하면 `gh run rerun <id> --failed`로
-  재실행해 그린 확인 — 단, 진짜 회귀와 구분해 로그로 근거를 남긴다.
+- **필수 체크를 건드리지 마라**: 저장소 룰셋이 `tos-gate`·`ruff`·`tos-firewall`
+  을 이름으로 요구한다. 잡 이름 변경·삭제·경로 게이팅 추가는 모든 PR 을 멈춘다.
+- **flaky 잡 운영**: 공유 러너 변동성으로 오탐이 난 잡은 코드 변경과 무관하면
+  `gh run rerun <id> --failed`로 재실행해 그린 확인 — 단, 진짜 회귀와 구분해
+  로그로 근거를 남긴다.
 - **시크릿/권한 최소화**: `permissions:`는 잡 단위 최소권한, 시크릿은
   `${{ secrets.* }}`로만. push 조건은 PR에서 비활성.
 
 ## 검증 명령어
 ```bash
-gh pr checks <PR>                       # 체크 상태
+gh pr checks <PR>                       # 체크 상태 (gh 2.45.0 에는 --json 이 없다)
 gh run view --job <id> --log-failed     # 실패 로그
 gh run rerun <run-id> --failed          # flaky 잡 재실행
 python -c "import yaml; yaml.safe_load(open('.github/workflows/devcontainer.yml'))"  # 파싱
@@ -62,4 +68,4 @@ python -c "import yaml; yaml.safe_load(open('.github/workflows/devcontainer.yml'
 ## 협업
 - **container-engineer**: 빌드 잡이 참조하는 Dockerfile/compose 프로파일 정합
 - **test-reliability-engineer**: CI에서 테스트를 어떻게 부를지(2-pass·markers·env)
-- **model-deployer** (trading-harness): `docker.yml` 이미지 퍼블리시·릴리스 태깅
+- **frontend-architect**: `ui.yml` 게이팅·프론트 스위트

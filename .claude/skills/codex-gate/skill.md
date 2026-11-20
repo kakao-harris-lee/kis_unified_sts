@@ -27,7 +27,7 @@ Claude는 저작하고, Codex는 심판한다.
 
 | 항목 | 소유 |
 |------|------|
-| 계획 **저작** | **이 스킬 아님** — 기존 경로 유지 (`planner`, `strategy-lab`, `frontend-lab`, `devx-harness`, `architect`) |
+| 계획 **저작** | **이 스킬 아님** — 세션 모델 단독 저작 (운영자 지시 2026-09-04) |
 | 코드 **저작·수정** | **이 스킬 아님** — 구현 에이전트 소관 |
 | 렌즈 감사 팬아웃 | `code-audit`이 제공 |
 | **심판(팬인·판정)** | **이 스킬** |
@@ -178,11 +178,10 @@ finding별로 담당을 배정한다 — **오케스트레이터가 직접 고�
 | finding 영역 | 담당 |
 |-------------|------|
 | 중복·구조 정리 | `refactorer` |
-| 주문 실행·KIS 정합 | `execution-specialist` |
-| 데이터 수집·품질 | `data-engineer` |
-| 전략 로직·YAML | `strategy-architect` |
+| KIS 전송·브로커 프로브 | `execution-specialist` |
+| 지표·선언형 필드 카탈로그 | `indicator-specialist` |
 | 테스트 보강 | `test-engineer` |
-| 프론트엔드 | `ui-engineer` / `frontend-realtime-engineer` |
+| 프론트엔드 | `frontend-architect` |
 | CI·컨테이너·flaky | `ci-pipeline-engineer` / `container-engineer` / `test-reliability-engineer` |
 
 수정 완료 후 **반드시 재심**한다. 수정만 하고 통과시키면 게이트가 아니다.
@@ -190,7 +189,7 @@ finding별로 담당을 배정한다 — **오케스트레이터가 직접 고�
 ## 레인 B — 계획 심판
 
 ```
-Claude 측이 계획 저작 (기존 경로 — strategy-lab / frontend-lab / devx-harness / planner / architect)
+Claude 측이 계획 저작 (세션 모델 단독 — 운영자 지시 2026-09-04)
     ↓
 codex-plan-reviewer 심판
     ↓ (디스패치 직전 리비전 포착: reviewed_at_head / reviewed_plan_paths / reviewed_scope_digest)
@@ -340,13 +339,13 @@ cancel [job-id] [--json]
 | 값 | 언제 |
 |----|------|
 | `"codex"` | Codex `adversarial-review`가 낸 판정 |
-| `"fallback-claude"` | 폴백(`review-synthesizer` / `code-reviewer` / `critic`)이 낸 판정 |
+| `"claude-lane"` | Claude 측 레인(`code-reviewer` / `review-synthesizer` / `critic`)이 낸 판정 |
 
 **이 필드는 오케스트레이터가 부여한다.** Codex의 JSON 스키마 자체는 플러그인 소유라 바꿀 수 없다 —
 따라서 Codex 출력 본문은 verbatim으로 두고, `verdict.md`로 기록하는 시점에 이 필드를 덧붙인다.
 
 이유: 하류가 **산문이 아니라 구조로** 심판자를 구별할 수 있어야 한다.
-"[FALLBACK] 이 판정은 잠정" 같은 배너 문구는 기계적 구별자가 아니다.
+산문 배너는 기계적 구별자가 아니다.
 
 ## 리비전 결속 — approve는 심사한 그 내용에 대한 진술이다 (레인 A·B 공통)
 
@@ -374,7 +373,7 @@ EV 실행의 baseline staleness 게이트(`NO_PRIOR_EV_L1_RUN_AT_THIS_BASELINE`)
 
 | 필드 | 값 | 용도 |
 |------|-----|------|
-| `adjudicator` | `codex` \| `fallback-claude` | 심판자 식별 (위 절) |
+| `adjudicator` | `codex` \| `claude-lane` | 심판자 식별 (위 절) |
 | `reviewed_at_head` | `git rev-parse HEAD` 출력 | 심사 시점의 커밋 (두 레인 공통) |
 | `reviewed_scope_digest` | 아래 스니펫 출력 (64자 hex) | 심사한 **내용**의 지문 (레인별 범위 다름) |
 | `reviewed_plan_paths` | 심사한 계획 문서 경로 목록 | **레인 B 전용** — 결속 범위 자체의 명시 기록 |
@@ -415,7 +414,7 @@ review_scope_digest() {
 
 | 필드 | 레인 A (코드) | 레인 B (계획) |
 |------|--------------|--------------|
-| `adjudicator` | `codex` \| `fallback-claude` | 동일 |
+| `adjudicator` | `codex` \| `claude-lane` | 동일 |
 | `reviewed_at_head` | `git rev-parse HEAD` | 동일 |
 | `reviewed_plan_paths` | — | **심사한 계획 문서 경로 목록** (repo 루트 기준 상대경로) |
 | `reviewed_scope_digest` | `review_scope_digest` (작업 트리 전체) | `plan_scope_digest <경로들>` (그 문서들만) |
@@ -511,12 +510,12 @@ Stop 훅을 이 스킬의 자동 안전망으로 다시 켜지 않는다.
 ```
 1회 재시도 (범위 축소 — 파일 수/경로 좁히기)
     ↓ 재실패
-폴백 강등 + [FALLBACK] 명시 (필수)
+Codex 미가용 확정 → Claude 측 레인 판정으로 진행 (그 사실을 기록)
 ```
 
 | 증상 | 대응 |
 |------|------|
-| companion 미발견 / auth 만료 / 네트워크 / rate limit / 비인증 | 1회 재시도 → 폴백 |
+| companion 미발견 / auth 만료 / 네트워크 / rate limit / 비인증 | 1회 재시도 → Claude 측 레인 |
 | 백그라운드 잡이 매달림 | `node "$CODEX" cancel <job-id> --json` → 범위 축소 재시도 |
 | "변경 없음" 판정 | 범위 지정 실수 우선 의심 → `--scope working-tree`로 재시도 |
 | verdict가 스키마를 벗어남 | 원문 그대로 보존 + 스키마 이탈 사실 명기 |
@@ -532,44 +531,55 @@ Stop 훅을 이 스킬의 자동 안전망으로 다시 켜지 않는다.
 버그가 아니라 그 경로의 정상 동작이다 — 위 "게이트 적격 경로" 절). 맞게 호출했는데도
 verdict가 없으면 1회 재시도 후 실패로 보고한다.
 
-### 폴백 정책
+### Codex 미가용일 때
 
-**Codex 미가용일 때만** Claude 측 `code-reviewer` / `review-synthesizer`(코드) 또는
-`critic`(계획)으로 강등한다. 강등 리포트 **최상단에 반드시**:
+**이 스킬은 추가 레인이다** (CLAUDE.md R1, 2026-09-11 운영자 지시). 등급 A 에서 운영자가
+범위·비용을 승인했을 때만 탄다. Codex 가 미가용일 때의 처리는 **등급에 따라 갈린다.**
 
-```
-[FALLBACK: 비독립 심판 — 동일 모델 계열]
-```
+#### 등급 A — 운영자가 승인한 Codex 패스가 미가용이면 머지하지 않는다
 
-**폴백을 조용히 수행하는 것은 결함이다.** 이 프로젝트는 "독립 비평"과 "동일 계열 한계"를
-중대하게 취급한다 — 표시 없는 폴백은 비독립 심판을 독립 심판으로 위장시킨다.
-Codex가 복구되면 **폴백 판정은 잠정이며 재심 대상**임을 명기한다.
+**등급 A 에서 운영자가 승인한 Codex 패스가 미가용이면 머지하지 않고 운영자에게 알린다
+(Claude 측 판정은 기록만).** 운영자가 그 패스를 요구한 것은 그 변경에 **다른 모델 계열의
+눈이 필요하다는 판단**이고, 도구가 잠깐 안 된다는 사실이 그 판단을 뒤집지 못한다.
+실주문·자금 이동·리스크 한도·자격증명·DB 마이그레이션·데이터 파기가 등급 A 인 이유도
+되돌리기가 어렵기 때문이다 — 되돌릴 수 없는 변경에서 심판 하나를 빼고 진행하는 것은
+비용 절감이 아니라 게이트 우회다.
 
-#### 폴백은 `approve`를 낼 수 없다
+- `verdict.md` 의 `adjudicator`: `"claude-lane"`, `verdict` 는 Claude 측 판정 그대로 기록
+- `summary`: 「등급 A — 운영자가 승인한 Codex 패스가 미가용(사유)이다. **머지 보류**」
+- `next_steps` 첫 항목: 「운영자에게 알리고 지시를 받는다 (Codex 복구 후 재심 또는 운영자의
+  명시적 면제)」
+- 운영자가 **명시적으로** 면제하기 전에는 머지하지 않는다. 면제는 운영자만 줄 수 있다
 
-**발견이 0건이어도 폴백 판정은 `needs-attention`이다.** `next_steps`에
-"Codex 복구 후 `codex-reviewer` 재심 필수"를 넣고, `verdict.md`에 `adjudicator: "fallback-claude"`를 기록한다.
+#### 등급 B — 게이트가 멈추지 않는다
 
-이유: 폴백이 낼 수 있는 **가장 강한 주장은 "내가 본 범위에선 차단 사유를 못 찾았다"이지 "통과"가 아니다.**
-비독립 심판자에게 통과 권한을 주면 폴백이 게이트 우회로가 된다 — Codex를 잠깐 못 쓰는 것만으로
-Claude가 Claude의 작업을 승인한 결과물이 정상 통과와 **구별 불가능한 형태로** 나온다.
-배너 문구는 산문일 뿐 기계적 구별자가 아니므로, 값 자체를 막는다.
+등급 B 에서는 Claude 측 레인이 **유일한** 리뷰 레인이므로(R1), Codex 미가용은 아무것도
+막지 않는다. 그 판정은 **그 자체로 유효하며 `approve` 를 낼 수 있다**.
 
-**품질 게이트 통과는 `adjudicator: "codex"` + `verdict: approve` + `reviewed_scope_digest == 현재 digest`의
-조합에서만 성립한다** (아래 "리비전 결속" 절).
-폴백 산출물(`adjudicator: "fallback-claude"`)은 어떤 값이든 게이트를 통과시키지 못한다
-(위 fail-closed 규칙과 같은 성질이다 — 판정 불능도, 비독립 판정도, 리비전 미결속 판정도 통과가 아니다).
+다만 등급과 무관하게 **조용히 넘어가는 것은 결함이다.** 다음을 반드시 남긴다:
+
+- `verdict.md` 의 `adjudicator`: `"claude-lane"`
+- `summary`: 「운영자가 승인한 Codex 추가 레인이 요청됐으나 미가용(사유)으로 실행되지 않았다」
+- 운영자가 그 추가 레인을 여전히 원하면 `next_steps`에 재심 요청을 넣는다
+
+**품질 게이트 통과는 `verdict: approve` + `reviewed_scope_digest == 현재 digest` 의
+조합에서 성립하고, 등급 A 에서는 여기에 «승인된 Codex 패스가 실제로 돌았다» 가 더해진다**
+(아래 "리비전 결속" 절).
+
+> 2026-09-04 의 «Claude 측은 폴백 전용 · approve 금지» 제약은 2026-09-11 의 범위 한정과
+> 2026-10-22 의 R1 로 **끝났다**. `[FALLBACK: …]` 마커는 더 이상 찍지 않는다.
+> 자기 승인 방지는 **저작 패스와 리뷰 패스의 분리**로 달성한다.
 
 ## 다른 하네스와의 경계
 
 | 하네스 | 역할 | 관계 |
 |--------|------|------|
-| `code-audit` | 4렌즈 팬아웃(증거 생산) | **팬인 심판은 이 스킬이 소유** |
+| `code-audit` | 4렌즈 팬아웃 + `review-synthesizer` 팬인 | 등급 A + 운영자 승인 시 이 스킬이 추가 레인 |
 | `codex-reviewer` | 코드 심판 (Codex 포워더) | 이 스킬이 호출 |
 | `codex-plan-reviewer` | 계획 심판 (Codex 포워더) | 이 스킬이 호출 |
-| `code-reviewer` / `review-synthesizer` | **폴백 전용으로 격하** | Codex 미가용 시에만 |
-| `critic` / `momus` | 계획 리뷰 — **폴백 전용으로 격하** | Codex 미가용 시에만 |
-| Claude 저작 경로 (`planner`, `strategy-lab`, `frontend-lab`, `devx-harness`) | 계획·코드 저작 | **변경 없음 — 그대로 유지** |
+| `code-reviewer` / `review-synthesizer` | **Claude 측 기본 레인** (R1: 등급 B 의 유일한 레인, 등급 A 의 독립 리뷰 1회) | 이 스킬과 독립적으로 돈다 |
+| `critic` | 계획 리뷰 (Claude 측) | 이 스킬과 독립적으로 돈다 |
+| Claude 저작 경로 (세션 모델 단독 저작) | 계획·코드 저작 | **변경 없음 — 그대로 유지** |
 
 ## 테스트 시나리오
 
@@ -617,11 +627,11 @@ Claude가 Claude의 작업을 승인한 결과물이 정상 통과와 **구별 �
 2. codex-reviewer 호출 → stderr "401 unauthorized"
    → 에이전트가 CODEX_UNAVAILABLE: 인증 만료 반환 (성공한 척하지 않음)
 3. 1회 재시도 (범위 축소) → 동일 실패
-4. 폴백 강등: code-reviewer + review-synthesizer 호출
-5. 리포트 최상단에 [FALLBACK: 비독립 심판 — 동일 모델 계열] 명시
-6. 폴백은 차단 항목 0건이어도 verdict: needs-attention (approve 불가)
-7. verdict.md에 adjudicator: "fallback-claude" + 폴백 사유 + next_steps "Codex 복구 후 재심 필수" 기록
-기대: 폴백 표시 누락 없음. adjudicator 필드만으로 하류가 비독립 판정임을 구조로 식별.
+4. Claude 측 레인 판정으로 진행: code-reviewer + review-synthesizer 호출
+5. verdict.md에 adjudicator: "claude-lane" 기록
+6. summary 에 「Codex 추가 레인 요청됨 — 미가용(사유)으로 미실행」 명시
+7. 운영자가 추가 레인을 여전히 원하면 next_steps 에 재심 요청
+기대: Codex 미실행 사실이 기록에 남는다. adjudicator 필드만으로 하류가 심판자를 구조로 식별.
       이 판정으로 승격 게이트를 통과시키지 않음
 ```
 
@@ -632,7 +642,7 @@ Claude가 Claude의 작업을 승인한 결과물이 정상 통과와 **구별 �
 2. status 반복 확인 → 진행 없음
 3. node "$CODEX" cancel <job-id> --json
 4. 범위 축소 (경로를 shared/execution/ 하위 1개 모듈로) 후 재시도
-5. 여전히 실패 → 폴백 정책 진입 ([FALLBACK] 명시)
+5. 여전히 실패 → Claude 측 레인 판정 + 미실행 사실 기록
 기대: job이 유실되지 않고 취소 기록이 남음
 ```
 
@@ -641,11 +651,11 @@ Claude가 Claude의 작업을 승인한 결과물이 정상 통과와 **구별 �
 - 모든 finding에 `파일:라인` 인용 — **실재 여부는 오케스트레이터가 검증**
 - verdict 원문은 **verbatim 보존**. 수용검사는 별도 섹션으로 덧붙임
 - 기각한 finding은 **기각 사유를 반드시 기록** (조용히 버리지 않는다) — 기각 사유는 **3가지로 한정**되고, **기각은 게이트를 열지 않는다**
-- `verdict.md`에 **`adjudicator`(`codex` | `fallback-claude`) 기록** — 하류가 구조로 심판자를 식별
+- `verdict.md`에 **`adjudicator`(`codex` | `claude-lane`) 기록** — 하류가 구조로 심판자를 식별
 - `verdict.md`에 **`reviewed_at_head` + `reviewed_scope_digest` 기록** (**레인 B는 + `reviewed_plan_paths`**),
   게이트 통과 시점(레인 B = **실행 착수 시점**)에 **digest 재계산·대조** — 기록 없음·계산 불가·경로 소실·불일치는
   전부 **통과 아님**(fail-closed). 승인 이후의 어떤 변경이든 `approve`를 무효화한다
   (레인 A는 작업 트리 전체, 레인 B는 심사한 계획 문서만 결속 — 방향 선택과 대가는 "리비전 결속" 절)
-- 폴백 시 `[FALLBACK: 비독립 심판 — 동일 모델 계열]` **최상단 명시** + **`approve` 금지**
+- Codex 미가용 시 **미실행 사실을 `summary` 에 명시** (조용히 넘어가지 않는다)
 - 렌즈 산출물은 `evidence/` 안, `verdict.md`는 `evidence/` **밖** — focus 지목은 `evidence/`만
 - needs-attention 후 수정했으면 **반드시 재심** — 수정만으로 통과시키지 않는다

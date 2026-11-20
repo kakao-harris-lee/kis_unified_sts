@@ -22,21 +22,26 @@ model: sonnet
 ## 비상식 규칙 (이 프로젝트의 함정)
 | 함정 | 규칙 |
 |------|------|
-| `.env` 오염 | 테스트는 **`.env` 없이** 돈다. `.env.example`은 `DASHBOARD_REQUIRE_AUTH=true`·`REDIS_HOST=redis`를 담아 conftest/`cli.main`의 `load_dotenv`로 주입되면 dashboard 401·Redis 호스트 오류를 낸다. 어떤 `.env` 템플릿도 test-safe하지 않다(`.env.dev`의 `DASHBOARD_DEV_MODE=true`는 명시적 인증 테스트를 깬다). |
+| `.env` 오염 | 테스트는 **`.env` 없이** 돈다. `.env.example`은 `DASHBOARD_REQUIRE_AUTH=true`·`REDIS_HOST=redis`를 담아 conftest/`cli.main`의 `load_dotenv`로 주입되면 dashboard 401·Redis 호스트 오류를 낸다. 어떤 `.env*.example` 템플릿도 test-safe하지 않다 — `make env`는 live/data 자격증명용이다. |
 | serial 혼합 | `serial` 마킹 테스트(공유 Redis DB 1/순서·시간 민감)는 **전용 serial 패스**에서만 돈다. `-n auto`나 단일 패스에 섞으면 깨진다. |
 | root 실행 | "쓰기 불가 경로 fallback"류 테스트는 비root(uid 1000)를 가정한다. root는 어디든 mkdir 가능해 단정이 깨진다. |
 | 시드 없는 RNG | 합성 데이터를 `np.random.*`로 만들며 시드를 안 박으면 단정이 비결정적이 된다 → autouse fixture로 `np.random.seed(0)`. |
 | Redis DB | 런타임/테스트 모두 DB 1. live_infra 테스트는 `KIS_RUN_LIVE_INFRA_TESTS=1` 없으면 스킵. |
+| tos 테스트 혼입 | 루트 스위트는 `--ignore-glob='tests/tools/test_tos_*.py' --ignore=tests/tos_l3` 로 tos 거버넌스를 비껴간다 — 그것들은 `tos-firewall` 워크플로우가 돌린다. 루트 패스에 되돌려 넣지 마라. |
+| tos 테스트의 subprocess | tos 커널·런타임 테스트에서 프로세스를 띄우지 않는다(hermetic 계약). |
 
 ## 2-pass 모델 (정식 실행)
 ```bash
-# 1) 병렬 (serial 제외) — 본 스위트
-pytest tests/ --ignore=tests/performance -n auto -m "not serial" \
-  --timeout=180 --timeout-method=thread -q
-# 2) serial — 공유 외부상태/타이밍 민감
-pytest tests/ --ignore=tests/performance -m serial \
-  --timeout=180 --timeout-method=thread -q
+# 1) 병렬 (serial 제외) — 본 스위트. CI 는 이것을 두 샤드로 나눠 돈다
+pytest tests/ --ignore-glob='tests/tools/test_tos_*.py' --ignore=tests/tos_l3 \
+  -n auto -m "not serial" --timeout=180 --timeout-method=thread -q
+# 2) serial — 공유 외부상태/타이밍 민감 (같은 ignore 목록을 그대로 쓴다)
+pytest tests/ --ignore-glob='tests/tools/test_tos_*.py' --ignore=tests/tos_l3 \
+  -m serial --timeout=180 --timeout-method=thread -q
 ```
+
+두 패스의 `--ignore` 목록은 **정확히 같아야 한다**. 어긋나면 새로 `serial` 로
+표시된 테스트가 조용히 아무 패스에서도 돌지 않는다.
 markers(`pyproject.toml`): `unit`, `integration`, `live_infra`, `slow`, `backtest`, `serial`.
 
 ## de-flaking 레시피
@@ -67,4 +72,4 @@ docker compose --profile test run --rm tests bash -lc \
 - **test-engineer**: 기능 테스트 *작성*은 그쪽; 신뢰성/환경/flakiness는 이쪽
 - **ci-pipeline-engineer**: CI에서 2-pass·markers·env를 어떻게 부를지 정합
 - **container-engineer**: 컨테이너 안 Redis 배선(localhost netns)·비root 실행 정합
-- **performance-auditor** (code-audit): p99/지표 hot-path 성능 회귀는 그쪽과 협력
+- **performance-auditor**: 바당 hot-path 성능 회귀는 그쪽과 협력
