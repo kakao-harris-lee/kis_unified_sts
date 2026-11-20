@@ -326,6 +326,37 @@ def _join_orders_by_execution_id(
     return joined, tuple(orphans)
 
 
+def _placed_before_our_first_order(
+    order: WitnessOrder, ours: tuple[WitnessOrder, ...]
+) -> bool:
+    """Whether the broker's OWN clock puts ``order`` before every order in ``ours`` (2026-11-20).
+
+    The comparison is between rows of ONE 주식일별주문체결조회 response: ``ord_dt`` + ``ord_tmd``
+    (주문시각, HHMMSS — an order PLACEMENT time, not a fill timestamp; measured in
+    ``tests/tools/test_broker_probes_p11_fill.py``). No local clock is involved, so there is no
+    clock-skew question; the broker stamped both sides.
+
+    An order placed before this runtime's own earliest order cannot be one this runtime placed.
+    Everything unprovable is false: a missing or malformed time on EITHER side, a different
+    trading date, no orders of our own to compare against, and — because ``ord_tmd`` resolves
+    only to the second — an equal time. Only STRICTLY earlier counts.
+    """
+    order_date, order_time = order.order_date, order.order_time
+    if order_date is None or order_time is None or not ours:
+        return False
+    earliest: tuple[str, str] | None = None
+    for own in ours:
+        if own.order_date is None or own.order_time is None:
+            return False
+        stamp = (own.order_date, own.order_time)
+        earliest = stamp if earliest is None else min(earliest, stamp)
+    assert earliest is not None  # `ours` is non-empty and every row had a stamp
+    earliest_date, earliest_time = earliest
+    if order_date != earliest_date:
+        return False
+    return order_time < earliest_time
+
+
 def _orphans_may_be_ours(
     *,
     orphan_orders: tuple[WitnessOrder, ...],
@@ -333,6 +364,7 @@ def _orphans_may_be_ours(
     attempt_records: tuple[AttemptClassification, ...],
     outstanding_reservation_ids: frozenset[str] | None,
     matched_reservation_ids: frozenset[str],
+    our_orders: tuple[WitnessOrder, ...] = (),
 ) -> bool:
     """Whether an orphan broker order could be an order THIS runtime emitted (2026-11-20).
 
@@ -356,13 +388,21 @@ def _orphans_may_be_ours(
     * the scope's reservations cannot be enumerated at all (no instrument key, or an
       unreadable RCL) — an unprovable scope explains nothing;
     * the orphan carries a broker execution id one of our OWN receipts carries — the
-      duplicate/ambiguous-order shape, where two broker orders answer to one attempt.
+      duplicate/ambiguous-order shape, where two broker orders answer to one attempt;
+    * the broker's own clock does NOT put the orphan before this runtime's earliest order
+      (:func:`_placed_before_our_first_order`). This is the load-bearing one. An order the
+      broker stamped after ours began could be an order of ours whose receipt never landed, so
+      only an order placed strictly BEFORE our first one is provably not ours. It is also what
+      keeps an orphan that merely *appeared* mid-session — between the balance read and the
+      order read, or after a release snapshot expired — withholding the release, since such an
+      order carries no earlier stamp.
 
     Only when none of those holds is the orphan provably not ours: every order we could have
-    produced is already matched to a different witness order, and this one's identity is one
-    we never recorded. It stays classified as ``ORPHAN_BROKER_ORDER`` in the report either
-    way. Position-level exposure is a separate question, answered by ``observed_positions``
-    / ``observed_positions_complete``, which this predicate does not touch.
+    produced is already matched to a different witness order, this one's identity is one we
+    never recorded, and the broker placed it before we placed anything. It stays classified as
+    ``ORPHAN_BROKER_ORDER`` in the report either way. Position-level exposure is a separate
+    question, answered by ``observed_positions`` / ``observed_positions_complete``, which this
+    predicate does not touch.
     """
     if any(
         record.classification is not ReconciliationClass.MATCHED
@@ -380,6 +420,7 @@ def _orphans_may_be_ours(
     }
     return any(
         _execution_id(order.broker_execution_id) in own_execution_ids
+        or not _placed_before_our_first_order(order, our_orders)
         for order in orphan_orders
     )
 
@@ -432,6 +473,7 @@ class ReconciliationService:
         orphan_orders: tuple[WitnessOrder, ...],
         receipts: tuple[EgressReceiptObservation, ...],
         attempt_records: tuple[AttemptClassification, ...],
+        our_orders: tuple[WitnessOrder, ...],
     ) -> bool:
         """Whether ``orphan_orders`` withhold this scope's release (:func:`_orphans_may_be_ours`)."""
         matched_reservation_ids = frozenset(
@@ -446,6 +488,7 @@ class ReconciliationService:
             attempt_records=attempt_records,
             outstanding_reservation_ids=self._outstanding_reservation_ids(scope),
             matched_reservation_ids=matched_reservation_ids,
+            our_orders=our_orders,
         )
 
     def _attempt_field_confidences_and_gates(
@@ -631,6 +674,7 @@ class ReconciliationService:
             orphan_orders=orphan_orders,
             receipts=receipts,
             attempt_records=tuple(classifications),
+            our_orders=tuple(witness_by_attempt.values()),
         )
         for order in orphan_orders:
             record, confidence = self._classify_orphan_order(

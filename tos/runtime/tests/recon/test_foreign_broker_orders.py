@@ -38,6 +38,10 @@ OUR_ODNO = "0000021560"
 #: archived morning leaf, one the operator's manual market SELL that flattened the account.
 FOREIGN_ODNOS = ("0000008456", "0000008560", "0000019398")
 DATE = "20261120"
+#: 주문시각 as the broker stamps it. The foreign orders are the morning leaf's and the manual
+#: flatten's; this runtime's own order went in after the 12:48 reboot.
+FOREIGN_TIME = "093015"
+OUR_TIME = "125012"
 
 
 class _Rcl:
@@ -122,7 +126,12 @@ def _our_receipt() -> EgressReceiptObservation:
     )
 
 
-def _order(odno: str, *, attempt_id: str | None = None) -> WitnessOrder:
+def _order(
+    odno: str,
+    *,
+    attempt_id: str | None = None,
+    order_time: str | None = FOREIGN_TIME,
+) -> WitnessOrder:
     return WitnessOrder(
         attempt_id=attempt_id,
         broker_execution_id=odno,
@@ -130,7 +139,17 @@ def _order(odno: str, *, attempt_id: str | None = None) -> WitnessOrder:
         remaining=Decimal("0"),
         state=WitnessOrderState.FILLED,
         order_date=DATE,
+        order_time=order_time,
     )
+
+
+def _ours(odno: str = OUR_ODNO) -> WitnessOrder:
+    """This runtime's own order, placed after the 12:48 reboot.
+
+    ``attempt_id`` is ``None`` because that is the real KIS shape — 주식일별주문체결조회 knows
+    only the ODNO, and the join to our attempt happens through the receipt that carries it.
+    """
+    return _order(odno, order_time=OUR_TIME)
 
 
 def _reconcile(
@@ -147,7 +166,7 @@ def _reconcile(
     service = ReconciliationService(
         _Rcl(rows, raises=raises),
         _Evidence(receipts if receipts is not None else (_our_receipt(),)),
-        _Witness((_order(OUR_ODNO),) + orders),
+        _Witness((_ours(),) + orders),
         reservation_id_for_attempt=lambda attempt_id: (
             OUR_RESERVATION if attempt_id == OURS else None
         ),
@@ -185,8 +204,12 @@ def test_orders_the_leaf_never_placed_do_not_withhold_its_release(fresh) -> None
 
 
 def test_an_orphan_carrying_our_own_execution_id_still_withholds(fresh) -> None:
-    """The duplicate-order shape: two broker orders answer to one attempt of ours."""
-    report = _reconcile(fresh, orders=(_order(OUR_ODNO, attempt_id=OURS),))
+    """The duplicate-order shape: two broker orders answer to one attempt of ours.
+
+    Its broker stamp is our own order's, so the placement-time test is not what withholds here
+    — the shared execution id is.
+    """
+    report = _reconcile(fresh, orders=(_order(OUR_ODNO, order_time=OUR_TIME),))
 
     assert report.permits_capacity_release is False
     assert report.permits_rearm is False
@@ -273,8 +296,14 @@ def test_an_attempt_without_its_own_witness_order_withholds(fresh) -> None:
     assert ReconciliationClass.RECEIPT_ONLY in _classes(report)
 
 
-def test_foreign_orders_alone_are_not_a_positive_report(fresh) -> None:
-    """A report made only of orders that are not ours permits nothing — no vacuous truth."""
+def test_orders_alone_with_none_of_our_own_permit_nothing(fresh) -> None:
+    """With no order of our own in the observation there is nothing to be earlier THAN.
+
+    So no orphan is provably foreign, every one keeps its veto, and a report made only of
+    orphans permits nothing. This is also why the relaxation can never produce a vacuously
+    positive report: being foreign requires one of our own orders in the same observation, and
+    that order is an attempt whose own flags are in the tally.
+    """
     service = ReconciliationService(
         _Rcl(),
         _Evidence(()),
@@ -290,7 +319,79 @@ def test_foreign_orders_alone_are_not_a_positive_report(fresh) -> None:
 
     assert report.permits_capacity_release is False
     assert report.permits_rearm is False
-    assert report.reason == "no observations in scope"
     assert _classes(report) == [ReconciliationClass.ORPHAN_BROKER_ORDER] * len(
         FOREIGN_ODNOS
     )
+
+
+@pytest.mark.parametrize(
+    ("time_", "label"),
+    [
+        (None, "no broker stamp at all"),
+        (OUR_TIME, "the same second as our own order"),
+        ("130000", "after our own order"),
+    ],
+)
+def test_an_orphan_not_stamped_before_our_first_order_withholds(
+    fresh, time_: str | None, label: str
+) -> None:
+    """Only a STRICTLY earlier broker stamp proves an order is not ours.
+
+    This is what keeps an order that merely appeared mid-session — between the balance read and
+    the order read, or after a release snapshot expired — withholding the release.
+    """
+    report = _reconcile(fresh, orders=(_order("0000099999", order_time=time_),))
+
+    assert report.permits_capacity_release is False, label
+    assert report.permits_rearm is False, label
+
+
+@pytest.mark.parametrize("other_date", ["20261119", "20261121"])
+def test_an_orphan_from_another_trading_date_withholds(fresh, other_date: str) -> None:
+    """A stamp from a different date is not compared with ours at all, so it proves nothing.
+
+    An earlier date looks earlier, but a leaf that has run for more than one session could own
+    it, and ``ord_tmd`` alone cannot say. Only a same-date, strictly-earlier stamp counts.
+    """
+    other_day = WitnessOrder(
+        attempt_id=None,
+        broker_execution_id="0000099999",
+        quantity=Decimal("1"),
+        remaining=Decimal("0"),
+        state=WitnessOrderState.FILLED,
+        order_date=other_date,
+        order_time="093015",
+    )
+
+    report = _reconcile(fresh, orders=(other_day,))
+
+    assert report.permits_capacity_release is False
+    assert report.permits_rearm is False
+
+
+def test_our_own_order_without_a_stamp_withholds(fresh) -> None:
+    """If OUR order carries no time, nothing can be shown to precede it."""
+    service = ReconciliationService(
+        _Rcl((ScopeReservation(OUR_RESERVATION, CapacityState.COMMITTED_UNBOUND, 2),)),
+        _Evidence((_our_receipt(),)),
+        _Witness(
+            (_order(OUR_ODNO, attempt_id=OURS, order_time=None),)
+            + tuple(_order(o) for o in FOREIGN_ODNOS)
+        ),
+        reservation_id_for_attempt=lambda attempt_id: (
+            OUR_RESERVATION if attempt_id == OURS else None
+        ),
+    )
+
+    report = service.reconcile(
+        WitnessScope(
+            account=ACCOUNT,
+            instrument_keys=(KEY,),
+            attempt_ids=(OURS,),
+            order_dates=(DATE,),
+        ),
+        freshness=fresh,
+    )
+
+    assert report.permits_capacity_release is False
+    assert report.permits_rearm is False

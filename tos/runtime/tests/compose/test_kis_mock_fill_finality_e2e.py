@@ -119,11 +119,17 @@ def _row(
     orgn_odno: str = "0000000000",
     avg_prvs: str | None = None,
     tot_ccld_amt: str | None = None,
+    ord_tmd: str | None = None,
 ) -> dict[str, str]:
     """One ``VTTC0081R`` ``output1`` row, in the measured wire shape (all strings).
 
     The two price fields are optional on purpose: a caller that omits them reproduces the row
     shape every e2e here used before ``FILL_OBSERVED`` carried a price.
+
+    ``ord_tmd`` (주문시각) is optional for the same reason, and leaving it out is load-bearing
+    rather than incidental: an order with no broker-stamped placement time can never be proven
+    to predate this runtime's own first order, so every orphan built without one keeps its
+    veto. Only a test about an order placed BEFORE the runtime started sets it.
     """
     row = {
         "ord_dt": date,
@@ -140,6 +146,8 @@ def _row(
         row["avg_prvs"] = avg_prvs
     if tot_ccld_amt is not None:
         row["tot_ccld_amt"] = tot_ccld_amt
+    if ord_tmd is not None:
+        row["ord_tmd"] = ord_tmd
     return row
 
 
