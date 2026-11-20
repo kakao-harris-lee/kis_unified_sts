@@ -673,6 +673,11 @@ def test_b1_a_python_that_cannot_import_yaml_is_a_failure_not_a_skip(env: Env) -
     r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
     _assert_alerted_failure(r)
     assert "holiday check failed (rc=1)" in r.stdout
+    # §7.2 좌표 규율: the gate's own output reaches the CRON LOG, never the telegram
+    # body — an unexpected fault there can carry a broker error body with it.
+    assert "market-open check output (rc=1): " in r.stdout
+    assert "ModuleNotFoundError" in r.stdout
+    assert "ModuleNotFoundError" not in r.stdout.split("notify-body: ", 1)[1]
     assert not (env.state / "cp3-sessions").exists()
     assert not (
         env.state / f"measure/wt-cp3-long-{_OPEN_DAY.replace('-', '')}"

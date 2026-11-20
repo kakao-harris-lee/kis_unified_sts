@@ -722,8 +722,12 @@ case $mrc in
   exit 0
   ;;
 *)
+  # The gate's own output goes to the CRON LOG only, never into the telegram body
+  # (§7.2 좌표 규율): an unexpected fault here can carry a broker error body with
+  # it, and a channel message is not where that belongs.
+  log "market-open check output (rc=$mrc): $mreason"
   git -C "$MAIN" worktree remove "$WT" 2>/dev/null
-  fail 2 "holiday check failed (rc=$mrc) on $WT/$CAL_REL for $TODAY — not skipped, not run: $mreason"
+  fail 2 "holiday check failed (rc=$mrc) on $WT/$CAL_REL for $TODAY — not skipped, not run (사유는 cron 로그)"
   ;;
 esac
 
