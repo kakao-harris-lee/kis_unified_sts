@@ -395,6 +395,7 @@ class KisMockFillObserver:
                 self._hold_absent(attempt, payload, reason)
                 held.append((attempt.attempt_id, payload.kind))
                 continue
+            priced = _priced_row(attempt, rows, payload.kind)
             self._record(
                 FILL_OBSERVED_KIND,
                 {
@@ -405,6 +406,18 @@ class KisMockFillObserver:
                     "filled_quantity": _text(payload.filled_quantity),
                     "remaining_quantity": _text(payload.remaining_quantity),
                     "reason": reason,
+                    # The broker's own 평균 체결가 / 총 체결금액 for the ONE attributed row,
+                    # in WHOLE KRW as it printed them — never the tree's
+                    # ``_runtime.price_scale`` (×100) representation. ``None`` whenever
+                    # :func:`_priced_row` refuses (see it for the three reasons).
+                    # Observation only: nothing downstream of this record reads them, so a
+                    # row written before these keys existed is read exactly as it always was.
+                    "avg_execution_price": (
+                        None if priced is None else _text(priced.avg_prvs)
+                    ),
+                    "executed_amount": (
+                        None if priced is None else _text(priced.tot_ccld_amt)
+                    ),
                 },
             )
             if payload.kind in _TERMINAL_KINDS:
@@ -752,11 +765,7 @@ class KisMockFillObserver:
     ) -> tuple[EgressResultPayload | None, str]:
         """The result to emit for ``attempt``, or ``None`` (nothing new / not visible yet)."""
         key = odno_key(attempt.odno)
-        mine = [
-            r
-            for r in rows
-            if odno_key(r.odno) == key and r.ord_dt == attempt.trading_date
-        ]
+        mine = _attributed_rows(attempt, rows)
         derived = [
             r
             for r in rows
@@ -866,6 +875,34 @@ class KisMockFillObserver:
 
     def _record(self, kind: str, fields: dict[str, Any]) -> None:
         self.evidence_store.append(fields, kind=kind, record_class=kind)
+
+
+def _attributed_rows(
+    attempt: _Tracked, rows: tuple[KisOrderRow, ...]
+) -> list[KisOrderRow]:
+    """The rows this attempt's own ODNO owns on its trading date (derived rows excluded)."""
+    key = odno_key(attempt.odno)
+    return [
+        r for r in rows if odno_key(r.odno) == key and r.ord_dt == attempt.trading_date
+    ]
+
+
+def _priced_row(
+    attempt: _Tracked, rows: tuple[KisOrderRow, ...], kind: EgressResultKind
+) -> KisOrderRow | None:
+    """The row whose price may be attributed to this observation, or ``None``.
+
+    Three refusals, all deliberate: more than one row under the ODNO (nothing identifies
+    which one filled), no row at all, and — the one review-1121 L2 names — an ``UNKNOWN``
+    verdict. ``UNKNOWN`` is what ``_classify`` returns when the row contradicts the attempt
+    (``instrument_mismatch``, ``ordered_quantity_mismatch``, a rejected or inconsistent
+    quantity): the record says the observer does not believe this row describes the attempt,
+    so quoting its price as the attempt's execution price would contradict the same row.
+    """
+    if kind is EgressResultKind.UNKNOWN:
+        return None
+    mine = _attributed_rows(attempt, rows)
+    return mine[0] if len(mine) == 1 else None
 
 
 def _reprojectable(attempt: _Tracked) -> bool:
