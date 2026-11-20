@@ -332,3 +332,19 @@ def test_a_plain_date_holiday_entry_is_still_accepted() -> None:
     holidays = session_day.holidays_of({"holidays": [date(2026, 1, 1), "2026-03-01"]})
     assert holidays == frozenset({date(2026, 1, 1), date(2026, 3, 1)})
     assert session_day.is_trading_day(date(2026, 1, 1), holidays) is False
+
+
+def test_the_trading_day_rule_is_known_holidays_only_in_every_year() -> None:
+    """2026-11-20 운영자 지시 — 달력 유지가 리스크가 되지 않게.
+
+    이 모듈은 「선언된 해 밖의 날짜를 거부한다」는 가드를 들고 있었고, tenant 달력에
+    2027 휴장일이 0 건이므로 그 가드를 읽던 상태판 누적 walk 과 P-SC 프로브는
+    2027-01-01 부터 각각 오류·거부만 냈다. 남은 규칙은 하나다: **적힌** 휴장일과
+    주말만 거래일이 아니다.
+    """
+    holidays = session_day.holidays_of({"holidays": ["2026-12-31", "2027-11-19"]})
+    assert session_day.is_trading_day(date(2027, 1, 4), holidays) is True  # 적히지 않음
+    assert session_day.is_trading_day(date(2027, 11, 19), holidays) is False  # 적힘
+    assert session_day.is_trading_day(date(2026, 12, 31), holidays) is False  # 적힘
+    assert session_day.is_trading_day(date(2027, 1, 2), holidays) is False  # 토요일
+    assert not hasattr(session_day, "assert_covers")

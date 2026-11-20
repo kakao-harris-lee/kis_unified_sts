@@ -76,18 +76,15 @@ def holidays_of(calendar: Mapping[str, Any]) -> frozenset[date]:
 
 
 def is_trading_day(day: date, holidays: Collection[date]) -> bool:
-    """KRX trades on *day*: a weekday the calendar does not declare closed."""
+    """KRX trades on *day*: a weekday the calendar does not declare closed — any year."""
+    # SAFETY: known-holidays-only, no covered-year declaration (2026-11-20
+    # operator directive, after #1147 did the same on the producer side). The
+    # year guard this module used to export is gone: it refused EVERY date of a
+    # year nobody had listed holidays for yet, so from 2027-01-01 the status
+    # board's clean-day walk would have reported an error instead of a count and
+    # P-SC would have refused every run. Whether an unlisted weekday really
+    # traded is settled by the data, not by this list.
     return day.weekday() < 5 and day not in holidays
-
-
-def assert_covers(day: date, *, covered_years: Collection[int], where: object) -> None:
-    """Refuse a date outside the years a reader DECLARES its calendar covers."""
-    if day.year not in covered_years:
-        raise SessionDayError(
-            f"{where} covers {sorted(covered_years)}; {day} is outside it. A "
-            "holiday set that does not cover the date would silently call a "
-            "closed day a trading day (plan §3.2 L2)"
-        )
 
 
 def parse_hhmm(value: Any, *, where: str) -> time:

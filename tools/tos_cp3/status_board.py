@@ -120,7 +120,6 @@ class StreakConfig:
     target_days: int
     window_days: int
     clean_run_rcs: frozenset[int]
-    calendar_covered_years: frozenset[int]
     trees: tuple[StreakTree, ...]
 
 
@@ -197,7 +196,6 @@ def load_streak_config(raw: Any, *, path: Path) -> StreakConfig:
         "target_days",
         "window_days",
         "clean_run_rcs",
-        "calendar_covered_years",
         "trees",
     )
     missing = [key for key in required if key not in raw]
@@ -215,9 +213,6 @@ def load_streak_config(raw: Any, *, path: Path) -> StreakConfig:
     rcs = frozenset(int(rc) for rc in raw["clean_run_rcs"])
     if not rcs:
         raise ValueError(f"{path}: clean_streak.clean_run_rcs 가 비었다")
-    years = frozenset(int(year) for year in raw["calendar_covered_years"])
-    if not years:
-        raise ValueError(f"{path}: clean_streak.calendar_covered_years 가 비었다")
     entries = raw["trees"]
     if not isinstance(entries, list) or not entries:
         raise ValueError(f"{path}: clean_streak.trees 가 비었다")
@@ -245,7 +240,6 @@ def load_streak_config(raw: Any, *, path: Path) -> StreakConfig:
         target_days=target,
         window_days=window,
         clean_run_rcs=rcs,
-        calendar_covered_years=years,
         trees=tuple(trees),
     )
 
@@ -1271,7 +1265,6 @@ SETTLED_STATUSES = frozenset({"ENDED", "FAILED", "ABORT", "LOST"})
 class TreeCalendar:
     """한 트리가 거래하는 날 — tenant 캘린더에서 읽은 휴장일 집합."""
 
-    path: Path
     version: str
     holidays: frozenset[_dt.date]
 
@@ -1292,7 +1285,7 @@ def load_tree_calendar(path: Path) -> TreeCalendar:
         holidays = sd.holidays_of(data)
     except sd.SessionDayError as exc:
         raise sd.SessionDayError(f"{path}: {exc}") from exc
-    return TreeCalendar(path=path, version=version, holidays=holidays)
+    return TreeCalendar(version=version, holidays=holidays)
 
 
 def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
@@ -1351,16 +1344,11 @@ def tree_streak(
     start: _dt.date | None = None
     walked: _dt.date | None = None
     cursor = day
+    # SAFETY: 연도 커버리지 거부는 2026-11-20 에 없어졌다(운영자 지시 — 「캘린더 관리가
+    # 리스크가 안 되어도 돼」 · #1147 이 생산자에서 먼저 걷었다). 달력은 아는 휴장일만
+    # 담고, 적히지 않은 평일은 어느 해든 거래일이므로 이 walk 은 해를 넘어가도 멈추지
+    # 않는다. 그 전에는 2027-01-01 부터 누적 절이 오류만 찍었다.
     for _ in range(scfg.window_days):
-        try:
-            sd.assert_covers(
-                cursor,
-                covered_years=scfg.calendar_covered_years,
-                where=calendar.path,
-            )
-        except sd.SessionDayError as exc:
-            out["error"] = str(exc)
-            break
         walked = cursor
         if sd.is_trading_day(cursor, calendar.holidays):
             session = sessions.get((cursor.strftime("%Y%m%d"), tree.label))

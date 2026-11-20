@@ -23,10 +23,11 @@ session:
   # (캘린더의 krx-stock CONTINUOUS 는 09:00-15:30 이고, 15:20 이후 종가
   # 단일가 구간에서는 취소 행 모양이 정규장과 다를 수 있어 창을 좁혔다).
   calendar_path: "config/tos_runtime/paper/calendar.yaml"
-  # 위 휴장 목록이 **덮는다고 선언하는** 연도. 이 밖의 날짜는 거부한다 —
-  # 덮지 않는 연도의 평일은 전부 거래일로 읽히기 때문
-  # (tools/tos_cp3/session_day.py::assert_covers).
-  covered_years: [2026]
+  # SAFETY: 연도 커버리지 선언은 2026-11-20 에 없어졌다(운영자 지시 — 「캘린더 관리가
+  # 리스크가 안 되어도 돼」 · #1147 이 생산자에서 먼저 걷었다). 달력은 **아는 휴장일만**
+  # 담고, 적히지 않은 평일은 어느 해든 거래일이다. 주문을 막는 거부는 그대로다 —
+  # 주말이거나 위 목록에 적힌 휴장일이면 아무것도 보내지 않는다
+  # (probes_stock_cancel.py::assert_session_window · session_day.is_trading_day).
   window:
     start: "09:00"   # KRX 정규장 개장
     end: "15:20"     # 종가 단일가 시작 전. 이후 구간은 측정 대상 아님
