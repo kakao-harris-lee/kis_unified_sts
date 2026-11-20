@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.fill_observer_config import (
+    FillObserverConfigError,
+    load_fill_observer_config,
+)
 from tos_runtime.posttrade.uncertain_send import (
     AMBIGUOUS,
     BOUND,
@@ -346,3 +351,82 @@ def test_another_scopes_uncertain_send_is_not_this_scopes_business(
 ) -> None:
     assert uncertain_sends(store, account=_ACCOUNT, instrument="000660") == ()
     assert uncertain_sends(store, account="9999999999", instrument=_INSTRUMENT) == ()
+
+
+# --------------------------------------------------------------------- the config gate
+
+
+def _observer_yaml(tmp_path: Path, **extra: object) -> Path:
+    """A minimal valid ``fill_observer.yaml`` plus whatever this case sets."""
+    raw: dict[str, object] = {
+        "order_inquiry_tr_id": "VTTC0081R",
+        "order_inquiry_path": "/o",
+        "balance_tr_id": "VTTC8434R",
+        "balance_path": "/b",
+        "max_pages": 10,
+        "poll_interval_ms": 3000,
+        "witness_request_timeout_s": 2.0,
+        "poll_deadline_ms": 1500,
+        "overdue_after_ms": 600000,
+        "finality_retry_interval_ms": 60000,
+        "prior_day_poll_interval_ms": 600000,
+        "release_snapshot_max_age_ms": 6000,
+        **extra,
+    }
+    path = tmp_path / "fill_observer.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return path
+
+
+def test_the_reconciliation_is_off_when_its_keys_are_absent(tmp_path: Path) -> None:
+    """The pre-11-20 behaviour is what a tree that says nothing gets."""
+    config = load_fill_observer_config(_observer_yaml(tmp_path))
+    assert config.uncertain_send_reconcile is False
+    assert config.uncertain_send_settle_ms is None
+    assert config.uncertain_send_side_codes == {}
+
+
+def test_the_gate_needs_both_companions_and_a_bool(tmp_path: Path) -> None:
+    """A gate whose window or side table is missing would run with that check silently off."""
+    on = load_fill_observer_config(
+        _observer_yaml(
+            tmp_path,
+            uncertain_send_reconcile=True,
+            uncertain_send_settle_ms=30_000,
+            uncertain_send_side_codes=_SIDE_CODES,
+        )
+    )
+    assert on.uncertain_send_reconcile is True
+    assert on.uncertain_send_settle_ms == 30_000
+    assert on.uncertain_send_side_codes == _SIDE_CODES
+
+    with pytest.raises(FillObserverConfigError, match="uncertain_send_settle_ms"):
+        load_fill_observer_config(
+            _observer_yaml(
+                tmp_path,
+                uncertain_send_reconcile=True,
+                uncertain_send_side_codes=_SIDE_CODES,
+            )
+        )
+    with pytest.raises(FillObserverConfigError, match="uncertain_send_side_codes"):
+        load_fill_observer_config(
+            _observer_yaml(
+                tmp_path,
+                uncertain_send_reconcile=True,
+                uncertain_send_settle_ms=30_000,
+            )
+        )
+    with pytest.raises(FillObserverConfigError, match="true or false"):
+        load_fill_observer_config(
+            _observer_yaml(tmp_path, uncertain_send_reconcile="yes")
+        )
+
+
+@pytest.mark.parametrize(
+    "codes", [{}, {"BUY": 2}, {"": "02"}, {"BUY": ""}, "02", ["02"]]
+)
+def test_a_malformed_side_table_is_refused(tmp_path: Path, codes: object) -> None:
+    with pytest.raises(FillObserverConfigError, match="uncertain_send_side_codes"):
+        load_fill_observer_config(
+            _observer_yaml(tmp_path, uncertain_send_side_codes=codes)
+        )
