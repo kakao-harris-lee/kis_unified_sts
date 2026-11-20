@@ -57,7 +57,7 @@ import statistics
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -403,7 +403,7 @@ def build_auth_config(creds: ProbeCredentials, token_cache_dir: Path) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def http_json(
+def http_json_with_headers(
     session: Any,
     method: str,
     url: str,
@@ -412,13 +412,16 @@ def http_json(
     params: dict[str, Any] | None = None,
     json_body: dict[str, Any] | None = None,
     timeout: float = 15.0,
-) -> tuple[int, dict[str, Any], float, str]:
-    """Issue one request and return ``(status, parsed, elapsed_ms, raw_text)``.
+) -> tuple[int, dict[str, Any], float, str, Mapping[str, str]]:
+    """:func:`http_json`, plus the RESPONSE headers — the one request site.
 
-    Deliberately **not** routed through ``retry_once_on_token_expiry``
-    (``shared/kis/auth.py:64-104``) or the executor's rate limiter. Those wrappers
-    are part of what the probes measure (Q-IDEMP-2, Q-RATE-1 in the KIS draft
-    §5); wrapping the measurement in them would confound the observation.
+    The headers are returned as the transport's own case-insensitive mapping,
+    not a copy, because the one field a caller comes here for is ``tr_cont``
+    (continuation), whose spelling on the wire is the broker's choice.
+
+    :func:`http_json` is the four-value view of this call and is what every
+    probe uses; a caller that must distinguish "the broker ended the set" from
+    "there is more" cannot, because that answer is only in the headers.
     """
     started = time.monotonic()
     response = session.request(
@@ -437,7 +440,39 @@ def http_json(
         parsed = {}
     if not isinstance(parsed, dict):
         parsed = {"output": parsed}
-    return int(response.status_code), parsed, elapsed_ms, text
+    return int(response.status_code), parsed, elapsed_ms, text, response.headers
+
+
+def http_json(
+    session: Any,
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str],
+    params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
+    timeout: float = 15.0,
+) -> tuple[int, dict[str, Any], float, str]:
+    """Issue one request and return ``(status, parsed, elapsed_ms, raw_text)``.
+
+    Deliberately **not** routed through ``retry_once_on_token_expiry``
+    (``shared/kis/auth.py:64-104``) or the executor's rate limiter. Those wrappers
+    are part of what the probes measure (Q-IDEMP-2, Q-RATE-1 in the KIS draft
+    §5); wrapping the measurement in them would confound the observation.
+
+    Response headers are dropped here, which is why ``probes_balance._get`` has
+    its own transport and why :func:`http_json_with_headers` exists.
+    """
+    status, parsed, elapsed_ms, text, _headers = http_json_with_headers(
+        session,
+        method,
+        url,
+        headers=headers,
+        params=params,
+        json_body=json_body,
+        timeout=timeout,
+    )
+    return status, parsed, elapsed_ms, text
 
 
 def is_rate_limited(status: int, parsed: dict[str, Any], text: str) -> bool:

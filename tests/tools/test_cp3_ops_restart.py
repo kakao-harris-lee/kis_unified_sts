@@ -368,6 +368,71 @@ def test_a_pid_that_is_not_the_runner_is_skipped_not_signalled(
         bystander.wait(timeout=10)
 
 
+def _start_impostor(stage: _Stage, session_root: str) -> subprocess.Popen[bytes]:
+    """A live process whose cmdline IS the session runner, at ``session_root``.
+
+    The reaper thread stands in for init: pytest is this process's parent and
+    never waits, and a zombie still answers `kill -0`, so without it the script
+    would wait out its whole stop bound on an already-dead runner.
+    """
+    proc = subprocess.Popen(
+        ["bash", str(stage.root / "stub/run_tenant_session.sh")],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "TOS_STOCK_SESSION_ROOT": session_root,
+            "TOS_STOCK_CUSTODY_ROOT": str(stage.custody),
+            "STUB_RUNNER_SLEEP_S": "60",
+        },
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    threading.Thread(target=proc.wait, daemon=True).start()
+    return proc
+
+
+def test_a_runner_living_at_another_session_root_is_refused_not_skipped(
+    stage: _Stage,
+) -> None:
+    """Round-1 MEDIUM: "not my session root" is not "not my process".
+
+    The pid IS a `run_tenant_session.sh`. If this run skipped it and carried on,
+    it would archive the leaf and start a second session NEXT TO a live runner.
+    `FAKE_FLAT_RC=0` here, so only the refusal stops that.
+    """
+    elsewhere = stage.root / "elsewhere"
+    elsewhere.mkdir()
+    session = stage.state / "cp3-sessions" / f"stock-r1-{stage.date}"
+    session.mkdir(parents=True)
+    impostor = _start_impostor(stage, str(elsewhere))
+    try:
+        (session / "runner.pid").write_text(f"{impostor.pid}\n", encoding="utf-8")
+        result = stage.run(FAKE_FLAT_RC="0")
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "TOS_STOCK_SESSION_ROOT" in result.stdout + result.stderr
+        assert impostor.poll() is None, "a live runner was signalled anyway"
+        assert stage.leaf.is_dir() and stage.archived() == []
+    finally:
+        impostor.kill()
+        impostor.wait(timeout=10)
+
+
+def test_a_trailing_slash_is_the_same_session_root(stage: _Stage) -> None:
+    """`CP3_DAILY_STATE=…/` must not look like a runner living somewhere else."""
+    session = stage.state / "cp3-sessions" / f"stock-r1-{stage.date}"
+    session.mkdir(parents=True)
+    impostor = _start_impostor(stage, f"{session}/")
+    try:
+        (session / "runner.pid").write_text(f"{impostor.pid}\n", encoding="utf-8")
+        result = stage.run(FAKE_FLAT_RC="3")
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "stop sent" in result.stdout, "the trailing slash was read as a mismatch"
+        assert impostor.wait(timeout=20) == 143
+    finally:
+        if impostor.poll() is None:
+            impostor.kill()
+            impostor.wait(timeout=10)
+
+
 def test_the_stop_bound_is_read_from_the_session_runner(stage: _Stage) -> None:
     """Not a second copy of 120: the wait is the runner's own stop constants."""
     runner_text = _SESSION_RUNNER.read_text(encoding="utf-8")
@@ -385,32 +450,15 @@ def test_the_stop_bound_is_read_from_the_session_runner(stage: _Stage) -> None:
     )
     session = stage.state / "cp3-sessions" / f"stock-r1-{stage.date}"
     session.mkdir(parents=True)
-    # A process whose cmdline IS the session runner, so the identity gate passes.
-    impostor = subprocess.Popen(
-        ["bash", str(stage.root / "stub/run_tenant_session.sh")],
-        env={
-            "PATH": "/usr/bin:/bin",
-            "TOS_STOCK_SESSION_ROOT": str(session),
-            "TOS_STOCK_CUSTODY_ROOT": str(stage.custody),
-            "STUB_RUNNER_SLEEP_S": "60",
-        },
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    # Reap it as init would. Without this the exited process stays a zombie —
-    # pytest is its parent and never waits — and a zombie still answers
-    # `kill -0`, so the script would wait out its whole bound on a dead runner.
-    reaper = threading.Thread(target=impostor.wait, daemon=True)
-    reaper.start()
+    impostor = _start_impostor(stage, str(session))
     try:
         (session / "runner.pid").write_text(f"{impostor.pid}\n", encoding="utf-8")
         result = stage.run(FAKE_FLAT_RC="3")
         assert result.returncode == 2, result.stdout + result.stderr
         assert "stop sent" in result.stdout
         assert f"상한 {expected}s" in result.stdout
-        reaper.join(timeout=10)
-        assert impostor.poll() == 143, "the runner was not stopped by our SIGTERM"
+        assert impostor.wait(timeout=20) == 143, "the runner was not stopped"
     finally:
         if impostor.poll() is None:
             impostor.kill()
-        impostor.wait(timeout=10)
+            impostor.wait(timeout=10)

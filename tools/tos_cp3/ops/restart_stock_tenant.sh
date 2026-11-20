@@ -12,8 +12,9 @@
 #
 # 무엇을 하는가 (하나라도 어긋나면 멈추고, 그때까지 치운 것은 없다):
 #   1. 지문·종목·주 체크아웃 확인. 모의 계좌 지문이 없으면 rc 2 — 여기까지 아무것도 건드리지 않는다.
-#   2. 오늘 이 tenant 의 살아 있는 run 전부 TERM. pid 는 /proc 로 신원을 확인하고 보내며(pid 재사용),
-#      기다리는 상한은 러너의 정지 상수 합에서 **읽는다**(아래 STOP_WAIT_S).
+#   2. 오늘 이 tenant 의 살아 있는 run 전부 TERM. pid 는 /proc 로 신원을 확인하고 보낸다(pid 재사용):
+#      cmdline 이 러너가 아니면 건너뛰고, 러너인데 TOS_STOCK_SESSION_ROOT 가 이 자리가 아니면 rc 2
+#      로 거부한다. 기다리는 상한은 러너의 정지 상수 합에서 **읽는다**(아래 STOP_WAIT_S).
 #   3. 평탄 확인(GET 전용 · mock_flat_check.py). 보유가 있거나 **미체결 주문이 남아 있거나** 읽지
 #      못하면 rc 2 로 끝내고 **잎을 그대로 둔다** — 포지션이 열린 잎을 보관하면 그 포지션은 어느
 #      증거 사슬의 것도 아니게 된다. 보유는 mock_flatten.py 로, 미체결 주문은 모의투자 HTS 에서
@@ -121,7 +122,10 @@ LC=stock$SUF
 [ -f "$ENV_MOCK" ] || die 2 "$ENV_MOCK 가 없다 (TOS_ENV_MOCK)"
 [ -d "$ST/cp3-sessions" ] || die 2 "$ST/cp3-sessions 가 없다 (CP3_DAILY_STATE=$ST)"
 
-# 정지 상한도 **세션 러너가 정본이다** — 120 을 여기에 또 적지 않는다. run_tenant_session.sh 의
+# 정지 상한도 **세션 러너가 정본이다** — 120 을 여기에 또 적지 않는다. 읽는 것은 **이 스크립트가
+# 있는 트리**의 러너다(돌고 있는 세션은 그날 origin/main 워크트리에서 떴으므로 다른 판일 수 있다).
+# 상한은 계약이 아니라 기다림의 바닥이고, 두 판이 갈라졌다면 그 사실 자체가 손볼 거리다.
+# run_tenant_session.sh 의
 # 정지 경로는 차례로 run(SIGKILL_AFTER_S) → producer(PRODUCER_SIGKILL_AFTER_S) →
 # band(BAND_PROCESS_KILL_AFTER_S) → 대기자(stop_wait 의 5s)이고, 그 합이 TERM 한 번이 끝나는
 # 데 걸릴 수 있는 최대다. 셋 중 하나라도 못 읽으면 추측하지 않고 거부한다(아직 아무것도 안 건드렸다).
@@ -155,7 +159,8 @@ for R in "$ST/cp3-sessions/$LC"-r*-"$D"; do
   kill -0 "$P" 2>/dev/null || continue
   # pid 는 재사용된다. 세션이 죽은 뒤 runner.pid 에 남은 번호를 지금 다른 프로세스가 갖고
   # 있으면, 여기서 TERM 을 보내는 것은 남의 프로세스를 죽이는 것이다. 그래서 보내기 전에
-  # /proc 로 신원을 확인하고, 맞지 않으면 **죽이지 않고 건너뛴다**(한 줄 남긴다).
+  # /proc 로 신원을 확인한다 — cmdline 이 러너가 아니면 **남의 pid** 로 보고 건너뛰고(한 줄 남긴다),
+  # 러너인데 세션 자리가 다르면 아래에서 **거부한다**(그것은 남이 아니라 내 가정이 틀린 것이다).
   CMDLINE=$(tr '\0' ' ' <"/proc/$P/cmdline" 2>/dev/null) || CMDLINE=""
   case "$CMDLINE" in
   *run_tenant_session.sh*) ;;
@@ -166,12 +171,23 @@ for R in "$ST/cp3-sessions/$LC"-r*-"$D"; do
   esac
   # environ 은 같은 사용자의 프로세스만 읽을 수 있다. 읽히면 그 세션 자리까지 맞는지 보고,
   # 못 읽으면 cmdline 확인만으로 간다(읽기 실패를 불일치로 읽지 않는다).
+  #
+  # ⚠ 여기서 어긋나면 **건너뛰지 않고 거부한다**(rc 2). cmdline 이 run_tenant_session.sh 인데
+  # 자리가 다르다는 것은 「이 pid 는 남이니 무시해도 된다」가 아니라 「이 tenant 의 러너가 어딘가
+  # 살아 있는데 그게 어디인지 내 가정과 다르다」는 뜻이다. 그대로 진행하면 **돌고 있는 세션 옆에서**
+  # 잎을 보관하고 두 번째 세션을 띄운다. 경로는 realpath 로 비교한다 — CP3_DAILY_STATE 끝의 `/`
+  # 하나, 심볼릭 링크 하나로 문자열이 갈라진다.
+  # ⚠ `printf … | grep -q` 를 쓰지 않는다: grep -q 가 먼저 끝나면 printf 가 EPIPE 로 죽고
+  # pipefail 이 그 파이프라인을 실패로 만든다. here-string 으로 받는다.
   ENVIRON=$(tr '\0' '\n' <"/proc/$P/environ" 2>/dev/null) || ENVIRON=""
-  if [ -n "$ENVIRON" ] && printf '%s\n' "$ENVIRON" | grep -q '^TOS_STOCK_SESSION_ROOT='; then
-    printf '%s\n' "$ENVIRON" | grep -qxF "TOS_STOCK_SESSION_ROOT=$R" || {
-      log "skip $R (pid $P 의 TOS_STOCK_SESSION_ROOT 가 이 자리가 아니다)"
-      continue
-    }
+  ENV_ROOT=$(grep -m1 '^TOS_STOCK_SESSION_ROOT=' <<<"$ENVIRON") || ENV_ROOT=""
+  ENV_ROOT=${ENV_ROOT#TOS_STOCK_SESSION_ROOT=}
+  if [ -n "$ENV_ROOT" ]; then
+    RP_ENV=$(realpath -m -- "$ENV_ROOT" 2>/dev/null) || RP_ENV=""
+    RP_R=$(realpath -m -- "$R" 2>/dev/null) || RP_R=""
+    if [ -z "$RP_ENV" ] || [ -z "$RP_R" ] || [ "$RP_ENV" != "$RP_R" ]; then
+      die 2 "pid $P 는 run_tenant_session.sh 인데 그 TOS_STOCK_SESSION_ROOT 가 이 자리가 아니다 ($ENV_ROOT ≠ $R) — 이 tenant 의 러너가 다른 자리에서 살아 있을 수 있다. 무엇이 돌고 있는지 확인하기 전에는 잎을 건드리지 않는다"
+    fi
   fi
   kill -TERM "$P"
   log "stop sent $R (pid $P · 상한 ${STOP_WAIT_S}s = 러너의 정지 상수 합)"

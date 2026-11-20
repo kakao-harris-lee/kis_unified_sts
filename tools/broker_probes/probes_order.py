@@ -65,7 +65,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
@@ -92,6 +92,7 @@ from tools.broker_probes.common import (
     classify_answer,
     dry_run_banner,
     http_json,
+    http_json_with_headers,
     is_rate_limited,
     probe_token_cache_dir,
     record_retry,
@@ -955,6 +956,48 @@ class MockTradingClient:
         assert_mock_host(url)
         assert_mock_trading_tr(tr_id)
         return self._request(method, url, tr_id, params=params, body=body)
+
+    def trading_get_with_headers(
+        self,
+        path: str,
+        tr_id: str,
+        *,
+        params: dict[str, Any] | None = None,
+        tr_cont: str = "",
+    ) -> tuple[int, dict[str, Any], float, str, Mapping[str, str]]:
+        """:meth:`trading_call` for a GET whose answer is in the RESPONSE headers.
+
+        Same two gates (host + mock TR) and the same pacer, in the same order as
+        :meth:`_request`; it does not delegate to it only because that method
+        drops the response headers, and ``tr_cont`` — the broker's own
+        "there is more" / "that was the end" — is nowhere else. A continuation
+        walk that guessed instead would either stop early (a holding on page 2
+        read as "not held") or never stop.
+
+        **GET by construction**: there is no method parameter and no body, so
+        this cannot become a second way to send an order. A continuation cursor
+        is a read concept.
+
+        Args:
+            tr_cont: the REQUEST ``tr_cont`` — empty on the first page, ``"N"``
+                to ask for the next one (the runtime's own spelling,
+                ``tos_runtime.recon.witness_kis._TR_CONT_REQUEST_NEXT``).
+        """
+        url = f"{MOCK_BASE_URL}{path}"
+        assert_mock_host(url)
+        assert_mock_trading_tr(tr_id)
+        headers = self._headers(tr_id)
+        if tr_cont:
+            headers["tr_cont"] = tr_cont
+        self._last_send_monotonic = self.pacer.wait()
+        return http_json_with_headers(
+            self.session,
+            "GET",
+            url,
+            headers=headers,
+            params=params,
+            timeout=self.timeout,
+        )
 
     def quote_call(
         self, path: str, tr_id: str, params: dict[str, Any]
