@@ -20,9 +20,14 @@
 | `paper` | SYNTHETIC | 상주 부팅증명 세션 | 08:45 start · 15:45 stop |
 | `cp3-setup-d-long` | SYNTHETIC 미니선물 | Setup D LONG 신호 관측 | 08:38 |
 | `cp3-setup-d-short` | SYNTHETIC 미니선물 | 대칭 관측 | 08:40 |
-| `cp3-setup-d-stock-005930` | KIS **MOCK** 주식 | 카나리아 — R4 프로브 진입으로 주문 경로를 매일 잰다 | 08:53 |
-| `cp3-setup-d-stock-000660` | KIS **MOCK** 주식 | 실험 A — Setup D LONG | 08:55 |
-| `cp3-setup-d-stock-005380` | KIS **MOCK** 주식 | 실험 B — RSI/%R 예정 | 08:57 |
+| `cp3-setup-d-stock-005930` | KIS **MOCK** 주식 | 카나리아 — 주문 경로가 매일 살아 있는지 | 08:53 |
+| `cp3-setup-d-stock-000660` | KIS **MOCK** 주식 | 실험 A 예정 — Setup D LONG | 08:55 |
+| `cp3-setup-d-stock-005380` | KIS **MOCK** 주식 | 실험 B 예정 — RSI/%R | 08:57 |
+
+주식 셋은 **지금 전부 R4 프로브 진입 규칙**으로 돈다(`strategy_bindings.yaml::m2_probe_entry_enabled:
+true` 셋 다, 2026-11-20 실측). 전략이 아니라 「경로가 살아 있나」를 매일 재는 카나리아이고,
+역할 분화(000660 Setup D · 005380 RSI/%R)는 [활용 계획](plans/2026-11-19-tos-usage-plan.md) §4.1
+의 다음 단계다.
 
 콜드 백업은 18:00(paper) · 18:20(LONG) · 18:40(SHORT) 에 돈다
 ([런북](runbooks/tos-evidence-cold-backup.md)). 부팅·재시작 절차는
