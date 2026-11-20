@@ -14,9 +14,11 @@ reservation the refused OPEN had taken was stranded — so every later OPEN that
 ``open_over_outstanding_reservation``. PR #1122 releases a send refused before transport,
 which is what turns each refusal below into a recovery instead of a dead session.
 
-Two scenarios do NOT recover, and say so in a strict xfail rather than in a softened
-assertion: an order POST that timed out, and one that answered HTTP 500. Both leave the same
-stuck state, which :func:`_assert_quarantined_unknown` pins.
+Two of them are the order POST itself going blind — a timeout, and an HTTP 500. Both leave the
+same stuck state, which :func:`_assert_quarantined_unknown` pins, and both leave it only until
+the broker's own order history is read for the send's trading date
+(:mod:`tos_runtime.posttrade.uncertain_send`): one unclaimed matching row binds the attempt, an
+empty history twice over a settle window releases it, and anything less certain holds.
 """
 
 from __future__ import annotations
@@ -36,7 +38,16 @@ from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose._transport_wiring import TransportKind
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.compose.root import compose_paper_runtime
-from tos_runtime.posttrade.unsent_release import REFUSED_BEFORE_TRANSPORT_CAUSE
+from tos_runtime.posttrade.uncertain_send import (
+    AMBIGUOUS,
+    BOUND,
+    NEVER_ACCEPTED,
+    UNCERTAIN_SEND_RECONCILED_KIND,
+)
+from tos_runtime.posttrade.unsent_release import (
+    NEVER_ACCEPTED_CAUSE,
+    REFUSED_BEFORE_TRANSPORT_CAUSE,
+)
 from tos_runtime.riskstate.service import RiskStateService
 from tos_runtime.transport.kis_mock.broker_facts import BROKER_FACTS_CONFIG_NAME
 
@@ -82,6 +93,11 @@ _NEXT_BAR_ADVANCE_MS = 1_200
 #: with. A timed-out call therefore costs ~0.4 s of real time, not the shipped 5 s.
 _REQUEST_TIMEOUT_S = 0.4
 _TIMEOUT_DELAY_S = 1.2
+#: The settle window the uncertain-send reconciliation spends before an EMPTY broker order
+#: history proves a non-send. Compressed from the shipped 30 s for the same reason as every
+#: bound above; what it bounds — two empty reads this far apart, the first this long after the
+#: send was first seen — is pinned exactly in ``tests/posttrade/test_uncertain_send.py``.
+_UNCERTAIN_SETTLE_MS = 100
 
 
 def _compress_waiting_bounds(config_dir: Path) -> None:
@@ -105,6 +121,7 @@ def _compress_waiting_bounds(config_dir: Path) -> None:
     observer = yaml.safe_load(observer_path.read_text(encoding="utf-8"))
     observer["witness_request_timeout_s"] = _REQUEST_TIMEOUT_S
     observer["loop_witness_request_timeout_s"] = _REQUEST_TIMEOUT_S
+    observer["uncertain_send_settle_ms"] = _UNCERTAIN_SETTLE_MS
     observer_path.write_text(
         yaml.safe_dump(observer, sort_keys=False), encoding="utf-8"
     )
@@ -546,6 +563,28 @@ def _poll_the_observer(tenant: _Tenant, *, passes: int = 40) -> None:
         time.sleep(0.001)
 
 
+def _poll_until(tenant: _Tenant, done: Any, what: str, *, seconds: float = 20) -> None:
+    """Drive the observer until ``done()`` holds — FETCH/APPLY take several passes each."""
+    deadline = time.monotonic() + seconds
+    while not done():
+        tenant.observer.poll_if_due()
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{what} never happened\n" + _diagnose(tenant))
+        time.sleep(0.002)
+
+
+def _reconciled(tenant: _Tenant, outcome: str) -> None:
+    """Drive the uncertain-send reconciliation until it records ``outcome``."""
+    _poll_until(
+        tenant,
+        lambda: any(
+            row["outcome"] == outcome
+            for row in _rows(tenant.runtime, UNCERTAIN_SEND_RECONCILED_KIND)
+        ),
+        f"the uncertain send was never reconciled as {outcome}",
+    )
+
+
 def test_d_an_order_post_that_timed_out_is_never_duplicated(
     config_dir_with_risk_state: Path,
     data_dir: Path,
@@ -556,7 +595,8 @@ def test_d_an_order_post_that_timed_out_is_never_duplicated(
     """The worst 11-20-shaped fault: the order POST times out and the broker DID fill it.
     What must hold — and does — is that the tenant sends nothing more while the attempt is
     unknown, and no later OPEN is admitted over it (RFC-005 §11: a timeout is neither a
-    rejection nor safe to retry)."""
+    rejection nor safe to retry). This is the state BEFORE the broker is asked; what asking it
+    then does is ``test_d_recovery_...``."""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -567,10 +607,9 @@ def test_d_an_order_post_that_timed_out_is_never_duplicated(
         # The broker filled the order the tenant never heard about.
         tenant.broker_filled(odno, quantity)
         tenant.broker_holds(quantity)
-        tenant.next_bar()
-        _poll_the_observer(tenant)
 
         _assert_quarantined_unknown(tenant, transport_kind="TIMEOUT")
+        assert _rows(tenant.runtime, UNCERTAIN_SEND_RECONCILED_KIND) == []
         assert tenant.order_posts() == posts, "a duplicate order was sent"
 
         next_open = fx.crossing_event(seq=2)
@@ -584,21 +623,6 @@ def test_d_an_order_post_that_timed_out_is_never_duplicated(
         _close(tenant.runtime)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "An order POST that times out strands the tenant for the rest of the session. The "
-        "engine ledger keeps ProvisionalReservation(capacity_state=QUARANTINED_UNKNOWN, "
-        "knowledge=UNKNOWN, pre_quarantine_capacity=POTENTIALLY_LIVE) outstanding and the "
-        "RCL reservation stays COMMITTED_UNBOUND, so every later OPEN halts at step 8 "
-        "LEDGER_VERIFICATION ('an unresolved reservation is projected for this scope ... "
-        "MAX_unresolved_send_per_scope'). Nothing resolves it: the TIMEOUT result carries no "
-        "broker_execution_id, so the fill observer never tracks the attempt and never reads "
-        "주식일별주문체결조회 for it — even though the fill IS in the broker's own history for "
-        "the trading date. UNCERTAIN_SEND records start_reconciliation=True and no component "
-        "performs that reconciliation. Only a restart plus operator intervention clears it."
-    ),
-)
 def test_d_recovery_an_order_post_that_timed_out_was_filled_at_the_broker(
     config_dir_with_risk_state: Path,
     data_dir: Path,
@@ -606,19 +630,81 @@ def test_d_recovery_an_order_post_that_timed_out_was_filled_at_the_broker(
     monkeypatch: pytest.MonkeyPatch,
     server: FakeKisServer,
 ) -> None:
-    """Same fault as the test above, driven to the completion condition: the tenant should
-    reconcile the timed-out attempt against the broker's order history (which shows it
-    FILLED), adopt the position, close it, and trade again. It does not."""
+    """Same fault as the test above, driven to the completion condition: the tenant reconciles
+    the timed-out attempt against the broker's order history (which shows it FILLED), adopts
+    the position, closes it, and trades again — without ever sending a second order."""
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
     try:
         quantity, odno = _open_that_times_out(tenant, seq=1)
+        posts = tenant.order_posts()
         tenant.broker_filled(odno, quantity)
         tenant.broker_holds(quantity)
         tenant.next_bar()
+
+        _reconciled(tenant, BOUND)
+        (verdict,) = _rows(tenant.runtime, UNCERTAIN_SEND_RECONCILED_KIND)
+        assert verdict["broker_execution_id"] == odno, verdict
+        _poll_until(
+            tenant,
+            lambda: CapacityState.POSITION_CONSUMED
+            in _reservation_states(tenant).values(),
+            "the adopted fill never reached POSITION_CONSUMED",
+        )
+        assert any(
+            row["egress_result_kind"] == "FULL_FILL"
+            and row["broker_execution_id"] == odno
+            for row in _rows(tenant.runtime, "EGRESS_RESULT_CONSUMED")
+        ), _diagnose(tenant)
+        assert tenant.order_posts() == posts, "reconciliation sent an order"
+        assert (
+            _rows(tenant.runtime, _DISCARD_KIND) == []
+        ), "a filled send must never be released as never-accepted"
+
+        # The adopted position closes, and the scope trades again on the next bar.
+        assert tenant.close_fills(seq=2, held=quantity) == quantity
+        assert set(_reservation_states(tenant).values()) == {
+            CapacityState.RELEASED
+        }, _diagnose(tenant)
+        tenant.next_bar()
+        assert tenant.open_fills(seq=3) == quantity
+    finally:
+        _close(tenant.runtime)
+
+
+def test_d_ambiguous_two_broker_orders_this_send_could_own_stay_held(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
+) -> None:
+    """The fail-closed half of the same reconciliation: when TWO orders on the send's own
+    trading date carry this instrument and this sealed quantity, nothing identifies which one
+    the timed-out POST created. The tenant binds neither and releases nothing — it stays stuck,
+    which is an operator matter, not a guess the runtime may make."""
+    tenant = _boot_tenant(
+        config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
+    )
+    try:
+        quantity, odno = _open_that_times_out(tenant, seq=1)
+        posts = tenant.order_posts()
+        tenant.broker_filled(odno, quantity)
+        tenant.broker_filled(tenant.next_odno(), quantity)
+        tenant.broker_holds(quantity * 2)
+        tenant.next_bar()
+
+        _reconciled(tenant, AMBIGUOUS)
         _poll_the_observer(tenant)
-        _assert_recovers_to_trading(tenant, first_seq=2)
+        assert [
+            row["outcome"]
+            for row in _rows(tenant.runtime, UNCERTAIN_SEND_RECONCILED_KIND)
+        ] == [
+            AMBIGUOUS
+        ], "an ambiguous verdict must never settle into a bind or a release"
+        _assert_quarantined_unknown(tenant, transport_kind="TIMEOUT")
+        assert tenant.order_posts() == posts
     finally:
         _close(tenant.runtime)
 
@@ -632,6 +718,10 @@ def test_e_an_order_post_that_answered_http_500_is_never_duplicated(
 ) -> None:
     """A 모의 REST 500 on the order POST itself. A 500 does not prove the order was refused,
     so the tenant treats it as UNKNOWN and sends nothing more — the safe half, and it holds.
+
+    Here the order-history read fails too (the squeezed app key answers 500 to that GET as
+    well), which is the third branch of the reconciliation: a read it could not complete proves
+    nothing either way, so the hold stands and the next poll asks again.
     """
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
@@ -640,31 +730,22 @@ def test_e_an_order_post_that_answered_http_500_is_never_duplicated(
         _open_that_answers_500(tenant, seq=1)
         posts = tenant.order_posts()
 
-        # The broker holds nothing and reports no order: the 500 was genuinely not accepted.
+        # The broker holds nothing — and cannot be asked whether it took the order.
         tenant.broker_holds(Decimal(0))
+        tenant.broker.script(Call.DAILY_CCLD, *([FaultKind.HTTP_500] * 60))
         tenant.next_bar()
-        _poll_the_observer(tenant)
+        _poll_the_observer(tenant, passes=120)
 
+        assert tenant.broker.calls(Call.DAILY_CCLD) > 0, "the broker was never asked"
+        assert (
+            _rows(tenant.runtime, UNCERTAIN_SEND_RECONCILED_KIND) == []
+        ), "a read that failed must settle nothing"
         _assert_quarantined_unknown(tenant, transport_kind="UNKNOWN")
         assert tenant.order_posts() == posts
     finally:
         _close(tenant.runtime)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "An order POST that answers HTTP 500 strands the tenant exactly as a timeout does, "
-        "even though the broker's own order history proves nothing was accepted: the engine "
-        "ledger keeps ProvisionalReservation(capacity_state=QUARANTINED_UNKNOWN, "
-        "knowledge=UNKNOWN) outstanding, the RCL reservation stays COMMITTED_UNBOUND, and "
-        "every later OPEN halts at step 8 LEDGER_VERIFICATION over "
-        "MAX_unresolved_send_per_scope. The 500 result carries no broker_execution_id, so the "
-        "fill observer never tracks the attempt; an EMPTY 주식일별주문체결조회 walk for the "
-        "trading date would settle it as never-accepted, and nothing reads it. The same "
-        "reconciliation the timeout case needs."
-    ),
-)
 def test_e_recovery_an_order_post_that_answered_http_500_was_never_filled(
     config_dir_with_risk_state: Path,
     data_dir: Path,
@@ -673,8 +754,9 @@ def test_e_recovery_an_order_post_that_answered_http_500_was_never_filled(
     server: FakeKisServer,
 ) -> None:
     """Same fault as the test above, driven to the completion condition: an order the broker
-    never accepted should be provable from its order history and give its capacity back. It
-    does not."""
+    never accepted is provable from its own order history — empty twice, a settle window apart
+    — and the reservation goes back through the never-sent release pass under its own cause.
+    """
     tenant = _boot_tenant(
         config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
     )
@@ -682,7 +764,14 @@ def test_e_recovery_an_order_post_that_answered_http_500_was_never_filled(
         _open_that_answers_500(tenant, seq=1)
         tenant.broker_holds(Decimal(0))
         tenant.next_bar()
-        _poll_the_observer(tenant)
+
+        _reconciled(tenant, NEVER_ACCEPTED)
+        assert (
+            tenant.runtime.core.ledger.outstanding(fx.instrument_key()) is not None
+        ), "the release is the engine's own after-turn pass, not the observer's"
+
         _assert_recovers_to_trading(tenant, first_seq=2)
+        discards = _rows(tenant.runtime, _DISCARD_KIND)
+        assert [row["reason"] for row in discards] == [NEVER_ACCEPTED_CAUSE], discards
     finally:
         _close(tenant.runtime)

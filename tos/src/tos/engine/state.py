@@ -110,8 +110,25 @@ _DISCARDABLE_CAPACITY: frozenset[CapacityState] = frozenset(
 )
 
 
+#: The two kinds whose application establishes no knowledge at all: the reservation they
+#: quarantine is the one an :data:`UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED` discard
+#: may still take, because the broker's own order history has since replaced that absence.
+_UNCERTAIN_RESULT_KINDS: frozenset[EgressResultKind] = frozenset(
+    {EgressResultKind.UNKNOWN, EgressResultKind.TIMEOUT}
+)
+
+
 def _discardable(reservation: ProvisionalReservation, ref: UnsentDiscardRef) -> bool:
-    """Whether ``ref``'s reason admits discarding ``reservation`` (the two never-sent shapes)."""
+    """Whether ``ref``'s reason admits discarding ``reservation`` (the three never-sent shapes)."""
+    if ref.reason is UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED:
+        # The send reached the transport and came back without an order id, so the sequencer
+        # quarantined this exact attempt. Only the attempt the discard names may be taken.
+        return (
+            ref.attempt_id is not None
+            and reservation.attempt_id == ref.attempt_id
+            and reservation.knowledge is EgressKnowledge.UNKNOWN
+            and reservation.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+        )
     if ref.reason is UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT:
         # The gateway refused this exact attempt before any transport call: the sequencer
         # already projected POTENTIALLY_LIVE, and nothing has been applied to it since.
@@ -124,6 +141,29 @@ def _discardable(reservation: ProvisionalReservation, ref: UnsentDiscardRef) -> 
     return (
         reservation.knowledge is EgressKnowledge.NOT_SENT
         and reservation.capacity_state in _DISCARDABLE_CAPACITY
+    )
+
+
+def _results_admit_discard(
+    ref: UnsentDiscardRef,
+    reservation: ProvisionalReservation,
+    signatures: tuple[tuple[object, ...], ...],
+) -> bool:
+    """Whether the results already applied to ``reservation``'s attempt still admit a discard.
+
+    A reservation that has consumed a result is normally past discarding. The one exception is
+    the broker-proved never-accepted discard: every result applied to it said UNKNOWN or
+    TIMEOUT, which is the ABSENCE of knowledge the broker's order history has since replaced.
+    """
+    if reservation.attempt_id is None:
+        return True
+    mine = [
+        signature for signature in signatures if signature[0] == reservation.attempt_id
+    ]
+    if not mine:
+        return True
+    return ref.reason is UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED and all(
+        signature[1] in _UNCERTAIN_RESULT_KINDS for signature in mine
     )
 
 
@@ -236,9 +276,8 @@ class ProvisionalReservationLedger:
                 continue
             if not _discardable(reservation, ref):
                 return False
-            if reservation.attempt_id is not None and any(
-                signature[0] == reservation.attempt_id
-                for signature in self._applied_result_signatures.get(key_tuple, ())
+            if not _results_admit_discard(
+                ref, reservation, self._applied_result_signatures.get(key_tuple, ())
             ):
                 return False
             del self._reservations[key_tuple]

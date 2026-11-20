@@ -228,6 +228,11 @@ class KisOrderRow:
     #: than a refused row.
     avg_prvs: Decimal | None = None
     tot_ccld_amt: Decimal | None = None
+    #: 매도매수구분코드 ``sll_buy_dvsn_cd`` as the broker printed it (``01`` 매도 / ``02``
+    #: 매수), or ``None`` when the row carried none. Read only by the uncertain-send
+    #: reconciliation, which uses it to refuse a row on the opposite side of the send it is
+    #: looking for; an absent code is "unknown", never a refusal.
+    sll_buy_dvsn_cd: str | None = None
 
     @classmethod
     def from_wire(cls, row: Mapping[str, Any]) -> KisOrderRow:
@@ -250,6 +255,7 @@ class KisOrderRow:
             cancelled=str(row.get("cncl_yn") or "").strip() == _CANCELLED,
             avg_prvs=_finite_decimal_or_none(row.get("avg_prvs")),
             tot_ccld_amt=_finite_decimal_or_none(row.get("tot_ccld_amt")),
+            sll_buy_dvsn_cd=_text("sll_buy_dvsn_cd"),
         )
 
 

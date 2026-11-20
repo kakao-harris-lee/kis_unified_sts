@@ -41,6 +41,8 @@ class FillObserverConfig:
     ack_date_recovery_lookback_trading_days: int | None = None
     broker_flat_release: bool = False
     broker_flat_release_settle_ms: int | None = None
+    uncertain_send_reconcile: bool = False
+    uncertain_send_settle_ms: int | None = None
     loop_witness_request_timeout_s: float | None = None
     loop_witness_deadline_ms: int | None = None
 
@@ -105,6 +107,17 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
             f"{path}: broker_flat_release needs broker_flat_release_settle_ms (the "
             "fill-to-balance reflection lag it waits out)"
         )
+    uncertain_send_reconcile = raw.get("uncertain_send_reconcile", False)
+    if not isinstance(uncertain_send_reconcile, bool):
+        raise FillObserverConfigError(
+            f"{path}: 'uncertain_send_reconcile' must be true or false, got "
+            f"{uncertain_send_reconcile!r}"
+        )
+    if uncertain_send_reconcile and "uncertain_send_settle_ms" not in raw:
+        raise FillObserverConfigError(
+            f"{path}: uncertain_send_reconcile needs uncertain_send_settle_ms (the window "
+            "an empty broker order history must stay empty before it proves a non-send)"
+        )
     missing = [key for key in _WITNESS_KEYS if key not in raw]
     if missing:
         raise FillObserverConfigError(f"{path}: missing {missing}")
@@ -155,6 +168,10 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         ),
         loop_witness_deadline_ms=_optional_positive_int(
             raw, "loop_witness_deadline_ms", path
+        ),
+        uncertain_send_reconcile=uncertain_send_reconcile,
+        uncertain_send_settle_ms=_optional_positive_int(
+            raw, "uncertain_send_settle_ms", path
         ),
     )
 

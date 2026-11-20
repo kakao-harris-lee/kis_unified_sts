@@ -285,6 +285,10 @@ class UnsentDiscardReason(StrEnum):
 
     UNSENT_FLOW_NON_EXECUTION = "UNSENT_FLOW_NON_EXECUTION"
     SEND_REFUSED_BEFORE_TRANSPORT = "SEND_REFUSED_BEFORE_TRANSPORT"
+    #: The send DID reach the transport and its answer named no order (a timeout, a 500), so
+    #: the reservation quarantined UNKNOWN; the broker's own order history for the send's
+    #: trading date has since shown that no such order exists.
+    UNCERTAIN_SEND_NEVER_ACCEPTED = "UNCERTAIN_SEND_NEVER_ACCEPTED"
 
 
 RESERVATION_DISCARDED_UNSENT_KIND = "RESERVATION_DISCARDED_UNSENT"

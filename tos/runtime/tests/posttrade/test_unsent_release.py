@@ -710,6 +710,7 @@ def test_the_close_history_literals_stay_in_lockstep_with_this_module() -> None:
     expected = {
         UNSENT_RELEASE_CAUSE,
         UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT.value,
+        UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED.value,
     }
     assert expected == NEVER_SENT_RELEASE_CAUSES
     assert _UNSENT_RELEASE_COMMAND_PREFIX == UNSENT_RELEASE_COMMAND_PREFIX

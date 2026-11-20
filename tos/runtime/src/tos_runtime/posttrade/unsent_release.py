@@ -27,6 +27,7 @@ from tos.rcl import (
 )
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.uncertain_send import never_accepted_attempt_ids
 from tos_runtime.rcl.log import ReservationTransitionRefusal, SqliteCommitLog
 from tos_runtime.rcl.projection import ReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import permit_reservation_id
@@ -34,6 +35,7 @@ from tos_runtime.rcl.reservation_identity import permit_reservation_id
 __all__ = [
     "CAPACITY_RELEASE_INTENT_KIND",
     "HALT_STEPS_BEFORE_THE_SEND_BOUNDARY",
+    "NEVER_ACCEPTED_CAUSE",
     "NEVER_SENT_RELEASE_CAUSES",
     "REFUSED_BEFORE_TRANSPORT_CAUSE",
     "SEND_EVIDENCE_KINDS",
@@ -69,6 +71,8 @@ UNSENT_RELEASE_CAUSE = UnsentDiscardReason.UNSENT_FLOW_NON_EXECUTION.value
 
 REFUSED_BEFORE_TRANSPORT_CAUSE = UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT.value
 
+NEVER_ACCEPTED_CAUSE = UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED.value
+
 # Every ``CAPACITY_RELEASE_INTENT`` cause this module writes: a release with no proof id and no
 # broker effect. Readers that skip / collect never-sent releases use THIS set, never a literal.
 NEVER_SENT_RELEASE_CAUSES: frozenset[str] = frozenset(
@@ -96,9 +100,20 @@ TRANSPORT_ENTRY_EVIDENCE_KINDS: tuple[str, ...] = (
 _SEND_REFUSED_KIND = "SEND_REFUSED"
 _SEND_HANDED_OFF_KIND = "SEND_HANDED_OFF"
 _PRE_CLAIM_REFUSAL_STEP = CommitmentStep.SEND_BOUNDARY_VERIFICATION.value
+#: The step an uncertain send reached: its answer WAS recorded, it just named no order.
+_UNCERTAIN_RESULT_STEP = CommitmentStep.EVIDENCE_RECORD.value
 
 _DISCARDABLE_CAPACITY_STATES: frozenset[CapacityState] = frozenset(
     {CapacityState.COMMITTED_UNBOUND, CapacityState.ATTEMPT_BOUND}
+)
+
+# The two causes the kernel's ``_discardable`` matches by ATTEMPT, not only by proposal: both
+# name one exact attempt the gateway bound, so the discard token must carry it.
+_ATTEMPT_BOUND_DISCARD_REASONS: frozenset[UnsentDiscardReason] = frozenset(
+    {
+        UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT,
+        UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED,
+    }
 )
 
 UNSENT_RELEASE_COMMAND_PREFIX = "release-unsent-"
@@ -184,14 +199,30 @@ def _verdict(
         conn, event_id=event_id, lo=commit_seq, hi=consumed_seq
     )
     if halt_step is None:
+        handed_off = _handed_off_attempt_id(
+            conn, receipt, event_id=event_id, lo=commit_seq, hi=consumed_seq
+        )
+        if handed_off is None or _handling_was_interrupted(
+            conn, event_id=event_id, receipt=receipt
+        ):
+            return settled
         return _settled(
             _refused_before_transport(
                 conn,
                 event_id=event_id,
                 permit_identity=permit_identity,
                 receipt=receipt,
+                attempt_id=handed_off,
                 lo=commit_seq,
                 hi=consumed_seq,
+            )
+            or _uncertain_send_never_accepted(
+                evidence_store,
+                event_id=event_id,
+                permit_identity=permit_identity,
+                receipt=receipt,
+                attempt_id=handed_off,
+                consumed_seq=consumed_seq,
             )
         )
     if _handling_was_interrupted(conn, event_id=event_id, receipt=receipt):
@@ -217,16 +248,15 @@ def _verdict(
     )
 
 
-def _refused_before_transport(
+def _handed_off_attempt_id(
     conn: sqlite3.Connection,
+    receipt: dict[str, object],
     *,
     event_id: str,
-    permit_identity: str,
-    receipt: dict[str, object],
     lo: int,
     hi: int,
-) -> UnsentReleaseCandidate | None:
-    """A handed-off flow whose attempt the gateway refused before any transport call (11-20)."""
+) -> str | None:
+    """The attempt a flow that halted at no step handed off, corroborated by its own step 12."""
     fingerprint = receipt.get("flow_fingerprint")
     if not isinstance(fingerprint, dict) or fingerprint.get("handed_off") is not True:
         return None
@@ -237,8 +267,52 @@ def _refused_before_transport(
         return None
     if _attempt_id(conn, event_id=event_id, lo=lo, hi=hi) != attempt_id:
         return None
-    if _handling_was_interrupted(conn, event_id=event_id, receipt=receipt):
+    return attempt_id
+
+
+def _uncertain_send_never_accepted(
+    evidence_store: SqliteEvidenceStore,
+    *,
+    event_id: str,
+    permit_identity: str,
+    receipt: dict[str, object],
+    attempt_id: str,
+    consumed_seq: int,
+) -> UnsentReleaseCandidate | None:
+    """A send the broker's own order history proved it never accepted (11-20 (e)).
+
+    This is the ONE never-sent cause whose flow genuinely reached the transport. The proof is
+    not in this flow's evidence — it is the completed reconciliation recorded by
+    :mod:`~tos_runtime.posttrade.uncertain_send`, which read 주식일별주문체결조회 for the send's
+    own trading date and found no order it could own, twice, a settle window apart.
+    """
+    if attempt_id not in never_accepted_attempt_ids(evidence_store):
         return None
+    proposal_id = _proposal_id(receipt)
+    if proposal_id is None:
+        return None
+    return UnsentReleaseCandidate(
+        event_id=event_id,
+        proposal_id=proposal_id,
+        permit_identity=permit_identity,
+        attempt_id=attempt_id,
+        halt_step=_UNCERTAIN_RESULT_STEP,
+        consumed_evidence_seq=consumed_seq,
+        reason=UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED,
+    )
+
+
+def _refused_before_transport(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    permit_identity: str,
+    receipt: dict[str, object],
+    attempt_id: str,
+    lo: int,
+    hi: int,
+) -> UnsentReleaseCandidate | None:
+    """A handed-off flow whose attempt the gateway refused before any transport call (11-20)."""
     if not _only_pre_claim_refusals(conn, attempt_id=attempt_id, lo=lo, hi=hi):
         return None
     if _transport_evidence(conn, attempt_id=attempt_id, lo=lo, hi=hi):
@@ -442,6 +516,18 @@ def _attempt_id(
     return None
 
 
+def _awaits_broker_verdict(held: ProvisionalReservation) -> bool:
+    """Whether a ``final`` verdict for ``held`` can still be overturned by a LATER row.
+
+    review-1023 M2's cache treats a verdict reached with the flow's own ``EVENT_CONSUMED``
+    receipt in hand as final, because nothing else in that flow's evidence can change it. An
+    uncertain send breaks that: its answer is the broker's order history, recorded afterwards
+    by :mod:`~tos_runtime.posttrade.uncertain_send`, so a "no candidate" verdict for a
+    quarantined reservation is only true until the reconciliation records one.
+    """
+    return held.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+
+
 @dataclass(frozen=True)
 class UnsentReleasePass:
     """The release action: RCL first, engine second, row only on a ``True`` (module docstring)."""
@@ -494,7 +580,8 @@ class UnsentReleasePass:
         cached = self._verdict_cache.get(key)
         if cached is not None:
             tip, verdict = cached
-            if verdict.final or tip == self._evidence_tip():
+            final = verdict.final and not _awaits_broker_verdict(held)
+            if final or tip == self._evidence_tip():
                 return verdict.candidate
         verdict = evaluate_unsent_release(
             self.evidence_store, account=self.account, instrument=self.instrument
@@ -529,6 +616,11 @@ class UnsentReleasePass:
         held: ProvisionalReservation, reason: UnsentDiscardReason
     ) -> bool:
         """review-1023 LOW-1 — the kernel's own two axes, read BEFORE the irreversible RCL write."""
+        if reason is UnsentDiscardReason.UNCERTAIN_SEND_NEVER_ACCEPTED:
+            return (
+                held.knowledge is EgressKnowledge.UNKNOWN
+                and held.capacity_state is CapacityState.QUARANTINED_UNKNOWN
+            )
         if reason is UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT:
             return (
                 held.knowledge is EgressKnowledge.SENT_UNCONFIRMED
@@ -591,11 +683,14 @@ class UnsentReleasePass:
         self, candidate: UnsentReleaseCandidate, *, reservation_id: str
     ) -> bool:
         """The engine half: discard, then record it — the row ONLY on a ``True``."""
-        refused = candidate.reason is UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT
         ref = UnsentDiscardRef(
             proposal_id=candidate.proposal_id,
             reason=candidate.reason,
-            attempt_id=candidate.attempt_id if refused else None,
+            attempt_id=(
+                candidate.attempt_id
+                if candidate.reason in _ATTEMPT_BOUND_DISCARD_REASONS
+                else None
+            ),
         )
         if not self.ledger.discard_unsent(ref):
             return False

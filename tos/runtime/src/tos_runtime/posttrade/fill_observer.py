@@ -41,6 +41,13 @@ from tos_runtime.posttrade.fill_observer_plan import (
     build_fetch_plan,
     preempt_risk_only_fetch,
 )
+from tos_runtime.posttrade.uncertain_send import (
+    UNCERTAIN_SEND_RECONCILED_KIND,
+    UncertainSend,
+    UncertainSendReconciler,
+    apply_uncertain_read,
+    bound_sends,
+)
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow
 from tos_runtime.time.sources import MonotonicSource
@@ -57,6 +64,7 @@ __all__ = [
     "FILL_OBSERVER_READ_FAILED_KIND",
     "FILL_OBSERVER_RELEASE_SNAPSHOT_KIND",
     "FILL_OBSERVER_UNATTRIBUTED_KIND",
+    "UNCERTAIN_SEND_RECONCILED_KIND",
     "FillObserverConfig",
     "FillObserverConfigError",
     "FillPollReport",
@@ -177,6 +185,8 @@ class KisMockFillObserver:
     resume_entry_discharge: Callable[[str], object] | None = None
     broker_flat_release: Callable[[HeldPositionSnapshot], object] | None = None
     trading_dates_back: Callable[[int], tuple[str, ...]] | None = None
+    uncertain_send: UncertainSendReconciler | None = None
+    _uncertain_send_due: UncertainSend | None = field(default=None, init=False)
     _last_poll_ms: int | None = field(default=None, init=False)
     _last_reproject_ms: dict[str, int] = field(default_factory=dict, init=False)
     _untrackable_recorded: set[str] = field(default_factory=set, init=False)
@@ -325,6 +335,7 @@ class KisMockFillObserver:
                 emitted.extend(self._emit(on_date, outcome, held))
         self._record_snapshot_uses(uses)
         self._apply_ack_date_read(result.ack_date_read)
+        self._apply_uncertain_send_read(result)
         if result.reads and not read_failed:
             self._last_read_failed = False
         return FillPollReport(
@@ -550,6 +561,7 @@ class KisMockFillObserver:
         tracked: dict[str, _Tracked] = {}
         undated: list[tuple[str, str]] = []
         claimed: set[tuple[str, str, str]] = set()
+        bound = self._bound_uncertain_sends()
         for evidence_kind, payload_json in rows:
             row = json.loads(payload_json).get("payload", {})
             key = row.get("instrument_key") or {}
@@ -596,6 +608,21 @@ class KisMockFillObserver:
                         )
                     elif date is None and odno_key(odno) is not None:
                         undated.append((attempt_id, odno))
+                elif odno is None and attempt_id in bound:
+                    # 11-20 (d): the POST's answer named no order, and the broker's own history
+                    # for the send's trading date has since named exactly one. ``UNKNOWN`` is
+                    # the engine's knowledge of it, so a repeated UNKNOWN stays unreported and
+                    # a terminal row resolves the quarantine through the ordinary path.
+                    odno, trading_date = bound[attempt_id]
+                    tracked[attempt_id] = _Tracked(
+                        attempt_id=attempt_id,
+                        instrument_key=InstrumentKey(
+                            account=self.account, instrument=self.instrument
+                        ),
+                        odno=odno,
+                        trading_date=trading_date,
+                        last_kind=EgressResultKind.UNKNOWN,
+                    )
                 continue
             attempt = tracked[attempt_id]
             filled = _decimal(row.get("filled_quantity"))
@@ -648,6 +675,17 @@ class KisMockFillObserver:
         self._ack_scan.clear()
         if recovered:
             self._recovered_dates = None
+
+    def _apply_uncertain_send_read(self, result: FetchResult) -> None:
+        """Judge the uncertain send this FETCH read for (11-20 d/e); a failed read holds."""
+        send, self._uncertain_send_due = self._uncertain_send_due, None
+        apply_uncertain_read(
+            self.uncertain_send, send, result, claimed=self._claimed_order_days
+        )
+
+    def _bound_uncertain_sends(self) -> dict[str, tuple[str, str]]:
+        """``attempt_id -> (odno, date)`` the reconciliation bound; empty when it is not wired."""
+        return {} if self.uncertain_send is None else bound_sends(self.evidence_store)
 
     def _recovered_date(self, attempt_id: str) -> str | None:
         """The date a completed scan gave this ACK — the durable rows are read at most once."""

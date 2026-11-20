@@ -48,6 +48,7 @@ from tos_runtime.posttrade.release_consumer import (
     FinalityReleaseConsumer,
     release_command_id,
 )
+from tos_runtime.posttrade.uncertain_send import UncertainSendReconciler
 from tos_runtime.recon.ports import WitnessScope, WitnessSnapshot, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow, KisStockBrokerWitness
 from tos_runtime.recon.witness_kis_client import build_witness_client
@@ -490,8 +491,31 @@ def attach_fill_observer(
         ),
         broker_flat_release=_broker_flat_release(runtime, posttrade, monotonic),
         trading_dates_back=trading_dates_back,
+        uncertain_send=_uncertain_send_reconciler(runtime, posttrade),
     )
     return runtime
+
+
+def _uncertain_send_reconciler(
+    runtime: ComposedRuntime, posttrade: BrokerPosttrade
+) -> UncertainSendReconciler | None:
+    """The opt-in uncertain-send reconciliation (``fill_observer.yaml``, 11-20 d/e)."""
+    config = posttrade.observer_config
+    if (
+        config is None
+        or not config.uncertain_send_reconcile
+        or config.uncertain_send_settle_ms is None
+    ):
+        return None
+    instrument_key = runtime.context_resolver.instrument_key
+    store = runtime.evidence_store
+    return UncertainSendReconciler(
+        evidence_store=store,
+        account=instrument_key.account,
+        instrument=instrument_key.instrument,
+        settle_ms=config.uncertain_send_settle_ms,
+        record=lambda kind, fields: store.append(fields, kind=kind, record_class=kind),
+    )
 
 
 def _broker_flat_release(
