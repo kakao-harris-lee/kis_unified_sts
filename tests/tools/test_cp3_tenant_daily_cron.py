@@ -233,10 +233,17 @@ class Env:
         ):
             _write(seed / rel, "")
         _write(seed / "tos/runtime/src/tos_runtime/compose/cli.py", _STUB_COMPOSE_CLI)
-        shutil.copy(
-            _REPO_ROOT / "tools/tos_cp3/session_day.py",
-            seed / "tools/tos_cp3/session_day.py",
-        )
+        # The gate's own modules, with their `__init__.py` files: `$MAIN` is on the
+        # interpreter's path (editable install), so without them PEP 420 hands
+        # `tools.tos_cp3` to the real checkout and the wrapper would not be reading
+        # the tree it fetched.
+        for rel in (
+            "tools/tos_cp3/__init__.py",
+            "tools/tos_cp3/ops/__init__.py",
+            "tools/tos_cp3/session_day.py",
+            "tools/tos_cp3/ops/market_open.py",
+        ):
+            _write(seed / rel, (_REPO_ROOT / rel).read_text(encoding="utf-8"))
         _write(seed / "shared/__init__.py", "")
         _write(seed / "shared/instruments/__init__.py", "")
         shutil.copy(
@@ -680,13 +687,30 @@ def test_b1_an_impossible_date_is_a_failure_not_a_skip(env: Env) -> None:
     assert env.daily("SHORT", "--preflight", "2026-02-30").returncode == 2
 
 
-def test_n3_a_calendar_without_this_years_holidays_is_refused(env: Env) -> None:
+def test_1143_a_calendar_without_this_years_holidays_runs_the_day(env: Env) -> None:
+    """#1143: 2027-01-04 against 2026-only holidays used to be an ALERTED refusal, so"""
     _data_parents(env)
     r = env.daily("LONG", CP3_DAILY_TODAY="2027-01-04")
-    _assert_alerted_failure(r)
-    assert "lists no holiday in 2027" in r.stdout
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "일일 세션 실패" not in r.stdout
+    assert "market closed" not in r.stdout
+    # No credential file is reachable from this hermetic tree, so the gate takes the
+    # fallback the old refusal replaced: an unlisted weekday is a trading day.
+    assert "market open on 2027-01-04" in r.stdout
+    assert "calendar fallback" in r.stdout
+    assert (env.state / "cp3-sessions/long-20270104").is_dir()
     pre = env.daily("LONG", "--preflight", "2027-01-04")
-    assert pre.returncode == 2 and "no holiday in 2027" in pre.stdout
+    assert pre.returncode == 0 and "market=OPEN" in pre.stdout
+
+
+def test_1143_the_gate_asks_no_broker_on_a_weekend_or_a_listed_holiday(
+    env: Env,
+) -> None:
+    """A closed day costs no KIS call and writes no answer file (KIS: 「1일 1회」)."""
+    _data_parents(env)
+    for day in (_HOLIDAY, "2026-10-24"):
+        assert "SKIP" in env.daily("SHORT", CP3_DAILY_TODAY=day).stdout
+    assert not (env.state / "market-open").exists()
 
 
 def test_n1_a_non_kst_host_zone_is_refused_at_run_time(env: Env) -> None:
@@ -1712,8 +1736,11 @@ def test_the_hook_adds_nothing_to_the_state_tree(env: Env) -> None:
         TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
     )
     assert r.returncode == 0, r.stdout
+    # `market-open` is the gate's day-answer cache and its own token cache (#1143) —
+    # one directory, shared by every tenant on the host, and nothing else is new.
     assert {p.name for p in env.state.iterdir()} - before <= {
         "cp3-sessions",
+        "market-open",
         "measure",
     }
     assert (_long_session_dir(env) / "bars-export.out").exists()

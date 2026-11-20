@@ -64,9 +64,12 @@
 #      the operator's call (runbook §7.2-d), never this script's.
 #   4. remove this direction's earlier worktrees (registered ones, never --force),
 #      fetch, add a fresh DETACHED worktree of origin/main.
-#   5. holiday/weekend check against the tenant calendar IN THAT TREE (+ any
-#      CP3_DAILY_EXTRA_CLOSED dates) — closed means SKIP: worktree
-#      removed, exit 0, no alert.
+#   5. is the market open today — weekend, CP3_DAILY_EXTRA_CLOSED and the tenant
+#      calendar's `holidays` IN THAT TREE answer first, and otherwise the KIS
+#      국내휴장일조회(개장일여부) GET answers, cached once a day for every tenant
+#      (#1143, tools/tos_cp3/ops/market_open.py). An unlisted weekday KIS cannot be
+#      reached about is a trading day. Closed means SKIP: worktree removed, exit 0,
+#      no alert.
 #   5b. STOCK only, after the holiday check and before the runner — two steps
 #      that decide whether the session can send at all:
 #        * the operation transport config
@@ -134,6 +137,9 @@
 #   CP3_DAILY_STOP_AFTER_CLOSE_MIN  5 (LONG/SHORT) · 10 (STOCK)
 #   CP3_DAILY_EXTRA_CLOSED  ""  space-separated extra closed dates (empty by
 #                           default — KRX closures belong in the tenant calendar)
+#   CP3_DAILY_MARKET_OPEN_CACHE  $CP3_DAILY_STATE/market-open — where the day's KIS
+#                           개장일여부 answer and this gate's own token cache live.
+#                           Shared by every tenant on the host: one KIS call a day.
 #   CP3_DAILY_NOTIFY        1   — 0 logs the body instead of sending it
 #   ⛔ CP3_DAILY_TODAY      test-only date override (YYYY-MM-DD). Never in a cron
 #                           line: the runner itself still runs on the real clock.
@@ -359,29 +365,31 @@ cron 로그 $STATE/cp3-$lc-tenant-daily.cron.log"
   exit "$1"
 }
 
-# market_open CALENDAR_FILE DATE — exit 0 open, 10 closed, 11 the calendar has no
-# holiday for DATE's year (a stale calendar would call every holiday open). Every
-# other code — a traceback (exit 1: bad date, missing yaml), an unreadable file —
-# is an error, never a skip: only 10 may become a silent SKIP.
+# market_open TREE_ROOT CALENDAR_FILE [extra args] — exit 0 open, 10 closed; ONE
+# reason line on stdout. Every other code — a traceback (exit 1: bad date, missing
+# yaml), an unreadable calendar (2) — is an error, never a skip: only 10 may become
+# a silent SKIP.
+#
+# The decision is tools/tos_cp3/ops/market_open.py, run from TREE_ROOT exactly as
+# `session_day` below (`-P`, PYTHONPATH=TREE_ROOT, no bytecode). What it decides,
+# in order: weekend · $CP3_DAILY_EXTRA_CLOSED · the tree calendar's `holidays` ·
+# the KIS 국내휴장일조회(개장일여부) answer for the day · and, when KIS cannot be
+# read, «an unlisted weekday is a trading day».
+#
+# ⚠ #1143 — there is no «this calendar lists no holiday in YEAR» refusal any more.
+# The calendars carry 2026 only, so that refusal would have stopped every tenant
+# on 2027-01-01 (operator 2026-11-20: 「캘린더 관리가 리스크가 안 되어도 돼」).
+# The day's broker answer is cached under $MARKET_OPEN_CACHE and the five tenants'
+# cron lines share it under one flock — one KIS call per host per day, which is
+# what KIS asks for.
 MARKET_CLOSED=10
-CALENDAR_STALE=11
+MARKET_OPEN_CACHE=${CP3_DAILY_MARKET_OPEN_CACHE:-$STATE/market-open}
 market_open() {
-  "$PY" - "$1" "$2" "$EXTRA_CLOSED" <<'PY'
-import datetime, sys
-import yaml
-path, today, extra = sys.argv[1], sys.argv[2], sys.argv[3].split()
-try:
-    with open(path, encoding="utf-8") as fh:
-        holidays = {str(h) for h in (yaml.safe_load(fh).get("holidays") or [])}
-except Exception as exc:  # noqa: BLE001 — any unreadable calendar is a refusal
-    print(f"calendar unreadable: {path}: {exc}", file=sys.stderr)
-    sys.exit(2)
-d = datetime.date.fromisoformat(today)  # 2026-02-30 raises -> exit 1 -> error
-if not any(h.startswith(f"{d.year}-") for h in holidays):
-    print(f"calendar {path} lists no holiday in {d.year}", file=sys.stderr)
-    sys.exit(11)
-sys.exit(10 if d.weekday() >= 5 or today in holidays or today in extra else 0)
-PY
+  local root=$1 cal=$2
+  shift 2
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$root "$PY" -P -m tools.tos_cp3.ops.market_open \
+    --date "$TODAY" --calendar "$cal" --cache-dir "$MARKET_OPEN_CACHE" \
+    --extra-closed "$EXTRA_CLOSED" --repo-root "$root" "$@"
 }
 
 # session_day CMD TREE_ROOT PRODUCER_CONFIG [CALENDAR] — one value on stdout from
@@ -552,27 +560,37 @@ if [ "$MODE" = preflight ]; then
   ref=$(git -C "$MAIN" rev-parse --short=12 origin/main 2>/dev/null) || {
     log "PREFLIGHT origin/main not found in $MAIN"; exit 2; }
   cal=$(mktemp) || exit 2
-  trap 'rm -f "$cal"' EXIT
+  pcfg=$(mktemp) || exit 2
+  # The readers come from origin/main too, like the files they read — never from
+  # $MAIN's working tree, whatever branch that is on (#963 review LOW-2).
+  rdr=$(mktemp -d) || exit 2
+  trap 'rm -f "$cal" "$pcfg"; rm -rf "$rdr"' EXIT
   git -C "$MAIN" show "origin/main:$CAL_REL" >"$cal" 2>/dev/null || {
     log "PREFLIGHT $CAL_REL missing at origin/main $ref"; exit 2; }
-  market_open "$cal" "$TODAY"
+  git -C "$MAIN" show "origin/main:$PRODUCER_REL" >"$pcfg" 2>/dev/null || {
+    log "PREFLIGHT $PRODUCER_REL missing at origin/main $ref"; exit 2; }
+  mkdir -p "$rdr/tools/tos_cp3/ops"
+  # The `__init__.py` files make `$rdr/tools/tos_cp3` a REGULAR package, which is
+  # what actually gives these extracted copies the last word: `$MAIN` is on the
+  # interpreter's path too (editable install), and without them PEP 420 hands
+  # `tools.tos_cp3` to $MAIN's package — the working tree this mode must not read
+  # (#963 review LOW-2). Empty: the tracked ones are docstring-only.
+  : >"$rdr/tools/tos_cp3/__init__.py"
+  : >"$rdr/tools/tos_cp3/ops/__init__.py"
+  for _rel in tools/tos_cp3/session_day.py tools/tos_cp3/ops/market_open.py; do
+    git -C "$MAIN" show "origin/main:$_rel" >"$rdr/$_rel" 2>/dev/null || {
+      log "PREFLIGHT $_rel missing at origin/main $ref"; exit 2; }
+  done
+  # `--cache-only`: this mode writes nothing outside its mktemp files and issues no
+  # token, so it reports the day's CACHED broker answer (the morning cron's) and
+  # otherwise the calendar's. It never spends a second KIS call of the day.
+  mreason=$(market_open "$rdr" "$cal" --cache-only 2>&1)
   mrc=$?
   case $mrc in
   0) open=OPEN ;;
   "$MARKET_CLOSED") open=CLOSED ;;
-  "$CALENDAR_STALE") log "PREFLIGHT calendar has no holiday in ${TODAY:0:4} — a run would refuse"; exit 2 ;;
-  *) log "PREFLIGHT calendar check failed (rc=$mrc)"; exit 2 ;;
+  *) log "PREFLIGHT calendar check failed (rc=$mrc): $mreason"; exit 2 ;;
   esac
-  pcfg=$(mktemp) || exit 2
-  # The reader comes from origin/main too, like the two files it reads — never
-  # from $MAIN's working tree, whatever branch that is on (#963 review LOW-2).
-  rdr=$(mktemp -d) || exit 2
-  trap 'rm -f "$cal" "$pcfg"; rm -rf "$rdr"' EXIT
-  git -C "$MAIN" show "origin/main:$PRODUCER_REL" >"$pcfg" 2>/dev/null || {
-    log "PREFLIGHT $PRODUCER_REL missing at origin/main $ref"; exit 2; }
-  mkdir -p "$rdr/tools/tos_cp3"
-  git -C "$MAIN" show "origin/main:tools/tos_cp3/session_day.py" >"$rdr/tools/tos_cp3/session_day.py" 2>/dev/null || {
-    log "PREFLIGHT tools/tos_cp3/session_day.py missing at origin/main $ref"; exit 2; }
   if [ "$open" = OPEN ]; then
     win=$(session_day show "$rdr" "$pcfg" "$cal" 2>&1) || {
       log "PREFLIGHT session window unreadable: $win"; exit 2; }
@@ -623,7 +641,7 @@ print(get_front_month_code(product="mini", target_date=datetime.date.fromisoform
       log "PREFLIGHT front-month lookup failed: $inst"; exit 2; }
   fi
   leaf=$DATA_PARENT/$inst
-  log "PREFLIGHT date=$TODAY market=$open origin/main=$ref instrument=$inst"
+  log "PREFLIGHT date=$TODAY market=$open ($mreason) origin/main=$ref instrument=$inst"
   log "PREFLIGHT data parent $DATA_PARENT $([ -d "$DATA_PARENT" ] && echo present || echo MISSING)"
   log "PREFLIGHT leaf $leaf $([ -d "$leaf" ] && echo 'present (continues)' || echo 'absent (first session genesis)')"
   log "PREFLIGHT session dir $SESSION $([ -e "$SESSION" ] && echo 'EXISTS (run would refuse)' || echo free)"
@@ -694,22 +712,18 @@ mkdir -p "$STATE/measure"
 git -C "$MAIN" worktree add -q --detach "$WT" origin/main || fail 1 "worktree add failed: $WT"
 log "worktree $WT @ $(git -C "$WT" rev-parse --short=12 HEAD) (detached origin/main)"
 
-market_open "$WT/$CAL_REL" "$TODAY"
+mreason=$(market_open "$WT" "$WT/$CAL_REL" --producer-config "$WT/$PRODUCER_REL" 2>&1)
 mrc=$?
 case $mrc in
-0) ;;
+0) log "market open on $TODAY — $mreason" ;;
 "$MARKET_CLOSED")
-  log "market closed on $TODAY (weekend/holiday per $TREE calendar or extra '$EXTRA_CLOSED') — SKIP"
+  log "market closed on $TODAY ($mreason) — SKIP"
   git -C "$MAIN" worktree remove "$WT" && log "removed $WT"
   exit 0
   ;;
-"$CALENDAR_STALE")
-  git -C "$MAIN" worktree remove "$WT" 2>/dev/null
-  fail 2 "$CAL_REL lists no holiday in ${TODAY:0:4} — calendar not updated for this year; refusing rather than treating holidays as open"
-  ;;
 *)
   git -C "$MAIN" worktree remove "$WT" 2>/dev/null
-  fail 2 "holiday check failed (rc=$mrc) on $WT/$CAL_REL for $TODAY — not skipped, not run"
+  fail 2 "holiday check failed (rc=$mrc) on $WT/$CAL_REL for $TODAY — not skipped, not run: $mreason"
   ;;
 esac
 
