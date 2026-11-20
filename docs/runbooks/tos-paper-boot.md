@@ -1,22 +1,11 @@
 # TOS paper 운영 런북 — 상주 세션 · CP-3 tenant 세션 · 콜드 백업
 
 - 이 파일은 **오늘 운영자가 돌리는 절차**만 담는다. 명령 · 경로 · 결말 표 · 분류 질의.
-- 과거 실측 · 수용 기록 · 드라이런 · 설계 이력은
-  [`tos-paper-boot-history.md`](tos-paper-boot-history.md) 로 **그대로 옮겼다**(한 줄도 고치지
-  않았다). 절 번호는 **양쪽에서 같다** — 다른 문서의 `§4-A` 는 이력 파일의 `§4-A` 다.
+- 과거 실측 · 수용 기록 · 드라이런 · 설계 이력은 **git 이력에 있다**
+  (`git log --diff-filter=D -- docs/runbooks/`). 다른 문서·코드·설정이 절 번호로 가리키는
+  조각만 [`tos-paper-boot-history.md`](tos-paper-boot-history.md) 에 부록으로 남겼다 —
+  §1 · §4 · §4-A · §4-B · §5 ④⑤ · §7.2 · §7.9-leaf · §7.10. 절 번호는 **양쪽에서 같다**.
 - ⛔ 이 런북은 호스트를 바꾸지 않는다. cron · 설정 파일 · 모드 변경은 전부 운영자 결정이다.
-
-| 이력으로 옮긴 절 | 무엇 |
-| --- | --- |
-| §0 | 이 배포가 무엇이고 무엇이 아닌가 (전문) |
-| §1 · §2 · §3 · §4 · §6 | 1회성 부팅 — 커스터디 루트 · 렌더 · 부팅 · 정지 확인 · 정리 (분기 1회 SHORT 부팅증명이 이 절차를 쓴다) |
-| §4-A · §4-A-1 · §4-B | `migrate` v1 → v2 와 그 실행 기록 · 대화형 `backup-set --archive-dir` |
-| §5 ①–⑤ | 2026-09-24 실측 차단 이력(정본 digest · 부팅 라벨 · HSE · 세션 게이트 · 방향 결속) |
-| §7.1 · §7.2 좌표 규율 · §7.2-a | 상주 결정의 배경 · 0700 패치 실측 |
-| §7.2-b (배경) · §7.2-c | tenant 경로 지정의 근거 · ③ 이전의 손 부팅 증명 절차 |
-| §7.2-d (해설) | 러너가 무엇을 바꿨나 · 은퇴한 §3.6 대조 명령과 수용 기준 M5/M6/B3 · band 설계 |
-| §7.3 | 래퍼 `start` 가 하는 일(순서) · 드라이버 출처 |
-| §7.9 · §7.9-leaf · §7.9-held(증상) · §7.10 | 드라이런 기록 · 닫힌/열린 질문 · 종목 롤 측정 |
 
 ## 0. 이 배포가 무엇이고 무엇이 아닌가 (요약 — 전문은 이력 §0)
 
@@ -135,8 +124,8 @@ B2/B3 도구와 `tos` 쪽 B1b 러너)는 P2-b 동등성 측정이 끝나면서 �
 경로가 레거시 경로와 626,745 셀 0 불일치로 같다는 측정(#1065 · #1066)이
 `docs/plans/2026-11-11-tos-platform-roadmap.md` §7 결정 3 이 건 조건이었다. 세션 디렉터리에
 `b3/` 는 더 생기지 않고, `sts tos status` 도 그 줄을 보여 주지 않는다. 그때의 실측
-(세 세션 409 봉 · unresolved 0 · divergent 0)과 선언된 차이 B1b-D1 의 해설은 이 파일의
-이력본(`docs/runbooks/tos-paper-boot-history.md` §7.2-d)과 git 이력에 그대로 있다.
+(세 세션 409 봉 · unresolved 0 · divergent 0)과 선언된 차이 B1b-D1 의 해설은 git 이력에
+있다 (`git log --diff-filter=D -- docs/runbooks/`).
 
 깨끗한 거래일 판정은 이제 「세션이 기동해 `clean_run_rcs` 안의 rc 로 끝났다」 하나다
 (`config/tos_status_board.yaml::clean_streak`).
@@ -542,115 +531,77 @@ sqlite3 -readonly $L/rcl.sqlite3 "SELECT seq,kind,substr(command_id,1,64) FROM e
 
 #### 7.2-g 개장 지연일(날짜별 세션 예외) — 수능일 등 (#924)
 
-KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선물 각각 지연, 시장마다 다르게) 그 날짜를
-**캘린더 한 곳**에 적는다 — `config/tos_runtime/{paper,cp3-setup-d-long,cp3-setup-d-short,cp3-setup-d-stock-005930}/calendar.yaml`
-의 `session_overrides` (네 파일은 바이트 동일 유지 · 형식은 파일 안 주석). 이 한 항목을 런타임 세션
-게이트(`tos_runtime.calendar`)·생산자 첫 봉/종료 커서·주식 첫 페이지 커서(`quote_initial_cursor: session_end`)·
-러너 첫 줄 대기(지연분만큼 늘어남)·밴드 기동 시각·cron 래퍼 정지 시각(`그날 종료 + CP3_DAILY_STOP_AFTER_CLOSE_MIN`)·
-**cron 래퍼의 (STOCK) 상시 승인 `render ok` 대기**(기본 1200s + 그날 개장 지연 — `render ok` 는 개장을
-따라오므로, 고정 대기는 지연일에 먼저 만료되고 그날 송신이 0 이 된다. review-1021 r1 HIGH)가
-모두 읽는다. 다른 곳에 시각을 다시 적지 않는다.
+KRX 가 어떤 날의 개장·종료를 옮기면(수능일: 주식·지수선물 각각 지연, 시장마다 다르게) 그
+날짜를 **캘린더 한 곳**에 적는다 — 각 tenant 트리의 `calendar.yaml` 의 `session_overrides`
+(형식은 파일 안 주석). 이 한 항목을 런타임 세션 게이트(`tos_runtime.calendar`)·생산자 첫
+봉/종료 커서·주식 첫 페이지 커서(`quote_initial_cursor: session_end`)·러너 첫 줄 대기
+(지연분만큼 늘어남)·밴드 기동 시각·cron 래퍼 정지 시각
+(`그날 종료 + CP3_DAILY_STOP_AFTER_CLOSE_MIN`)·**cron 래퍼의 (STOCK) 상시 승인 `render ok`
+대기**(기본 1200s + 그날 개장 지연 — `render ok` 는 개장을 따라오므로, 고정 대기는 지연일에
+먼저 만료되고 그날 송신이 0 이 된다)가 모두 읽는다. 다른 곳에 시각을 다시 적지 않는다.
 
-⚠ 그 **상시 승인 대기**는 래퍼(`tools/tos_cp3/runners/cp3_tenant_daily.sh`) 안에 있고,
-`~/.config/kis-probes/run-cp3-tenant-daily.sh` 는 그 **복사본**이다. 래퍼가 바뀐 PR 을 머지한 뒤에는
-운영자가 `bash tools/tos_cp3/runners/install_tenant_cron.sh --apply` 를 한 번 다시 돌려야
-설치된 복사본이 따라온다(설치본은 `origin/main` 에서 복사된다 — 작업 트리에서 복사하지 않는다).
+**항목을 더하거나 고칠 때 (순서가 전부다).**
 
-**2026-11-19(2027학년도 수능) — KRX 2026-11-05 공지로 확인됐다.** 네 캘린더의 항목은 **공지값**이고
-(선례값이 아니다) `calendar_version` 은 `krx-2026.10` → `krx-2026.11` 로 올라가 있다. 출처 =
-한국거래소 공지(2026-11-05) 「대학수학능력시험일(11.19) 증권시장 등 거래시간 임시 변경」 —
-`www.krx.co.kr` 공지사항이고 세부 시각이 첨부파일이라 안정 permalink 가 없다. 그래서 같은 날 보도
-두 건을 같이 적는다(둘 다 그 공지의 시각을 그대로 전한다):
-[뉴스핌 2026-11-05 10:23](https://www.newspim.com/news/view/20261105000442) ·
-[아시아투데이 2026-11-05 14:50](https://www.asiatoday.co.kr/kn/view.php?key=20261105010002121).
+1. **출처는 KRX 공지값이다 — 선례값이 아니다.** 공지의 세부 시각이 첨부파일이라 안정
+   permalink 가 없으면, 같은 날 보도 두 건을 함께 적어 둔다.
+2. `calendar_version` 을 올린다(예: `krx-2026.11` → `krx-2026.11.1`). 네 트리의
+   `time.yaml::trading_calendar_version` 도 **같은 커밋**에 — 불일치는
+   `SessionCalendarMismatch` 부팅 거부다.
+3. 해당 tenant 트리의 `calendar.yaml` 바이트 동일 규율을 유지한다(`md5sum`).
+4. **그날 가장 이른 cron(LONG 08:38) 전까지 `origin/main` 에 머지돼 있어야 한다.** 래퍼들은
+   매 세션 `origin/main` 에서 새 워크트리를 떠서 부팅하므로 재시작은 필요 없다 — 그 시각에
+   `origin/main` 에 있기만 하면 된다. 넘기면 그날 그 세션은 정규 시각으로 이미 떠 있다.
+5. ⚠ **래퍼(`tools/tos_cp3/runners/cp3_tenant_daily.sh`)를 바꾼 PR 이라면 머지 뒤
+   `bash tools/tos_cp3/runners/install_tenant_cron.sh --apply` 를 한 번 돌린다.** 설치본
+   `~/.config/kis-probes/run-cp3-tenant-daily.sh` 는 **복사본**이고 `origin/main` 에서
+   복사된다(작업 트리에서 복사하지 않는다). 재설치하지 않으면 그날 STOCK 세션이 옛 대기를
+   돌려 승인을 못 쓰고 송신이 0 이 된다.
 
-| 클래스 | 공지 시각 (정규 대비 개장·종료 각 +1h) |
-| --- | --- |
-| `krx-stock` | PRE_OPEN(장전 시간외 종가) 09:30–09:40 · CONTINUOUS 10:00–16:30 · AFTER_HOURS(장후 시간외 종가) 16:40–17:00 |
-| `krx-index-futures` | KOSPI200·미니 CONTINUOUS 09:45–16:45 |
-
-공지값은 작년 선례(2025-11-13)와 **같았다** — 그래서 2026-11-01 초안의 시각을 한 자도 고치지 않았고
-`calendar_version` 도 `krx-2026.11` 그대로다(main 에 아직 없던 값이라 올릴 것이 없다). 공지의
-「최종거래일 종목 16:20 종료」는 11-19 에 해당하지 않는다 — 11 월 mini 만기는 `futures_expiry`(둘째
-목요일)대로 **2026-11-12** 이고 11-19 는 셋째 목요일이다. 공지의 나머지 창(시간외 접속매매
-17:00–20:00 · 대량·바스켓매매 · 야간 파생 19:00→06:00)은 정규 캘린더에도 없어 모델하지 않는다.
-
-**이 항목을 또 고쳐야 할 때 (리뷰 #1021 LOW-2).** 공지 정정이 나오거나 다음 수능일을 적을 때는
-**머지 뒤**의 경로를 탄다: 새 PR 로 항목을 고치고 `calendar_version` 을 **`krx-2026.11` →
-`krx-2026.11.1`** 로 올린다. 네 트리의 `time.yaml::trading_calendar_version` 도 **같은 커밋**에
-(불일치 = `SessionCalendarMismatch` 부팅 거부). 네 파일 바이트 동일도 유지한다(`md5sum`).
-
-**기한: 2026-11-19 아침 부팅 전까지 머지되어 있어야 한다.** cron 은 LONG 08:38 · SHORT 08:40 ·
-STOCK 08:53 KST 에 뜨고(`crontab -l | grep cp3-.*-tenant-daily`), 상주 paper 는 08:45 다. 래퍼들은
-매 세션 `origin/main` 에서 **새 워크트리를 떠서** 부팅하므로 캘린더 값에는 재시작이 필요 없다 — 그 시각
-전에 `origin/main` 에 들어가 있기만 하면 된다. **단 #1021 은 래퍼 자체(승인 대기)도 바꾸므로 머지 뒤
-`install_tenant_cron.sh --apply` 한 번은 필수다**(아래 「CP-3 cron 래퍼」). 가장 이른 08:38 을 넘기면 그날 그 세션은 정규 시각으로
-이미 떠 있다(08:53 STOCK 은 그만큼 여유가 더 있다).
-
-**머지 뒤, 11-19 전 dry-run (읽기 전용, 운영자):**
+**머지 뒤, 그날 전 dry-run (읽기 전용, 운영자):**
 
 ```bash
 git -C $MAIN fetch -q origin
-for dir in LONG SHORT STOCK; do ~/.config/kis-probes/run-cp3-tenant-daily.sh $dir --preflight 2026-11-19; done
-# 기대: "PREFLIGHT session krx-index-futures CONTINUOUS 2026-11-19 09:45-16:45 OVERRIDE · stop_at=16:50"
-#        (18일 등 평일은 "08:45-15:45 regular · stop_at=15:50")
-#       STOCK 은 "krx-stock CONTINUOUS 2026-11-19 10:00-16:30 OVERRIDE · stop_at=16:40"
-#        (평일은 "09:00-15:30 regular · stop_at=15:40")
+for dir in LONG SHORT STOCK; do ~/.config/kis-probes/run-cp3-tenant-daily.sh $dir --preflight <YYYY-MM-DD>; done
+# 지연일 기대: "PREFLIGHT session krx-index-futures CONTINUOUS <날짜> 09:45-16:45 OVERRIDE · stop_at=16:50"
+#   평일은   "08:45-15:45 regular · stop_at=15:50"
+#   STOCK 지연일은 "krx-stock CONTINUOUS <날짜> 10:00-16:30 OVERRIDE · stop_at=16:40"
+#   평일은   "09:00-15:30 regular · stop_at=15:40"
 # 손으로 시작하는 주식 세션(재기동)의 정지 시각은 같은 리더로 구한다 — TOS_STOCK_STOP_AT 에 그대로 넣는다
 # (--after-close-min 10 = cron 래퍼의 STOCK 기본값):
 .venv/bin/python -P -m tools.tos_cp3.session_day stop-at \
   --producer-config config/tos_probes/cp3-live-producer-stock-005930.yaml \
-  --repo-root . --date 2026-11-19 --after-close-min 10
-# 기대: 16:40 — 주식 종료 16:30 + 10분. 평일(11-18)은 15:40.
+  --repo-root . --date <YYYY-MM-DD> --after-close-min 10
 ```
 
-**CP-3 cron 래퍼 — 머지 뒤 재설치 필수(review-1021 r2).** #1021 r2 가 래퍼의 STOCK 상시 승인
-대기를 그날 개장 지연만큼 늘렸다(`write_standing_approval`). 설치본
-`~/.config/kis-probes/run-cp3-tenant-daily.sh` 는 복사본이라, 재설치하지 않으면 11-19 08:53 STOCK 이
-옛 20분 고정 대기를 돌려 승인을 못 쓰고 그날 송신 0 이다. 그래서 머지 뒤
-`bash tools/tos_cp3/runners/install_tenant_cron.sh --apply` 를 한 번 돌리고 아래 해시 비교로 확인한다.
-정지 시각 쪽은 원래부터 코드에 박혀 있지 않다 — 래퍼는 정지 시각을
-`session_day` 로 그날 캘린더에서 도출한다 — `STOP_AT` 의 기본값은 비어 있고
-(`cp3_tenant_daily.sh:104` `STOP_AT=${CP3_DAILY_STOP_AT:-}`) :561-566 에서
-`STOP_AT=$(session_day stop-at …)` 로 채운다. 정지 시각이 코드에 박힌 곳은 없다 — 테넌트별
-기본 여유분만 있고(`:118` LONG/SHORT 5 분 · `:133` STOCK 10 분) 종료 시각 자체는 그날 캘린더에서
-온다. 재설치 뒤 같은지 한 줄로 확인한다:
+정지 시각은 코드에 박혀 있지 않다 — 래퍼는 `session_day stop-at` 으로 그날 캘린더에서
+도출한다(`cp3_tenant_daily.sh` 의 `STOP_AT=${CP3_DAILY_STOP_AT:-}` 가 비어 있고 뒤에서
+채워진다). 테넌트별 기본 여유분만 상수다(LONG/SHORT 5 분 · STOCK 10 분). 재설치 뒤 같은지
+한 줄로 확인한다:
 
 ```bash
 sha256sum ~/.config/kis-probes/run-cp3-tenant-daily.sh \
   <(git -C $MAIN show origin/main:tools/tos_cp3/runners/cp3_tenant_daily.sh)
-# 두 줄의 해시가 같아야 한다 (#1021 머지 전 설치본은 2e6403508ecd… — 머지 뒤엔 달라지는 게 정상)
-# 다르면 `tools/tos_cp3/runners/install_tenant_cron.sh --apply`
+# 두 줄의 해시가 같아야 한다. 다르면 `tools/tos_cp3/runners/install_tenant_cron.sh --apply`
 ```
 
-**상주 paper 세션은 11-19 의 마지막 1시간을 못 받는다 (리뷰 #1021 LOW-1 · 받아들이는 손실).**
-상주 래퍼 `~/.config/kis-probes/tos-paper-session.sh` 는 **이 저장소 밖**이고 #1021 이 건드리지
-않는다. 정지 시각이 캘린더가 아니라 래퍼 상수와 crontab 에 박혀 있다:
-
-- `tos-paper-session.sh:62` `STOP_HHMM=${TOS_PAPER_STOP_HHMM:-15:45}`
-- crontab `45 15 * * 1-5 … tos-paper-session.sh stop` — 캘린더와 무관하게 15:45 에 멈춘다
-
-그래서 11-19 에는 선물 마지막 1시간(공지값 15:45→16:45)이 빠진다. **다만 세션 게이트는
-override 를 읽으므로** 그날 09:45 개장도, 15:45 까지의 창도 올바르다 — override 가 아예 없을
-때보다 나쁘지 않다(없으면 08:45 개장으로 잡아 첫 줄 대기부터 실패한다).
-
-> **권장(세션 모델, 2026-11-02)**: 상주 paper 는 synthetic 이고 M4 창 밖이므로 이 1시간 손실을
-> 그대로 받아들인다 — 운영자가 원하면 아래 하루짜리 옵션. **운영자가 정한다.**
-
-하루만 늘리기로 한다면 **두 줄을 다 손봐야 한다.** 08:45 start 가 `STOP_HHMM` 으로 안전
-데드라인을 잡고(`tos-paper-session.sh:338·342·345` — 이미 지난 시각이면 기동 자체를 거부한다),
-15:45 stop cron 이 그와 **별개로** 세션을 끝낸다. 한쪽만 바꾸면 효과가 없다 — stop 만 늦추면
-드라이버가 15:45 데드라인에 이미 끝나 있고, start 만 늘리면 15:45 cron 이 그대로 죽인다.
+⛔ **상주 paper 세션은 지연일의 마지막 시간을 받지 못한다 (알려진 손실).** 상주 래퍼
+`~/.config/kis-probes/tos-paper-session.sh` 는 **이 저장소 밖**이고 정지 시각이 캘린더가
+아니라 래퍼 상수와 crontab 에 박혀 있다 — `STOP_HHMM=${TOS_PAPER_STOP_HHMM:-15:45}` 와
+crontab 의 `45 15 * * 1-5 … stop`. **다만 세션 게이트는 override 를 읽으므로** 그날 개장도,
+정지까지의 창도 올바르다 — override 가 아예 없을 때보다 나쁘지 않다(없으면 정규 개장으로
+잡아 첫 줄 대기부터 실패한다). 상주는 synthetic 이라 이 손실을 그냥 받아들이는 것이 기본이고,
+하루만 늘리려면 **두 줄을 다 손봐야 한다**(start 가 `STOP_HHMM` 으로 안전 데드라인을 잡고,
+stop cron 이 그와 별개로 끝낸다 — 한쪽만 바꾸면 효과가 없다):
 
 ```bash
-# 11-19 **전날까지** crontab 두 줄을 그날용으로 바꾸고, 11-20 아침에 되돌린다.
+# 전날까지 crontab 두 줄을 그날용으로 바꾸고, 다음 날 아침에 되돌린다.
 #   45 8  * * 1-5 … TOS_PAPER_STOP_HHMM=16:45 /bin/bash …/tos-paper-session.sh start …
 #   45 16 * * 1-5 … /bin/bash …/tos-paper-session.sh stop …
-# 되돌리는 것을 잊으면 그 뒤로 매일 한 시간씩 길어진다 — 「권장」이 그냥 받아들이는 쪽인 이유다.
+# 되돌리는 것을 잊으면 그 뒤로 매일 한 시간씩 길어진다 — 그냥 받아들이는 쪽이 기본인 이유다.
 ```
 
-주식 수동 세션(`TOS_STOCK_STOP_AT`)은 위 dry-run 의 `16:40`(= 16:30 종료 + 10분) 을 그대로 넣는다 —
-이쪽은 상주 래퍼와 무관하게 캘린더에서 읽은 값이다.
+주식 수동 세션(`TOS_STOCK_STOP_AT`)은 위 dry-run 이 찍는 값을 그대로 넣는다 — 이쪽은 상주
+래퍼와 무관하게 캘린더에서 읽은 값이다.
 
 #### 7.2-h synthetic venue 원장 (#1011) — 켜기 · 볼 것 · 되돌림
 
@@ -662,16 +613,21 @@ override 를 읽으므로** 그날 09:45 개장도, 15:45 까지의 창도 올�
 - **되돌림**: 키 줄을 지우는 PR. 배포 가드 `test_venue_ledger_wiring.py::_SHIPPED_TREE_WITNESS` 와 `test_deploy_approved_values.py` 의 고정값도 같이 고친다. 다음 부팅부터 옛 증인으로 돌아가 다시 봉인 쪽(fail-closed)이 된다. 원장 파일은 지우지 않는다(증거다).
 - **세션일 금지**: 같은 잎에서 키를 켠 채 원장 파일을 지우거나 옮기지 않는다 — 원장 없는 체결 증거는 증인 부재로 HOLD 된다(fail-closed지만 그 scope 는 다시 봉인된다).
 
-### 7.4 cron 두 줄 — ✅ **설치됐다 (운영자 2026-10-03 15:43 KST)**
+### 7.4 상주 paper cron (설치됨)
 
-설치된 줄은 이것이다(설치된 블록 그대로 — 주석 머리 한 줄 포함):
+설치된 줄은 이것이다(`crontab -l`, 2026-11-20 실측):
 
 ```cron
 # TOS paper 상주 세션 (운영자 결정 2026-10-03 · 첫 세션 2026-10-06 · 런북 tos-paper-boot.md §7.4; 크론 끝에 둔다 — CRON_TZ 는 아래 줄에만 적용)
 CRON_TZ=Asia/Seoul
 45 8  * * 1-5 /bin/bash /home/deploy/.config/kis-probes/tos-paper-session.sh start >> /home/deploy/.local/state/tos/paper-logs/cron.log 2>&1 # tos-paper-session
 45 15 * * 1-5 /bin/bash /home/deploy/.config/kis-probes/tos-paper-session.sh stop  >> /home/deploy/.local/state/tos/paper-logs/cron.log 2>&1 # tos-paper-session
+@reboot sleep 150; [ "$(date +\%u)" -le 5 ] && [ "$(date +\%H\%M)" -ge 0845 ] && [ "$(date +\%H\%M)" -lt 1545 ] && ! ls -d /home/deploy/.local/state/tos/paper-sessions/$(date +\%F)-* >/dev/null 2>&1 && /bin/bash /home/deploy/.config/kis-probes/tos-paper-session.sh start >> /home/deploy/.local/state/tos/paper-logs/cron.log 2>&1 # tos-paper-session-catchup
 ```
+
+- `@reboot` 줄은 **장중 재부팅 복구**다 — 평일 08:45~15:45 사이에 뜨면서 오늘 세션
+  디렉터리가 아직 없을 때만 기동한다. CP-3 tenant 쪽에도 같은 모양의 catch-up 줄이 있다
+  (§7.2-e).
 
 - 시각은 `calendar.yaml` 의 `krx-index-futures` **CONTINUOUS 08:45–15:45 KST MON–FRI** 에
   맞췄다(§5 ④). 런타임은 **마감에 스스로 멎지 않는다** — 세션이 닫히면 틱이

@@ -1,68 +1,34 @@
-# Futures Paradigm — Legal & Compliance Review
+# Futures — 법적·컴플라이언스 체크리스트 (§3 TR ID · §4 세션)
 
-Gate 2 deliverable per `docs/plans/2026-04-20-futures-paradigm-phase5-rollout.md`
-§2.2. Template — fill in *during* the operator's review with a regulator
-or compliance counsel; commit the completed document before flipping
-`futures_live.enabled: true`.
+> ⛔ **이 문서는 실전 선물 주문을 여는 경로가 아니다.** 실전 선물 계좌 미펀딩과
+> 실주문 경로 차단은 **영구 정책**이다(루트 `CLAUDE.md` 비협상 규칙) — 이 체크리스트를
+> 채운다고 `config/futures_live.yaml::enabled` 를 뒤집지 않는다.
+>
+> 남긴 이유는 하나다: **코드와 설정이 §3 · §4 를 인용한다.**
+> `shared/execution/tr_ids.py` · `config/kis/tr_ids.yaml` 가 §3 을,
+> `shared/strategy/market_time.py` 가 §4 의 야간세션 조항을 가리킨다. 2026-11-20 에
+> 나머지 절(ToS · 세금 · 감사 보존 · 서명란)과 그것이 가리키던 삭제된 모듈·계획 참조를
+> 지웠다 — `git log --diff-filter=D -- docs/runbooks/`.
 
-This is **not** legal advice produced by the engineering team. It is a
-checklist of items that an operator must verify with appropriate
-counsel and KIS account managers, with space to record their findings.
+## 3. KIS API — TR ID (모의 → 실전)
 
-## 1. Broker Terms of Service — Automated trading
+모의 서버는 시뮬레이션 TR ID 를 쓴다. 실전 계좌 제출에는 운영 TR ID 가 필요하다.
 
-KIS (한국투자증권) account ToS reference: <fill in URL/section/date>.
+- **정본은 `config/kis/tr_ids.yaml`** 이고 `shared/execution/tr_ids.py::tr_id()` 가 읽는다.
+  이 파일을 KIS 계좌 담당자의 명세와 대조한다(선물 주문·정정·취소·잔고 조회·체결 조회).
+- 실전 API 키는 **같은 KIS 계좌**에 등록돼 있어야 한다(교차 계좌 드리프트 금지).
+- 단일 계좌 전제 — 자동매매와 수동 데스크가 계좌를 공유하면 포지션 상태가 오염된다.
 
-- [ ] Automated/algorithmic trading explicitly **permitted** for the operator's account type (real account, individual or corporate as applicable)
-- [ ] No order-rate limit is exceeded by the configured Phase 4/5 pipeline (current cap: spec §2.3 "1계약, 일일 최대 2회"). Document the broker's stated rate limit:
-  - Throughput cap: <e.g. 5 req/s per account>
-  - Daily order cap: <e.g. unlimited / N orders/day>
-- [ ] Disclosure obligations — does the broker require notification of automated trading? <yes/no, doc-ref>
-- [ ] Any account-tier upgrade required (e.g. 일반/전문 투자자 distinction) for futures + algorithmic? <answer>
+⚠ 이 저장소에서 실전 키는 **GET 전용**이다. 선물 주문 프로브(`tools/broker_probes/`)는
+`tools/broker_probes/common.py::assert_no_live_futures_config` 가
+`config/futures_live.yaml::enabled` 를 보고 거부한다.
 
-## 2. Tax — Derivatives capital-gains (파생상품 양도세)
+## 4. 거래 세션
 
-As of 2026, Korean derivatives are taxed under the 양도소득세 regime (separate
-schedule from regular capital gains). Operator must confirm:
-
-- [ ] Tax rate applicable to operator's account type (currently 11% incl. 지방세 for individuals)
-- [ ] Annual exemption threshold (currently 2.5 million KRW basic deduction)
-- [ ] **Reporting cadence**: 양도소득세 is filed semi-annually — confirm operator has the bookkeeping to support it
-- [ ] Brokerage-issued tax statement (거래내역) — verify it matches our internal `kospi.rl_trades` ledger; reconciliation script TBD if mismatch is possible
-
-## 3. KIS API — TR ID transition (Paper → Real)
-
-The mock server uses simulation TR IDs. Real-account submission requires
-the production TR IDs in `config/kis/tr_ids.yaml`. Confirm:
-
-- [ ] Production TR IDs verified for: futures order place, modify, cancel, balance query, fill query — **canonical source: `config/kis/tr_ids.yaml`** (loaded by `shared/execution/tr_ids.py::tr_id()` and consumed via `ExecutionConfig` `default_factory` fields). Diff this file against the KIS account-manager spreadsheet.
-- [ ] Real-account API key registered to the same KIS account (no cross-account drift)
-- [ ] WebSocket session works in real (not just mock) — `H0IFASP0` quote feed connects + receives live ticks
-- [ ] Single-account-only assumption holds — no shared account between automated trading and manual desk activity (would corrupt position state)
-
-## 4. Trading session compliance
-
-- [ ] Day-session window 09:00–15:30 KST stock / 09:00–15:45 KST futures, EOD-flat at 15:15 KST (`eod_close_hour=15, eod_close_minute=15` in `shared/strategy/exit/{three_stage,williams_r_exit,atr_dynamic,setup_target_exit}.py`) — verified, no after-hours fills
-- [ ] Night session (`야간 18:00–05:00`) explicitly disabled in `config/market_schedule.yaml` — confirm
-- [ ] Holiday calendar source: `services/trading/holiday_cache.py` → KIS official 휴장일 — last refresh date: <YYYY-MM-DD>
-
-## 5. Monitoring & audit-trail obligations
-
-Some jurisdictions require automated trading to retain order/fill audit
-trails for N years. Confirm the operator's obligation and our implementation:
-
-- [ ] Required retention period: <N years>
-- [ ] Implementation: `kospi.order_fills` TTL = 5 years (V3 migration); `kospi.rl_trades` TTL = 5 years (V4 migration, aligned with order_fills)
-- [ ] Audit-bundle-on-demand: `reports/incidents/<ts>/` (rollback runbook §5) — sufficient for a regulator request? <yes/no — note any gap>
-
-## 6. Sign-off
-
-- [ ] Counsel/compliance officer reviewing: <name, date>
-- [ ] Operator (final accountable): <name, date>
-- [ ] Document committed to repo: <PR#>
-
-**Until all 6 sections are filled in and committed, do not flip
-`config/futures_live.yaml::enabled` to `true`.**
-
-Spec: `docs/plans/2026-04-20-futures-paradigm-phase5-rollout.md` §2.2,
-"법적 검토" Gate 2 checkpoint.
+- **야간 세션(18:00–05:00)은 `config/market_schedule.yaml::market_schedule.futures.night.enabled`
+  에서 명시적으로 `false` 다.** `shared/strategy/market_time.py` 가 그 값을 읽고, 읽기에
+  실패하면 **비활성으로 취급한다**(fail-closed). 켜려면
+  [market-structure-policy.md](market-structure-policy.md) 의 Futures Night Session Gate 를
+  먼저 통과해야 한다.
+- 정규장 창은 같은 파일의 `stock.regular`(09:00–15:30) · `futures.regular`(08:45–15:45) 다.
+  TOS tenant 트리의 세션 창은 이 파일이 아니라 각 트리의 `calendar.yaml` 이 정한다.

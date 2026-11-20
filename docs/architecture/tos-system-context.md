@@ -1,8 +1,7 @@
 # TOS system context and layer ownership
 
-기준: 2026-10-06, repository HEAD `5c4f38e9`. 이 문서는 현재 계층 명명의 정본이다.
-명명과 책임을 정리하며 기존 규범·방화벽·실행 권한을 개정하지 않는다.
-운영 프로세스와 브로커 접속은 이번 문서 작업에서 확인하지 않았다.
+기준: 2026-11-20. 이 문서는 현재 계층 명명의 정본이다. 명명과 책임을 정리하며 기존
+규범·방화벽·실행 권한을 개정하지 않는다.
 
 ## 1. 공식 명칭과 책임
 
@@ -11,9 +10,9 @@
 | TOS Kernel | `tos/src/tos/` | 결정·권한·위험·증거·전송 판정의 커널 타입, Protocol, 상태 전이. 제품 HTTP/UI를 소유하지 않는다. |
 | Application Runtime + Infrastructure Adapters | `tos/runtime/src/tos_runtime/` | `compose`에서 커널과 구현체 결선; event driver, 복구·대사, 시간·시세·SQLite·custody·transport, 운영 CLI. 별도 배포 패키지 `tos-runtime`. |
 | Control Plane API (BFF) | `services/dashboard/`의 TOS 표면 | 현재 projection 파일을 읽는 `GET /api/tos/projection`. 기존 dashboard 전체를 TOS 전용 API로 간주하지 않는다. |
-| Product / Operator UI | `strategy-builder-ui/` | 운영자가 상태·실험·전략을 보는 제품 표면. `/tos` projection 조회 화면 구현; 운영 배포 대기. |
-| Tenant Content | `config/tos_runtime/paper/`, `tos/runtime/config/`, 향후 tenant 산출물 | DSL 전략, construction/policy 설정, broker profile 참조. 실행 권한과 별개인 버전 관리 콘텐츠. |
-| Legacy Runtime and Research Tools | `shared/`, `services/`, `cli/`, 기존 전략 설정 | 기존 실행 경로 및 연구·백테스트·데이터 도구. 기능별 처분은 이관 표가 관리한다. |
+| Product / Operator UI | `strategy-builder-ui/` | 운영자가 상태를 보는 제품 표면. 남은 것은 `/tos` 조회 화면 · `/` 리디렉트 · `/api` 프록시뿐이다(배포됨). |
+| Tenant Content | `config/tos_runtime/<tree>/`(paper · cp3-setup-d-long/short · 주식 MOCK 셋), `tos/runtime/config/` | DSL 전략, construction/policy 설정, broker profile 참조. 실행 권한과 별개인 버전 관리 콘텐츠. |
+| 잔존 공용 코드 | `shared/`, `services/dashboard/`, `cli/`, `tools/` | 레거시 거래 런타임은 2026-11 에 제거됐다(L1–L7). 남은 것은 TOS 뿌리가 import 하는 것(CP-3 생산자 · Setup D 증인 · KIS 인증 · 지표 · 설정 · 저장소 · 리스크 원시형)과 운영자 표면뿐이다. |
 
 외부 KIS·파일시스템·SQLite는 런타임 어댑터가 접근하는 인프라다.
 커널 아래에 구체 인프라를 import하는 계층을 두는 것으로 해석하지 않는다.
@@ -29,8 +28,8 @@ flowchart LR
   C[Tenant Content] -->|validated loading| RT
 ```
 
-UI→API는 제품의 일반 경로이며 `/tos`가 기존 projection API를 조회한다. 운영 환경 연결은 검증 대기다.
-Control Plane→Runtime 명령 ingress는 현재 미구현이다.
+UI→API는 제품의 일반 경로이며 `/tos`가 projection API를 조회한다.
+Control Plane→Runtime 명령 ingress는 현재 미구현이다 — TOS 표면은 읽기 전용이다.
 
 ## 2. 허용 의존 방향
 
@@ -42,7 +41,6 @@ Control Plane→Runtime 명령 ingress는 현재 미구현이다.
 - repo 분리는 기존 live-gate 재검토 조건을 따른다. TOS를 새 repo로 이동하지 않는다.
 
 정본: [boundary design §3·§6](../plans/2026-07-20-tos-boundary-and-import-firewall-design.md),
-`docs/plans/2026-09-07-tos-phase2-runtime-shell-preliminary-decisions.md` (2026-11-13 은퇴 — `git log --diff-filter=D -- docs/`) 의 runtime D1,
 [실제 검사기](../../tools/tos_firewall_check.py), [import-linter](../../.importlinter).
 이 문서와 규범이 충돌하면 기존 규범을 따르고 이 문서를 정정한다.
 
@@ -60,12 +58,11 @@ nullable 계약 fixture, UI freshness 설정과 read-only proxy를 추가했다.
 end-to-end 증거와 명령 ingress는 후속 범위다. 공개/내부 경계는
 [인터페이스 카탈로그](tos-public-interfaces.md)를 따른다.
 
-## 4. 정리와 이행 문서의 역할
+## 4. 함께 읽는 문서
 
-- [Legacy disposition](../migration/legacy-disposition.md): 기존 규범 레지스터를 참조하는 기능별 처분·전환 작업표.
-- [Control Plane / first tenant 계획](../plans/2026-10-06-tos-control-plane-and-first-tenant-plan.md): 새 개발 순서와 완료 조건.
-- [Project status](../PROJECT_STATUS.md): 현재 구현·검사·미확인 운영 상태.
-- `ROADMAP`: 기존 Cross-Asset/Stock/Futures 전략 로드맵. 새 계획은 TOS 통합 범위에 한정한다.
+- [Project status](../PROJECT_STATUS.md): 지금 무엇이 도는가.
+- [플랫폼 로드맵](../plans/2026-11-11-tos-platform-roadmap.md) · [활용 계획](../plans/2026-11-19-tos-usage-plan.md): 어디로 가는가.
+- [공개 인터페이스 카탈로그](tos-public-interfaces.md): 외부 계약과 런타임 내부 포트의 경계.
 
 실전 선물 주문과 증거금 투입은 정책상 금지다. 이 문서의 cutover는 우선
 paper scope에 한정하며 live 승격을 완료 조건으로 삼지 않는다.
