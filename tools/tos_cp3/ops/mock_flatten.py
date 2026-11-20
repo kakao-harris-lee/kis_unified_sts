@@ -25,9 +25,9 @@ Exit codes:
 
     0  nothing was held, or the holding reached 0      (flat)
     1  the broker's answer is not one to act on: the sell was rejected, OR a
-       balance read failed — which, after the sell went out, means the position
-       is unknown rather than unchanged. Read the balance in the 모의투자 HTS
-       before running this again.
+       balance read failed, OR a call raised instead of answering — which, after
+       the sell went out, means the position is unknown rather than unchanged.
+       Read the balance in the 모의투자 HTS before running this again.
     2  refused before any broker call                  (fail closed)
     3  sent and acknowledged, but still holding when the poll bound ran out
 
@@ -43,6 +43,7 @@ from collections.abc import Sequence
 from tools.tos_cp3.ops.mock_flat_check import (
     BalanceUnreadable,
     OpsRefusal,
+    broker_transport_errors,
     build_client,
     build_parser,
     holdings,
@@ -94,6 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OpsRefusal as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return EXIT_REFUSED
+    transport_errors = broker_transport_errors()
     try:
         qty = holdings(client, creds).get(args.symbol, 0)
         print(f"{args.symbol} holding {qty}")
@@ -128,6 +130,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         # unconfirmed". Both are the same instruction to the operator: read the
         # balance in the 모의투자 HTS before running anything else at this symbol.
         print(str(exc), file=sys.stderr)
+        return EXIT_REJECTED
+    except transport_errors as exc:
+        # Same instruction, and the type name only: the exception's own message
+        # carries the request URL, and the URL carries CANO. Whether the sell
+        # left the host is unknown — the 모의투자 HTS is what answers that.
+        print(f"broker call failed: {type(exc).__name__}", file=sys.stderr)
         return EXIT_REJECTED
     finally:
         client.close()

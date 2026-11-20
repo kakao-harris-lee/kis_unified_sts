@@ -32,6 +32,12 @@ class _Creds:
     account_no = "5000000001"
 
 
+#: ``tr_cont`` on a response page that ends the set. 'D' is what the mock
+#: answered on VTTC8434R (P-BAL 2026-08-05) — with the cursor keys still set,
+#: which is why the walk reads the header and not the keys.
+_END_OF_SET = "D"
+
+
 class _Client:
     """Records what a tool asked of the broker. Sends nothing."""
 
@@ -53,6 +59,18 @@ class _Client:
         self.calls.append((method, path, tr_id))
         self.params = dict(params or {})
         return 200, self.payload, 1.0, tr_id
+
+    def trading_get_with_headers(
+        self,
+        path: str,
+        tr_id: str,
+        *,
+        params: dict[str, Any] | None = None,
+        tr_cont: str = "",
+    ) -> tuple[int, dict[str, Any], float, str, dict[str, str]]:
+        self.calls.append(("GET", path, tr_id))
+        self.params = dict(params or {})
+        return 200, self.payload, 1.0, tr_id, {"tr_cont": _END_OF_SET}
 
     def stock_order_body(
         self, symbol: str, qty: int, *, order_type: str = "limit"
@@ -307,3 +325,349 @@ def test_flatten_says_still_held_when_the_poll_bound_runs_out(
         flatten.main([_SYMBOL, "--poll-interval-s", "0", "--poll-tries", "1"])
         == flatten.EXIT_STILL_HELD
     )
+
+
+# --- the open-order read (#1130 review: a resting order is not flat) --------
+
+
+class _PagedClient(_Client):
+    """Answers a fixed sequence of ``(payload, headers)`` pages, recording each ask."""
+
+    def __init__(
+        self,
+        pages: list[tuple[dict[str, Any], dict[str, str]]],
+        *,
+        status: int = 200,
+    ) -> None:
+        super().__init__()
+        self.pages = list(pages)
+        self.status = status
+        self.sent: list[dict[str, Any]] = []
+        self.tr_cont_sent: list[str] = []
+
+    def trading_get_with_headers(
+        self,
+        path: str,
+        tr_id: str,
+        *,
+        params: dict[str, Any] | None = None,
+        tr_cont: str = "",
+    ) -> tuple[int, dict[str, Any], float, str, dict[str, str]]:
+        self.calls.append(("GET", path, tr_id))
+        self.sent.append(dict(params or {}))
+        self.params = dict(params or {})
+        self.tr_cont_sent.append(tr_cont)
+        payload, headers = (
+            self.pages.pop(0)
+            if self.pages
+            else ({"rt_cd": "0", "output1": []}, {"tr_cont": _END_OF_SET})
+        )
+        return self.status, payload, 1.0, tr_id, headers
+
+
+def _page(
+    rows: list[dict[str, Any]],
+    *,
+    fk: str = "",
+    nk: str = "",
+    tr_cont: str = _END_OF_SET,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """One page: body (rows + cursor) and the header that says whether more follows."""
+    body = {
+        "rt_cd": "0",
+        "output1": rows,
+        "ctx_area_fk100": fk,
+        "ctx_area_nk100": nk,
+    }
+    return body, ({"tr_cont": tr_cont} if tr_cont else {})
+
+
+def _more(
+    rows: list[dict[str, Any]], *, fk: str, nk: str
+) -> tuple[dict[str, Any], dict[str, str]]:
+    return _page(rows, fk=fk, nk=nk, tr_cont="M")
+
+
+def _resting(odno: str = "0000000001", qty: str = "1") -> dict[str, Any]:
+    return {"pdno": _SYMBOL, "odno": odno, "rmn_qty": qty, "cncl_yn": "N"}
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"pdno": _SYMBOL, "rmn_qty": "1", "cncl_yn": "N"}, True),
+        ({"pdno": _SYMBOL, "rmn_qty": "0", "cncl_yn": "N"}, False),
+        ({"pdno": _SYMBOL, "rmn_qty": "1", "cncl_yn": "Y"}, False),
+        ({"pdno": "000660", "rmn_qty": "5", "cncl_yn": "N"}, False),
+        # Unattributable working quantity is never read as flat.
+        ({"pdno": "", "rmn_qty": "1", "cncl_yn": "N"}, True),
+    ],
+)
+def test_row_is_open(row: dict[str, Any], expected: bool) -> None:
+    assert flat.row_is_open(row, _SYMBOL) is expected
+
+
+@pytest.mark.parametrize(
+    "rmn_qty",
+    ["", "   ", None, "??", "1.5"],
+    ids=["blank", "spaces", "none", "not-a-number", "not-an-int"],
+)
+def test_an_unreadable_remainder_is_open_not_zero(rmn_qty: Any) -> None:
+    """Round-1 HIGH: `or "0"` read a blank remainder as a closed order.
+
+    The row is a working limit entry — one ordered, none filled — whose
+    ``rmn_qty`` the broker did not fill in. Read as 0 it is "closed", the check
+    says flat, and the leaf is archived with the order still live.
+    """
+    row = {
+        "pdno": _SYMBOL,
+        "ord_qty": "1",
+        "tot_ccld_qty": "0",
+        "rmn_qty": rmn_qty,
+        "cncl_yn": "N",
+    }
+    assert flat.row_is_open(row, _SYMBOL) is True
+
+
+def test_a_missing_remainder_key_is_open() -> None:
+    assert flat.row_is_open({"pdno": _SYMBOL, "cncl_yn": "N"}, _SYMBOL) is True
+
+
+def test_the_remainder_is_derived_when_the_row_does_not_state_it() -> None:
+    """`ord_qty - tot_ccld_qty` is readable, so the row CAN be proven closed."""
+    filled = {"pdno": _SYMBOL, "ord_qty": "1", "tot_ccld_qty": "1", "rmn_qty": ""}
+    assert flat.row_is_open(filled, _SYMBOL) is False
+    working = {"pdno": _SYMBOL, "ord_qty": "2", "tot_ccld_qty": "1", "rmn_qty": ""}
+    assert flat.row_is_open(working, _SYMBOL) is True
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        # cancelled, but with nothing to quantify it: still open to this gate.
+        {"pdno": _SYMBOL, "rmn_qty": "", "cncl_yn": "Y"},
+        # quantities that contradict each other (1 + 5 != 2).
+        {"pdno": _SYMBOL, "ord_qty": "2", "tot_ccld_qty": "1", "rmn_qty": "5"},
+        # a negative remainder is not a remainder.
+        {"pdno": _SYMBOL, "rmn_qty": "-1"},
+    ],
+    ids=["cancelled-unquantified", "inconsistent", "negative"],
+)
+def test_quantities_that_do_not_add_up_are_open(row: dict[str, Any]) -> None:
+    assert flat.row_is_open(row, _SYMBOL) is True
+
+
+def test_open_orders_queries_the_mock_tr_with_the_runtimes_parameters() -> None:
+    client = _PagedClient([_page([_resting()])])
+    assert flat.open_orders(client, _Creds(), _SYMBOL) == [_resting()]
+    assert client.calls == [("GET", flat.ORDER_PATH, flat.ORDER_TR_ID)]
+    sent = client.sent[0]
+    assert sent["PDNO"] == _SYMBOL
+    assert sent["CANO"] == _Creds.cano
+    # 전체, not 미체결-only: a narrowing filter that returned nothing would read
+    # as "no open order" — the one error this check may not make.
+    assert sent["CCLD_DVSN"] == "00"
+    assert sent["INQR_STRT_DT"] == sent["INQR_END_DT"]
+    assert sent["EXCG_ID_DVSN_CD"] == "KRX"
+    assert (sent["CTX_AREA_FK100"], sent["CTX_AREA_NK100"]) == ("", "")
+
+
+def test_the_last_page_is_the_one_the_tr_cont_header_calls_last() -> None:
+    """Round-1 MEDIUM: the mock sets cursor keys on its LAST page too.
+
+    Reading the keys instead of the header (P-BAL 2026-08-05 saw tr_cont='D'
+    with both keys set) would make every answer "the cursor did not advance" —
+    rc 1 on every symbol that has orders, and a restart that never works.
+    """
+    client = _PagedClient([_page([_resting()], fk="FK9", nk="NK9")])
+    assert len(flat.open_orders(client, _Creds(), _SYMBOL)) == 1
+    assert len(client.sent) == 1, "a page the broker called last was followed"
+
+
+def test_open_orders_walks_while_the_header_says_more() -> None:
+    client = _PagedClient(
+        [
+            _more([{"pdno": _SYMBOL, "rmn_qty": "0"}], fk="FK1", nk="NK1"),
+            _page([_resting(odno="0000000002")], fk="FK2", nk="NK2"),
+        ]
+    )
+    working = flat.open_orders(client, _Creds(), _SYMBOL)
+    assert [row["odno"] for row in working] == ["0000000002"]
+    assert len(client.sent) == 2
+    assert (client.sent[1]["CTX_AREA_FK100"], client.sent[1]["CTX_AREA_NK100"]) == (
+        "FK1",
+        "NK1",
+    )
+    # First page asks with no tr_cont; every later page asks for the next one.
+    assert client.tr_cont_sent == ["", flat.TR_CONT_REQUEST_NEXT]
+
+
+def test_a_page_without_a_tr_cont_header_is_refused() -> None:
+    """Fail closed: with no header there is no end-of-set, only a guess."""
+    client = _PagedClient([_page([], tr_cont="")])
+    with pytest.raises(flat.BalanceUnreadable, match="tr_cont"):
+        flat.open_orders(client, _Creds(), _SYMBOL)
+
+
+def test_the_header_is_read_whatever_its_case() -> None:
+    """The wire spells it; a plain-dict transport would not fold the case for us."""
+    client = _PagedClient([({"rt_cd": "0", "output1": []}, {"TR_CONT": "D"})])
+    assert flat.header_value({"TR_CONT": " D "}, "tr_cont") == "D"
+    assert flat.header_value({}, "tr_cont") == ""
+    assert flat.open_orders(client, _Creds(), _SYMBOL) == []
+
+
+def test_open_orders_refuses_our_page_cap_rather_than_report_none() -> None:
+    client = _PagedClient([_more([], fk=f"FK{i}", nk=f"NK{i}") for i in range(9)])
+    with pytest.raises(flat.BalanceUnreadable, match="cap"):
+        flat.open_orders(client, _Creds(), _SYMBOL)
+    assert len(client.sent) == flat.MAX_PAGES
+
+
+def test_open_orders_refuses_a_cursor_that_does_not_advance() -> None:
+    client = _PagedClient([_more([], fk="FK1", nk="NK1") for _ in range(3)])
+    with pytest.raises(flat.BalanceUnreadable, match="did not advance"):
+        flat.open_orders(client, _Creds(), _SYMBOL)
+
+
+def test_open_orders_refuses_more_without_a_cursor() -> None:
+    client = _PagedClient([_page([], tr_cont="M")])
+    with pytest.raises(flat.BalanceUnreadable, match="no continuation key"):
+        flat.open_orders(client, _Creds(), _SYMBOL)
+
+
+def test_open_orders_refuses_a_non_zero_rt_cd() -> None:
+    client = _PagedClient(
+        [({"rt_cd": "1", "msg1": "조회가 불가합니다"}, {"tr_cont": "D"})]
+    )
+    with pytest.raises(flat.BalanceUnreadable):
+        flat.open_orders(client, _Creds(), _SYMBOL)
+
+
+def test_open_orders_refuses_a_non_200() -> None:
+    client = _PagedClient([_page([])], status=500)
+    with pytest.raises(flat.BalanceUnreadable, match="http 500"):
+        flat.open_orders(client, _Creds(), _SYMBOL)
+
+
+# --- the balance read is walked too (L3: 25 holdings over 2 pages, 08-05) ---
+
+
+def test_holdings_walks_past_the_first_page() -> None:
+    """A symbol held only on page 2 must not read as "not held" — that is flat."""
+    client = _PagedClient(
+        [
+            _more([{"pdno": "000660", "hldg_qty": "1"}], fk="FK1", nk="NK1"),
+            _page([{"pdno": _SYMBOL, "hldg_qty": "1"}], fk="FK2", nk="NK2"),
+        ]
+    )
+    assert flat.holdings(client, _Creds()) == {"000660": 1, _SYMBOL: 1}
+    assert client.tr_cont_sent == ["", flat.TR_CONT_REQUEST_NEXT]
+    assert client.calls[0] == ("GET", flat.BALANCE_PATH, flat.BALANCE_TR_ID)
+
+
+def test_a_balance_walk_that_cannot_finish_is_unreadable() -> None:
+    client = _PagedClient([_more([], fk=f"FK{i}", nk=f"NK{i}") for i in range(9)])
+    with pytest.raises(flat.BalanceUnreadable, match="balance"):
+        flat.holdings(client, _Creds())
+
+
+def _wire_flat_check(
+    monkeypatch: pytest.MonkeyPatch, client: Any, held: dict[str, int]
+) -> None:
+    monkeypatch.setenv(flat.EXPECT_FP_ENV, _FP)
+    _no_env_file(monkeypatch, flat)
+    monkeypatch.setattr(flat, "build_client", lambda **kw: (client, _Creds()))
+    monkeypatch.setattr(flat, "holdings", lambda c, creds: held)
+
+
+def test_flat_check_calls_a_resting_order_not_flat(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The leaf must survive an ACKed, unfilled order (#948: no cancel exists)."""
+    client = _PagedClient([_page([_resting()])])
+    _wire_flat_check(monkeypatch, client, {})
+    assert flat.main([_SYMBOL]) == flat.EXIT_HELD
+    assert "open orders" in capsys.readouterr().out
+    assert client.closed == 1
+
+
+def test_flat_check_is_flat_only_with_no_holding_and_no_working_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _PagedClient([_page([{"pdno": _SYMBOL, "rmn_qty": "0", "cncl_yn": "N"}])])
+    _wire_flat_check(monkeypatch, client, {})
+    assert flat.main([_SYMBOL]) == flat.EXIT_FLAT
+
+
+def test_flat_check_reports_an_incomplete_order_read_as_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _PagedClient([_more([], fk=f"FK{i}", nk=f"NK{i}") for i in range(9)])
+    _wire_flat_check(monkeypatch, client, {})
+    assert flat.main([_SYMBOL]) == flat.EXIT_UNREADABLE
+    assert client.closed == 1
+
+
+def test_flat_check_spends_no_order_call_when_the_balance_already_says_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _PagedClient([])
+    _wire_flat_check(monkeypatch, client, {_SYMBOL: 1})
+    assert flat.main([_SYMBOL]) == flat.EXIT_HELD
+    assert client.sent == []
+
+
+# --- transport failures: rc 1, and no URL (the URL carries CANO) ------------
+
+
+_URL_IN_EXC = (
+    "HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): "
+    "Max retries exceeded with url: /uapi/domestic-stock/v1/trading/"
+    "inquire-balance?CANO=50000000&ACNT_PRDT_CD=01"
+)
+
+
+def _raise_transport(*_args: Any, **_kwargs: Any) -> dict[str, int]:
+    import requests
+
+    raise requests.ConnectionError(_URL_IN_EXC)
+
+
+def test_flat_check_maps_a_transport_failure_to_unknown_without_the_url(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = _Client()
+    monkeypatch.setenv(flat.EXPECT_FP_ENV, _FP)
+    _no_env_file(monkeypatch, flat)
+    monkeypatch.setattr(flat, "build_client", lambda **kw: (client, _Creds()))
+    monkeypatch.setattr(flat, "holdings", _raise_transport)
+    assert flat.main([_SYMBOL]) == flat.EXIT_UNREADABLE
+    printed = capsys.readouterr()
+    assert "ConnectionError" in printed.err
+    for leak in ("CANO", "50000000", "openapivts"):
+        assert leak not in printed.out + printed.err
+    assert client.closed == 1
+
+
+def test_flatten_maps_a_transport_failure_to_rejected_without_the_url(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = _Client()
+    monkeypatch.setenv(flat.EXPECT_FP_ENV, _FP)
+    _no_env_file(monkeypatch, flatten)
+    monkeypatch.setattr(flatten, "build_client", lambda **kw: (client, _Creds()))
+    monkeypatch.setattr(flatten, "holdings", _raise_transport)
+    assert flatten.main([_SYMBOL]) == flatten.EXIT_REJECTED
+    printed = capsys.readouterr()
+    assert "ConnectionError" in printed.err
+    for leak in ("CANO", "50000000", "openapivts"):
+        assert leak not in printed.out + printed.err
+    assert client.closed == 1
+
+
+def test_a_probe_error_is_caught_the_same_way() -> None:
+    """ProbeError is in the caught set, so it cannot print a call's detail either."""
+    from tools.broker_probes.common import ProbeError
+
+    assert issubclass(ProbeError, tuple(flat.broker_transport_errors()))
