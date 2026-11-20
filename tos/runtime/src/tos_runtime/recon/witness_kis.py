@@ -59,6 +59,18 @@ def _decimal_or_none(value: Any) -> Decimal | None:
     return None
 
 
+def _finite_decimal_or_none(value: Any) -> Decimal | None:
+    """:func:`_decimal_or_none`, but ``NaN``/``sNaN``/``Infinity`` is also ``None``.
+
+    Only the two price fields use this. ``Decimal("NaN")`` parses, so a broker string of
+    that shape would travel into evidence and raise ``InvalidOperation`` the first time a
+    reader compared it. The quantity fields keep the older coercion untouched — their
+    ``_fill_state`` comparisons are a decision path this change may not alter.
+    """
+    parsed = _decimal_or_none(value)
+    return parsed if parsed is not None and parsed.is_finite() else None
+
+
 def _header_value(secret: bytes) -> str:
     """ASCII-decode one credential for its header. A non-ASCII credential is refused WITHOUT"""
     try:
@@ -212,7 +224,8 @@ class KisOrderRow:
     #: printed them: WHOLE KRW on the wire, NOT the tenant tree's ``_runtime.price_scale``
     #: representation (the seal scales the other way — ORD_UNPR = price / price_scale).
     #: Observation only: no witness/fill/release decision reads either, and an absent,
-    #: blank, or unparseable value is ``None`` rather than a refused row.
+    #: blank, unparseable, or non-finite (``NaN``/``Infinity``) value is ``None`` rather
+    #: than a refused row.
     avg_prvs: Decimal | None = None
     tot_ccld_amt: Decimal | None = None
 
@@ -235,8 +248,8 @@ class KisOrderRow:
             rmn_qty=_decimal_or_none(row.get("rmn_qty")),
             rjct_qty=_decimal_or_none(row.get("rjct_qty")),
             cancelled=str(row.get("cncl_yn") or "").strip() == _CANCELLED,
-            avg_prvs=_decimal_or_none(row.get("avg_prvs")),
-            tot_ccld_amt=_decimal_or_none(row.get("tot_ccld_amt")),
+            avg_prvs=_finite_decimal_or_none(row.get("avg_prvs")),
+            tot_ccld_amt=_finite_decimal_or_none(row.get("tot_ccld_amt")),
         )
 
 

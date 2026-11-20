@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Iterator
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import pytest
 from tos_runtime.recon import witness_kis
@@ -677,8 +677,32 @@ def test_the_execution_price_fields_are_read_as_exact_decimals() -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ["", "   ", "-", None, ["193300"], {"price": "193300"}, True],
-    ids=["blank", "whitespace", "dash", "null", "array", "object", "bool"],
+    [
+        "",
+        "   ",
+        "-",
+        None,
+        ["193300"],
+        {"price": "193300"},
+        True,
+        "NaN",
+        "sNaN",
+        "Infinity",
+        "-Infinity",
+    ],
+    ids=[
+        "blank",
+        "whitespace",
+        "dash",
+        "null",
+        "array",
+        "object",
+        "bool",
+        "nan",
+        "snan",
+        "infinity",
+        "negative-infinity",
+    ],
 )
 def test_an_unusable_execution_price_leaves_the_rest_of_the_row_readable(
     value: object,
@@ -699,6 +723,22 @@ def test_an_unusable_execution_price_leaves_the_rest_of_the_row_readable(
         Decimal("1"),
         Decimal("0"),
     )
+
+
+def test_a_non_finite_price_never_reaches_a_comparison() -> None:
+    """``Decimal("NaN") > 0`` RAISES ``InvalidOperation`` — it is not ``False``.
+
+    A price that parses but cannot be compared would travel into evidence and blow up in
+    the first reader that ranked it, so the two price fields refuse it at the parse. The
+    quantity fields are deliberately NOT changed: their comparisons are a decision path.
+    """
+    parsed = witness_kis.KisOrderRow.from_wire(
+        _priced_wire_row(avg_prvs="NaN", tot_ccld_amt="Infinity")
+    )
+
+    assert (parsed.avg_prvs, parsed.tot_ccld_amt) == (None, None)
+    with pytest.raises(InvalidOperation):
+        _ = Decimal("NaN") > 0
 
 
 def test_a_row_without_the_price_fields_parses_as_it_always_did() -> None:

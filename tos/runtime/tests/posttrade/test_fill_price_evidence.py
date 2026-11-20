@@ -67,6 +67,8 @@ def _row(
     odno: str = _ODNO,
     avg_prvs: str | None = _AVG_PRVS,
     tot_ccld_amt: str | None = _TOT_CCLD_AMT,
+    ord_qty: str = format(_QTY, "f"),
+    pdno: str = _INSTRUMENT,
 ) -> KisOrderRow:
     """One fully filled row, parsed the one way the witness parses a wire row."""
     return KisOrderRow.from_wire(
@@ -74,8 +76,8 @@ def _row(
             "ord_dt": _DATE,
             "odno": odno,
             "orgn_odno": "0000000000",
-            "pdno": _INSTRUMENT,
-            "ord_qty": format(_QTY, "f"),
+            "pdno": pdno,
+            "ord_qty": ord_qty,
             "tot_ccld_qty": format(_QTY, "f"),
             "rmn_qty": "0",
             "rjct_qty": "0",
@@ -190,6 +192,34 @@ def test_ambiguous_rows_claim_no_price(store: SqliteEvidenceStore) -> None:
 
     (observed,) = _observed(store)
     assert (observed["kind"], observed["reason"]) == ("UNKNOWN", "ambiguous_rows")
+    assert (observed["avg_execution_price"], observed["executed_amount"]) == (
+        None,
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_reason"),
+    [
+        ({"ord_qty": "2"}, "ordered_quantity_mismatch"),
+        ({"pdno": "000660"}, "instrument_mismatch"),
+    ],
+    ids=["ordered-quantity", "instrument"],
+)
+def test_an_unknown_verdict_claims_no_price_even_from_a_single_row(
+    store: SqliteEvidenceStore, overrides: dict[str, str], expected_reason: str
+) -> None:
+    """review-1121 L2: an ``UNKNOWN`` row contradicts the attempt — quoting its price as
+
+    the attempt's execution price would contradict the same row this record disbelieves. One
+    row, so the ODNO is unambiguous; the price is still refused because the verdict is.
+    """
+    observer = _observer(store, (_row(**overrides),))
+
+    assert observer.poll_once().emitted != ()
+
+    (observed,) = _observed(store)
+    assert (observed["kind"], observed["reason"]) == ("UNKNOWN", expected_reason)
     assert (observed["avg_execution_price"], observed["executed_amount"]) == (
         None,
         None,

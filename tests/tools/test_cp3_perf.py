@@ -231,6 +231,35 @@ def test_a_leaf_without_the_price_keys_falls_back_to_the_sealed_order_price(
     assert f"-1,200{perf.FALLBACK_MARK}" in text
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["NaN", "sNaN", "Infinity", "-Infinity", "0", "-1"],
+    ids=["nan", "snan", "infinity", "negative-infinity", "zero", "negative"],
+)
+def test_an_uncomparable_or_nonpositive_execution_price_falls_back(
+    tmp_path: Path, value: str
+) -> None:
+    """``Decimal("NaN") > 0`` 은 ``False`` 가 아니라 ``InvalidOperation`` 을 던진다.
+
+    이 도구는 자기가 쓰지 않은 잎도 읽으므로(보관된 잎 · 손댄 잎) 비교 전에 걸러야
+    보고서가 죽지 않는다. 쓸 수 없는 가격은 지정가로 떨어질 뿐이다.
+    """
+    rows = _round_trip_rows()
+    rows[3][1]["avg_execution_price"] = value
+
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, code = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    assert code == 0
+    (symbol,) = document["symbols"]
+    # 매수는 지정가 193,400, 매도는 체결가 192,200 → −1,200 이고 기준은 «섞임».
+    assert symbol["days"][0]["pnl_krw"] == "-1200"
+    assert symbol["days"][0]["pnl_basis"] == perf.BASIS_MIXED
+    assert f"-1,200{perf.FALLBACK_MARK}" in text
+
+
 def test_a_round_trip_that_mixes_both_prices_says_mixed(tmp_path: Path) -> None:
     """한 다리만 체결가가 있으면 그 날의 기준은 «섞임» 이고 표에 표시가 붙는다."""
     rows = [

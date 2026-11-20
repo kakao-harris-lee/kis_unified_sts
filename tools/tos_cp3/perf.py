@@ -195,8 +195,13 @@ def _decimal(value: Any) -> Decimal | None:
 
 
 def _positive(value: Decimal | None) -> Decimal | None:
-    """0 이나 음수인 «가격» 은 가격이 아니다 — 브로커가 아직 못 찍은 것으로 본다."""
-    return value if value is not None and value > 0 else None
+    """0 이나 음수인 «가격» 은 가격이 아니다 — 브로커가 아직 못 찍은 것으로 본다.
+
+    ``is_finite()`` 를 먼저 묻는 이유: ``Decimal("NaN") > 0`` 은 ``False`` 가 아니라
+    ``InvalidOperation`` 을 던진다. 잎이 적은 문자열은 이 도구가 고르지 않으므로
+    (오래된 잎 · 손댄 잎도 읽는다) 비교 전에 걸러 보고서가 죽지 않게 한다.
+    """
+    return value if value is not None and value.is_finite() and value > 0 else None
 
 
 def _dig(record: Any, *path: str) -> Any:
