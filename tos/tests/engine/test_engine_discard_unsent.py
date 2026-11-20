@@ -290,3 +290,74 @@ def test_the_974_block_clears_after_the_discard() -> None:
     assert CommitmentStep.LEDGER_VERIFICATION in consulted_after
     assert len(transmit.attempts) == 1
     assert outstanding(ledger, key).capacity_state is CapacityState.POTENTIALLY_LIVE
+
+
+def _refused_ref(attempt_id: str | None = _ATTEMPT) -> UnsentDiscardRef:
+    return UnsentDiscardRef(
+        proposal_id=_PROPOSAL,
+        reason=UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT,
+        attempt_id=attempt_id,
+    )
+
+
+def _handed_off_ledger() -> tuple[ProvisionalReservationLedger, InstrumentKey]:
+    """What a hand-off leaves behind: the sequencer marks POTENTIALLY_LIVE before transmit."""
+    ledger, key = _committed_ledger()
+    ledger.bind_attempt(key, attempt_id=_ATTEMPT)
+    ledger.mark_potentially_live(key)
+    return ledger, key
+
+
+def test_a_send_refused_before_transport_discards_the_potentially_live_projection() -> (
+    None
+):
+    """2026-11-20: the gateway refused the attempt before any transport call."""
+    ledger, key = _handed_off_ledger()
+    assert ledger.admits_new_exposure(key) is False
+
+    assert ledger.discard_unsent(_refused_ref()) is True
+
+    assert ledger.outstanding(key) is None
+    assert ledger.admits_new_exposure(key) is True
+
+
+@pytest.mark.parametrize("attempt_id", [None, "attempt-other"])
+def test_a_refused_discard_must_name_the_held_attempt(attempt_id: str | None) -> None:
+    ledger, key = _handed_off_ledger()
+    before = outstanding(ledger, key)
+    assert ledger.discard_unsent(_refused_ref(attempt_id)) is False
+    assert outstanding(ledger, key) == before
+
+
+def test_a_refused_discard_does_not_apply_before_the_hand_off() -> None:
+    """The refusal reason names the POTENTIALLY_LIVE shape only; NOT_SENT keeps its own reason."""
+    ledger, key = _committed_ledger()
+    ledger.bind_attempt(key, attempt_id=_ATTEMPT)
+    assert ledger.discard_unsent(_refused_ref()) is False
+    assert outstanding(ledger, key).capacity_state is CapacityState.ATTEMPT_BOUND
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [EgressResultKind.TIMEOUT, EgressResultKind.UNKNOWN, EgressResultKind.ACK],
+)
+def test_a_refused_discard_is_refused_once_any_result_applied(
+    kind: EgressResultKind,
+) -> None:
+    """A TIMEOUT / UNKNOWN / ACK already applied to the attempt keeps the projection held."""
+    ledger, key = _handed_off_ledger()
+    applied = ledger.apply_egress_result(
+        EgressResultPayload(instrument_key=key, attempt_id=_ATTEMPT, kind=kind)
+    )
+    assert applied.disposition is ResultDisposition.APPLIED
+    before = outstanding(ledger, key)
+
+    assert ledger.discard_unsent(_refused_ref()) is False
+    assert outstanding(ledger, key) == before
+
+
+def test_the_unsent_reason_still_refuses_potentially_live() -> None:
+    """The new reason does not widen the old one."""
+    ledger, key = _handed_off_ledger()
+    assert ledger.discard_unsent(_ref()) is False
+    assert ledger.outstanding(key) is not None

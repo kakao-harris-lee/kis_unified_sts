@@ -325,6 +325,7 @@ class UnsentDiscardRef(FrozenModel):
 
     proposal_id: str
     reason: UnsentDiscardReason
+    attempt_id: str | None = None
 
 
 class EgressResultOutcome(FrozenModel):

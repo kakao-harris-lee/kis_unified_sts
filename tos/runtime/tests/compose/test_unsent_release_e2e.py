@@ -12,6 +12,7 @@ from tos_runtime.calendar.ports import FixedWallClockReference
 from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.posttrade.unsent_release import (
     CAPACITY_RELEASE_INTENT_KIND,
+    REFUSED_BEFORE_TRANSPORT_CAUSE,
     UNSENT_RELEASE_CAUSE,
     UnsentReleasePass,
     unsent_release_command_id,
@@ -320,5 +321,211 @@ def test_a_raising_release_pass_still_lets_the_operator_projection_publish(
         assert "the release pass is broken" in (
             runtime.driver.after_turn_last_error or ""
         )
+    finally:
+        _close_runtime(runtime)
+
+
+def _refused_open(runtime: Any, custody_root: Path) -> str:
+    """2026-11-20 incident shape: item 12's tradability fact is None, so the gateway refuses the
+    OPEN at step 15 — after the hand-off, before seal, claim, and any transport call."""
+    _reach_trusted(runtime)
+    resolver = runtime.context_resolver
+    original = resolver.tradability_facts_current_reader
+    resolver.tradability_facts_current_reader = lambda: None
+    try:
+        _, refused = _approve_and_run(runtime, custody_root, fx.crossing_event(seq=0))
+    finally:
+        resolver.tradability_facts_current_reader = original
+    assert refused.flow is not None and refused.flow.handed_off is True
+    (refusal,) = _rows(runtime, "SEND_REFUSED")
+    assert refusal["step"] == "SEND_BOUNDARY_VERIFICATION"
+    assert "tradability_facts_current is None" in refusal["detail"]
+    assert _rows(runtime, "NETWORK_CALL_ENTERED") == []
+    assert _rows(runtime, "SEND_SEALED") == []
+    ((reservation_id, _state),) = _reservations(runtime)
+    return reservation_id
+
+
+def _open_fills(runtime: Any, custody_root: Path, *, seq: int) -> None:
+    _, entry = _approve_and_run(runtime, custody_root, fx.crossing_event(seq=seq))
+    assert entry.flow is not None and entry.flow.handed_off is True
+    assert entry.flow.halt_step is None
+    for _ in range(3):
+        runtime.run_once(())
+
+
+def test_an_open_refused_before_transport_releases_and_the_next_open_fills(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-11-20: the refused OPEN gives its capacity back, and the next OPEN is sent."""
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+    turn_the_venue_ledger_on(config_dir_with_risk_state)
+    runtime = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        refused_id = _refused_open(runtime, custody_root)
+        assert dict(_reservations(runtime)) == {refused_id: CapacityState.RELEASED}
+        (discard,) = _rows(runtime, _DISCARD_KIND)
+        assert discard["reason"] == REFUSED_BEFORE_TRANSPORT_CAUSE
+        instrument_key = runtime.context_resolver.instrument_key
+        assert runtime.core.ledger.outstanding(instrument_key) is None
+
+        _open_fills(runtime, custody_root, seq=1)
+        states = dict(_reservations(runtime))
+        assert states.pop(refused_id) is CapacityState.RELEASED
+        assert list(states.values()) == [CapacityState.POSITION_CONSUMED]
+    finally:
+        _close_runtime(runtime)
+
+
+def test_a_crash_before_the_refused_release_is_released_at_boot_and_replays_clean(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Die after the refused flow's receipt and before the release: the boot pass reaches the same
+    answer from evidence, and a third boot replays the discard row without divergence.
+    """
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+    turn_the_venue_ledger_on(config_dir_with_risk_state)
+    runtime = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        monkeypatch.setattr(UnsentReleasePass, "run", lambda _self: False)
+        refused_id = _refused_open(runtime, custody_root)
+        assert dict(_reservations(runtime)) == {
+            refused_id: CapacityState.COMMITTED_UNBOUND
+        }
+        instrument_key = runtime.context_resolver.instrument_key
+    finally:
+        _close_runtime(runtime)
+    monkeypatch.undo()
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+
+    rebooted = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        assert rebooted.recovery is not None and rebooted.recovery.ready is True
+        assert dict(_reservations(rebooted)) == {refused_id: CapacityState.RELEASED}
+        assert rebooted.core.ledger.outstanding(instrument_key) is None
+        assert len(_rows(rebooted, _DISCARD_KIND)) == 1
+    finally:
+        _close_runtime(rebooted)
+
+    third = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        assert third.recovery is not None and third.recovery.ready is True
+        assert third.core.ledger.outstanding(instrument_key) is None
+        assert len(_rows(third, _DISCARD_KIND)) == 1
+        _open_fills(third, custody_root, seq=1)
+        states = dict(_reservations(third))
+        assert states.pop(refused_id) is CapacityState.RELEASED
+        assert list(states.values()) == [CapacityState.POSITION_CONSUMED]
+    finally:
+        _close_runtime(third)
+
+
+def _refusing(runtime: Any) -> Any:
+    """Make item 12's tradability fact None (the 11-20 shape); returns the original reader."""
+    resolver = runtime.context_resolver
+    original = resolver.tradability_facts_current_reader
+    resolver.tradability_facts_current_reader = lambda: None
+    return original
+
+
+def _close_fills_and_everything_releases(
+    runtime: Any, custody_root: Path, *, seq: int
+) -> None:
+    discovery, closed = _approve_and_run(
+        runtime, custody_root, fx.crossing_event(seq=seq, close=fx.UPPER_BAND + 1_000)
+    )
+    proposal = discovery.pipeline.proposal
+    assert (proposal.position_effect, proposal.direction) == ("CLOSE", "SHORT")
+    assert closed.flow is not None and closed.flow.handed_off is True
+    assert closed.flow.halt_step is None, closed.flow
+    for _ in range(3):
+        runtime.run_once(())
+    assert set(dict(_reservations(runtime)).values()) == {CapacityState.RELEASED}
+    instrument_key = runtime.context_resolver.instrument_key
+    witness = runtime.venue_ledger.witness
+    assert witness is not None
+    snapshot = witness.observe(
+        WitnessScope(account=instrument_key.account, instrument_keys=(instrument_key,))
+    )
+    assert snapshot.positions == (), snapshot.positions
+
+
+def test_a_refused_open_then_a_filled_open_still_closes_and_releases(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """review-1122 HIGH (a): the refused release's intent row must not poison the close history."""
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+    turn_the_venue_ledger_on(config_dir_with_risk_state)
+    runtime = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        _refused_open(runtime, custody_root)
+        _open_fills(runtime, custody_root, seq=1)
+        _close_fills_and_everything_releases(runtime, custody_root, seq=2)
+    finally:
+        _close_runtime(runtime)
+
+
+def test_a_refused_close_is_released_and_the_next_close_fills(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """review-1122 HIGH (b): entry fills -> CLOSE refused before transport -> released -> CLOSE."""
+    monkeypatch.setattr(fx, "band_reversion_strategy_mapping", _entry_exit_mapping)
+    turn_the_venue_ledger_on(config_dir_with_risk_state)
+    runtime = _boot_with_the_production_risk_service(
+        config_dir_with_risk_state, data_dir, custody_root
+    )
+    try:
+        _reach_trusted(runtime)
+        _open_fills(runtime, custody_root, seq=0)
+        (entry_id,) = dict(_reservations(runtime))
+
+        original = _refusing(runtime)
+        try:
+            _, refused = _approve_and_run(
+                runtime,
+                custody_root,
+                fx.crossing_event(seq=1, close=fx.UPPER_BAND + 1_000),
+            )
+        finally:
+            runtime.context_resolver.tradability_facts_current_reader = original
+        assert refused.flow is not None and refused.flow.handed_off is True
+        assert refused.flow.attempt is not None
+        refused_attempt = refused.flow.attempt.attempt_id
+        assert [row["attempt_id"] for row in _rows(runtime, "SEND_REFUSED")] == [
+            refused_attempt
+        ]
+        assert all(
+            row["attempt_id"] != refused_attempt
+            for row in _rows(runtime, "NETWORK_CALL_ENTERED")
+        )
+        states = dict(_reservations(runtime))
+        assert states.pop(entry_id) is CapacityState.POSITION_CONSUMED
+        assert list(states.values()) == [CapacityState.RELEASED]
+        (discard,) = _rows(runtime, _DISCARD_KIND)
+        assert discard["reason"] == REFUSED_BEFORE_TRANSPORT_CAUSE
+
+        _close_fills_and_everything_releases(runtime, custody_root, seq=2)
     finally:
         _close_runtime(runtime)

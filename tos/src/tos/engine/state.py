@@ -17,6 +17,7 @@ from tos.engine.vocabulary import (
     EgressKnowledge,
     EgressResultKind,
     ResultDisposition,
+    UnsentDiscardReason,
 )
 from tos.rcl import CapacityState
 
@@ -107,6 +108,23 @@ class FinalityProofRef(FrozenModel):
 _DISCARDABLE_CAPACITY: frozenset[CapacityState] = frozenset(
     {CapacityState.COMMITTED_UNBOUND, CapacityState.ATTEMPT_BOUND}
 )
+
+
+def _discardable(reservation: ProvisionalReservation, ref: UnsentDiscardRef) -> bool:
+    """Whether ``ref``'s reason admits discarding ``reservation`` (the two never-sent shapes)."""
+    if ref.reason is UnsentDiscardReason.SEND_REFUSED_BEFORE_TRANSPORT:
+        # The gateway refused this exact attempt before any transport call: the sequencer
+        # already projected POTENTIALLY_LIVE, and nothing has been applied to it since.
+        return (
+            ref.attempt_id is not None
+            and reservation.attempt_id == ref.attempt_id
+            and reservation.knowledge is EgressKnowledge.SENT_UNCONFIRMED
+            and reservation.capacity_state is CapacityState.POTENTIALLY_LIVE
+        )
+    return (
+        reservation.knowledge is EgressKnowledge.NOT_SENT
+        and reservation.capacity_state in _DISCARDABLE_CAPACITY
+    )
 
 
 def knowledge_for_result(kind: EgressResultKind) -> EgressKnowledge:
@@ -216,9 +234,7 @@ class ProvisionalReservationLedger:
         for key_tuple, reservation in tuple(self._reservations.items()):
             if reservation.proposal_id != ref.proposal_id:
                 continue
-            if reservation.knowledge is not EgressKnowledge.NOT_SENT:
-                return False
-            if reservation.capacity_state not in _DISCARDABLE_CAPACITY:
+            if not _discardable(reservation, ref):
                 return False
             if reservation.attempt_id is not None and any(
                 signature[0] == reservation.attempt_id
