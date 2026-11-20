@@ -64,7 +64,6 @@ def seed_lineage(
         "dropped_density": sum(
             1 for s in seed.sessions if s.drop_reason == SEED_DROP_DENSITY
         ),
-        "calendar_covered_years": list(config.calendar_covered_years),
         "parser_env": dict(config.parser_env),
         "config_sha256": config.sha256,
         "source_id": source_id,

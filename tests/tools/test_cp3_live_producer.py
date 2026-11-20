@@ -330,13 +330,9 @@ class FakeQuotes:
         return self._visible(day)
 
 
-COVERED_YEARS = (2026,)
-
-
-def _tenant_calendar(*, covered_years=COVERED_YEARS):
+def _tenant_calendar():
     return calendar_mod.load_runtime_calendar(
         _REPO_ROOT / "config/tos_runtime/cp3-setup-d-long/calendar.yaml",
-        covered_years=covered_years,
     )
 
 
@@ -1933,48 +1929,57 @@ def test_item5_red_a_density_gate_that_is_not_b1as_refuses_to_start(
         )
 
 
-def test_item5_red_a_declared_covered_year_without_holidays_is_refused() -> None:
-    """Coverage is declared and cross-checked, never inferred (review L4).
+def test_a_date_in_a_year_the_calendar_lists_no_holidays_for_still_runs() -> None:
+    """The 2027 cliff, gone (operator directive 2026-11-20).
 
-    Inferring from the holiday dates makes ONE forward-dated entry mark a whole
-    year as covered, which is the silent "every weekday trades" that plan
-    §3.2 L2's refusal exists to prevent. The tenant calendar is digest-bound so
-    it cannot carry its own range; the declaration is checked against the file
-    instead.
+    Measured before this change: a 2027-01-04 target raised
+    ``LiveProducerRefused`` at ``producer.boot``'s calendar check, because the
+    reader demanded a declared covered year and the tenant calendar carries
+    2026 holidays only. The calendar is now known-holidays-only: an unlisted
+    weekday is a trading day whatever its year, so no one has to renew a
+    declaration every December.
+
+    The other two directions stay: a LISTED holiday and a weekend are not
+    trading days.
     """
-    assert _tenant_calendar().covered_years == frozenset({2026})
-    with pytest.raises(LiveProducerRefused, match="2027"):
-        _tenant_calendar(covered_years=(2026, 2027))
-    with pytest.raises(LiveProducerRefused, match="no covered years"):
-        _tenant_calendar(covered_years=())
-    shipped = config_mod.load_config(
-        _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml", repo_root=_REPO_ROOT
-    )
-    assert shipped.calendar_covered_years == (2026,)
+    cal = _tenant_calendar()
+    assert cal.is_trading_day(date(2027, 1, 4)) is True
+    assert cal.is_trading_day(date(2026, 12, 25)) is False  # 크리스마스, listed
+    assert cal.is_trading_day(date(2026, 12, 31)) is False  # KRX 연말, listed
+    assert cal.is_trading_day(date(2027, 1, 2)) is False  # Saturday
+
+    # The walk reaches across the year end without refusing, and steps over the
+    # one closed day the calendar DOES list (2026-12-31).
+    assert list(cal.trading_days_before(date(2027, 1, 5), max_calendar_days=10)) == [
+        date(2027, 1, 4),
+        date(2027, 1, 1),  # 신정 — closed, but unlisted: the DATA settles it
+        date(2026, 12, 30),
+        date(2026, 12, 29),
+        date(2026, 12, 28),
+    ]
 
 
-def test_item5_red_a_thin_year_is_refused_even_with_one_holiday(
-    tmp_path: Path,
-) -> None:
-    """The concrete input L4 names: a single stray 2027 entry.
+@pytest.mark.parametrize(
+    "shipped",
+    [
+        "cp3-live-producer.yaml",
+        "cp3-live-producer-stock-005930.yaml",
+        "cp3-live-producer-stock-005380.yaml",
+        "cp3-live-producer-stock-000660.yaml",
+    ],
+)
+def test_no_shipped_producer_config_declares_a_calendar_range(shipped: str) -> None:
+    """The key is gone from the loader, so a config still carrying it is refused.
 
-    One holiday is not a covered year. Built here rather than measured on the
-    tenant file, because the tenant file must not be edited.
+    ``load_config`` refuses unknown keys, which is what makes this a red proof:
+    if one of the four files had kept ``calendar_covered_years``, this would
+    raise instead of loading.
     """
-    source = yaml.safe_load(
-        (_REPO_ROOT / "config/tos_runtime/cp3-setup-d-long/calendar.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    source["holidays"] = [*source["holidays"], "2027-01-01"]
-    path = tmp_path / "with-stray-2027.yaml"
-    path.write_text(yaml.safe_dump(source, allow_unicode=True), encoding="utf-8")
-
-    assert calendar_mod.load_runtime_calendar(
-        path, covered_years=(2026,)
-    ).covered_years == frozenset({2026})
-    with pytest.raises(LiveProducerRefused, match="2027: 1"):
-        calendar_mod.load_runtime_calendar(path, covered_years=(2026, 2027))
+    path = _REPO_ROOT / "config/tos_probes" / shipped
+    keys = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert "calendar_covered_years" not in keys
+    config = config_mod.load_config(path, repo_root=_REPO_ROOT)
+    assert not hasattr(config, "calendar_covered_years")
 
 
 def test_item5_the_token_cache_is_scoped_to_the_app_key(
@@ -2013,19 +2018,50 @@ def test_item5_the_token_cache_is_scoped_to_the_app_key(
     assert FakeCreds.app_key not in str(captured["token_cache"])
 
 
-@pytest.mark.parametrize("walk_back_year", [2025])
-def test_item5_red_a_seed_walk_leaving_the_calendar_is_refused(
-    walk_back_year: int,
-) -> None:
-    """Plan §3.2's explicit coverage refusal, not a silent "no holidays".
+def test_an_unlisted_closed_weekday_is_skipped_by_the_seed_walk(inputs: dict) -> None:
+    """The concrete input the dropped coverage declaration used to cover.
 
-    The tenant calendar holds 2026 only, so a target early enough that the walk
-    crosses into the previous year must refuse before requesting anything.
+    2027-01-01 (신정) is closed, and the tenant calendar does not list it — the
+    exact "a holiday nobody added" the old refusal existed to prevent. The walk
+    now asks the broker for that day, gets no rows at all, and treats it as
+    closed: dropped as :data:`frame.SEED_DROP_NO_RAW_ROWS`, walked past, and
+    recorded. The seed still fills, from the four days that DID answer.
+
+    2026-12-31 (listed) is the control: it is never even requested.
     """
-    calendar = _tenant_calendar()
-    with pytest.raises(LiveProducerRefused, match="covers"):
-        list(calendar.trading_days_before(date(2026, 1, 5), max_calendar_days=10))
-    assert walk_back_year not in calendar.covered_years
+    target = date(2027, 1, 5)
+    open_days = [date(2026, 12, 28), date(2026, 12, 29), date(2026, 12, 30)]
+    open_days.append(date(2027, 1, 4))
+    market = Market(
+        sessions={
+            day: _session_bars(day, partial(_constant, _seed_scale(index)))
+            for index, day in enumerate(open_days)
+        },
+        target_bars=[],
+    )
+    walked: list[date] = []
+
+    def fetch(day: date, contract: str) -> list[dict]:
+        walked.append(day)
+        return market.rows(day)
+
+    seed = frame_mod.build_seed(
+        target=target,
+        calendar=_tenant_calendar(),
+        strategy=inputs["strategy"],
+        anchor=inputs["anchor"],
+        min_bars_per_day=330,
+        max_calendar_days=90,
+        fetch_day=fetch,
+        assembler=partial(frame_mod.same_contract_seed, instrument=INSTRUMENT),
+    )
+
+    assert date(2027, 1, 1) in walked, "an unlisted weekday is walked, not refused"
+    assert date(2026, 12, 31) not in walked, "a listed holiday is never requested"
+    assert seed.days_used == tuple(sorted(open_days))
+    dropped = {s.day: s.drop_reason for s in seed.sessions if s.drop_reason}
+    assert dropped == {date(2027, 1, 1): frame_mod.SEED_DROP_NO_RAW_ROWS}
+    assert seed.capacity >= seed.required
 
 
 def test_item5_the_session_window_comes_from_the_calendar(tmp_path: Path) -> None:
@@ -2040,9 +2076,7 @@ def test_item5_the_session_window_comes_from_the_calendar(tmp_path: Path) -> Non
     assert window.last_bar_minute(TARGET) == datetime(2026, 10, 19, 15, 45)
     assert window.end_boundary(TARGET) == datetime(2026, 10, 19, 15, 46)
 
-    moved = calendar_mod.load_runtime_calendar(
-        _write_calendar(tmp_path), covered_years=COVERED_YEARS
-    )
+    moved = calendar_mod.load_runtime_calendar(_write_calendar(tmp_path))
     assert moved.window("krx-index-futures", "CONTINUOUS").end_boundary(
         TARGET
     ) == datetime(2026, 10, 19, 9, 21)
@@ -3483,9 +3517,9 @@ def test_the_open_the_read_side_uses_is_the_tenant_calendars_own() -> None:
     """
     shipped = _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml"
     config = config_mod.load_config(shipped, repo_root=_REPO_ROOT)
-    window = calendar_mod.load_runtime_calendar(
-        config.calendar_yaml, covered_years=config.calendar_covered_years
-    ).window(config.calendar_session_id, config.calendar_session_phase)
+    window = calendar_mod.load_runtime_calendar(config.calendar_yaml).window(
+        config.calendar_session_id, config.calendar_session_phase
+    )
     expected = datetime.combine(TARGET, window.start, tzinfo=band_line_mod.KST)
 
     open_ms, trading_date = band_line_mod.session_open_ms(

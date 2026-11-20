@@ -54,7 +54,6 @@ contract_spec_block: stock_contract_spec
 # 2026-11-06 부터 매 거래일 세션에서 쓰고 있는 동작이다 — 같은 TR·같은 커서 규칙이므로
 # 이 종목도 같다. 종목별로 다시 재지 않는다.
 quote_initial_cursor: session_end
-calendar_covered_years: [2026]
 
 # --- δ / G · 전송 · 시드 · 정지 조건 — 선물 설정과 같은 값 ---
 # 근거는 선물 측정(PR-1 증거)이다. 주식 분봉 도착 지연은 측정되지 않았으므로 같은 값에서

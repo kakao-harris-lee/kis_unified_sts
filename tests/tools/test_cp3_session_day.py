@@ -153,7 +153,7 @@ def test_band_open_follows_the_override(tmp_path: Path) -> None:
 
 
 def test_producer_calendar_window_by_day(tmp_path: Path) -> None:
-    cal = load_runtime_calendar(_calendar(tmp_path), covered_years=[2026])
+    cal = load_runtime_calendar(_calendar(tmp_path))
     assert (
         cal.window("krx-index-futures", "CONTINUOUS", DAY).end.isoformat() == "16:45:00"
     )
@@ -186,7 +186,7 @@ def test_producer_calendar_refuses_a_malformed_override_at_load(
     tmp_path: Path, overrides: dict
 ) -> None:
     with pytest.raises(LiveProducerRefused):
-        load_runtime_calendar(_calendar(tmp_path, overrides), covered_years=[2026])
+        load_runtime_calendar(_calendar(tmp_path, overrides))
 
 
 def test_cli_prints_one_value(tmp_path: Path) -> None:
@@ -262,7 +262,7 @@ def test_a_repeated_override_date_is_refused_by_both_tools_loaders(
         + "\n",
     )
     with pytest.raises(LiveProducerRefused, match="repeats date"):
-        load_runtime_calendar(calendar, covered_years=[2026])
+        load_runtime_calendar(calendar)
     with pytest.raises(session_day.SessionDayError, match="repeats date"):
         session_day.load_producer_session(
             _producer_config(tmp_path, calendar), repo_root=_REPO_ROOT
@@ -309,7 +309,7 @@ def test_tools_refuses_what_the_runtime_refuses(
             _producer_config(tmp_path, calendar), repo_root=_REPO_ROOT
         )
     with pytest.raises(LiveProducerRefused, match=match):
-        load_runtime_calendar(calendar, covered_years=[2026])
+        load_runtime_calendar(calendar)
 
 
 def test_a_datetime_holiday_entry_is_refused_by_both_readers(tmp_path: Path) -> None:
@@ -325,7 +325,7 @@ def test_a_datetime_holiday_entry_is_refused_by_both_readers(tmp_path: Path) -> 
     with pytest.raises(session_day.SessionDayError, match="2026-01-01 00:00:00"):
         session_day.holidays_of({"holidays": [loaded]})
     with pytest.raises(LiveProducerRefused, match="2026-01-01 00:00:00"):
-        load_runtime_calendar(calendar, covered_years=[2026])
+        load_runtime_calendar(calendar)
 
 
 def test_a_plain_date_holiday_entry_is_still_accepted() -> None:

@@ -142,10 +142,7 @@ class LiveProducer:
         )
         refuse_if_journal_exists(self.journal_path)
 
-        self.calendar = load_runtime_calendar(
-            self.config.calendar_yaml,
-            covered_years=self.config.calendar_covered_years,
-        )
+        self.calendar = load_runtime_calendar(self.config.calendar_yaml)
         if not self.calendar.is_trading_day(self.target):
             raise LiveProducerRefused(
                 f"{self.target} is not a trading day in {self.calendar.path}"

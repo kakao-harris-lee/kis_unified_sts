@@ -185,6 +185,12 @@ def build_seed(
                 density_pass=density_pass,
             )
         )
+        # SAFETY: a day the calendar calls a trading day but that answers with no
+        # rows is SKIPPED here, never a refusal — the calendar lists only the
+        # holidays we know, so this is the one thing that tells an unlisted closed
+        # day from a trading day. Refusing instead would stop every session whose
+        # seed window touches one forgotten holiday. The skip is not silent: the
+        # day, its row counts and SEED_DROP_NO_RAW_ROWS go into the seed log.
         if not density_pass:
             continue
         kept.append(SeedDay(day=day, contract=contract, bars=tuple(parsed)))
@@ -258,6 +264,9 @@ def _unfilled_seed_refusal(
         "plan §3.2a's cross-contract stitching — shipped in PR-2b, so reaching "
         "this message with the stitched assembler means the window could not "
         "be filled even ACROSS the roll. ⚠ A day the calendar calls a "
-        "trading day that returned NO rows may be a holiday the calendar is "
-        "missing; that is why it is counted separately above"
+        "trading day that returned NO rows is EXPECTED to happen — the calendar "
+        "lists only the holidays we know, so an unlisted closed day looks like "
+        "one — and such a day is skipped, not refused; that is why it is "
+        "counted separately above. Only the window staying unfilled across the "
+        "whole calendar-day budget gets here"
     )

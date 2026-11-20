@@ -31,9 +31,7 @@ def resolve_initial_cursor(config: LiveProducerConfig) -> str | Callable[[date],
     """The first page's ``FID_INPUT_HOUR_1``: the config's literal, or per day."""
     if config.quote_initial_cursor != QUOTE_CURSOR_SESSION_END:
         return config.quote_initial_cursor
-    calendar = load_runtime_calendar(
-        config.calendar_yaml, covered_years=config.calendar_covered_years
-    )
+    calendar = load_runtime_calendar(config.calendar_yaml)
 
     def close_of(day: date) -> str:
         window = calendar.window(
