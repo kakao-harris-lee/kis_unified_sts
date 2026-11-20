@@ -47,7 +47,10 @@ class FillObserverConfig:
     #: a constant: a side is a policy-carried token in this runtime, never one it authors.
     uncertain_send_side_codes: dict[str, str] = field(default_factory=dict)
     loop_witness_request_timeout_s: float | None = None
+    #: The loop-side walk deadline for a ONE-date scope; each further receipt date in the scope
+    #: adds one app-key pacing interval, up to :attr:`loop_witness_deadline_max_ms` (#1115 N1).
     loop_witness_deadline_ms: int | None = None
+    loop_witness_deadline_max_ms: int | None = None
 
 
 _WITNESS_KEYS = (
@@ -110,6 +113,7 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
             f"{path}: broker_flat_release needs broker_flat_release_settle_ms (the "
             "fill-to-balance reflection lag it waits out)"
         )
+    _loop_witness_deadlines(raw, path)
     uncertain_send_reconcile, side_codes = _uncertain_send(raw, path)
     missing = [key for key in _WITNESS_KEYS if key not in raw]
     if missing:
@@ -162,12 +166,34 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         loop_witness_deadline_ms=_optional_positive_int(
             raw, "loop_witness_deadline_ms", path
         ),
+        loop_witness_deadline_max_ms=_optional_positive_int(
+            raw, "loop_witness_deadline_max_ms", path
+        ),
         uncertain_send_reconcile=uncertain_send_reconcile,
         uncertain_send_settle_ms=_optional_positive_int(
             raw, "uncertain_send_settle_ms", path
         ),
         uncertain_send_side_codes=side_codes,
     )
+
+
+def _loop_witness_deadlines(raw: dict[str, Any], path: Path) -> None:
+    """The loop-side walk deadline and its cap (#1115 N1): a cap needs a base, and is not below it."""
+    cap_key = "loop_witness_deadline_max_ms"
+    if cap_key not in raw:
+        return
+    if "loop_witness_deadline_ms" not in raw:
+        raise FillObserverConfigError(
+            f"{path}: {cap_key} caps loop_witness_deadline_ms and needs it (without a base "
+            "deadline the loop-side read is unbounded and nothing is capped)"
+        )
+    cap = _positive_int(raw, cap_key, path)
+    base = _positive_int(raw, "loop_witness_deadline_ms", path)
+    if cap < base:
+        raise FillObserverConfigError(
+            f"{path}: {cap_key} {cap} is below loop_witness_deadline_ms {base} — the cap would "
+            "shorten the one-date deadline it exists to extend"
+        )
 
 
 def _uncertain_send(raw: dict[str, Any], path: Path) -> tuple[bool, dict[str, str]]:

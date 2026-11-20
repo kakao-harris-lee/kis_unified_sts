@@ -140,7 +140,15 @@ class BrokerFlatRelease:
         return verdict
 
     def _note(self, verdict: BrokerFlatVerdict) -> None:
-        """One ``BROKER_FLAT_RELEASE_HELD`` row per verdict per process (an operator's why)."""
+        """One ``BROKER_FLAT_RELEASE_HELD`` row per verdict per process (an operator's why).
+
+        A failed append propagates out of the observation pass (#1115 N3, recorded not changed):
+        every writer on this path behaves that way — an evidence store that cannot take a row is
+        not a condition under which this runtime keeps deciding — and the verdict it would have
+        explained is a HOLD, so nothing is released by the raise. The ``_noted`` guard is set
+        BEFORE the append on purpose: a store that refuses once refuses again, and retrying the
+        same row each pass would turn one failure into a per-pass exception storm.
+        """
         if verdict.value in self._noted:
             return
         self._noted.add(verdict.value)
