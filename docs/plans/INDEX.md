@@ -1,18 +1,18 @@
 # Plans Index
 
+> **2026-11-20 — CP-0~CP-4 통합 계획 은퇴.** `2026-10-06-tos-control-plane-and-first-tenant-plan.md`
+> 를 지웠다 — CP-0~CP-2 는 끝났고 CP-4 는 착수하지 않았으며, 본문이 2026-11-12 에 퇴역한
+> 검사기(`tos_spec_status` · `tos_completion_status`)의 GREEN 을 현재 상태로 적고 있었다.
+> 저장소의 어떤 코드·설정·CI 도 그 경로를 인용하지 않는다. 내용은 git 이력에 있다:
+> `git log --diff-filter=D -- docs/plans/`.
+
 > **2026-11-14 — 역사 계획 은퇴.** 끝난 2026-07~09 커널·런타임 착지 기록과
 > 상위 제안·측정 계획 35건을 지웠다. 남긴 것은 지금 도는 것(CP-3 테넌트 트리 ·
 > 합성 venue 원장 · P2 선언형 필드)의 결정 기록, `TOS_PAPER_READY` 기준,
-> 방화벽 설계 계약뿐이다. 내용은 git 이력에 그대로 있다:
-> `git log --diff-filter=D -- docs/plans/`.
+> 방화벽 설계 계약뿐이다.
 
-> **2026-11-12 — 미참조 과거 문서 정리.** 저장소 어디에서도 참조하지 않는 과거
-> 문서를 삭제했다. 내용은 git 이력에 그대로 남아 있다:
-> `git log --diff-filter=D -- docs/`.
+## 지금 도는 것의 결정 기록
 
-## Current TOS integration entry — 2026-10-06
-
-- [Control Plane and first tenant plan](2026-10-06-tos-control-plane-and-first-tenant-plan.md): CP-0 documentation complete; CP-1 implemented, deployed and observed (2026-10-07); CP-2 onward planned, paper-only migration scope.
 - [CP-3 kickoff — first tenant candidate comparison and operator decisions](2026-10-07-tos-cp3-first-tenant-kickoff.md): operator-approved 2026-10-07 (all nine decisions as recommended; decision 9 re-decided 2026-10-08 as (a) rulebook-primary — see the next entry); first tenant = Setup D; DSL can only compare published scalars, so indicator math moves upstream; same-input parity needs new builds on both sides of the import firewall (JSONL indicator producer, in-tree Bar loader/driver runner, legacy reject emitter, decision-level diff, one-order-per-scope disposition); paper venue `max_quantity` is null today so paper can only observe decisions until sourced; §5 steps 1-2 implemented (B1a shared indicator producer, B2 legacy per-bar candidate/reject emitter and B3 decision-level diff, all `tools/tos_cp3/`), B1b in #877; B3's first real run over 101S6000 2025-12-01~2026-04-30 (35,612 bars) reports rule-level entry agreement 374/374 and 0 UNRESOLVED bars, with the 18 extra TOS actions attributed to B1a-D1/B2-L9 (min_confidence unpublished) and 176 legacy short fires to B1b-D5 (LONG-only render); the SHORT half closed 2026-10-09 (B1b SHORT render under `tos/runtime/cp3/short/`, B3 attribution made direction-aware from B1b's lineage rather than a caller flag): rule-level entry agreement 176/176, position-model 56/56, 0 UNRESOLVED, 12 extra TOS actions to B1a-D1/B2-L9 and 374 legacy long fires to B1b-D5; the LONG artifacts reproduce byte-for-byte under the new tool; `short_blocked_regimes` (decision 5) is declared but absorbs zero bars because the guard lives in `setup_d_adapter` after `check()` returns and B2 drives `check()` directly; B4 disposed as 체결 비교 포기 and stated in B3's summary.json scope block.
 - [CP-3 decision 9 — venue quantity-limit source and mock GET probe design](2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md): operator chose (a) 2026-10-08, superseding the 10-07 probe-as-source recommendation; primary source = KRX 시행세칙 별표 17의2 **미니코스피200선물거래** row (the deployed/tenant product is mini `A056xx`): 정규거래 10,000 contracts (full `101xxxx` row 2,000 applies only to the parity dataset), 제164차 in force 2026-07-06; evidence `docs/broker-profiles/evidence/2026-10-08-krx-venue-limits/`; `VTTO5105R` is deposit/parameter-derived so the probe only corroborates (≥1 orderable, band matches 제56조 arithmetic); `price_min/max` are per-day dynamic, so decision 9 alone leaves `order_shape_admissible` UNKNOWN — the band-source wave is a separate operator decision (§6), with a prerequisite finding that the deployed `tick_size: 5` is the full contract's 0.05 while mini's regulation tick is 0.02. Design only; probe `P-VL`, evidence and tenant-tree values land in later PRs.
 - [CP-3 band-source wave — tick 5→2 + band (i) broker read](2026-10-08-tos-cp3-band-source-wave-plan.md): operator decisions 2026-10-08 (max_quantity 10000 tenant-only · tick 5→2 · band (i) broker GET first). Runtime `VenueConstraintService` fills effective `price_min/max` from a policy-declared `_runtime.band_source` read at boot/phase change, bound to the snapshot's existing provenance fields; no kernel change. Intraday band only widens (제56조의2) so one boot read is conservative; three fail-open guards (validation set · trading-date · contract binding — v2 after review #883). Resident paper stays off (synthetic prices). §6 (A) first runtime network egress/token and (B) `_runtime` outside activation digest — both approved as recommended 2026-10-08.
@@ -37,9 +37,9 @@
 - **2026-11-14 — 역사 계획 은퇴** (`2026-11-13-tos-code-halving-plan.md` §S3/§4).
   끝난 착지 기록 35건(2026-07~09 커널·런타임, 상위 제안표, 측정 계획)과 끝난
   측정 캠페인 증거 5건을 지웠다. 런북은 **하나도 지우지 않았다** —
-  `tos-paper-boot-history.md` 는 콜드 백업 런북의 거부 대응표가 그 §4-A
-  `migrate` 절차로 운영자를 보내므로 이력이 아니라 현행 절차의 부록이다. 내용은
-  git 이력에 있다: `git log --diff-filter=D -- docs/`.
+  `tos-paper-boot-history.md` 는 2026-11-20 에 **다른 문서·코드·설정이 절 번호로
+  가리키는 조각만 남기고** 2,250 줄을 줄였다(§1 · §4 · §4-A · §4-B · §5 ④⑤ ·
+  §7.2 · §7.9-leaf · §7.10). 내용은 git 이력에 있다.
 - **2026-11-13 — 역사 문서 은퇴** (`2026-11-13-tos-code-halving-plan.md` §S3).
   2026-04 · 2026-07 · 2026-08 의 RFC 설계 코퍼스(약 48k 줄)와 끝난 Phase 1~5
   구현 기록, 레거시 런북·루트 문서를 지웠다. 남긴 것은 코드·CI·설정이 인용하는

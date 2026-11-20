@@ -1,85 +1,48 @@
 # Market Structure Policy
 
-Last updated: 2026-06-28 KST.
+기준: 2026-11-20. 이 런북은 `config/market_schedule.yaml` 의 값 **둘**이 왜 그 값인지와,
+바꾸려면 무엇이 먼저 참이어야 하는지를 적는다. 그 파일의 주석이 이 문서를 가리킨다.
 
-## Scope
+> 2026-11-20 에 레거시 거래 런타임 시절의 기록(ATS/SOR 라우팅 게이트 · 2026-06-28 의
+> 08:45 전환 작업 기록 · Setup A/C/D 창 재평가 표)을 지웠다. 그것이 설명하던 모듈
+> (`services/trading/orchestrator.py` · `stock_order_router` · `shared/strategy/exit/*`)은
+> 2026-11 의 레거시 제거(L1–L7)로 사라졌다 — `git log --diff-filter=D -- docs/runbooks/`.
+>
+> ⚠ **TOS tenant 의 세션 창은 이 파일이 아니다.** 각 트리의 `calendar.yaml`
+> (`session_overrides` 포함)이 정하고, 절차는
+> [tos-paper-boot.md](tos-paper-boot.md) §7.2-g 다. `market_schedule.yaml` 은 그 밖의
+> 잔존 코드(`shared/strategy/market_time.py` · `shared/decision/context.py` ·
+> `shared/backtest/market_context_replay.py`)가 읽는다.
 
-This runbook records operator policy for stock venue routing, KOSPI 200 futures
-product/session handling, and what must be true before changing runtime windows.
+## 현재 정책
 
-## Current Policy
-
-| Area | Policy | Runtime Setting |
+| 항목 | 정책 | 설정 |
 |---|---|---|
-| Stock venue | KRX-only until operator approves ATS/SOR readiness | `ats_routing.enabled=false`; `stock_order_router` remains KRX-only |
-| Stock extended hours | No automated extended-hours trading until ATS feed/routing evidence exists | `market_schedule.stock.extended` is non-authoritative for automation |
-| Futures regular session | **IMPLEMENTED 2026-06-28** — regular open moved to 08:45 KST (day-only; night stays disabled) | `market_schedule.futures.regular.open` now `08:45` |
-| Futures night session | Disabled fail-closed | `market_schedule.futures.night.enabled=false` |
-| Futures product | Product must be explicit in env and evidence reports before promotion | `FUTURES_TRADING_PRODUCT`, `FUTURES_STRATEGY_SYMBOL`, `FUTURES_SLIPPAGE_TICK_SIZE` |
+| 선물 정규장 | 일중 전용. 개장 08:45 KST (2026-06-28 전환) | `market_schedule.futures.regular.open: "08:45"` · `close: "15:45"` |
+| 선물 야간세션 | **fail-closed 로 비활성** | `market_schedule.futures.night.enabled: false` |
+| 주식 venue | KRX 전용. ATS/SOR 은 운영자 승인 전까지 쓰지 않는다 | 자동 라우팅 경로는 존재하지 않는다(레거시 제거) |
+| 주식 시간외 | 자동 거래 없음 | `market_schedule.stock.extended` 는 자동화에 대해 비권위적이다 |
 
-## Change Gates
+`night.enabled` 는 `shared/strategy/market_time.py` 가 읽고, **읽기에 실패하면 비활성으로
+취급한다** — 설정 부재가 야간 거래를 여는 쪽으로 틀리지 않는다.
 
-### Stock ATS/SOR Gate
+## Futures Night Session Gate
 
-Before enabling `ats_routing.enabled=true`, all of these must be present:
+`night.enabled: true` 로 바꾸기 전에 전부 참이어야 한다:
 
-- KRX and ATS quote ingestion for the same symbol and timestamp window.
-- Routing decision audit persisted with venue, price improvement, spread, depth,
-  fill estimate, and reason.
-- Paper simulator calibrated for ATS fill rate and price improvement.
-- Workbench venue evidence panel.
-- Integration test proving KRX fallback when ATS quote is missing.
+- 야간 피드와 주문 API 거동이 주간과 **따로** 검증됐다.
+- 야간 주문 유효성·호가 한도가 리스크/주문 가드에 반영됐다.
+- 킬 스위치 · 포지션 복구 · 정산 가정이 시험됐다.
+- 운영자 승인이 허용 상품과 최대 익스포저를 **이름으로** 적었다.
 
-### Futures 08:45 Regular Session Gate — IMPLEMENTED 2026-06-28
+⛔ 실전 선물 주문·증거금은 비협상 규칙으로 영구 차단이다 — 이 게이트를 통과해도 그것이
+열리지 않는다.
 
-`market_schedule.futures.regular.open` changed from `09:00` to `08:45` (PR feat/futures-0845-open).
+## Stock ATS/SOR Gate
 
-**What was changed**
+자동 ATS/SOR 라우팅을 다시 세운다면 그 전에 전부 있어야 한다:
 
-- `config/market_schedule.yaml`: `futures.regular.open: "08:45"`
-- `shared/decision/context.py`: `market_open_hour/market_open_minute` fields added to `MarketContext` (defaults 8/45); `market_open_time()` / `minutes_since_open()` are now anchor-configurable.
-- `shared/decision/context.py`: `build_market_context()` reads the open from config; module-level cache avoids per-tick I/O.
-- `services/trading/orchestrator.py`: `MarketSchedule.futures_open` default updated to 08:45; `MarketSchedule.load_from_yaml()` added; `TradingConfig.futures()` now calls it.
-
-**Per-setup window decisions (open-relative windows auto-shift; close-relative cutoffs re-valued)**
-
-| Setup | Parameter | Old value | New value | Resulting clock time | Rationale |
-|-------|-----------|-----------|-----------|----------------------|-----------|
-| Setup A | `valid_minutes_min` | 10 | 10 | 08:55 KST | open-relative — auto-shifts |
-| Setup A | `valid_minutes_max` | 90 | 90 | 10:15 KST | open-relative — auto-shifts |
-| Setup C | `no_entry_after_minutes_since_open` | 360 | 375 | 15:00 KST | close-relative — re-valued to preserve 15:00 KST |
-| Setup D | `valid_minutes_min` | 15 | 15 | 09:00 KST | open-relative — auto-shifts (skips open auction) |
-| Setup D | `no_entry_after_minutes_since_open` | 345 | 360 | 14:45 KST | close-relative — re-valued to preserve 14:45 KST |
-
-**Slippage**
-
-- `blocked_time_windows` early-open block: `09:00–09:05 → 08:45–08:50`
-- `time_of_day_multipliers` early-session key: `"09:00-09:15" → "08:45-09:15"`
-- `ats_routing.time_of_day_preferences["09:00-09:30"]` (dormant ATS block): left unchanged (out-of-scope dormant routing)
-
-**Backtest parity — historical data anchor**
-
-`MarketContextReplay` now stamps `market_open_hour`/`market_open_minute` onto every
-replayed `MarketContext`, defaulting to 08:45 (current production). **Historical
-backtests on pre-08:45 data (the futures day session opened at 09:00 before
-2026-06-28) MUST pass `market_open_hour=9, market_open_minute=0`** — otherwise every
-setup's open-relative window is shifted 15 min earlier and the replay no longer
-matches the regime that produced the historical research numbers. In particular,
-**Setup D OOS Sharpe 1.77 and the Setup A profitability numbers were computed at the
-09:00 anchor and require re-validation under the 08:45 anchor** before any
-08:45-conditioned conclusions are drawn.
-
-**Paper observation**
-
-09:00-only vs 08:45-inclusive behavior will accumulate in paper trading evidence as sessions run with the new anchor.
-
-**To roll back**: revert `market_schedule.yaml::futures.regular.open` to `"09:00"` and revert the per-setup parameter values above. The code path is config-driven so no code change is needed for rollback.
-
-### Futures Night Session Gate
-
-Before enabling night trading:
-
-- Separate feed and order API behavior must be verified.
-- Night order validity and quote limits must be reflected in risk/order guards.
-- Kill-switch, position recovery, and settlement assumptions must be tested.
-- Operator approval must explicitly name the allowed products and max exposure.
+- 같은 종목·같은 타임스탬프 창에 대한 KRX 와 ATS 호가 수집.
+- venue · 가격개선 · 스프레드 · 호가잔량 · 체결 추정 · 사유를 담은 라우팅 결정 감사 기록.
+- ATS 체결률·가격개선으로 보정된 paper 시뮬레이터.
+- ATS 호가가 없을 때 KRX 로 폴백하는 것을 증명하는 통합 테스트.

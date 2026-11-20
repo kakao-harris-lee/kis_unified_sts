@@ -247,219 +247,112 @@ CRON_TZ=Asia/Seoul
   체인이 재검증됐다. 그 밖은 1 이고 stderr **한 줄**이 어느 단계에서 무엇이 일어났는지
   말한다(§5). **traceback 은 나오지 않는다.**
 
-## 4-5. 활성화 준비 상태 — 2026-10-03 (잎 순회 개정 2026-10-04)
+## 4-5. 호스트 배선 — 설정 · cron · 래퍼 · 아침 확인
 
-운영자 결정 두 개(용량 바닥 · 대상 data dir)가 2026-10-03 에 들어왔다. 같은 날
-**16:13 KST 에 운영자가 crontab 줄까지 넣었고, 남은 하나였던 2026-10-06 genesis 도 그날 08:45 첫
-상주 세션으로 끝났다**(ops-paper 레인 · 같은 날 18:00 첫 실전 백업 verdict — §4-5-1·§4-5-4). 이 절은 호스트에 무엇이 있고, 켜는 데 무엇이 남았고, 사본에서
-무엇을 확인했는지의 기록이다.
+> 2026-11-20 에 이 절의 **활성화 기록**(2026-10-03/04 의 호스트 인벤토리 · 운영자 결정 서사 ·
+> 사본 전 구간 증명 · 래퍼 판본 대조)을 지웠다. 남긴 것은 **지금 돌고 있는 배선**과 그것을
+> 읽는 법뿐이다. 지운 내용은 git 이력에 있다:
+> `git log --diff-filter=D -- docs/runbooks/tos-evidence-cold-backup.md`.
 
-⚠ 이 절은 그날 오전에 쓰였고 한동안 「남은 것은 둘」이라고 적고 있었다. cron 줄이 들어간
-16:13 뒤로 **거짓**이었고, PR #855 가 발견해 정정했다(§4-5-3).
+### 4-5-1. 호스트 배선 (지금)
 
-### 4-5-1. 호스트에 있는 것
-
-| 무엇 | 경로 | 모드 | 상태 |
+| 무엇 | 경로 | 모드 | 비고 |
 |---|---|---|---|
-| 인스턴스 설정(**기준**) | `~/.local/state/tos/paper-ops/evidence_cold_backup.yaml` | `600` | 세 경로 + **바닥 53687091200** 채움. 2026-10-04 부터 **유일한 원본**이고 래퍼는 이 파일을 읽기만 한다 — 잎마다 아래 파생 설정을 여기서 만든다 |
-| 잎별 파생 설정 | `~/.local/state/tos/paper-ops/leaves/<잎>/evidence_cold_backup.yaml` | `700`/`600` | **10-06 18:00 첫 실행이 `leaves/A05610/` 을 만들었다**(실측 600) — **실행마다 다시 만든다**. 기준 설정과 다른 곳은 세 경로 줄뿐이고 래퍼가 그것을 대조한 뒤에야 돈다(§4-5-4). 손으로 고치면 다음 실행이 지운다 |
-| 콜드 루트(잎 보관소의 부모) | `~/.local/state/tos/paper-cold` | `700` | 래퍼가 **기준 설정의 세 경로가 공유하는 부모**로 읽는다(여기에 두 번째로 적지 않는다). 잎마다 `<잎>/{backups,archives,verify}` 가 그 밑에 선다(`umask 077` · 10-06 18:00 첫 실행이 `A05610/` 을 만들었다, 700) |
-| ⚠ 2026-10-03 에 손으로 만든 셋 | `~/.local/state/tos/paper-cold/{backups,archives,verify}` | `700` | 빈 디렉터리 — **잎 순회 판부터 쓰이지 않는다**(세대 번호가 `backup_root` 단위라 잎마다 자기 보관소를 쓴다, §4-5-4). 지울지는 운영자 몫이고 래퍼는 건드리지 않는다 |
-| **커스터디 루트** | `~/.local/state/tos/paper-custody` | `700` | `evidence.key` · `evidence.key.1`(둘 다 `600`) — **세대 1**. 함께 있는 것: `read.principal` · `replay.params`(`600`) · `custody.manifest.yaml`(`664`) · `approvals/`(`775`). 없으면 프리플라이트가 `custody refused` 로 끊는다 |
-| **락 파일** | `~/.config/kis-probes/cold-backup-nightly.lock` | `644` | 존재(0 B). `flock -n` 의 대상이고 내용은 쓰지 않는다 |
-| **통지 자격증명** | `/home/deploy/project/kis_unified_sts/.env` 의 `TELEGRAM_BRIEFING_BOT_TOKEN` · `TELEGRAM_BRIEFING_CHAT_ID` | — | 래퍼가 **그 두 줄만** 읽는다. 없으면 실행은 계속되고 통지만 빠진다(로그에 한 줄) |
-| 분리 워크트리 | `~/.local/state/tos/measure/wt-cold` | — | detached `origin/main` |
-| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | **crontab 등재됨**(아래 행). sha256 **`e7579803548b9dcb21dfb813650e51c995a0f25531e1e05add718a98f26d4916`** — **잎 순회 + `umask 077` 판**(2026-10-06 21:16:01 KST 설치, mtime · 이전 판 `c38078fc…` 백업 `.bak.c38078fcbbe7`). 10-04 잎 순회 판(`c38078fc…`, 운영자 결정 「계약월마다 durable set 하나」 · `tos-paper-boot-history.md` §7.10 7 (c))과의 차이는 **`set -u` 다음의 `umask 077` 한 줄과 헤더 주석**뿐이다(`cold-a3/leaf-selftest-20261006/wrapper.diff.c38078fc-to-e7579803`): 첫 실전 실행(10-06 18:00)의 산출물이 cron 의 umask 를 물려받아 아카이브·리포트·매니페스트 664 · 세대 디렉터리 775 · 비압축 sqlite 사본 644 였기 때문이다(A3-F3 · 아래 §4-5-4). 그 전 판 `6b6f5766…`(PR #855 — `classify()` 에 `migrate refused` 가지)은 `.bak.6b6f5766a6f0` 로 옆에 있다. ✅ **`classify()` 는 이 이동에 포함되지 않았다** — `fc0cd225…`·`6b6f5766…`·`c38078fc…`·**`e7579803…`** 네 판에서 함수를 떼어 낸 추출물이 **sha256 까지 같다**(`7c306195…` — 추출물과 해시는 `~/.local/state/tos/measure/cold-a3/classify-extract-20261006.txt`, 2026-10-06 실측; 10-04 의 같은 이름 파일에는 `e7579803` 이 없다). `d7e52b2f…`(#855 이전)만 다르고 그 차이는 #855 가 더한 두 줄이다. 그러므로 §4-5-4 의 분류 증명은 이 판에도 그대로 유효하다 |
-| **cron 등재** | 운영자 crontab (`crontab -l` 220-222행) | — | **설치됨 2026-10-03 16:13 KST**(운영자). 줄 그대로: `0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly`, 바로 위에 `CRON_TZ=Asia/Seoul` 과 머리 주석 한 줄(§4-5-3 에 셋 다 그대로). 설치 **직전** 스냅숏이 `~/.config/kis-probes/crontab.bak.20261003T161332`(15401 B, mtime 16:13:32) — 그 파일과 현재 crontab 의 차이는 **이 세 줄뿐**이다(실측 `diff`). 첫 발화 2026-10-05(월) 18:00 KST |
-| 래퍼 로그 | `~/.local/state/tos/cold-backup.log` | `644` | **일곱 블록** — `--selftest` 다섯(10-03 20:34 · 21:04 · 10-04 07:24 · 08:33 — PR #855 의 네 판 · 10-04 19:20:06 — 잎 순회 판 `c38078fc…`; 전부 PRE-GENESIS rc 0) + **cron 발화 둘**(10-05 18:00 PRE-GENESIS rc 0 · 10-06 18:00 `A05610` gen1 verdict rc 0, 둘 다 `c38078fc…`). 각 블록 머리에 그때 돈 래퍼의 sha256 이 찍힌다. ⚠ 현재 판 `e7579803…` 의 블록은 **아직 없다** — 그 판의 증명은 스크래치 `COLD_LOG` 로 돌렸고(§4-5-4 끝), 호스트 로그의 첫 `e7579803…` 블록은 **10-07 18:00** 이다. 래퍼가 소유한다 |
-| cron 로그 | `~/.local/state/tos/cold-backup.cron.log` | `664` | **매 실행 줄이 쌓인다** — 래퍼의 `log()` 가 로그 파일과 stdout 양쪽에 쓰고 cron 줄이 stdout 을 여기로 보내므로, 래퍼 로그와 같은 줄(머리 sha256 · 결말 · 끝 줄)이 날마다 붙는다(실측 10-05 3줄 · 10-06 10줄). ⚠ 모드 **664**(실측) — cron 의 셸이 `>>` 로 래퍼보다 **먼저** 여는 파일이라 래퍼의 `umask 077` 이 닿지 않는 유일한 산출물이다. 그룹 쓰기 가능이지만 래퍼 줄(경로·수·sha)만 담기고 좌표는 없다. ⚠ 이 행의 1차 판 「비어 있는 것이 정상」은 **틀렸다** — 첫 발화 전(10-03) 의 부재를 일반화한 것이다. 비어 있거나 어제 날짜에서 멈춰 있으면 **cron 이 뜨지 않은 것**이고, rc 2 ABORT 의 stderr 한 줄이 남는 유일한 자리도 여기다(§4-5-4 결말표) |
-| 증명 로그·보고서 | `~/.local/state/tos/measure/cold-a3/` | `700` | `selftest-20261003.log`(208줄) + `gen{1..5}.cold-backup.report.json` + `selftest-20261003.round1.log`(앞 래퍼판) (§4-5-5). **PR #855 이 더한 것**: `classify-diff-20261004.{in,out.before,out.after,diff}`(분류 대조 실측, §4-5-4) · 래퍼 판본 사본 `cold-backup-nightly.d7e52b2f7f34.sh` 와 `cold-backup-nightly.fc0cd225caeb.sh` · `cold-backup-nightly.6b6f5766a6f0.sh` · `cold-backup-nightly.c38078fcbbe7.sh`(잎 순회) · **`cold-backup-nightly.e7579803548b.sh`(현재 · 잎 순회 + umask)**(전부 `600`) · `leaf-selftest-20261004/`(잎 순회 증명 14 로그) · `leaf-selftest-20261006/`(umask 판 증명 · 모드 census) · `mode-fix-20261006.txt`(gen1 모드 전후) · `classify-extract-20261004.txt` |
-| 대상 — **부모** | `~/.local/state/tos/paper-data` | `700` | **2026-10-06 08:45 첫 세션의 래퍼가 만들었다**(`tos-paper-boot.md` §7.6, 실측). 래퍼는 이 밑의 **`A0####` 디렉터리만** 잎으로 센다 |
-| 대상 — **잎** | `~/.local/state/tos/paper-data/<종목>` | `700` | **`A05610` 은 10-06 genesis 완료**(첫날 194.7 MB — 194,740,224 B · 같은 날 18:00 gen1 백업 verdict), `A05611` 은 10-12 genesis. 잎마다 `cold-backup` 한 번(§4-5-4). 잎이 아닌 항목은 거부하지 않고 ⚠ 줄로 텔레그램 본문에 실린다 |
-| ⛔ **이것이 아니다** | `~/.config/tos/paper-config/evidence_cold_backup.yaml` | `644` | 렌더가 만든 **all-null 쌍둥이**. **`origin/main` 의 저장소 템플릿(이 PR 머지 전 기준)과 바이트 동일**이고, ops-paper 가 매일 재렌더하므로(최근 2026-10-03 14:30) **이 PR 의 주석본은 다음 렌더가 가져간다** — 값은 그때도 all-null 이다. 로더가 둘을 구별하는 수단은 **`--config-dir` 하나뿐**이다 |
+| 인스턴스 설정(**기준**) | `<COLD_CONFIG_DIR>/evidence_cold_backup.yaml` (기본 `~/.local/state/tos/paper-ops/`) | `600` | **유일한 원본.** 래퍼는 읽기만 하고, 잎마다 파생 설정을 여기서 만든다 |
+| 잎별 파생 설정 | `<COLD_CONFIG_DIR>/leaves/<잎>/evidence_cold_backup.yaml` | `700`/`600` | **실행마다 다시 만든다.** 손으로 고치면 다음 실행이 지운다 |
+| 콜드 루트 | 기준 설정의 세 경로가 공유하는 **부모** | `700` | 스크립트에 적지 않는다 — 래퍼가 설정에서 읽는다. 잎마다 `<잎>/{backups,archives,verify}` |
+| 커스터디 루트 | `~/.local/state/tos/paper-custody` | `700` | 없으면 프리플라이트가 `custody refused` 로 끊는다. 래퍼는 **읽기만** 하므로 잎마다 가르지 않는다 |
+| 락 파일 | `~/.config/kis-probes/cold-backup-nightly.lock` | `644` | `flock -n` 의 대상. 내용은 쓰지 않는다 |
+| 통지 자격증명 | 저장소 `.env` 의 `TELEGRAM_BRIEFING_BOT_TOKEN` · `TELEGRAM_BRIEFING_CHAT_ID` | — | 래퍼가 **그 두 줄만** 읽는다. 없으면 실행은 계속되고 통지만 빠진다 |
+| 분리 워크트리 | `~/.local/state/tos/measure/wt-cold` | — | detached `origin/main`. 래퍼가 매 실행 맞춘다 |
+| 야간 래퍼 | `~/.config/kis-probes/cold-backup-nightly.sh` | `700` | sha256 **`e7579803548b9dcb21dfb813650e51c995a0f25531e1e05add718a98f26d4916`** (2026-11-20 실측 · 잎 순회 + `umask 077` 판). 래퍼가 매 실행 **첫 줄**에 자기 sha256 을 찍는다 — 이 값과 다르면 호스트 파일이 이 문서보다 새것이거나 그 반대다 |
+| 래퍼 로그 | `<COLD_LOG>` (기본 `~/.local/state/tos/cold-backup.log`, tenant 별로 다름) | `600`/`644` | 래퍼가 소유한다 |
+| cron 로그 | `…cron.log` | **`664`** | cron 의 셸이 `>>` 로 래퍼보다 **먼저** 여는 파일이라 래퍼의 `umask 077` 이 닿지 않는 유일한 산출물이다. 래퍼 줄(경로·수·sha)만 담기고 좌표는 없다. **비어 있거나 어제 날짜에서 멈춰 있으면 cron 이 뜨지 않은 것**이고, rc 2 ABORT 의 stderr 한 줄이 남는 유일한 자리도 여기다 |
+| 대상 — **부모** | `<COLD_DATA_DIR>` | `700` | 래퍼는 이 밑의 **`A0####` 디렉터리만** 잎으로 센다 |
+| 대상 — **잎** | `<COLD_DATA_DIR>/<종목>` | `700` | 잎마다 `cold-backup` 한 번. 잎이 아닌 항목은 거부하지 않고 ⚠ 줄로 텔레그램 본문에 실린다 |
+| ⛔ **이것이 아니다** | `~/.config/tos/paper-config/evidence_cold_backup.yaml` | `644` | 렌더가 만든 **all-null 쌍둥이**. 로더가 둘을 구별하는 수단은 `--config-dir` 하나뿐이다 |
 
-래퍼의 첫 줄이 찍는 sha256 은 위 표의 값과 대조하라고 있는 것이다 — 값이 다르면 호스트
-파일이 이 문서보다 새것이거나 그 반대다.
+⛔ **설정을 `~/.config/tos/paper-config` 에 두지 않는다** — §2 가 금지한 바이고, 그 파일이
+`scripts/tos/render_paper_config.py` 의 원본 트리(`config/tos_runtime/paper/`)에 있기
+때문이다. 거기에 손으로 채운 파일을 두면 두 가지가 **조용히** 일어난다:
 
-⛔ **설정은 `~/.config/tos/paper-config` 에 두지 않았다 — 인스턴스를 2026-10-03 에
-`paper-ops` 에 둔 이유가 그것이다.** §2 가 **금지한** 바이고, #840 이후로는 근거가 하나 더
-구체적이다 — `evidence_cold_backup.yaml` 이 이제 `scripts/tos/render_paper_config.py` 의
-**원본 트리**(`config/tos_runtime/paper/`)에 있다. 위 표의 마지막 행이 그 결과이고, 그
-디렉터리에 손으로 채운 파일을 두면 두 가지가 **조용히** 일어난다:
-
-1. 재렌더가 디렉터리를 통째로 갈아끼운다(`_publish` 가 이전 렌더를 옆으로 옮긴 뒤
-   `rmtree` 한다). 채운 값이 저장소의 all-null 사본으로 **되돌아가고**, 그 다음 cron 은
+1. 재렌더가 디렉터리를 통째로 갈아끼운다(`_publish` 가 이전 렌더를 옮긴 뒤 `rmtree`).
+   채운 값이 저장소의 all-null 사본으로 **되돌아가고**, 그 다음 cron 은
    「`minimum_free_bytes` is still null」로 거부한다 — 아무도 아무것도 바꾸지 않았는데.
-2. `--check` 는 렌더 디렉터리를 원본과 줄 단위로 대조한다. 채운 줄은 `replace` 훅이면
-   `…: changed line is not a registered coordinate slot (…)`, 순수 삽입·삭제면
-   `…: line(s) N-M changed outside any coordinate slot (insert)` 로 **두 형태 중 하나**가
-   된다. 원본에 없는 파일로 허용되는 것은 `bootproof_journal.jsonl` 과 `RENDERED.json`
-   둘뿐이다.
+2. `--check` 는 렌더 디렉터리를 원본과 줄 단위로 대조하므로 채운 줄이 거부된다.
 
-로더는 어느 경로도 하드코딩하지 않는다 — `<--config-dir>/evidence_cold_backup.yaml` 을
-읽을 뿐이므로 위치는 순전히 래퍼의 인자이고, 래퍼의 `COLD_CONFIG_DIR` 기본값이
-`paper-ops` 를 가리킨다.
+로더는 어느 경로도 하드코딩하지 않는다 — `<--config-dir>/evidence_cold_backup.yaml` 을 읽을
+뿐이므로 위치는 순전히 래퍼의 인자다.
 
-⚠ **단일 장치 배치 — 기록해 둔다.** 세 보관 경로와 (아직 없는) 라이브 data dir 이 **전부
-같은 파일시스템**(`/dev/sdd`, 마운트 `/`)에 있다. 두 가지 대가가 따른다:
+⚠ **단일 장치 배치.** 세 보관 경로와 라이브 data dir 이 전부 같은 파일시스템에 있다.
+`_free_space` 는 `st_dev` 로 묶으므로 세 루트의 바닥 검사가 **한 번의 측정**으로 축약된다
+(보고서의 `free_space_*` 항목이 하나뿐인 이유다 — 세 개의 독립된 여유처럼 읽지 말 것).
+그리고 §6 이 권하는 「오래된 아카이브를 **다른 매체로** 옮긴다」에 쓸 매체가 이 호스트에는
+없다 — 바닥이 울리면 할 수 있는 것은 저장공간을 늘리는 쪽뿐이다.
 
-- `_free_space` 는 `st_dev` 로 묶으므로 세 루트의 바닥 검사가 **한 번의 측정**으로
-  축약된다(보고서의 `free_space_*` 항목이 하나뿐인 이유다). 세 개의 독립된 여유처럼
-  읽지 말 것.
-- §6 이 권하는 조치 「오래된 아카이브를 **다른 매체로** 옮긴다」에 쓸 **매체가 지금은
-  없다.** 바닥이 울리면 이 호스트에서 할 수 있는 것은 저장공간을 늘리는 쪽뿐이다.
-  이 이탈은 계획 **§7.1.27 A3-F2** 에 등재했다.
+### 4-5-2. 두 전제 — 바닥 값의 단위와 「런타임이 멎었다」
 
-여유 공간(측정값은 명령과 시각을 붙여 적는다):
+**(1) `minimum_free_bytes` 는 바이트 정수만 받는다.** `_require_free_bytes` 는 `int` 가
+아니면 거부하고(`bool` 도 거부), `<= 0` 도 거부하며, 값을 `shutil.disk_usage(...).free` 와
+**그대로** 비교한다. 접미사도, 단위 문자열도, 실수도 없다. 배포값 `53687091200` 은
+**50 GiB**(50 × 1024³)이고 십진 GB 로는 53.69 GB 다 — 두 수를 설정 파일에도 함께 적어 둔다.
 
-```
-$ df -B1 /home/deploy          # 2026-10-03 14:15:52 KST
-/dev/sdd  1081101176832  668870635520  357238185984  66%  /
-```
-
-바닥 53687091200 B 까지의 여유는 ≈283 GiB 다. 한 번의 실행이 쓰는 양은 §4-5-5 의 실측으로
-**7,630,848 ~ 7,651,328 B**(할당 기준, 보고서의 `free_space_before − free_space_after`)다.
-그 수로 나눈 나눗셈은 **적지 않는다** — 1회성 corpus 한 벌(7 MB)을 반복해 뜬 수치라서
-상주 런타임의 증가율(계획 §1: 원본 ≈200 MB/일)과 다르고, 둘을 곱해 「몇 년」을 만들면
-측정하지 않은 것을 측정한 것처럼 적게 된다.
-
-### 4-5-2. 운영자 결정 둘 — 2026-10-03 확정
-
-**(1) `minimum_free_bytes` = 50 GB → `53687091200`.**
-
-**단위 규약: 로더는 바이트 정수만 받는다.** `_require_free_bytes` 는 `int` 가 아니면
-거부하고(`bool` 도 거부), `<= 0` 도 거부하며, 값을 `shutil.disk_usage(...).free` 와
-**그대로** 비교한다. 접미사도, 단위 문자열도, 실수도 없다. 적힌 `53687091200` 은
-**50 GiB**(50 × 1024³)이고 십진 GB 로는 53.69 GB 다 — 운영자 표기 「50 GB」를 GiB 기준으로
-적으라는 지시에 따른 것이라 두 수를 설정 파일에도 함께 적어 두었다.
-
-로드된 값 (2026-10-03, `load_cold_backup_config` 실행):
-
-```
-backup_root        : /home/deploy/.local/state/tos/paper-cold/backups
-archive_dir        : /home/deploy/.local/state/tos/paper-cold/archives
-verify_root        : /home/deploy/.local/state/tos/paper-cold/verify
-minimum_free_bytes : 53687091200 B  = 50.0 GiB / 53.6870912 GB (decimal)   [type: int]
-xz_preset          : 6 (파일에 없음 -> DEFAULT_XZ_PRESET)
-```
-
-**(2) 대상 = `~/.local/state/tos/paper-data` 밑의 계약월 잎들(`<종목>`) — 상주 paper 런타임.**
-(2026-10-04 개정: 운영자 결정 「계약월마다 durable set 하나」 — `tos-paper-boot-history.md` §7.10 7 (c).
-10-03 결정의 「대상 = `paper-data`」는 그대로이고, 그 디렉터리가 **부모**가 되어 래퍼가 잎을
-순회한다는 것이 더해졌다, §4-5-4.)
-
-부모는 **첫 기동 때 세션 래퍼가** `umask 077` 로 만들고(없을 때만), 첫 잎(`A05610`)은 **그 세션의
-genesis 가 만든다**(2026-10-06 화 예정, `ops-paper` 레인 · `tos-paper-boot-history.md` §7.3 5-a · `tos-paper-boot.md` §7.6).
-상주 운영 절차는 `docs/runbooks/tos-paper-boot.md` **§7** 에 있다(#854, 2026-10-03 머지 —
-그전까지 열린 PR 이라 파일만 가리키고 있었다). 그 절의 §4-A 머리 경고가 같은 날짜를 반대
-방향에서 적는다: 10-06 **이후**로는 「상주 data dir 이 없다」가 더 이상 참이 아니지만,
-**그 디렉터리에 §4-A 가 적용되는 것도 아니다**.
-genesis 가 증거 저장소를 곧장 v2 로 만들기 때문에 아래 v1 전제는 이 대상에 해당하지 않는다.
+**(2) 대상은 데이터 부모 밑의 계약월 잎(`A0####`)이다** — 부모를 그대로 `--data-dir` 로
+넘기면 스토어가 하나도 없는 트리를 뜬다(§4-5-4). 잎은 **그 잎의 첫 세션 genesis 가**
+만들고, genesis 가 증거 저장소를 곧장 v2 로 만들므로 아래 v1 전제는 이 대상에 해당하지
+않는다.
 
 ⛔ **「런타임이 멎었다」는 이 문서가 보증할 수 있는 것이 아니다 — 운영자의 의무다.**
 §1 전제 1 과 §4-4 가 말하는 기준은 「장 마감 뒤」가 아니라 **「런타임 정지 뒤」**이고,
 `backup_set` 은 다른 프로세스가 연 sqlite 핸들을 **기계적으로 확인하지 못한다**(그 함수의
-문서화된 전제). 상주 런타임은 아직 존재하지 않으므로 「15:45 에 멎는다」는 **계획이지
-실측이 아니다.** 18:00 이라는 시각은 그 계획에 **여유를 둔 간격**일 뿐이다:
-
-```
-런타임 정지 ~15:45 KST  →  안전 마감 16:00  →  야간 백업 18:00   (여유 ≈2시간 15분)
-```
-
-정지 절차나 시각이 바뀌면 cron 줄도 같이 바꾼다. 매일 밤 실제로 닫혔는지는 사람이 본다:
+문서화된 전제). 18:00 이라는 시각은 정지(~15:45)에 여유를 둔 간격일 뿐이다. 정지 절차나
+시각이 바뀌면 cron 줄도 같이 바꾼다. 매일 밤 실제로 닫혔는지는 사람이 본다:
 
 ```bash
-fuser -v ~/.local/state/tos/paper-data/*/*.sqlite3   # 비어 있어야 한다 (잎 한 단계 아래)
+fuser -v <COLD_DATA_DIR>/*/*.sqlite3   # 비어 있어야 한다 (잎 한 단계 아래)
 ```
 
-래퍼가 같은 검사를 실행 직전에 한 번 돌리지만(§4-5-4), 그것은 **한쪽 방향만** 말한다 —
-열려 있는 것이 보이면 멈추고, 조용히 통과하는 것은 **증명이 아니다.** 런타임이 아직
-떠 있으면 스냅숏이 `snapshot failed — OperationalError: database is locked` 한 줄로
-끝난다(§5) — 조용히 반쪽짜리 백업을 만들지는 않는다.
+래퍼가 같은 검사를 실행 직전에 돌리지만(§4-5-4), 그것은 **한쪽 방향만** 말한다 — 열려
+있는 것이 보이면 멈추고, 조용히 통과하는 것은 **증명이 아니다.** 런타임이 아직 떠 있으면
+스냅숏이 `snapshot failed — OperationalError: database is locked` 한 줄로 끝난다(§5).
 
-⚠ **1회성 corpus 를 대상으로 고를 때만 해당하는 전제 — 그대로 남겨 둔다.** 이 호스트의
-부팅증명 corpus 12개는 **전부 증거 스키마 v1** 이다(2026-10-03 읽기 전용 전수 조사,
-`mode=ro&immutable=1`). `EVIDENCE_SCHEMA_VERSION` 이 2 이므로 아카이브의 체인 재검증이
-거부한다.
-
-⚠ **아래 블록은 실측 전사가 아니라 「현 코드가 내는 줄」(조립)이다**(리뷰 #855 2회차 노트 f).
-2026-10-03 전수 조사가 실제로 본 줄은 접두가 `archive failed` 인 **옛 모양**이었고(§4-5-2 ①
-이 그 전후를 적는다), 이 PR 이 그 접두를 `migrate refused` 로 옮겼다. 메시지 본문은 그때와
-같고 접두만 다르다 — 그래서 현 코드로 다시 돌리면 아래와 같은 줄이 나온다:
+⚠ **증거 스키마가 v1 인 옛 corpus 를 대상으로 고를 때.** `EVIDENCE_SCHEMA_VERSION` 이 2 이
+므로 아카이브의 체인 재검증이 거부하고, 현 코드는 그것을 판정 접두로 말한다:
 
 ```
 cold-backup: migrate refused — evidence: on-disk schema user_version=1 is BEHIND this code's schema_version=2 — run the operator `migrate` CLI (tos_runtime.operations.schema_migrations.apply_migrations) before booting; boot never auto-applies a migration
 ```
 
-그 경우에는 `docs/runbooks/tos-paper-boot-history.md` §4-A 의 `migrate` 절차를 **그 corpus 에** 먼저
-돌려야 한다.
+그 경우에는 `docs/runbooks/tos-paper-boot-history.md` §4-A 의 `migrate` 절차를 **그 corpus
+에** 먼저 돌려야 한다. ⚠ 이때 **비압축 스냅숏은 이미 떠 있다** — 그 세대의 백업은
+완전하고 잃은 것은 압축본뿐이며, `gen{N}.verify` 가 거부 원인의 증거로 남는다. 다음 실행은
+그 번호를 **건너뛴다**.
 
-✅ **① 접두는 고쳤다 — PR #855 (계획 §7.1.28).** 실측 당시의 줄은
-`cold-backup: archive failed — SchemaVersionRefused: …` 였다. 예외 이름 자체가 판정인데도
-`_PASSTHROUGH_REFUSALS` 에 없어 환경 고장으로 포장됐고, 한 단어로는 「호스트가 깨졌다」로
-읽혔다 — §5 의 `archive failed` 행이 안내하는 「다시 돌린다」는 on-disk
-`PRAGMA user_version` 을 바꾸지 못한다. 이제 그 예외는 목록을 통과하고 디스패치가
-방향에 따라 `migrate refused`(BEHIND) 또는 `schema refused`(AHEAD) 접두를 붙인다(§5 의
-두 행). **래퍼 분류도 같은 PR 에서 닫았다 — §4-5-4.**
+### 4-5-3. cron 등재 (crontab 주석이 이 절을 가리킨다)
 
-② 이때 **비압축 스냅숏은 이미 떠 있다** — 그 세대의 백업은 완전하고,
-잃은 것은 압축본뿐이다. 실측에서 `gen1/` 과 매니페스트가 남았고 `.tar.xz` 는 없었으며
-`gen1.verify` 가 **남았다**(거부 원인의 증거). 다음 실행은 그 번호를 **건너뛰어** gen2 를
-썼다. **이 거동은 PR #855 가 바꾸지 않았고, 이제 테스트가 고정한다.**
-
-### 4-5-3. 남은 것은 없다 — cron 2026-10-03 등재 · genesis 2026-10-06 완료 (아래는 그때의 기록)
-
-설정의 한 줄 편집은 **끝났다**(§4-5-2). 대상도 래퍼의 기본값으로 들어갔다.
-
-1. ✅ **crontab 한 줄 — 운영자가 2026-10-03 16:13 KST 에 넣었다**(#851 머지 뒤).
-   이 절은 그 전까지 「남은 것 둘」이라고 적고 있었고, 줄이 들어간 16:13 뒤로
-   **거짓**이었다(PR #855 에서 발견·정정). **PR #855 도 crontab 을 건드리지 않았다** —
-   넣는 것도 빼는 것도 운영자가 한다. 실측한 등재 내용을 **그대로** 옮긴다
-   (`crontab -l`, 2026-10-03):
-
-   ```cron
-   # A3 콜드 백업 야간 (운영자 결정 2026-10-03 · 바닥 50 GiB · 대상 paper-data, 10-06 genesis 전엔 PRE-GENESIS rc=0 · 런북 tos-evidence-cold-backup.md §4-5-3)
-   CRON_TZ=Asia/Seoul
-   0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly
-   ```
-
-   ⚠ 아래 권장 블록과 **글자 그대로 같지는 않다.** 같은 것: 일정(`0 18 * * 1-5`) ·
-   **`CRON_TZ=Asia/Seoul`** · 스크립트 경로 · 리다이렉트 대상 · **그리고 `CRON_TZ` 가
-   실행 줄보다 앞에 온다는 순서**(cron 의 환경 설정은 뒤따르는 줄에만 적용되므로 이
-   순서가 뒤집히면 KST 가 아니라 시스템 TZ 로 돈다 — 모양이 아니라 동작의 문제다).
-   다른 것: 머리 주석의 문구와 끝의 `# cold-backup-nightly` 태그뿐이고, 그 태그는 이
-   호스트의 다른 cron 줄들이 쓰는 식별 관례다.
-
-   **되돌리는 법**: 설치 직전 스냅숏이 `~/.config/kis-probes/crontab.bak.20261003T161332`
-   (15401 B · mtime 2026-10-03 16:13:32 KST)에 있다. 그 파일과 현재 crontab 의 차이는
-   **위 세 줄뿐**임을 `diff` 로 확인했다 — 즉 그 스냅숏은 **줄이 들어가기 전**의 상태이고,
-   `crontab <그 파일>` 이 등재를 되돌린다. 되돌리는 것도 운영자의 결정이다.
-2. **2026-10-06 genesis** — `ops-paper` 레인의 첫 상주 세션이 대상 디렉터리를 만든다.
-   **이것만 남았다.** → ✅ **2026-10-06 08:45 완료**(부모 + 잎 `A05610`, §4-5-1).
-
-(2026-10-03 기준 기록 — 그 뒤 첫 발화 둘은 실측됐다: 10-05 PRE-GENESIS · 10-06 verdict, §4-5-4 끝.)
-아직 한 번도 발화하지 않았다(2026-10-03 토요일 20:3x KST 기준 `cold-backup.cron.log`
-부재 — ⚠ 그 부재는 「발화 전」의 사실이지 정상 상태의 정의가 아니다: 발화한 뒤로는 매 실행
-줄이 그 파일에 쌓인다, §4-5-1 cron 로그 행). 결함이 아니라 요일이다 — 스펙이 `1-5`(월–금)이므로 토요일에는 돌지 않는다.
-**첫 발화는 2026-10-05(월) 18:00 KST** 이고 genesis 하루 전이라 `PRE-GENESIS` rc 0 로
-끝난다(§4-5-4). **첫 실제 아카이브는 2026-10-06(화) 18:00 KST** 실행에서 나온다.
+등재된 줄 — 세 tenant 가 **같은 래퍼를 환경변수로 겨눠** 20분 간격으로 돈다. 기본값은
+상주 paper 좌표이므로 첫 줄만 환경변수가 없다:
 
 ```cron
 CRON_TZ=Asia/Seoul
-# 평일 18:00 KST — 상주 런타임 정지(계획 ~15:45) 뒤. 기준은 「장 마감」이 아니라
-# 「런타임 정지」다(§1 전제 1 · §4-5-2) — 정지 절차가 바뀌면 이 줄도 같이 바꾼다.
-0 18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1
+0  18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly
+20 18 * * 1-5 COLD_DATA_DIR=$HOME/.local/state/tos/cp3-setup-d-long-data COLD_CONFIG_DIR=$HOME/.local/state/tos/cp3-setup-d-long-ops COLD_TARGET_BORN_ON=2026-10-15 COLD_LOG=$HOME/.local/state/tos/cold-backup-cp3-long.log $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup-cp3-long.cron.log 2>&1 # cold-backup-cp3-long
+40 18 * * 1-5 COLD_DATA_DIR=$HOME/.local/state/tos/cp3-setup-d-short-data COLD_CONFIG_DIR=$HOME/.local/state/tos/cp3-setup-d-short-ops COLD_TARGET_BORN_ON=2026-10-23 COLD_LOG=$HOME/.local/state/tos/cold-backup-cp3-short.log $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup-cp3-short.cron.log 2>&1 # cold-backup-cp3-short
 ```
 
-- 대상이 래퍼의 기본값이라 cron 줄에 `COLD_DATA_DIR` 을 적지 않는다. 다른 트리를 한 번만
-  겨눠야 한다면 그때만 줄 앞에 붙인다.
-- **종료코드 0 의 이유는 「메일이 쌓이지 않게」가 아니다.** 위 리다이렉트가 stdout·stderr
-  를 둘 다 파일로 보내므로 **cron 은 어떤 종료코드에서도 메일을 보내지 않는다** — 끌
-  메일이 애초에 없다. 이유는 **종료코드 위생**이다: 「대상이 아직 없다」는 고장이 아니므로
-  0 이어야 하고, 그래야 나중에 누가 이 줄을 감시 도구에 물렸을 때 10-06 전의 밤들이
-  거짓 경보가 되지 않는다. **경보 경로는 텔레그램 하나뿐**이고(이 cron 줄 아래에서는
-  그렇다), 그것이 §4-5-6 의 아침 확인이 필요한 이유다.
-- §4-4 의 cron 줄과 **같은 것은 시각뿐이다**(그 절의 ⛔ 참조).
+- ⚠ **`CRON_TZ=Asia/Seoul` 은 실행 줄보다 앞에 와야 한다.** cron 의 환경 설정은 뒤따르는
+  줄에만 적용되므로 순서가 뒤집히면 KST 가 아니라 시스템 TZ 로 돈다 — 모양이 아니라 동작의
+  문제다.
+- ⚠ **주식 MOCK tenant(005930 · 000660 · 005380)에는 콜드 백업 줄이 없다**(2026-11-20
+  실측). 그 잎의 증거는 백업되지 않는다 — 켤지는 운영자 결정이다.
+- 새 tenant 를 더할 때는 **`COLD_TARGET_BORN_ON` 을 그 잎의 genesis 날짜로** 적는다. 그
+  날짜 전에는 「대상 없음」이 `PRE-GENESIS` rc 0 이고, 그 날부터는 같은 부재가 `refused`
+  rc 1 이다(§4-5-4).
+- **종료코드 0 의 이유는 「메일이 쌓이지 않게」가 아니다.** 리다이렉트가 stdout·stderr 를
+  둘 다 파일로 보내므로 cron 은 어떤 종료코드에서도 메일을 보내지 않는다. 이유는 종료코드
+  위생이다 — 「대상이 아직 없다」는 고장이 아니므로 0 이어야 한다. **경보 경로는 텔레그램
+  하나뿐**이고, 그것이 §4-5-6 의 아침 확인이 필요한 이유다.
+- §4-4 의 권장 블록과 **같은 것은 시각뿐이다**(그 절의 ⛔ 참조).
 
 ### 4-5-4. 래퍼가 하는 일 (`~/.config/kis-probes/cold-backup-nightly.sh`)
 
@@ -550,7 +443,7 @@ CRON_TZ=Asia/Seoul
   달력 유효성(`date -d` 왕복)을 **둘 다** 본다 — `date -d` 혼자서는 `2026/10/06` 를 받아
   정규화해 버리고, 정규식 혼자서는 `2026-02-30` 을 통과시킨다. 검증이 없던 판에서는
   `2026/10/06` · `6-10-2026` · `TBD` 가 모두 오늘보다 「커서」 래퍼를 PRE-GENESIS
-  종료코드 0 에 **영구히** 묶었다(§4-5-5 R3).
+  종료코드 0 에 **영구히** 묶었다.
   대상 자리에 **일반 파일**이 있으면(`[ ! -d ]` 는 그것도 참이다) 「아직 없다」가 아니라
   오타이므로 날짜와 무관하게 `refused` 다.
   ⚠ **검증이 막는 것은 「날짜가 아닌 값」이지 「먼 날짜」가 아니다.** `9999-12-31` 은 형식도
@@ -582,242 +475,10 @@ CRON_TZ=Asia/Seoul
 | `unclassified` | 1 | 위 어느 형태도 아닌 줄 | **보냄** | 래퍼가 모르는 형태다. 못 알아본 줄을 깨끗한 분류로 접어 넣지 않는다 |
 | `ABORT` | **2** | 로그 디렉터리 생성 실패 · 락 파일 열기 실패 · 모르는 인자 · 인자 과다 · mktemp 실패 | ⛔ **못 보냄** | 통지 수단 자체를 세우지 못한 경우다. 앞의 넷은 **stderr 한 줄**뿐이고(로그 파일에도 안 남는다), mktemp 실패만 `log()` 를 거쳐 **래퍼 로그와 stdout 양쪽에** 남는다. 어느 쪽이든 cron 리다이렉트가 받는 곳은 `cold-backup.cron.log` 다 — **§4-5-6 의 아침 확인이 이것을 잡는 유일한 수단이다** |
 
-✅ **래퍼의 `classify()` 는 일반 패턴이 아니라 접두 리터럴을 열거한다 — 그래서 새 접두마다
-가지를 더해야 한다 (PR #855 에서 닫았다).** 위 `refused` 행의
-`[<layer>|<조치>|<대상> ]refused` 는 **이상형**이고(접두가 셋 중 무엇을 이름으로 쓰는지는
-`_backup_dispatch.py` 의 **`_REFUSAL_PREFIXES` 블록 주석**이 적어 둔 그대로다 — 여섯 행에
-리터럴 **다섯**, 그중 **층을 말하는 것은 넷**(`snapshot`·`archive`·`integrity`·`custody`) ·
-조치 하나 `migrate` · 대상 하나 `schema`. ⚠ 나머지 한 리터럴인 **맨 `refused` 는 층을
-말하지 않는다** — 어느 층에 들어가기도 전에 이 명령 자신이 거부한 것이라 안쪽에 이름 붙일
-층이 없다. 이 문단은 그 하나를 세면서 「층 다섯」이라 적었고, 출처도 방향 전용 함수인
-`_schema_version_prefix` 를 가리키고 있었다 — 리뷰 #855 2회차 노트 j), 실제 코드는 접두를
-그대로 적어 놓은 `case` 다. PR #855 가 디스패치에 더한
-두 접두는 그 열거에 없어 **둘 다 `unclassified` 로 갔다** — 실측으로 확인한 뒤 가지 둘을
-더했다:
-
-```sh
-    "cold-backup: migrate refused — "*)   printf 'refused\n' ;;
-    "cold-backup: schema refused — "*)    printf 'refused\n' ;;
-```
-
-이제 일곱 접두가 모두 `refused` 다. 래퍼 sha256 이 `d7e52b2f…` → `6b6f5766…` 로
-움직였고 §4-5-1 표의 값이 그것이다. **crontab 자체는 건드리지 않았다.**
-
-⚠ **`classify()` 자체는 중간판(`fc0cd225…`) 이후 한 바이트도 안 바뀌었다**(두 사본에서
-함수를 떼어 `diff` — 동일). 그 뒤 움직인 것은 텔레그램 본문과 범례 주석이다(아래). 아래
-대조 아티팩트의 `out.after` 는 **출하본으로 다시 돌려** 받은 것이라 §4-5-1 의 sha 와 짝이다.
-
-⚠ **가지를 더하는 변경이 기존 분류를 바꾸지 않았다는 것은 주장이 아니라 측정이고, 이제
-파일로 남아 있다.** `classify()` 를 옛 판과 새 판에서 각각 떼어 내 **같은 15줄**(일곱 접두 ·
-`snapshot/archive/report/config failed` · 접두 없는 `failed` · 모르는 줄 · 빈 stderr ·
-rc 0)에 먹이고 출력을 비교했다:
-
-| 파일 | 무엇 |
-|---|---|
-| `~/.local/state/tos/measure/cold-a3/classify-diff-20261004.in` | 먹인 15줄(`rc\|line`) |
-| `…/classify-diff-20261004.out.before` | 옛 판(`d7e52b2f…`)의 분류 |
-| `…/classify-diff-20261004.out.after` | 새 판(출하본 `6b6f5766…`)의 분류 |
-| `…/classify-diff-20261004.diff` | 둘의 `diff -u` |
-
-**다른 줄은 정확히 둘** — `migrate refused` 와 `schema refused` 가 `unclassified` →
-`refused` 로 뒤집힌 것뿐이고, 나머지 열셋은 바이트까지 같다. `case` 는 순서가 있는
-구조라 새 가지가 뒤 가지를 가릴 수 있는데, 그러지 않았음을 그 대조가 보인다.
-(파일명의 날짜는 **실측일 2026-10-04** 다. 10-03 에 돌린 1차 대조는 중간 래퍼판에 대한
-것이라 최종판으로 다시 돌렸고, 남기는 것은 최종판 쪽이다.)
-
-**래퍼 판본은 이제 사본으로 남긴다.** 같은 디렉터리에
-`cold-backup-nightly.<sha12>.sh` 로 각 판을 둔다 — 지금은 `…d7e52b2f7f34.sh`(#855 이전) ·
-`…fc0cd225caeb.sh`(#855 1차 처분) · `…6b6f5766a6f0.sh`(#855 최종) · `…c38078fcbbe7.sh`(잎 순회,
-2026-10-04 19:19) · **`…e7579803548b.sh`(현재 · 잎 순회 + `umask 077`, 2026-10-06 21:16)**. sha 가 움직였을 때 **무엇이 바뀌었는지 대조할 수 있게** 하려는
-것이다. 지금까지는 그것이 불가능해 주장으로만 남았다 — 바로 위 「`classify()` 는 안
-바뀌었다」가 그 사본들 덕에 **잴 수 있는 문장**이 됐고, 잎 순회 판에 대해서도 같은 방법으로
-쟀다(§4-5-1 래퍼 행 · 추출물과 해시는 `cold-a3/classify-extract-20261004.txt`).
-⚠ 호스트의 `~/.config/kis-probes/cold-backup-nightly.sh.bak.fc0cd225caeb` 는 **이름과 달리
-`6b6f5766…` 바이트다**(2026-10-04 실측) — 진짜 `fc0cd225` 판은 이 디렉터리의 사본뿐이다. 그
-파일은 이 레인이 만든 것이 아니라 이름을 고치지 않았다; 판을 대조할 때는 사본 디렉터리를 쓴다.
-
-PR #855 의 최종판은 2026-10-04 **08:33:47 KST** 에 호스트에서 `--selftest` 로 돌아 `PRE-GENESIS`
-rc 0 · 텔레그램 `[SELFTEST]` 한 줄이었다(로그 머리 `sha256=6b6f5766…`). **잎 순회 판의 증명**
-(기록한 sha 와 돌린 sha 가 같아야 하므로 — §4-5-5 의 그 규율 — 설치본 `c38078fc…` 으로):
-
-- **스크래치 좌표**(호스트 `paper-cold`·`paper-ops` 는 매 실행 전후 동일함을 목록 대조로
-  확인): 실제 genesis 스토어를 담은 잎 둘(`A05610`·`A05611`, `tos-paper-boot-history.md` §7.9-leaf 의
-  드라이런 산출물 사본) + 잎이 아닌 항목 셋(파일 · 다른 이름 디렉터리 · 숨은 디렉터리)에
-  세 번 연속 실행 → 잎마다 gen1 → gen2 → gen3, 매번 ⚠ 잎 밖 항목 3개 줄, 머리줄
-  `OK 2 · REFUSED 0 · FAILED 0 · UNCLASSIFIED 0`, rc 0 · 잎 셋 중 **마지막**이 거부(빈 잎 →
-  `snapshot refused`) → 앞의 둘은 백업되고 rc 1 · 잎 셋 중 **첫째**가 거부 → 뒤의 둘이 그래도
-  백업됨(순회가 첫 실패에서 멈추지 않는다는 증명은 이쪽이다 — 마지막이 거부되는 보기만으로는
-  모른다) · 다른 프로세스가 락을 쥔 채 실행 → `SKIP` rc 0. `bash -n` 통과, shellcheck 의
-  경고는 이전 판과 같은 한 건(`SELFTEST` 미사용)뿐.
-- **설치본**(2026-10-04 **19:20:06 KST**, `COLD_NOTIFY=0 … --selftest`): 로그 머리
-  `sha256=c38078fc…` · `PRE-GENESIS — 부모 … 가 없다` rc 0 · `paper-data` 부재 유지 ·
-  `paper-cold`/`paper-ops` 전후 동일. 그 블록은 `~/.local/state/tos/cold-backup.log` 의
-  **다섯째 블록**(29행부터)이다 — 그 뒤 cron 발화 둘(10-05 PRE-GENESIS · 10-06 verdict, 둘 다
-  `c38078fc…`)이 붙었고, §4-5-1 의 현재 값 `e7579803…` 의 첫 블록은 10-07 18:00 에 생긴다.
-- **가드의 가지도 각각 실행했다**(같은 설치본 · 스크래치 좌표): 부모는 있는데 잎 0개 →
-  `PRE-GENESIS — 부모 … 는 있는데 계약월 잎(A0####)이 0개` rc 0, 잎 밖 항목 ⚠ 줄 포함, `leaves/`
-  미생성(F) · 같은 입력에 `COLD_TARGET_BORN_ON` 을 지난 날짜로 → `REFUSED (wrapper)` rc 1,
-  「아무것도 쓰이지 않았다」(참)(F2) · 기준 설정의 `backup_root:` 를 **다른 부모**로 중복 →
-  세 루트 공유 부모 가드가 먼저 거부, 쓰기 전(G0) · **같은 부모**로 중복 → 파생 설정 대조 (a)
-  가 `carries 2 'backup_root:' line(s)` 로 거부하고, 본문이 **이미 쓴 것**(잎별 디렉터리 ·
-  파생 설정 1개, `A05610 까지`)을 말한다(G — `WROTE` 를 단조로 둔 이유가 이 분기다) · 기준
-  설정 주석에 잎 경로 문자열 → (b) 가 `on 4 line(s), expected exactly 3` 로 거부(H) ·
-  들여쓴 `  backup_root:` → 래퍼의 세 검사는 통과하고 CLI 가 YAML 파싱 거부(I — 래퍼는 YAML
-  을 해석하지 않는다는 분업의 양성 대조군). ⚠ **(c) 는 렌더 경로로는 도달하지 않는다** —
-  awk 가 바꾸는 줄과 (c) 가 양쪽에서 빼는 줄이 같은 앵커라 잔여물은 정의상 같다. 나중에
-  awk 쪽만 넓히는 회귀를 막는 뒷받침이지 실행된 가지가 아니다 — 그 침묵을 증명으로 읽지 말 것.
-- **로그는 전부 남아 있다** — `~/.local/state/tos/measure/cold-a3/leaf-selftest-20261004/`(700/600):
-  `selftest-{A1,A2,A3,B,B2,C-mixed,D-badfirst,E-lock,F-zeroleaf,F2-zeroleaf-born,G0-dupkey-otherparent,G-dupkey,H-leak,I-indented}.log`
-  · 호스트 전후 목록 `hostdirs.{before,after,final}.txt` · `install.{before,after}.txt` ·
-  `wrapper.diff`(6b6f5766 → c38078fc). 매 로그 머리 줄의 `sha256=` 이 `c38078fc…` 다. 판본 사본은
-  같은 디렉터리의 `cold-backup-nightly.c38078fcbbe7.sh`.
-- **첫 실전 실행 — 2026-10-06 18:00:01 KST(`c38078fc…`)**: `leaves: A05610` → `[A05610] rc=0
-  class=verdict` → `telegram notified` → `wrapper 끝 rc=0 (잎 1개 중 verdict 1)`(`cold-backup.log`
-  43–60행 · cron 로그 10줄). 산출물 `paper-cold/A05610/archives/gen1.set.tar.xz`(11.9 MB) +
-  보고서, `backups/gen1/` + 매니페스트. **모드가 틀렸다** — 위 ⚠(A3-F3): 파일 664/644 · 세대
-  디렉터리 775. 손으로 600/700 으로 돌렸고(21:12 KST) 전후 목록이 `cold-a3/mode-fix-20261006.txt`.
-- **`umask 077` 판(`e7579803…`)의 증명** — `cold-a3/leaf-selftest-20261006/`(700/600), 전부
-  스크래치 좌표(`COLD_DATA_DIR`·`COLD_CONFIG_DIR`·`COLD_LOCK`·`COLD_LOG` 전부 스크래치, 커스터디 루트만
-  실 경로 `paper-custody` 를 **읽기 전용**으로 —
-  10-06 부터 호스트에는 실 잎이 있어 호스트 좌표로는 돌리지 않는다; 호스트 `paper-cold`·`paper-ops`·
-  `paper-data` 전후 목록 동일 `host.{before,after}.txt`): 잎 둘 → gen1 둘 verdict rc 0, **파일 27개
-  전부 600 · 디렉터리 19개 전부 700**(`selftest-J-umask.log` · `selftest-J-modes.txt`) · 새 로그
-  디렉터리·로그 파일·락 파일도 700/600 으로 생성(`selftest-J2-newlog.log`) · **설치본**을 설치 경로에서
-  같은 스크래치 좌표로 한 번 더 → gen2 둘 verdict rc 0, 머리 `sha256=e7579803…`, 트리 전체 **파일 43
-  · 600 / 디렉터리 22 · 700** 외 0건(`selftest-K-installed.log` · `selftest-K-modes.txt`) ·
-  `wrapper.diff.c38078fc-to-e7579803`(코드 변경 = `umask 077` 한 줄). ⚠ 10-06 당일부터 실 좌표에서는
-  `PRE-GENESIS` 가 더 나올 수 없다 — `BORN_ON` 당일이라 잎 0개 부모는 `refused` 다(J2 는 미래 날짜로
-  돌린 것). 첫 **두 잎** 메시지는 2026-10-12 18:00 이다.
-
 통지가 **빠질 수 있는** 두 경우도 적어 둔다: `.env` 의 briefing 두 줄이 없으면 실행은
 계속되고 로그에 `notify skipped: briefing credentials not found` 가 남는다. curl 이
 실패하면 `telegram notify FAILED` 가 남고 종료코드는 바뀌지 않는다. **둘 다 텔레그램에는
 아무것도 가지 않는다** — 그래서 아침 확인이 통지의 대체가 아니라 **짝**이다.
-
-### 4-5-5. 사본에서의 전 구간 증명 (2026-10-03)
-
-**증거 파일**: `~/.local/state/tos/measure/cold-a3/selftest-20261003.log`(208줄) ·
-같은 디렉터리의 `gen{1..5}.cold-backup.report.json`. 아래 표의 「줄」은 그 로그의 행
-번호다. 보고서 JSON 에는 증거 내용이 들어가지 않는다 — 경로·바이트·멤버 이름·여유
-공간뿐이다.
-
-⚠ **이 로그는 래퍼 sha256 `d7e52b2f…` 로 다시 돌린 것이다.** 디스포지션 3라운드가 래퍼
-헤더(종료코드 범례)를 고쳐 sha256 이 `248b284c…` → `d7e52b2f…` 로 바뀌었고, 그러면 §4-5-1
-표의 값과 로그에 찍힌 값이 어긋난다 — 그 대조가 이 줄의 존재 이유이므로 **전 구간을 다시
-돌렸다**. 앞 래퍼판의 로그는 `selftest-20261003.round1.log` 로 **남겨 두었다**(지우지
-않는다). 두 판의 차이는 주석 블록 하나뿐이고 모든 결말이 같다.
-
-⚠⚠ **이 로그의 sha256 은 이제 §4-5-1 표의 값과 다르다 — 그리고 이번에는 전 구간을 다시
-돌리지 않았다.** PR #855 이 래퍼를 `d7e52b2f…` → `6b6f5766…` 로 옮겼다. 바뀐 것은
-**다섯 군데**이고 **분류에 닿는 것은 둘뿐이다**: ① `classify()` 의 `case` 에 더한
-`migrate refused` 가지 · ② 같은 자리의 `schema refused` 가지 · ③ 그 위 범례 주석 ·
-④ 머리말의 crontab 정정 · ⑤ `refused` 텔레그램 본문(③~⑤ 는 분류 로직 밖이다 — ⑤ 는
-사람이 읽는 문구라 **거짓이면 해롭지만** `classify()` 의 출력은 바꾸지 않는다).
-바로 위 문단의 규율(「어긋나면
-다시 돌린다」)을 그대로 적용하지 않은 이유를 적는다: 그때 어긋나게 만든 변경은
-**종료코드 범례 주석**이라 어느 결말이 바뀌었는지 문서만 보고는 알 수 없었고, 이번에
-실행 경로에 닿는 변경은 `classify()` **자체**라서 무엇이 바뀌는지 직접 잴 수 있다.
-그래서 전 구간 재실행 대신 **옛 판과 새 판의 `classify()` 를 같은 15줄에 먹여 출력을
-대조했고, 이번에는 그 입력·두 출력·diff 를 파일로 남겼다**(§4-5-4 의 표): 다른 줄은
-`migrate refused` 와 `schema refused` 둘뿐이고 나머지 열셋은 같다. 이 로그가 증명한
-R1-R11 중 그 둘을 낸 것은 **없으므로** 열한 결말은 그대로다. 더 강한 증거를 원하면 전
-구간 재실행이 답이고, 그것은 하지 않았다.
-
-⚠ **스스로 적발한 하네스 결함 둘 — 적어 둔다.** ① 다시 돌린 1차에서 R7-R11 을
-`"$W" … || true` 로 감쌌더니 `$?` 가 `true` 의 종료코드가 되어 **모든 실행이 `exit=0` 으로
-기록됐다**. 실제로 1 이어야 할 R9(바닥 초과 거부)가 0 으로 적혔고, 그래서 **rc 를 변수로
-직접 받도록 고쳐 다시 돌렸다**. 「어떤 입력에도 같은 답을 내는 검사」의 교과서 모양이다
-(프로젝트 메모리 `guards-that-admit-what-they-name`). ② R11 의 첫 시도는 경고를 내지
-못했다 — 바닥이 유효한 창 `(free_after, free_before]` 안에 있어야 하는데 그 사이에 다른
-레인이 공간을 **비웠다**. 실패한 시도도 로그에 남기고(175행) 창을 다시 잡아 R11a 에서
-성립시켰다(191-208행). 호스트가 공유 자원이라는 사실이 측정의 일부다.
-
-**사본 뜨는 법과 실 corpus 에 남은 것 — 나누어 적는다.** 대상은
-`~/.local/state/tos/realclock-20260928T110001-LONG/data` 이고, 그 런의 `report.json` 이
-`started_kst` 2026-09-28 11:00:01 · `ended_kst` 11:15:04 로 적어 둔 corpus 다. 사본은
-WAL 조건에 기대지 않는 관용구로 떴다:
-
-```bash
-sqlite3 "file:$CORPUS/$f.sqlite3?mode=ro" ".backup '$COPY/$f.sqlite3'"
-```
-
-- **본체 네 파일은 바뀌지 않았다 — 해시로 증명된다.** 복사 전후 sha256 이 네 개 모두
-  같았다(로그 **92-95행**(블록 전) · **177-180행**(블록 후)):
-  `241d79d5…`(evidence) · `21b3d222…`(rcl) · `36ea8ae7…`(inbox) · `4efbae27…`(marketfeed).
-- **⚠ 「한 바이트도 안 건드렸다」는 아니다. `-shm` 은 새로 쓰였다.** 이 관용구는
-  `mode=ro` 이고 `immutable=1` 이 아니며, 읽기 전용 연결도 WAL 인덱스를 쓰기로 열기
-  때문에 `-shm` 이 갱신된다 — `docs/runbooks/tos-paper-boot-history.md` §4-A-1 이 #843 F2 로
-  실측해 둔 그대로다. 이 작업 뒤 네 `-shm` 의 mtime 은 **2026-10-03 14:46:57-58**
-  (evidence `57.960` · rcl `58.028` · inbox `58.036` · marketfeed `58.064`)이고 크기는
-  32768 B 그대로다(로그 182-185행).
-- **`-wal` 은 건드리지 않았다**: evidence 2026-09-29 23:47:50 · 나머지 셋 2026-10-02
-  13:05:01, 전부 0 B — 이 작업보다 앞선다(로그 186-189행).
-- **사이드카는 치우지 않았다.** 지우는 것은 실 paper 상태를 바꾸는 일이라 운영자 지시
-  없이는 하지 않는다(§4-A-1 의 같은 판단). 치울 때의 조건도 거기에 있다.
-
-| 실행 | 줄 | 무엇을 겨눴나 | 결과 |
-|---|---|---|---|
-| R1 | 2-10 | 대상 부재 · 오늘 2026-10-03 < `BORN_ON` 2026-10-06 (기본값) | `PRE-GENESIS` **rc=0** · 본문 로그에 기록 |
-| R2 | 12-21 | 같은 부재 · `BORN_ON=2026-10-01`(이미 지남) | `REFUSED (wrapper)` **rc=1** — `…is on/after the configured genesis date … it is a missing target` |
-| R3a | 23-32 | `COLD_TARGET_BORN_ON=2026/10/06` | `refused` **rc=1** — `is not YYYY-MM-DD` |
-| R3b | 34-43 | `6-10-2026` | `refused` **rc=1** — 같은 줄 |
-| R3c | 45-54 | `TBD` | `refused` **rc=1** — 같은 줄 |
-| R3d | 56-65 | `2026-02-30`(형식은 맞고 달력에 없는 날) | `refused` **rc=1** — `is not a real calendar date` |
-| R4 | 67-69 | 모르는 인자 `--selftst` | **rc=2**, 백업을 돌리지 않음 — `ABORT — unknown argument` |
-| R5 | 71-80 | 대상 자리에 **일반 파일** | `refused` **rc=1** — `exists but is NOT a directory … This is a typo` |
-| R6 | 82-88 | 락을 다른 프로세스가 보유 | `SKIP` **rc=0** · **텔레그램 본문 생성됨**(85행) |
-| R7 | 90-110 | 새 사본(migrate 뒤) · **실 바닥 53687091200** | `verdict` **rc=0** · gen1 · 7,195,055 → 429,320 B (16.76×) · 멤버 4 + 체인 재검증(101행) |
-| R8 | 111-126 | 다음 세대 | `verdict` **rc=0** · gen2 · 429,588 B (16.75×) |
-| R9 | 127-143 | 바닥 900 TiB | `refused` **rc=1** — `below the configured floor of 989560464998400; refused before anything is written`(134행), **아무것도 쓰지 않음** |
-| R10 | 144-159 | 다음 세대 | `verdict` **rc=0** · gen3 · 427,908 B (16.81×) |
-| R11 | 160-190 | 바닥 = 측정 여유 − 3 MB | `verdict` **rc=0** · gen4 — **경고 없음**(창을 놓쳤다, 위 ⚠ ②) |
-| R11a | 191-208 | 바닥 = 측정 여유 − 4 MB, 창 재설정 | `verdict` **rc=0** · gen5 + **바닥 경고**(199행) · 보고서 `below_floor_after=true`(208행) |
-
-R9 는 「바닥을 터무니없이 높이면」 **프리플라이트 거부**(아무것도 안 씀)라는 것을 보인다.
-경고 경로는 그것과 **다른 자리**다 — 바닥이 실행 **전** 여유보다는 낮고 실행 **후**
-여유보다는 높아야 한다. 즉 겨눠야 하는 것은 폭이 한 실행의 소비(≈7.6 MB)뿐인 창이고,
-이 호스트는 다른 레인이 동시에 쓰는 공유 자원이라 **한 번에 맞는다는 보장이 없다**
-(R11 이 그래서 빗나갔다). R11a 가 창을 다시 잡아 성립시켰고, 종료코드는 **0** 이며
-보고서에 `"free_bytes_below_minimum_after": true` 가 남았다 — 검증된 백업을 경보 때문에
-되돌리지 않는다(§6).
-
-**산출물과 압축비** — 원본은 네 실행 모두 **7,195,055 B**(`source_bytes`, 멤버 4; 이
-corpus 에 `composite_state` 가 없어 §7.1.4 의 실 커스터디 왕복과 같은 4 다):
-
-| 세대 | 실행 | `.tar.xz` | 압축비 | 바닥 | `below_floor_after` | 소비(할당) |
-|---|---|---|---|---|---|---|
-| gen1 | R7 | 429,320 B | 16.76× | 53687091200 | `false` | 9,539,584 B |
-| gen2 | R8 | 429,588 B | 16.75× | 53687091200 | `false` | 7,630,848 B |
-| gen3 | R10 | 427,908 B | 16.81× | 53687091200 | `false` | 68,628,480 B |
-| gen4 | R11 | 427,856 B | 16.82× | 357026904384 | `false` | 7,630,848 B |
-| gen5 | R11a | 427,732 B | 16.82× | 357078824704 | **`true`** | 7,692,288 B |
-
-⚠ 「소비」는 **할당 기준**이고(보고서의 `free_space_before − free_space_after`), 이 호스트
-에서는 **이 명령만의 소비가 아니다.** 같은 파일시스템에 다른 레인이 동시에 쓰므로 그 몫이
-섞인다 — gen3 의 68,628,480 B 와 gen1 의 9,539,584 B 가 그 증거이고, 이 명령 자체의 몫은
-조용한 구간의 **7,630,848 B** 에 가깝다. 아카이브 파일 크기의 합과 다른 이유는 비압축
-세대·매니페스트·블록 반올림이 함께 들어가기 때문이고, `du -sb` 의 **apparent size** 와도
-다른 수다. 세 계열을 더하거나 비교하지 말 것.
-
-**보관본 재검사(§7)도 돌렸다** — 새 압축 없이 `verify_archive` 로 왕복시켰고 통과했으며
-검증 디렉터리는 지워졌다. ⚠ §7 의 스니펫은 **옛 경로 배치**(`paper-backups`/`paper-cold`/
-`paper-verify`)로 적혀 있다. 이 호스트에서는 다음으로 바꿔 읽는다:
-`archive` → `~/.local/state/tos/paper-cold/archives/gen{N}.set.tar.xz` ·
-`manifest` → `~/.local/state/tos/paper-cold/backups/gen{N}.set.manifest.json` ·
-`verify_dir` → `~/.local/state/tos/paper-cold/verify/gen{N}.recheck`(없는 경로여야 한다) ·
-`custody` → `~/.local/state/tos/paper-custody`.
-⚠ 위 셋은 **10-03 증명 당시의 평면 루트**다. 잎 순회 판(2026-10-04 · §4-5-4)부터 실제 산출물은
-잎 밑에 선다 — `~/.local/state/tos/paper-cold/<잎>/{archives,backups,verify}/…` — 그러므로
-§7 을 돌릴 때는 **그 잎의** 경로로 다시 바꿔 읽는다. 재검사 자체는 잎과 무관하다(아카이브
-하나 · 매니페스트 하나 · 커스터디 하나).
-
-**텔레그램**은 `[SELFTEST]` 접두로 **한 번만** 실제 전송했다(디스포지션 전 라운드). 위
-R1-R11 은 전부 `COLD_NOTIFY=0` 이라 전송하지 않았고, **보낼 본문은 로그에 그대로 적혔다**
-(`--- telegram body ---` 블록). 예를 들어 R6 의 SKIP 본문은 85행이다.
-
-사본과 스크래치 아카이브는 증명을 적은 뒤 **지웠다**(라운드별 합계는 PR 본문에 적는다 —
-전부 apparent size, `du -sb`). **로그와 보고서 JSON 은 위 증거 경로에 남겼다.** 실 세 트리
-(`paper-cold/{backups,archives,verify}`)는 이 전 과정에서 **비어 있는 채로 남았다**.
 
 ### 4-5-6. 다음날 아침 확인 (통지의 대체가 아니라 짝)
 
@@ -831,16 +492,15 @@ tail -n 60 ~/.local/state/tos/cold-backup.log
 #    잎마다 `=== cold-backup [A05610] rc=0 class=verdict` 한 줄, 끝에
 #    `=== cold-backup wrapper 끝 rc=0 (잎 N개 중 verdict N)` — 두 N 이 같아야 한다.
 #    ⛔ 로그에 `SKIP —` 가 보이면 **백업은 돌지 않았다** — 종료코드 0 이어도 그렇다.
-#    `PRE-GENESIS` 도 마찬가지다(2026-10-06 전에는 정상).
+#    `PRE-GENESIS` 도 마찬가지다(그 잎의 COLD_TARGET_BORN_ON 전에는 정상).
 #    ⚠ `WARNING — ⚠ … 계약월 잎이 아닌 항목` 줄이 있으면 부모 밑에 잎 밖의 무언가가 있다.
 
 # 2) 잎마다, 평일마다 세대가 하나씩 늘었는가
 ls -l ~/.local/state/tos/paper-cold/*/archives/
-#    잎(지금 A05610 · 10-12 부터 A05611 도) 거래일 하루에 gen{N}.set.tar.xz +
-#    gen{N}.cold-backup.report.json 한 쌍. 번호가 건너뛰어 있으면 그 밤에 그 잎의 스냅숏이
-#    중도 사망한 것이다(§5 — 지우지 말 것). 세대 번호는 **잎마다 따로** 센다 — 두 잎의 gen3 은
-#    같은 밤이 아닐 수 있다(A05611 은 10-12 가 gen1).
-#    ⛔ `~/.local/state/tos/paper-cold/archives/`(잎 없는 옛 경로)는 비어 있어야 한다.
+#    잎마다 거래일 하루에 gen{N}.set.tar.xz + gen{N}.cold-backup.report.json 한 쌍.
+#    번호가 건너뛰어 있으면 그 밤에 그 잎의 스냅숏이 중도 사망한 것이다(§5 — 지우지 말 것).
+#    세대 번호는 **잎마다 따로** 센다 — 두 잎의 gen3 은 같은 밤이 아닐 수 있다.
+#    ⛔ 콜드 루트 바로 밑의 `archives/`(잎 없는 옛 경로)는 비어 있어야 한다.
 
 # 3) 잎마다 마지막 보고서가 실제로 검증됐고 바닥 위인가
 for leaf in ~/.local/state/tos/paper-cold/A0[0-9][0-9][0-9][0-9]/; do   # 래퍼와 같은 길이 고정 글로브
@@ -919,7 +579,7 @@ done
 | `cold-backup: schema refused — … is AHEAD …` | ⛔ **대상이 이 코드보다 새 스키마다** — 그 파일을 쓴 쪽이 더 새 코드다 | **`migrate` 는 답이 아니다 — 그쪽도 거부한다**(`operations/schema_migrations.py` 의 AHEAD 가드가 아무것도 쓰기 전에 끊는다). 둘 중 하나다: (a) 그 저장소를 쓴 **코드 버전으로 되돌려** 돌린다, (b) 이 레인을 **멈춘다**(cron 줄을 빼는 것은 운영자). ⚠ 이 방향은 **메시지가 조치를 말하지 않는다** — 접두가 BEHIND 와 갈라져 있는 이유가 그것이다. 산출물은 위 행과 같다 |
 | `cold-backup: snapshot failed — OperationalError: database is locked` | **런타임이 아직 떠 있다** — §1 전제 1 위반 | 런타임을 멈추고 다시 돌린다. cron 시각을 당겼는지 본다 |
 | `cold-backup: snapshot failed — OSError: … No space left …` | 복사 도중 디스크가 찼다 | §6. 남은 `gen{N}/` 는 **지우지 않는다** — 다음 실행은 그 번호를 건너뛴다 |
-| `cold-backup: archive failed — …` | 압축·검증 단계에서 환경이 무너졌다 | 비압축 스냅숏은 남아 있다. 원인을 고치고 다시 돌린다(다음 세대로 간다). ⚠ 2026-10-03 **이전에는** `SchemaVersionRefused` 도 이 접두로 나왔다 — 그것은 환경 고장이 아니라 판정이고, 지금은 위의 `migrate refused`/`schema refused` 두 행이다(PR #855 · §4-5-2 의 ⚠ 문단과 ① · 계획 §7.1.28) |
+| `cold-backup: archive failed — …` | 압축·검증 단계에서 환경이 무너졌다 | 비압축 스냅숏은 남아 있다. 원인을 고치고 다시 돌린다(다음 세대로 간다). ⚠ 2026-10-03 **이전에는** `SchemaVersionRefused` 도 이 접두로 나왔다 — 그것은 환경 고장이 아니라 판정이고, 지금은 위의 `migrate refused`/`schema refused` 두 행이다(§4-5-2 의 ⚠ 문단) |
 | `cold-backup: failed — <ExcType>: …` | 단계 이름이 없는 형태 — 디스패치가 분류표의 어느 접두에도 못 넣은 예외다 | 위 행들과 같은 「환경」 취급이되, **예외 타입을 그대로 보고한다**. 분류표에 빠진 판정일 수 있다 |
 | `cold-backup: config failed — …` | 설정 로더가 이 모듈이 모르는 방식으로 깨졌다 | 메시지의 예외 타입을 그대로 보고한다 — 결함일 수 있다 |
 
@@ -968,12 +628,12 @@ done
 몇 달 묵은 콜드 사본이 아직 읽히는지 확인할 때는 새 백업을 만들지 않고 공개
 `verify_archive` 를 쓴다:
 
-⚠ **아래 스니펫의 경로는 옛 배치**(`paper-backups` / `paper-cold` / `paper-verify`)다.
-이 호스트의 실제 좌표로 바꿔 읽는다 — 치환 네 줄은 §4-5-5 끝에 있다.
+⚠ **아래 스니펫의 경로는 예시다.** 기준 설정(§4-5-1)의 `backup_root` · `archive_dir` ·
+`verify_root` 와 그 잎 이름으로 바꿔 읽는다.
 ⚠ **재검사도 복원도 `umask 077` 아래에서 돌린다.** `verify_archive` 의 data 필터는 멤버 모드를
-`& 0o755 | 0o600` 으로 쓰고, 비root `tar` 는 umask 를 적용한다 — `A05610` gen1 의 멤버는 tar 안에
-644/664 로 기록돼 있어(§4-5-4 A3-F3) 느슨한 umask 로 풀면 증거 DB 사본이 644 로 생긴다. gen2 부터는
-멤버가 600 이라 어느 쪽으로 풀어도 600 이다.
+`& 0o755 | 0o600` 으로 쓰고, 비root `tar` 는 umask 를 적용한다. 첫 잎의 gen1 은 `umask 077`
+판 이전에 떠서 멤버가 644/664 로 기록돼 있으므로, 느슨한 umask 로 풀면 증거 DB 사본이 644 로
+생긴다. 그 뒤 세대는 멤버가 600 이라 어느 쪽으로 풀어도 600 이다.
 
 ```python
 from pathlib import Path

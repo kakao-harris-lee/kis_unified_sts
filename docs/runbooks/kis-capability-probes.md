@@ -1538,17 +1538,22 @@ python -m tools.broker_probes.run P-BAL --asset stock --env real
 
 본문의 `파일명:행` 축약(초안 메모 §5와 동일 관례)은 아래로 해소한다.
 
+⛔ 표시한 셋은 **더 이상 존재하지 않는다** — 레거시 런타임 제거(2026-11, L1–L7)와 명세 코퍼스
+은퇴(2026-11-13)로 사라졌다(`git log --diff-filter=D`). 본문에서 그 파일을 행 번호로 인용하는
+문단(§5.6 P-BAL 의 동기 · §5.7.6 의 `_normalize_odno`)은 **측정 당시의 기록**이고, 오늘의
+소비자를 설명하지 않는다. 프로브 자체는 그대로 돈다 — 프로브는 그 모듈들을 import 하지 않는다.
+
 | 축약 | 실제 경로 |
 |---|---|
-| `executor.py` | `shared/execution/executor.py` |
-| `client.py` | `shared/kis/client.py` |
+| `executor.py` | ⛔ `shared/execution/executor.py` — **2026-11-13 삭제** |
+| `client.py` | ⛔ `shared/kis/client.py` — **2026-11-13 삭제** |
 | `auth.py` | `shared/kis/auth.py` |
 | `approval_cache.py` | `shared/kis/approval_cache.py` |
 | `tr_ids.py` | `shared/execution/tr_ids.py` |
 | `tr_ids.yaml` | `config/kis/tr_ids.yaml` |
 | `streaming.yaml` | `config/streaming.yaml` |
 | `common.py` · `registry.py` · `probes_*.py` · `run.py` | `tools/broker_probes/` |
-| `broker_verification.py` | `services/trading/broker_verification.py` |
+| `broker_verification.py` | ⛔ `services/trading/broker_verification.py` — **2026-11 삭제(L2)** |
 | `futures-legal-review.md` | `docs/runbooks/futures-legal-review.md` |
 
 ## 부록 C — 관련 문서
