@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -13,7 +12,6 @@ import yaml
 from tools.tos_cp3.live_producer.config import LiveProducerRefused
 from tools.tos_cp3.session_day import (
     SessionDayError,
-    assert_covers,
     holidays_of,
     is_trading_day,
     validate_overrides,
@@ -42,25 +40,23 @@ class SessionWindow:
 
 @dataclass(frozen=True)
 class RuntimeCalendar:
-    """The tenant calendar's holiday set, coverage and session windows."""
+    """The tenant calendar's holiday set and session windows."""
 
     path: Path
     calendar_version: str
     tz_id: str
     holidays: frozenset[date]
-    covered_years: frozenset[int]
     sessions: dict[str, tuple[SessionWindow, ...]]
     raw: dict = field(default_factory=dict, repr=False, compare=False)
 
     def is_trading_day(self, day: date) -> bool:
-        self.assert_covers(day)
+        """A weekday the calendar does not list as closed — in any year."""
+        # SAFETY: known-holidays-only, no covered-year declaration (2026-11-20
+        # operator directive). A coverage refusal here refuses EVERY session of a
+        # year nobody has listed holidays for yet — measured 2027-01-04 ->
+        # LiveProducerRefused at boot. Whether an unlisted day really traded is
+        # settled by the rows the broker returns (frame.build_seed).
         return is_trading_day(day, self.holidays)
-
-    def assert_covers(self, day: date) -> None:
-        try:
-            assert_covers(day, covered_years=self.covered_years, where=self.path)
-        except SessionDayError as exc:
-            raise LiveProducerRefused(str(exc)) from exc
 
     def window(
         self, session_id: str, phase: str, day: date | None = None
@@ -112,13 +108,8 @@ def _parse_time(value: str, *, path: Path, field: str) -> time:
         raise LiveProducerRefused(f"{path}: {field}={value!r} is not HH:MM") from exc
 
 
-MIN_HOLIDAYS_PER_COVERED_YEAR = 5
-
-
-def load_runtime_calendar(
-    path: Path, *, covered_years: Iterable[int]
-) -> RuntimeCalendar:
-    """Read the tenant calendar YAML and cross-check its declared range."""
+def load_runtime_calendar(path: Path) -> RuntimeCalendar:
+    """Read the tenant calendar YAML: its holidays, overrides and windows."""
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
     if not isinstance(data, dict):
@@ -160,32 +151,11 @@ def load_runtime_calendar(
         raise LiveProducerRefused(
             f"{path}: 'calendar_version' and 'tz_id' must both be strings"
         )
-    declared = frozenset(int(year) for year in covered_years)
-    if not declared:
-        raise LiveProducerRefused(
-            f"{path}: no covered years declared. Without a declared range the "
-            "seed walk cannot tell 'this year has no holidays listed' from "
-            "'this year is closed on no days' (plan §3.2 L2)"
-        )
-    per_year = Counter(day.year for day in holidays)
-    thin = sorted(
-        year for year in declared if per_year[year] < MIN_HOLIDAYS_PER_COVERED_YEAR
-    )
-    if thin:
-        raise LiveProducerRefused(
-            f"{path} declares {sorted(declared)} covered but carries "
-            + ", ".join(f"{year}: {per_year[year]}" for year in thin)
-            + f" holiday(s) — fewer than the {MIN_HOLIDAYS_PER_COVERED_YEAR} a "
-            "real KRX year has. A year present only as a stray forward-dated "
-            "entry would let every weekday in it read as a trading day "
-            "(review L4)"
-        )
     return RuntimeCalendar(
         path=path,
         calendar_version=version,
         tz_id=tz_id,
         holidays=holidays,
-        covered_years=declared,
         sessions=sessions,
         raw=data,
     )

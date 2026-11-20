@@ -47,8 +47,6 @@ _REQUIRED: tuple[tuple[str, type], ...] = (
     ("band_max_response_bytes", int),
 )
 
-_REQUIRED_INT_LISTS: tuple[str, ...] = ("calendar_covered_years",)
-
 _REQUIRED_NULLABLE_STR: tuple[str, ...] = ("front_month_product",)
 
 _MARKET_PATH_KEY = "venue_policy_yaml"
@@ -116,7 +114,6 @@ class LiveProducerConfig:
     max_seed_calendar_days: int
     max_consecutive_produce_errors: int
     max_consecutive_fetch_error_minutes: int
-    calendar_covered_years: tuple[int, ...]
     band_max_response_bytes: int
     venue_policy_yaml: Path | None
     parser_env: tuple[tuple[str, str], ...]
@@ -255,7 +252,6 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
 
     known = (
         {name for name, _ in _REQUIRED}
-        | set(_REQUIRED_INT_LISTS)
         | set(_REQUIRED_NULLABLE_STR)
         | {"parser_env", _MARKET_PATH_KEY}
     )
@@ -267,9 +263,7 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
         )
     missing = sorted(
         name
-        for name in [n for n, _ in _REQUIRED]
-        + list(_REQUIRED_INT_LISTS)
-        + list(_REQUIRED_NULLABLE_STR)
+        for name in [n for n, _ in _REQUIRED] + list(_REQUIRED_NULLABLE_STR)
         if name not in data
     )
     if missing:
@@ -282,16 +276,6 @@ def load_config(path: Path, *, repo_root: Path) -> LiveProducerConfig:
         except (TypeError, ValueError) as exc:
             raise LiveProducerRefused(
                 f"{path}: {name}={data[name]!r} is not a {kind.__name__}"
-            ) from exc
-    for name in _REQUIRED_INT_LISTS:
-        entries = data[name]
-        if not isinstance(entries, list) or not entries:
-            raise LiveProducerRefused(f"{path}: {name} must be a non-empty list")
-        try:
-            values[name] = tuple(sorted({int(entry) for entry in entries}))
-        except (TypeError, ValueError) as exc:
-            raise LiveProducerRefused(
-                f"{path}: {name}={entries!r} is not a list of ints"
             ) from exc
 
     for name in _REQUIRED_NULLABLE_STR:
