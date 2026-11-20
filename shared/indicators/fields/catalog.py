@@ -72,7 +72,9 @@ from typing import Final
 #: * **Adding** an op does NOT bump it. Every document that loaded against the
 #:   previous op set still loads and still evaluates identically: the set only
 #:   grew, and a declaration cannot use an op it does not name. ``const`` was
-#:   added this way (P2-b).
+#:   added this way (P2-b), and ``rsi``/``williams_r`` the same way — the five
+#:   shipped tenant declarations name none of the three, so their every bar ×
+#:   field value is unchanged.
 #: * **Removing** an op, or changing what an existing one COMPUTES or accepts,
 #:   DOES bump it — those are the changes that would make an unchanged
 #:   declaration mean something else, which is the whole point of the pin.
@@ -102,6 +104,16 @@ class NonePolicy(Enum):
 
 #: Sentinel for a variadic op's maximum input count.
 UNBOUNDED: Final[int] = -1
+
+#: Shortest ``period`` ``rsi``/``williams_r`` accept — TA-Lib's own floor
+#: (``TA_BAD_PARAM`` below it), so the ops stay inside the domain their
+#: reference will compute.
+MOMENTUM_MIN_PERIOD: Final[int] = 2
+
+#: Longest ``period`` ``rsi`` accepts. The live producer's ~780-bar seed carries
+#: about ``780 / 35`` periods' worth of Wilder memory; see the note beside the
+#: op below for the measurement and for why ``williams_r`` has no such bound.
+RSI_MAX_PERIOD: Final[int] = 20
 
 
 @dataclass(frozen=True)
@@ -217,6 +229,50 @@ _CATALOG: Final[tuple[OpSpec, ...]] = (
         returns=_NUM,
         required_params=("open_hour", "open_minute"),
         summary="elapsed minutes from the configured KST session open to this bar",
+    ),
+    # --- momentum indicators (bar-driven, their own warmup) -----------------
+    # General indicators, parameterized by `period` only: no default, because a
+    # period is the whole content of the declaration and a silent 14 would make
+    # two tenants that look the same compute different things. Both are the
+    # TA-Lib reference definition, bit for bit, over the whole domain the loader
+    # accepts (``tests/unit/indicators/fields/test_talib_reference.py``) except
+    # a degenerate window, where they differ in a declared and tested way
+    # (``stateful.py``, decision 2). Both are ``None`` until their lookback is
+    # covered — which is why they are listed in :data:`WARMUP_MISSING_OPS` —
+    # and neither resets on the session boundary (``stateful.py``, part 3).
+    #
+    # `period` bounds, enforced by the loader (`schema.py::_validate_params`):
+    #
+    # * Both refuse `period < 2`, because TA-Lib does (`TA_BAD_PARAM`). A value
+    #   the reference will not compute must not reach a published field.
+    # * `rsi` additionally refuses `period > RSI_MAX_PERIOD` (20). Wilder
+    #   smoothing never forgets, so an `rsi` value depends on where the bar
+    #   stream STARTED, and the live producer's start is not the backtest's:
+    #   it boots from a seed of about 780 sampled bars
+    #   (`tools/tos_cp3`'s `build_seed`). Two starts converge to the last bit
+    #   after roughly `35 * period` bars (measured on 7000 bars: period 2 -> 55,
+    #   14 -> 470, 50 -> 1758, and period 200 had not converged at all), so
+    #   780 / 35 ~= 22 is the longest period that seed can carry. Above the
+    #   bound the live and replayed values of the SAME bar would differ while
+    #   both looked correct, which is the one failure this catalog cannot let a
+    #   tenant declare by accident. `williams_r` needs no such bound: its window
+    #   holds exactly `period` bars and forgets everything older.
+    _op(
+        "rsi",
+        returns=_NUM,
+        required_params=("period",),
+        stateful=True,
+        summary="Wilder RSI of the close, 0..100 (None for the first `period` bars)",
+    ),
+    _op(
+        "williams_r",
+        returns=_NUM,
+        required_params=("period",),
+        stateful=True,
+        summary=(
+            "Williams %R over the trailing `period` bars, -100..0 "
+            "(None for the first `period` - 1 bars)"
+        ),
     ),
     # --- literal ------------------------------------------------------------
     _op(
@@ -344,6 +400,15 @@ GATED_OPS: Final[frozenset[str]] = frozenset(
     {"gated_percentile", "gated_max", "gated_min", "gated_lag"}
 )
 
+#: Ops that carry NO VALUE until their window has warmed up, and so may hand a
+#: ``None`` to whatever reads them. The loader walks this set to refuse, at
+#: boot, a declaration that reads one where a definite value is required —
+#: an ``all``/``any``/``not`` operand, a ``sample_when`` gate, or a published
+#: field (``schema.py::_may_be_missing``). An op that is stateful but always
+#: definite (``atr``, ``session.vwap_typical``: both report a partial window
+#: from their first bar) is deliberately NOT here.
+WARMUP_MISSING_OPS: Final[frozenset[str]] = GATED_OPS | frozenset({"rsi", "williams_r"})
+
 
 def op_spec(name: str) -> OpSpec:
     """Return the :class:`OpSpec` named *name*.
@@ -364,7 +429,10 @@ __all__ = [
     "CATALOG",
     "CATALOG_VERSION",
     "GATED_OPS",
+    "MOMENTUM_MIN_PERIOD",
+    "RSI_MAX_PERIOD",
     "UNBOUNDED",
+    "WARMUP_MISSING_OPS",
     "NonePolicy",
     "OpSpec",
     "ValueKind",

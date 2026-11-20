@@ -56,6 +56,7 @@ from shared.indicators.fields.bar import (
 from shared.indicators.fields.catalog import (
     CATALOG,
     CATALOG_VERSION,
+    WARMUP_MISSING_OPS,
     NonePolicy,
     OpSpec,
     ValueKind,
@@ -94,6 +95,8 @@ from shared.indicators.fields.stateful import (
     GatedMin,
     GatedPercentile,
     GatedWindowOp,
+    WilderRsi,
+    WilliamsR,
 )
 
 __all__ = [
@@ -101,6 +104,7 @@ __all__ = [
     "CATALOG_VERSION",
     "ROUNDING_MODES",
     "SCHEMA_VERSION",
+    "WARMUP_MISSING_OPS",
     "AtrWindow",
     "EvaluatedBar",
     "FieldBar",
@@ -123,6 +127,8 @@ __all__ = [
     "ScaleSpec",
     "SessionVwapTypical",
     "ValueKind",
+    "WilderRsi",
+    "WilliamsR",
     "evaluate_bars",
     "known_op_names",
     "load_fields_file",
