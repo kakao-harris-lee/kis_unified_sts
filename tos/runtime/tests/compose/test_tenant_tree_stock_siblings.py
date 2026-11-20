@@ -40,7 +40,6 @@ _DIFFERS: dict[str, frozenset[str] | None] = {
     "README.md": None,
     "RENDER.yaml": frozenset({"tree_id", "instrument.pattern"}),
     "fields.yaml": frozenset(),
-    "fill_observer.yaml": frozenset(),
     "critical_input_policy.yaml": frozenset({"policy_id", "issuer_principal_id"}),
     "venue_constraint_policy.yaml": frozenset(
         {
