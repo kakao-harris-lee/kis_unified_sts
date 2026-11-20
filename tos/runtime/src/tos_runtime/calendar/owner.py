@@ -152,12 +152,7 @@ class SessionFactsOwner:
         return trading_date_at(reading.unix_ms, instrument_class, self._calendar)
 
     def local_time_now(self) -> str | None:
-        """The calendar timezone's wall time (``HHMMSS``) now, or ``None`` (issue #1127).
-
-        The send-start stamp the KIS order transport writes beside its ``trading_date``, from
-        the SAME trusted clock that date comes from — one unreadable clock means both are
-        absent, and the uncertain-send reconciliation then binds nothing.
-        """
+        """The calendar timezone's wall time (``HHMMSS``) now, or ``None`` (issue #1127)."""
         reading = self._trading_date_wall_clock.read()
         return (
             None if reading is None else local_time_at(reading.unix_ms, self._calendar)

@@ -927,10 +927,6 @@ def _package_files() -> list[Path]:
     return list(Path(pkg.__file__).parent.glob("*.py"))
 
 
-# The only waits this package may contain, each named by the ONE function allowed to hold it:
-# the app key's slot wait, and (#1125) the wait for the cross-process token lock, which is the
-# same slot wait spread over the processes that share one app key. Neither re-sends anything,
-# which is what this guard exists to forbid. Anything else that loops or sleeps is an offender.
 _PACING_WAIT_FUNCTIONS = {
     "pacer.py": {"acquire"},
     "file_lock.py": {"_flock_within_budget"},

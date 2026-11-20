@@ -118,8 +118,6 @@ class DeferredKisWitness:
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
         self.inner: KisStockBrokerWitness | None = None
-        #: The session-loop fallback read's own witness (``loop_witness_request_timeout_s``) and
-        #: walk deadline (``loop_witness_deadline_ms``); ``None`` keeps ``inner`` / no deadline.
         self.loop_inner: KisStockBrokerWitness | None = None
         self._loop_deadline_ms = loop_deadline_ms
         self._loop_deadline_max_ms = loop_deadline_max_ms
@@ -174,20 +172,7 @@ class DeferredKisWitness:
         return self._loop_observe(scope)
 
     def _loop_page_dates(self, scope: WitnessScope) -> int:
-        """How many ORDER PAGES the witness will walk for ``scope`` — today included (#1136).
-
-        ``KisStockBrokerWitness.observe`` reads ``(today, *sorted(set(order_dates) - {today}))``
-        (``recon/witness_kis.py``): today is always one of the pages, whether or not the scope
-        names it. Counting only ``order_dates`` therefore undercounted by one on exactly the leaf
-        #1115 was written for — receipts on 11-17/18/19 reconciled on 11-20, before that day has
-        a receipt of its own, walk FOUR order pages plus the balance, and the deadline that
-        counted three (7000 ms) cut the last page off at 8000 ms on every pass.
-
-        The date comes from this witness's own ``trading_date_now``, which is what the inner
-        witness's ``KstDateSource`` reads when ``observe`` resolves ``today`` — one reader, one
-        answer, so the count cannot disagree with the walk it is predicting. No trusted date
-        means the read is about to fail at that same source, so nothing is added here.
-        """
+        """How many ORDER PAGES the witness will walk for ``scope`` — today included (#1136)."""
         today = self._trading_date_now()
         dates = set(scope.order_dates)
         if today is not None:
@@ -195,21 +180,7 @@ class DeferredKisWitness:
         return len(dates)
 
     def _loop_deadline_for_page_dates(self, page_dates: int) -> int | None:
-        """The loop-side walk deadline for a walk of ``page_dates`` order pages (#1115 N1).
-
-        ``loop_witness_deadline_ms`` was measured for a ONE-page walk (the balance page plus one
-        order page, one app-key pacing interval apart). The release reconciliation reads EVERY
-        receipt date in its scope (``release_consumer._scope_receipt_dates``) and today besides,
-        so an N-page walk needs N+1 paced GETs and its last page does not start until N intervals
-        in — with a fixed 3000 ms deadline a 2-page walk already fails, every time, so the loop
-        fallback was ``WitnessUnavailable`` by construction on any leaf that outlived one trading
-        date.
-
-        So each page past the first adds one pacing interval, up to
-        ``loop_witness_deadline_max_ms`` — the cap is what keeps the session-loop stall bounded,
-        and past it the behaviour is the old one (no verdict, fail-closed, recovered by the FETCH
-        worker's reprojection). Without the cap or the pacing interval the base is used unchanged.
-        """
+        """The loop-side walk deadline for a walk of ``page_dates`` order pages (#1115 N1)."""
         base = self._loop_deadline_ms
         per_date = self._loop_deadline_per_date_ms
         cap = self._loop_deadline_max_ms
@@ -224,19 +195,7 @@ class DeferredKisWitness:
     def _refuse_a_walk_the_deadline_cannot_finish(
         self, page_dates: int, deadline_ms: int
     ) -> None:
-        """Refuse BEFORE the first GET when the walk provably cannot finish (review-1132 r1).
-
-        Past what the cap admits the outcome is ``WitnessUnavailable`` either way — the last
-        order page's pacer grant lands after the deadline, so the walk is cut off. Spending the
-        whole cap plus a pacer wait and a GET in flight (~13 s at the committed numbers) on the
-        SESSION LOOP to arrive at a result that was certain before the first request is the one
-        cost worth avoiding: that thread is also the one that produces decisions. The release
-        holds exactly as it would have, and the FETCH worker's reprojection is still the path
-        that resolves it.
-
-        Only the scaled mode can say this. Without the pacing interval the page starts are not
-        knowable here, so nothing is refused up front and the read runs as it always did.
-        """
+        """Refuse BEFORE the first GET when the walk provably cannot finish (review-1132 r1)."""
         per_date = self._loop_deadline_per_date_ms
         if per_date is None or self._loop_deadline_max_ms is None:
             return
@@ -255,8 +214,6 @@ class DeferredKisWitness:
     def _loop_observe(self, scope: WitnessScope) -> WitnessSnapshot:
         """A live read no prefetched snapshot served — on the caller's (loop) thread, bounded."""
         witness = self._ready() if self.loop_inner is None else self.loop_inner
-        # One date read for the whole decision: the deadline and the refusal must agree about
-        # which pages this walk has, and two reads could straddle a KST date rollover (#1136).
         page_dates = self._loop_page_dates(scope)
         deadline_ms = self._loop_deadline_for_page_dates(page_dates)
         if deadline_ms is None:
@@ -374,9 +331,6 @@ class BrokerPosttrade:
     release_consumer: FinalityConsumerPort | None = None
     held_position_bridge: HeldPositionBridge | None = None
     trading_date_now: Callable[[], str | None] = lambda: None
-    #: ``kis_mock_transport.yaml::min_send_interval_ms`` (the app-key pacer's spacing), carried
-    #: here because the observer's idle reads must reserve one such slot for the next holdings
-    #: refresh (#1107 L1) and ``attach_fill_observer`` has no transport config of its own.
     app_key_min_send_interval_ms: int | None = None
 
 

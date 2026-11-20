@@ -292,16 +292,7 @@ class Inputs:
 
 
 def producer_open_anchor(asset_class: AssetClass) -> str:
-    """The ``open_anchor`` the live producer config(s) for *asset_class* declare.
-
-    Several configs of one market are allowed — a market is one SESSION, and since the
-    operator's 2026-11-19 directive the stock market has one producer config per tenant
-    symbol (``cp3-live-producer-stock-{005930,000660,005380}.yaml``), all three anchored
-    at the same KRX open. What is refused is DISAGREEMENT: two configs of one market
-    declaring different anchors leave no single anchor for the harness to pick, and a
-    silently chosen one would shift the entry window on every compared bar. Zero matches
-    stays a refusal too — an absent anchor is not a default.
-    """
+    """The ``open_anchor`` the live producer config(s) for *asset_class* declare."""
     matches: list[tuple[Path, str]] = []
     for path in sorted(REPO_ROOT.glob(PRODUCER_CONFIG_GLOB)):
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))

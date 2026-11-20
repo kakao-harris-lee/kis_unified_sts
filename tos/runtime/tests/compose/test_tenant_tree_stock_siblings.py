@@ -1,24 +1,4 @@
-"""The stock tenant trees added for the operator's 2026-11-19 directive.
-
-「유동성이 큰 대형주들로 최종 모의투자에서 매수/매도가 잘 동작하게 완료해」 — one open
-position per symbol (the kernel's no-pyramiding is unchanged), so three concurrent slots
-come from three symbols. ``cp3-setup-d-stock-000660`` and ``cp3-setup-d-stock-005380`` are
-derivations of ``cp3-setup-d-stock-005930``, whose own differences from the LONG tree
-``test_tenant_tree_stock.py`` already pins — this module pins the step from 005930 to a
-sibling, which is exactly «the symbol, and nothing else»:
-
-* the file set is identical;
-* every file is a BYTE copy of 005930's except the ones listed in ``_DIFFERS``, and in
-  those the only differing leaves are the ones declared there;
-* each sibling tree BOOTS under ``compose_paper_runtime`` with the kis-mock transport and
-  a crossing event still sends nothing (the band is absent in a hermetic boot);
-* the trees are discovered, not listed, so a fourth symbol cannot land uncovered.
-
-What the symbol does NOT change is worth stating because it is why the siblings are copies:
-the KRX 호가가격단위 ladder is chosen by PRICE, not by symbol, and the day's price band is
-read per session by the band source. So the venue policy's tick table is byte-identical and
-only its ``policy_id`` and provenance move.
-"""
+"""The stock tenant trees added for the operator's 2026-11-19 directive."""
 
 from __future__ import annotations
 
@@ -56,13 +36,6 @@ _SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
 
 _PRIMARY_SYMBOL = "005930"
 
-#: Per file, the leaf paths that may differ from the 005930 tree. ``None`` means the file
-#: is prose (its whole content may differ). An EMPTY set means the bytes differ but NO
-#: parsed leaf does — the file's only difference is a comment naming the symbol, so the
-#: runtime reads exactly the 005930 values from it. Everything absent from this map must
-#: be a BYTE copy — including ``strategies/``, ``strategy_bindings.yaml`` and
-#: ``engine.yaml``, which is what makes all three stock tenants measure one decision
-#: digest (``config/tos_runtime/decision_generations.yaml``).
 _DIFFERS: dict[str, frozenset[str] | None] = {
     "README.md": None,
     "RENDER.yaml": frozenset({"tree_id", "instrument.pattern"}),
@@ -81,11 +54,7 @@ _DIFFERS: dict[str, frozenset[str] | None] = {
 
 
 def _sibling_symbols() -> tuple[str, ...]:
-    """Every shipped stock tenant tree except the one the siblings derive from.
-
-    Discovered from the config root rather than listed, so a tree added later is covered
-    by this module instead of being silently skipped.
-    """
+    """Every shipped stock tenant tree except the one the siblings derive from."""
     found = sorted(
         path.name.removeprefix("cp3-setup-d-stock-")
         for path in _CONFIG_ROOT.glob("cp3-setup-d-stock-*")
@@ -162,7 +131,6 @@ def test_a_sibling_tree_names_its_own_symbol_everywhere_it_matters(symbol: str) 
     tree = _tree(symbol)
     render = yaml.safe_load((tree / "RENDER.yaml").read_text(encoding="utf-8"))
     assert render["tree_id"] == f"cp3-setup-d-stock-{symbol}"
-    # Single-symbol by construction: the renderer FULL-matches `--instrument` against this.
     assert render["instrument"]["pattern"] == symbol
     assert render["market"] == "stock"
     assert render["account"] == {"env_key": "KIS_STOCK_ACCOUNT_NO"}
@@ -179,17 +147,13 @@ def test_a_sibling_tree_names_its_own_symbol_everywhere_it_matters(symbol: str) 
         raw["venue_policy_yaml"]
         == f"config/tos_runtime/cp3-setup-d-stock-{symbol}/venue_constraint_policy.yaml"
     )
-    assert raw["front_month_product"] is None  # a stock does not roll
+    assert raw["front_month_product"] is None
     assert raw["open_anchor"] == "09:00"
 
 
 @pytest.mark.parametrize("symbol", _SIBLINGS)
 def test_a_sibling_has_a_contract_spec_the_producer_can_resolve(symbol: str) -> None:
-    """``resolve_contract_spec`` matches by ``symbol_prefix``; without a block the
-
-    producer refuses to start. The values are 005930's, because a KRX share is
-    price x 1 and the tick ladder is the tenant tree's business, not this spec's.
-    """
+    """``resolve_contract_spec`` matches by ``symbol_prefix``; without a block the"""
     execution = yaml.safe_load(
         (_REPO_ROOT / "config" / "execution.yaml").read_text(encoding="utf-8")
     )
@@ -218,7 +182,6 @@ def test_a_sibling_tree_carries_the_same_tick_ladder_and_quantity_cap(
     assert sibling["_runtime"] == primary["_runtime"]
     assert sibling["_model_view"]["shape_constraints"]["max_quantity"] == 1
     assert sibling["scope"]["market_segments"] == ["KRX_STOCK"]
-    # The policy's identity moves with its content (the LONG tree's header rule).
     assert sibling["policy_id"] != primary["policy_id"]
     assert symbol in sibling["policy_id"]
 
@@ -246,14 +209,7 @@ def test_a_sibling_trees_venue_policy_loads_with_its_own_symbol(
 
 
 def _install_sibling_tree(config_dir: Path, symbol: str) -> str:
-    """``_install_stock_tree`` for a sibling: its calendar + its two filled policies.
-
-    The instrument filled in is the compose fixture's (``_VENUE_POLICY_INSTRUMENT``), not
-    the tenant's symbol, because the boot cross-checks the policy scope against the
-    fixture's ``construction.instrument``. This test is about the tree's own files
-    composing; which symbol a deployment renders in is
-    ``tests/unit/scripts/test_render_tenant_trees.py``'s subject.
-    """
+    """``_install_stock_tree`` for a sibling: its calendar + its two filled policies."""
     tree = _tree(symbol)
     calendar_text = (tree / "calendar.yaml").read_text(encoding="utf-8")
     (config_dir / "calendar.yaml").write_text(calendar_text, encoding="utf-8")
@@ -291,12 +247,7 @@ def test_a_sibling_tree_boots_and_a_session_attempt_sends_nothing(
     server,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The same end as 005930's own boot test, per sibling tree.
-
-    A hermetic boot has no band line, so a fully constructed candidate still ends at
-    VENUE_ADMISSIBILITY_DECISION = UNKNOWN and nothing is sealed. That is the fail-closed
-    direction the tree is supposed to have, and it proves the tree's own files compose.
-    """
+    """The same end as 005930's own boot test, per sibling tree."""
     _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
     venue_digest = _install_sibling_tree(config_dir, symbol)
     runtime = _boot(config_dir, data_dir, custody_root, hour=10, minute=0)

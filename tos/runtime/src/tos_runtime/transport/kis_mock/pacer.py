@@ -79,8 +79,6 @@ class KisAppKeyPacer:
     ) -> None:
         self._pacing = pacing
         self._monotonic = monotonic
-        # #1125: this pacer spaces THIS process's requests; the gate spaces the app key's,
-        # across every tenant process holding it. A request passes both or is not sent.
         self._shared_gate = shared_gate
         self._lock = threading.Lock()
         self._last_grant_ms: int | None = None

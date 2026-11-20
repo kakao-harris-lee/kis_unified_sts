@@ -127,11 +127,7 @@ class TestTheSharedTokenCacheComesFromTheTransportConfig:
         assert gate.min_interval_s == pytest.approx(0.5)
 
     def test_every_session_of_this_boot_gets_that_one_cache_and_gate(self) -> None:
-        """One registry, one cache, one gate: the order transport, the broker-facts reader,
-
-        the fill witness and the loop witness all take their session from here, so none of
-        them can open a second token lifecycle or a second queue on this app key.
-        """
+        """One registry, one cache, one gate: the order transport, the broker-facts reader,"""
         config = self._cache_config()
         cache = kis_shared_token_cache(config)
         gate = kis_shared_app_key_gate(config)

@@ -1,14 +1,4 @@
-"""A fault-injectable KIS 모의투자 (VTS) double — one scripted answer per CALL, not per path.
-
-:class:`~..transport.kis_mock._fake_kis_server.FakeKisServer` scripts one answer per *path*,
-which is enough for a healthy session but cannot express "this call fails and the next one
-works" — the shape of every 2026-11-20 stock-MOCK incident. This module keeps that server and
-adds a queue of :class:`FaultKind` per CALL CLASS: the route is re-armed from the queue's head
-inside the handler's ``on_request`` hook, which the fake server calls after it has already bound
-the answer it is about to write, so the arming is always for the NEXT call of that class.
-
-Nothing here opens a socket of its own, writes outside ``tmp_path``, or prints a credential.
-"""
+"""A fault-injectable KIS 모의투자 (VTS) double — one scripted answer per CALL, not per path."""
 
 from __future__ import annotations
 
@@ -31,21 +21,14 @@ __all__ = [
     "ScriptedKisBroker",
 ]
 
-#: The two request paths and the two GET-path builders are the suite's existing ones — the
-#: wire shape of a KIS call is stated once, in the e2e modules that first measured it.
 TOKEN_PATH = _TOKEN_PATH
 ORDER_PATH = _ORDER_PATH
 
-#: The bearer string the healthy token route hands out. A fixture value, never a credential.
 FAKE_BEARER_TOKEN = "fault-harness-fake-bearer-token-never-in-evidence"
 
 
 class Call(Enum):
-    """The five call classes one stock-MOCK tenant makes, plus the witness's own balance read.
-
-    They are distinct because the incidents are: a token minute collision hits ``TOKEN`` only,
-    a balance rate limit hits ``FACTS_BALANCE`` (item 12) while the order POST is still fine.
-    """
+    """The five call classes one stock-MOCK tenant makes, plus the witness's own balance read."""
 
     TOKEN = "token"
     FACTS_BALANCE = "facts_balance"
@@ -59,13 +42,9 @@ class FaultKind(Enum):
     """What one call answers. ``OK`` answers the call class's current healthy body."""
 
     OK = "ok"
-    #: KIS's own 1-token-per-minute refusal (EGW00133) — the 2026-11-20 three-tenant collision.
     TOKEN_ERROR = "token_error"
-    #: HTTP 200 with ``rt_cd != "0"`` — how KIS reports a per-key rate limit on a GET.
     RT_CD_NOT_OK = "rt_cd_not_ok"
     HTTP_500 = "http_500"
-    #: No answer at all until the client's own timeout fires. The request IS recorded, so a
-    #: timed-out order POST can still be filled at the broker.
     TIMEOUT = "timeout"
 
 
@@ -119,13 +98,7 @@ def daily_ccld_body(rows: list[dict[str, str]]) -> dict[str, Any]:
 
 
 class ScriptedKisBroker:
-    """A fault-injectable view of one :class:`FakeKisServer`, keyed by :class:`Call`.
-
-    ``script(call, *faults)`` queues one fault per upcoming call of that class; calls past the
-    queue answer healthily again. The healthy answer itself is set by :meth:`order_ack` and
-    :meth:`witness`, so a scenario changes what the broker *holds* without touching what it
-    *fails at*.
-    """
+    """A fault-injectable view of one :class:`FakeKisServer`, keyed by :class:`Call`."""
 
     def __init__(
         self,
@@ -261,7 +234,5 @@ class ScriptedKisBroker:
         if fault is FaultKind.HTTP_500:
             return 500, _HTTP_500_BODY, 0.0, False
         if fault is FaultKind.TIMEOUT:
-            # Delay past the caller's own request timeout, then close without a byte written:
-            # the client raises its timeout error and the server never answers.
             return 200, None, self._timeout_delay_s, True
         raise AssertionError(f"unhandled fault kind {fault!r}")

@@ -94,13 +94,10 @@ def kis_shared_token_cache(
     """The cross-process token cache ``kis_mock_transport.yaml`` declares, or ``None``."""
     if config is None or config.token_cache_path is None:
         return None
-    assert config.token_cache_refresh_margin_s is not None  # the loader pairs the two
+    assert config.token_cache_refresh_margin_s is not None
     return SharedTokenCache(
         path=Path(config.token_cache_path),
         refresh_margin_s=config.token_cache_refresh_margin_s,
-        # The longest a peer process may legitimately hold the lock: its own slot wait on
-        # this app key plus one token POST. Derived from the two values that bound it, so
-        # a slower endpoint does not silently turn into a refusal here.
         lock_wait_s=(
             config.request_timeout_s + config.app_key_request_wait_budget_ms / 1000.0
         ),
@@ -113,7 +110,7 @@ def kis_shared_app_key_gate(
     """The cross-process request gate ``kis_mock_transport.yaml`` declares, or ``None``."""
     if config is None or config.shared_pacer_path is None:
         return None
-    assert config.shared_max_rps is not None  # the loader pairs the two
+    assert config.shared_max_rps is not None
     return SharedAppKeyGate(
         path=Path(config.shared_pacer_path), max_rps=config.shared_max_rps
     )

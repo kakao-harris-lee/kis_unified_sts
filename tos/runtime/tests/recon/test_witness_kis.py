@@ -228,11 +228,7 @@ def test_non_200_http_status_raises_even_when_the_body_looks_successful(
 
 
 def test_a_non_200_says_what_kis_called_it(server: FakeKisGetServer) -> None:
-    """#1125: on 2026-11-20 every witness read failed with `returned HTTP 500` and nothing
-
-    else, and the KIS mock answers 500 for an expired token AND for EGW00201 — so the
-    rate limit could not be told from an auth failure without a manual POST.
-    """
+    """#1125: on 2026-11-20 every witness read failed with `returned HTTP 500` and nothing"""
     server.queue_response(
         BALANCE_PATH,
         status=500,
@@ -754,12 +750,7 @@ def test_an_unusable_execution_price_leaves_the_rest_of_the_row_readable(
 
 
 def test_a_non_finite_price_never_reaches_a_comparison() -> None:
-    """``Decimal("NaN") > 0`` RAISES ``InvalidOperation`` — it is not ``False``.
-
-    A price that parses but cannot be compared would travel into evidence and blow up in
-    the first reader that ranked it, so the two price fields refuse it at the parse. The
-    quantity fields are deliberately NOT changed: their comparisons are a decision path.
-    """
+    """``Decimal("NaN") > 0`` RAISES ``InvalidOperation`` — it is not ``False``."""
     parsed = witness_kis.KisOrderRow.from_wire(
         _priced_wire_row(avg_prvs="NaN", tot_ccld_amt="Infinity")
     )

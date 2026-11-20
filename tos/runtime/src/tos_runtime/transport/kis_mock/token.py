@@ -24,10 +24,6 @@ __all__ = [
     "TokenStale",
 ]
 
-# What a failed token POST is allowed to say in an exception message and an evidence row:
-# KIS's own fault codes and their human text. Never a credential, never the token (2026-11-20
-# — `BROKER_FACTS_OBSERVED` recorded `reason: TokenResponseError` and nothing else, so the
-# incident could not be told apart from an endpoint outage without a manual POST).
 _RESPONSE_FAULT_FIELDS = ("error_code", "error_description", "msg_cd", "msg1", "rt_cd")
 _RESPONSE_FAULT_MAX_CHARS = 200
 
@@ -187,9 +183,6 @@ class KisTokenLifecycle:
         except Exception:  # noqa: BLE001 - a cached token outranks a failed refresh
             if entry is None or remaining_s <= 0:
                 raise
-            # 2026-11-20's failing input: the token is minutes from expiry, the reissue is
-            # refused (1/min on this app key, or this process's own cooldown) and a token
-            # that still works is right there. Using it is what keeps the session sending.
             self._adopt(cache, entry, remaining_s, outcome="fallback", reason=reason)
             return entry.access_token
         cache.write(fingerprint, access_token=access_token, expires_in_s=expires_in_s)

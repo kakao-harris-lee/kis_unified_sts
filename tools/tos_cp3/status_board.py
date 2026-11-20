@@ -1722,10 +1722,6 @@ def render_text(board: Mapping[str, Any]) -> str:
             add(f"    {_fmt_authority(pa)}")
     add("")
     if board["history"]:
-        # 세션 칸 폭은 **그 표에 실제로 있는** 가장 긴 라벨에 맞춘다. 고정 10 이었을 때
-        # `stock-r10` 까지는 맞았지만 종목별 주식 tenant(운영자 지시 2026-11-19)의
-        # `stock-000660-r1`(15자)·`stock-000660-r10`(16자)이 뒤 칸을 모두 밀어
-        # 열이 어긋났다. 머리글도 같은 폭으로 늘린다.
         label_w = max(10, *(len(h["label"]) for h in board["history"]))
         add("■ 최근 세션(날짜별)")
         add(

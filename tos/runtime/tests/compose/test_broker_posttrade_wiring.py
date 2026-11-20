@@ -130,7 +130,6 @@ def test_the_committed_fill_observer_config_loads() -> None:
     config = load_fill_observer_config(_STOCK / "fill_observer.yaml")
     assert config.witness_fields["order_inquiry_tr_id"] == "VTTC0081R"
     assert config.poll_interval_ms > 0 and config.overdue_after_ms > 0
-    # 2026-11-19: 5.0 (fresh TLS per GET); still well under the order path's 10 s.
     assert 0 < config.witness_request_timeout_s <= 5.0
 
 
@@ -302,7 +301,6 @@ def test_the_committed_loop_side_bounds_are_tighter_than_the_worker_ones() -> No
     assert config.loop_witness_request_timeout_s is not None
     assert config.loop_witness_deadline_ms is not None
     assert config.loop_witness_request_timeout_s < config.witness_request_timeout_s
-    # #1115 N1: the cap exists and leaves room above the one-date deadline for more dates.
     assert config.loop_witness_deadline_max_ms is not None
     assert config.loop_witness_deadline_max_ms > config.loop_witness_deadline_ms
 
@@ -326,12 +324,7 @@ def _multi_date_scope(*dates: str) -> WitnessScope:
 
 
 def test_the_loop_deadline_admits_one_paced_page_per_receipt_date() -> None:
-    """#1115 N1: the release reconciliation reads every receipt date, so a 3-date scope needs
-
-    four paced GETs and its last page starts at ~6 s. The one-date deadline (3000) refused it on
-    every pass, which made the loop fallback WitnessUnavailable by construction on a leaf older
-    than one trading date. The deadline now scales per date, capped.
-    """
+    """#1115 N1: the release reconciliation reads every receipt date, so a 3-date scope needs"""
     clock = _StepClock()
     witness = DeferredKisWitness(
         lambda: "20261119",
@@ -348,14 +341,12 @@ def test_the_loop_deadline_admits_one_paced_page_per_receipt_date() -> None:
     witness.observe(three_dates)
     (deadline,) = loop.deadlines
     assert deadline is not None
-    clock.ms = 6_000  # the third order page's pacer grant
+    clock.ms = 6_000
     assert deadline() is False
     clock.ms = 7_000
     assert deadline() is True
 
-    # Today alone is unchanged, and the cap bounds the stall rather than the page count.
     assert witness.loop_deadline_ms_for(_multi_date_scope("20261119")) == 3_000
-    # An EMPTY scope is still one page: the witness reads today whatever the scope says.
     assert witness.loop_deadline_ms_for(_multi_date_scope()) == 3_000
     assert (
         witness.loop_deadline_ms_for(
@@ -363,20 +354,13 @@ def test_the_loop_deadline_admits_one_paced_page_per_receipt_date() -> None:
         )
         == 9_000
     )
-    # A repeated date is one page, not two (the snapshot key dedupes them the same way).
     assert witness.loop_deadline_ms_for(_multi_date_scope("20261119", "20261119")) == (
         3_000
     )
 
 
 def test_the_deadline_counts_today_even_when_the_scope_does_not_name_it() -> None:
-    """#1136: ``KisStockBrokerWitness.observe`` walks ``(today, *older)``, so today is a page.
-
-    The failing input is the leaf #1115 was written for, one day later: receipts on 11-17/18/19
-    reconciled on 11-20 before that day has a receipt of its own. Counting the scope alone said
-    three pages (7000 ms) while the walk had four — the last started at 8000 ms and was cut off
-    on every pass, which is the "always WitnessUnavailable" this was supposed to end.
-    """
+    """#1136: ``KisStockBrokerWitness.observe`` walks ``(today, *older)``, so today is a page."""
     witness = DeferredKisWitness(
         lambda: "20261120",
         loop_deadline_ms=3_000,
@@ -385,15 +369,13 @@ def test_the_deadline_counts_today_even_when_the_scope_does_not_name_it() -> Non
     )
 
     older_three = _multi_date_scope("20261117", "20261118", "20261119")
-    assert witness.loop_deadline_ms_for(older_three) == 9_000  # 4 pages, last at 8000
+    assert witness.loop_deadline_ms_for(older_three) == 9_000
     one_older = _multi_date_scope("20261119")
-    assert witness.loop_deadline_ms_for(one_older) == 5_000  # 2 pages, last at 4000
+    assert witness.loop_deadline_ms_for(one_older) == 5_000
 
-    # Today already in the scope: counted once, so the number does not move.
     with_today = _multi_date_scope("20261119", "20261120")
     assert witness.loop_deadline_ms_for(with_today) == 5_000
 
-    # No trusted date: the read is about to fail at that same source, so nothing is added.
     dateless = DeferredKisWitness(
         lambda: None,
         loop_deadline_ms=3_000,
@@ -404,10 +386,7 @@ def test_the_deadline_counts_today_even_when_the_scope_does_not_name_it() -> Non
 
 
 def test_a_walk_the_cap_cannot_finish_is_refused_before_its_first_get() -> None:
-    """review-1132 r1 MEDIUM: past the cap the read can only end unavailable, so the session
-
-    loop must not spend ~13 s (cap + a pacer wait + a GET in flight) arriving at that.
-    """
+    """review-1132 r1 MEDIUM: past the cap the read can only end unavailable, so the session"""
     clock = _StepClock()
     witness = DeferredKisWitness(
         lambda: "20261119",
@@ -419,24 +398,18 @@ def test_a_walk_the_cap_cannot_finish_is_refused_before_its_first_get() -> None:
     loop = _DeadlineWitness()
     witness.loop_inner = loop  # type: ignore[assignment]
 
-    # Four pages (three older dates + today): five paced GETs, the last granted at 8000 <
-    # the 9000 the cap allows — read.
     witness.observe(_multi_date_scope("1", "2", "3", "20261119"))
     assert len(loop.deadlines) == 1
 
-    # Five: the last would be granted at 10000, past the cap. No GET is attempted at all.
     with pytest.raises(WitnessUnavailable, match="refused before its first GET"):
         witness.observe(_multi_date_scope("1", "2", "3", "4", "20261119"))
     assert len(loop.deadlines) == 1
     assert clock.ms == 0
 
-    # The boundary is exact on today's side too: the same four older dates WITHOUT today in
-    # the scope are still five pages, because the walk reads today anyway (#1136).
     with pytest.raises(WitnessUnavailable, match="refused before its first GET"):
         witness.observe(_multi_date_scope("1", "2", "3", "4"))
     assert len(loop.deadlines) == 1
 
-    # Without the pacing interval the page starts are unknowable, so nothing is refused up front.
     unscaled = DeferredKisWitness(lambda: "20261119", loop_deadline_ms=3_000)
     unscaled.loop_inner = loop  # type: ignore[assignment]
     unscaled.observe(_multi_date_scope("1", "2", "3", "4", "5"))

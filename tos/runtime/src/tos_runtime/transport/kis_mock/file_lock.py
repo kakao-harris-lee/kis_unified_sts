@@ -1,13 +1,4 @@
-"""The one exclusive file lock the cross-process KIS app-key state is held under (#1125).
-
-Two things about one KIS app key live outside any single tenant process: its OAuth token
-(``token_cache``) and its request rate (``shared_pacer``). Both are files, both are shared by
-the tenant processes that hold that app key, and both must be read-modify-written by one
-process at a time — so both take this lock.
-
-``fcntl.flock`` is per open file description, so two processes (and two fds in one process)
-contend as expected, and the kernel releases the lock if a holder dies.
-"""
+"""The one exclusive file lock the cross-process KIS app-key state is held under (#1125)."""
 
 from __future__ import annotations
 

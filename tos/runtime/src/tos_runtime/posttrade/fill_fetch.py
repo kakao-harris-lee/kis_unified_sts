@@ -145,12 +145,7 @@ class FetchPlan:
     held_position_token: int | None = None
     recovery_attempt_ids: tuple[str, ...] = ()
     evidence_seq_at_plan: int | None = None
-    #: Issue #1096: ONE trading date of a dateless ACK's ODNO scan, read under this plan's own
-    #: ``deadline_ms`` like every other read here. One date per FETCH, never the whole window
-    #: (review-1105 M1/M2), and only in a FETCH that has no other work to delay.
     ack_date_read: tuple[str, WitnessScope] | None = None
-    #: The ONE trading date an uncertain send's reconciliation may read this FETCH (11-20 d/e),
-    #: under this plan's own ``deadline_ms``, and only in a FETCH with no other work to delay.
     uncertain_send_read: tuple[str, WitnessScope] | None = None
 
     @property
@@ -177,9 +172,6 @@ class FetchResult:
     ack_date_read: tuple[str, tuple[KisOrderRow, ...] | WitnessUnavailable] | None = (
         None
     )
-    #: ``(rows_or_unavailable, read_started_ms)`` of the uncertain-send reconciliation read.
-    #: The instant is the read's START, never its apply: the settle window is a LOWER bound on
-    #: elapsed time, so measuring it from the later instant would shorten the wait.
     uncertain_send_read: (
         tuple[tuple[KisOrderRow, ...] | WitnessUnavailable, int] | None
     ) = None
@@ -376,9 +368,6 @@ def run_fetch(
             continue
         reads.append((date, rows))
         releasing = releasing or may_release(plan, rows)
-    # BEFORE both snapshots (review-1105 M1): each snapshot's age runs from its own read start,
-    # so work placed after one ages it — a scan read here cannot. A scan is planned only into an
-    # otherwise-idle FETCH, so in practice neither snapshot is read in the same pass at all.
     ack_date_read = _ack_date_read(plan, orders=orders, expired=_expired)
     uncertain_send_read = _uncertain_send_read(
         plan, orders=orders, monotonic=monotonic, expired=_expired

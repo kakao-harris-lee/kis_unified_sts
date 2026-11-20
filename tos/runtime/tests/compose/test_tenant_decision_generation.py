@@ -31,8 +31,6 @@ _PERSISTENT_LEAF_TENANTS = (
     "cp3-setup-d-long",
     "cp3-setup-d-short",
     "cp3-setup-d-stock-005930",
-    # One stock tenant per symbol — operator directive 2026-11-19. Each keeps its OWN
-    # durable leaf, so each needs its own generation token.
     "cp3-setup-d-stock-000660",
     "cp3-setup-d-stock-005380",
 )
@@ -140,9 +138,6 @@ def _runner_stock_symbols(text: str) -> tuple[str, ...]:
     symbols = tuple(match.group(1).split())
     assert symbols, f"{_RUNNER}: STOCK_SYMBOLS is empty"
     assert len(set(symbols)) == len(symbols), symbols
-    # Two tenants on one symbol would make each one's broker witness read the other's
-    # orders on the shared mock account (witness_kis.py queries by PDNO), and the
-    # unmatched rows would hold every release as an orphan.
     for symbol in symbols:
         assert re.fullmatch(r"[0-9]{6}", symbol), symbol
     return symbols

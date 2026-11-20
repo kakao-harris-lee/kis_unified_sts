@@ -175,11 +175,6 @@ class KisMockFillObserver:
     account: str
     instrument: str
     snapshots: SnapshotPrefetcher | None = None
-    #: ``kis_mock_transport.yaml::min_send_interval_ms`` — the app-key pacer's spacing, NOT a
-    #: value of this file's config. Compose passes it so an idle read (the #1096 ack-date scan,
-    #: the 11-20 uncertain-send read) can leave the next holdings refresh its own paced GET
-    #: (#1107 L1, :func:`~tos_runtime.posttrade.fill_observer_plan
-    #: .idle_read_delays_the_held_refresh`). ``None`` keeps the pre-#1107 behaviour.
     app_key_min_send_interval_ms: int | None = None
     held_position_tip: Callable[[], tuple[int, int | None] | None] | None = None
     held_position_eligible: Callable[[], bool] | None = None
@@ -214,9 +209,6 @@ class KisMockFillObserver:
     _claimed_order_days: frozenset[tuple[str, str, str]] = field(
         default=frozenset(), init=False
     )
-    # ``None`` until the first pass that actually meets a dateless ACK (review-1105 L2): a leaf
-    # with nothing to recover never runs the query. Recording a verdict resets it to ``None`` so
-    # the next pass re-reads the durable rows rather than trusting this cache.
     _recovered_dates: dict[str, str] | None = field(default=None, init=False)
 
     def poll_if_due(self) -> FillPollReport:
@@ -423,12 +415,6 @@ class KisMockFillObserver:
                     "filled_quantity": _text(payload.filled_quantity),
                     "remaining_quantity": _text(payload.remaining_quantity),
                     "reason": reason,
-                    # The broker's own 평균 체결가 / 총 체결금액 for the ONE attributed row,
-                    # in WHOLE KRW as it printed them — never the tree's
-                    # ``_runtime.price_scale`` (×100) representation. ``None`` whenever
-                    # :func:`_priced_row` refuses (see it for the three reasons).
-                    # Observation only: nothing downstream of this record reads them, so a
-                    # row written before these keys existed is read exactly as it always was.
                     "avg_execution_price": (
                         None if priced is None else _text(priced.avg_prvs)
                     ),
@@ -595,8 +581,6 @@ class KisMockFillObserver:
                     and kind is EgressResultKind.ACK
                     and isinstance(odno, str)
                 ):
-                    # Issue #1096: an ACK written before #1074 carries no date; a completed
-                    # broker scan that found its ODNO on exactly one trading date supplies one.
                     date = (
                         stamped
                         if isinstance(stamped, str)
@@ -615,10 +599,6 @@ class KisMockFillObserver:
                     elif date is None and odno_key(odno) is not None:
                         undated.append((attempt_id, odno))
                 elif odno is None and attempt_id in bound:
-                    # 11-20 (d): the POST's answer named no order, and the broker's own history
-                    # for the send's trading date has since named exactly one. ``UNKNOWN`` is
-                    # the engine's knowledge of it, so a repeated UNKNOWN stays unreported and
-                    # a terminal row resolves the quarantine through the ordinary path.
                     odno, trading_date = bound[attempt_id]
                     tracked[attempt_id] = _Tracked(
                         attempt_id=attempt_id,
@@ -934,15 +914,7 @@ def _attributed_rows(
 def _priced_row(
     attempt: _Tracked, rows: tuple[KisOrderRow, ...], kind: EgressResultKind
 ) -> KisOrderRow | None:
-    """The row whose price may be attributed to this observation, or ``None``.
-
-    Three refusals, all deliberate: more than one row under the ODNO (nothing identifies
-    which one filled), no row at all, and — the one review-1121 L2 names — an ``UNKNOWN``
-    verdict. ``UNKNOWN`` is what ``_classify`` returns when the row contradicts the attempt
-    (``instrument_mismatch``, ``ordered_quantity_mismatch``, a rejected or inconsistent
-    quantity): the record says the observer does not believe this row describes the attempt,
-    so quoting its price as the attempt's execution price would contradict the same row.
-    """
+    """The row whose price may be attributed to this observation, or ``None``."""
     if kind is EgressResultKind.UNKNOWN:
         return None
     mine = _attributed_rows(attempt, rows)

@@ -249,7 +249,6 @@ def test_flat_reads_inside_the_settle_window_release_nothing(
         verdicts = [
             row["verdict"] for row in _rows(runtime, BROKER_FLAT_RELEASE_HELD_KIND)
         ]
-        # NOT_FLAT: the post-fill read that still showed the lot; then only SETTLING.
         assert verdicts == ["NOT_FLAT", "SETTLING"]
     finally:
         _close(runtime)
