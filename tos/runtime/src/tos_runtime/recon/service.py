@@ -28,6 +28,7 @@ from tos_runtime.recon.ports import (
     EvidenceReceiptReader,
     ReservationProjectionReader,
     WitnessOrder,
+    WitnessOrderState,
     WitnessScope,
     WitnessSnapshot,
     WitnessUnavailable,
@@ -357,6 +358,29 @@ def _placed_before_our_first_order(
     return order_time < earliest_time
 
 
+#: The witness states that mean the broker prints no further fill for an order. The model has no
+#: separate rejected state: ``witness_kis`` reads 취소 (``cncl_yn``) as ``CANCELLED``, and
+#: ``witness_synthetic`` maps ``REJECT``/``EXPIRED``/``CANCEL_ACK`` onto it too.
+_FINISHED_WITNESS_STATES = frozenset(
+    (WitnessOrderState.FILLED, WitnessOrderState.CANCELLED)
+)
+
+
+def _is_finished(order: WitnessOrder) -> bool:
+    """Whether the broker's OWN row says ``order`` can never fill again (2026-11-20).
+
+    Both halves must hold: a terminal state (:data:`_FINISHED_WITNESS_STATES`) AND a residual
+    quantity the broker printed as exhausted. ``ACKED``, ``PARTIAL``, ``UNKNOWN``, a missing
+    ``rmn_qty``, or any residual left over is a live order — nothing unprovable counts as
+    finished.
+    """
+    return (
+        order.state in _FINISHED_WITNESS_STATES
+        and order.remaining is not None
+        and order.remaining <= 0
+    )
+
+
 def _orphans_may_be_ours(
     *,
     orphan_orders: tuple[WitnessOrder, ...],
@@ -396,13 +420,16 @@ def _orphans_may_be_ours(
       keeps an orphan that merely *appeared* mid-session — between the balance read and the
       order read, or after a release snapshot expired — withholding the release, since such an
       order carries no earlier stamp.
+    * the orphan is not finished (:func:`_is_finished`) — an earlier-stamped order that is still
+      live can fill AFTER the release and buy a lot no reservation covers (#1128), so only a
+      terminal state with an exhausted ``rmn_qty`` earns the exemption.
 
-    Only when none of those holds is the orphan provably not ours: every order we could have
-    produced is already matched to a different witness order, this one's identity is one we
-    never recorded, and the broker placed it before we placed anything. It stays classified as
-    ``ORPHAN_BROKER_ORDER`` in the report either way. Position-level exposure is a separate
-    question, answered by ``observed_positions`` / ``observed_positions_complete``, which this
-    predicate does not touch.
+    Only when none of those holds is the orphan provably not ours and provably over: every order
+    we could have produced is already matched to a different witness order, this one's identity
+    is one we never recorded, and the broker placed it before we placed anything and has since
+    finished it. It stays classified as ``ORPHAN_BROKER_ORDER`` in the report either way.
+    Position-level exposure is a separate question, answered by ``observed_positions`` /
+    ``observed_positions_complete``, which this predicate does not touch.
     """
     if any(
         record.classification is not ReconciliationClass.MATCHED
@@ -421,6 +448,7 @@ def _orphans_may_be_ours(
     return any(
         _execution_id(order.broker_execution_id) in own_execution_ids
         or not _placed_before_our_first_order(order, our_orders)
+        or not _is_finished(order)
         for order in orphan_orders
     )
 
