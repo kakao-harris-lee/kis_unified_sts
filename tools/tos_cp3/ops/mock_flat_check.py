@@ -5,10 +5,19 @@
 an archived leaf with an open position would leave a position nobody's evidence
 chain owns any more. Exit codes are the answer (there is no parsing of stdout):
 
-    0  the account holds none of that symbol        (flat — safe to archive)
-    1  the balance could not be read                (unknown — treated as NOT flat)
+    0  no holding AND no order still working        (flat — safe to archive)
+    1  a read could not be completed                (unknown — treated as NOT flat)
     2  refused before any broker call               (fail closed, see below)
-    3  the account holds some of that symbol        (NOT flat — keep the leaf)
+    3  the account holds some of that symbol, or an order for it is still
+       working on the book                          (NOT flat — keep the leaf)
+
+Two reads, because the holding alone does not answer the question. A runtime
+limit entry that was ACKed and has not filled holds no quantity yet, and the
+runtime cannot cancel it (#948): a check that read only the balance would say
+flat, the leaf would be archived, and the order would fill afterwards into a
+position no evidence chain owns — exactly what the check exists to prevent. So
+the 주식일별주문체결조회 (``VTTC0081R``) rows for today are read too, and any row
+with quantity still working is "not flat".
 
 Safety properties, in the order they are checked — every one of them before the
 first request leaves the host:
@@ -44,8 +53,10 @@ import argparse
 import os
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tools.broker_probes.common import ProbeCredentials
@@ -64,6 +75,8 @@ EXIT_FLAT = 0
 EXIT_UNREADABLE = 1
 EXIT_REFUSED = 2
 EXIT_HELD = 3
+
+KST = ZoneInfo("Asia/Seoul")
 
 BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 #: 주식잔고조회 (모의). ``trading_call`` refuses a TR that is not a mock one.
@@ -89,6 +102,43 @@ BALANCE_PARAMS: dict[str, str] = {
     "CTX_AREA_NK100": "",
 }
 
+ORDER_PATH = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+#: 주식일별주문체결조회 (모의). ``VTTC8001R`` is NOT the one — it answers empty on the
+#: mock account; the runtime polls ``VTTC0081R`` (``config/tos_runtime/
+#: cp3-setup-d-stock-*/fill_observer.yaml::order_inquiry_tr_id``) and so does
+#: ``probes_order.stock_daily_ccld_verbose``. A mock (``V``-prefixed) read TR, so
+#: ``trading_call``'s TR gate passes it with no allowlist change.
+ORDER_TR_ID = "VTTC0081R"
+
+#: The runtime's own parameters for this TR, verbatim
+#: (``tos_runtime.recon.witness_kis._read_order_rows``), minus the account, the
+#: date and the continuation keys, which are per call.
+#:
+#: ``CCLD_DVSN="00"`` (전체) rather than 미체결-only: whether the mock honours a
+#: narrowing filter is not something this tool has measured, and a filter that
+#: silently returned nothing would read as "no open order" — the one error this
+#: check may not make. 전체 plus the local ``rmn_qty``/``cncl_yn`` test
+#: (:func:`row_is_open`) can only over-report, never under-report.
+#: ``INQR_DVSN="00"`` is 역순 (newest first), so a seconds-old order is on page 1.
+ORDER_PARAMS: dict[str, str] = {
+    "SLL_BUY_DVSN_CD": "00",
+    "CCLD_DVSN": "00",
+    "INQR_DVSN": "00",
+    "INQR_DVSN_3": "00",
+    "ORD_GNO_BRNO": "",
+    "ODNO": "",
+    "INQR_DVSN_1": "",
+    "EXCG_ID_DVSN_CD": "KRX",
+}
+
+#: Page cap for the continuation walk, the same 5 the cancel probe's flat-start
+#: check uses (``config/broker_probes/stock_cancel_probe.yaml::flat_check.
+#: balance_max_pages``). 모의 serves 15 rows per call (P-5b 실측), so five pages is
+#: 75 rows of one symbol's single day against a tenant that sends a handful.
+#: Reaching it is NOT "no open order": the broker was still offering more, so the
+#: answer is unknown and this tool says so.
+ORDER_MAX_PAGES = 5
+
 #: The probes' own floor between calls. 2.5 s is what the 11-20 scratchpad runs
 #: used and it sits under the 2.0 rps the shared pacer allows the app key.
 DEFAULT_PACE_S = 2.5
@@ -99,7 +149,27 @@ class OpsRefusal(RuntimeError):
 
 
 class BalanceUnreadable(RuntimeError):
-    """The broker answered, but not with a balance this tool may act on."""
+    """The broker answered, but not with a reading this tool may act on.
+
+    Raised by both reads (balance and open orders). The name is the one
+    ``mock_flatten.py`` and the tests already import.
+    """
+
+
+def broker_transport_errors() -> tuple[type[BaseException], ...]:
+    """What a broker call raises instead of answering.
+
+    Caught — and printed as ``type(exc).__name__`` and nothing else — because
+    ``requests`` puts the request URL in the exception it raises, and this
+    client's URLs carry ``CANO``: an uncaught one would print the account number
+    in a traceback. ``ProbeError`` is here for the same reason, not a different
+    one: it is raised with whatever the call was doing at the time.
+    """
+    import requests
+
+    from tools.broker_probes.common import ProbeError
+
+    return (requests.RequestException, ProbeError)
 
 
 def six_digit_symbol(value: str) -> str:
@@ -157,7 +227,9 @@ def resolve_expected_fingerprint(flag: str | None) -> str:
         raise OpsRefusal(
             "--expect-account-fingerprint (or "
             f"${EXPECT_FP_ENV}) is required. Read it off the mock account: "
-            '`KIS_STOCK_ACCOUNT_NO=… python -c "import os;from '
+            # PYTHONPATH=<repo root>, because `python -c` puts the CWD on
+            # sys.path and the venv interpreter is run from anywhere.
+            '`KIS_STOCK_ACCOUNT_NO=… PYTHONPATH=<저장소 루트> python -c "import os;from '
             "tools.broker_probes.common import account_fingerprint;"
             "print(account_fingerprint(os.environ['KIS_STOCK_ACCOUNT_NO']))\"` — "
             "this tool will not infer which account it may read."
@@ -269,6 +341,93 @@ def holdings(client: MockTradingClient, creds: ProbeCredentials) -> dict[str, in
     return held
 
 
+def row_is_open(row: dict[str, Any], symbol: str) -> bool:
+    """Is this 주문체결 row still working on the book, for ``symbol``?
+
+    ``rmn_qty > 0`` AND not flagged cancelled — both halves, as
+    ``probes_stock_cancel._row_is_live`` has them: #948's open question is
+    whether a cancel shows as the flag or as another row, so a reader that
+    trusted one of them alone would be assuming the answer.
+
+    A row whose ``pdno`` is blank counts as this symbol's: the query asked for
+    one symbol, and an unattributable working quantity is not evidence of flat.
+    """
+    code = str(row.get("pdno") or "").strip()
+    if code and code != symbol:
+        return False
+    try:
+        remaining = int(str(row.get("rmn_qty") or "0").strip() or "0")
+    except ValueError:
+        # A quantity we cannot read is not a quantity we may call zero.
+        return True
+    cancelled = str(row.get("cncl_yn") or "").strip().upper() == "Y"
+    return remaining > 0 and not cancelled
+
+
+def open_orders(
+    client: MockTradingClient,
+    creds: ProbeCredentials,
+    symbol: str,
+    *,
+    max_pages: int = ORDER_MAX_PAGES,
+) -> list[dict[str, Any]]:
+    """Today's rows for ``symbol`` that still have quantity working, walked to the end.
+
+    The walk — not one page — because one page cannot tell "no open order" from
+    "the open order is on page 2", and this is the read that decides whether a
+    leaf may be archived. Anything short of the broker's own end-of-set raises
+    :class:`BalanceUnreadable`, which the caller reports as unknown, never as
+    flat.
+    """
+    day = datetime.now(KST).strftime("%Y%m%d")
+    fk = nk = ""
+    live: list[dict[str, Any]] = []
+    for page in range(max_pages):
+        params: dict[str, Any] = {
+            "CANO": creds.cano,
+            "ACNT_PRDT_CD": creds.acnt_prdt_cd,
+            "INQR_STRT_DT": day,
+            "INQR_END_DT": day,
+            "PDNO": symbol,
+            **ORDER_PARAMS,
+            "CTX_AREA_FK100": fk,
+            "CTX_AREA_NK100": nk,
+        }
+        status, parsed, _ms, _tr = client.trading_call(
+            "GET", ORDER_PATH, ORDER_TR_ID, params=params
+        )
+        if parsed.get("rt_cd") != "0":
+            raise BalanceUnreadable(
+                f"open orders not readable: page {page} http {status} rt_cd "
+                f"{parsed.get('rt_cd')} {parsed.get('msg1')}"
+            )
+        rows = parsed.get("output1")
+        live.extend(
+            row
+            for row in (rows if isinstance(rows, list) else [])
+            if isinstance(row, dict) and row_is_open(row, symbol)
+        )
+        next_fk = str(parsed.get("ctx_area_fk100") or "").strip()
+        next_nk = str(parsed.get("ctx_area_nk100") or "").strip()
+        if not next_fk and not next_nk:
+            # The broker ended the set: every row of today was walked.
+            return live
+        if (next_fk, next_nk) == (fk, nk):
+            # The same cursor again while still offering more — the next request
+            # would repeat this page. The runtime refuses this too
+            # (``witness_kis._walk_continuation``) rather than return a partial
+            # list, and a partial list here reads as "no open order".
+            raise BalanceUnreadable(
+                f"open orders not readable: continuation keys did not advance on "
+                f"page {page} — refusing a partial read"
+            )
+        fk, nk = next_fk, next_nk
+    raise BalanceUnreadable(
+        f"open orders not readable: hit our {max_pages}-page cap while the broker "
+        "was still offering more — this is OUR cap, not end-of-set"
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser(
         "tools/tos_cp3/ops/mock_flat_check.py",
@@ -287,15 +446,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OpsRefusal as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return EXIT_REFUSED
+    transport_errors = broker_transport_errors()
     try:
         held = holdings(client, creds)
+        print("holdings", {code: qty for code, qty in held.items() if qty})
+        if held.get(args.symbol, 0):
+            return EXIT_HELD
+        # Only when the balance is clear: an order still working is the other
+        # way this symbol is not flat (#948 — the runtime cannot cancel it).
+        working = open_orders(client, creds, args.symbol)
     except BalanceUnreadable as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_UNREADABLE
+    except transport_errors as exc:
+        # The message would carry the request URL, and the URL carries CANO.
+        print(f"broker call failed: {type(exc).__name__}", file=sys.stderr)
+        return EXIT_UNREADABLE
     finally:
         client.close()
-    print("holdings", {code: qty for code, qty in held.items() if qty})
-    return EXIT_HELD if held.get(args.symbol, 0) else EXIT_FLAT
+    if working:
+        print(
+            f"{args.symbol} open orders",
+            [
+                {"odno": str(row.get("odno") or ""), "rmn_qty": row.get("rmn_qty")}
+                for row in working
+            ],
+        )
+        return EXIT_HELD
+    print(f"{args.symbol} flat (no holding, no order working)")
+    return EXIT_FLAT
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI

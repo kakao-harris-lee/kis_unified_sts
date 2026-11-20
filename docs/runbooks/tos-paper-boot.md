@@ -484,16 +484,22 @@ sqlite3 -readonly $L/evidence.sqlite3 "SELECT kind,json_extract(payload_json,'\$
 ```bash
 MAIN=/home/deploy/project/kis_unified_sts
 # 계좌 지문은 필수다. 한 번 구해 두고 재사용한다 (계좌번호의 sha256 앞 12자 · 비밀값 아님):
-export CP3_EXPECT_ACCOUNT_FP=$(set -a; . $MAIN/.env.mock; set +a; $MAIN/.venv/bin/python -c \
+# PYTHONPATH=$MAIN 이 필요하다 — `python -c` 는 **그때의 cwd** 를 sys.path 에 넣으므로, 저장소
+# 밖에서 돌리면 `tools.broker_probes` import 가 ModuleNotFoundError 로 죽는다(cd $MAIN 도 같다).
+export CP3_EXPECT_ACCOUNT_FP=$(set -a; . $MAIN/.env.mock; set +a; PYTHONPATH=$MAIN $MAIN/.venv/bin/python -c \
   "import os;from tools.broker_probes.common import account_fingerprint;print(account_fingerprint(os.environ['KIS_STOCK_ACCOUNT_NO']))")
 bash $MAIN/tools/tos_cp3/ops/restart_stock_tenant.sh <종목> [태그]   # 정지 → 평탄 확인 → 잎 보관 → origin/main 새 run
 ```
 
 - **잎은 평탄할 때만 보관한다.** 스크립트는 보관 전에 `tools/tos_cp3/ops/mock_flat_check.py`
-  (GET 전용)로 그 종목 보유를 읽고, 보유가 있거나 잔고를 못 읽으면 **rc 2 로 멈추고 잎을 그대로
-  둔다**. 포지션이 열린 잎을 보관하면 그 포지션은 어느 증거 사슬의 것도 아니게 된다. 청산은
-  런타임이 못 한다(승인은 1주 진입 BUY 만 · #960) — `mock_flatten.py <종목>`(모의 전용 시장가
-  전량 매도)로 평탄하게 한 뒤 다시 돌리거나, 모의투자 HTS 에서 손으로 판다.
+  (GET 전용)로 **둘 다** 읽는다 — 그 종목 보유(주식잔고조회 `VTTC8434R`)와 **그날 아직 책에
+  남아 있는 주문**(주식일별주문체결조회 `VTTC0081R` · `CCLD_DVSN=00` 전체를 연속조회 키로 끝까지
+  걷고 `rmn_qty>0`·미취소 행만 센다). 하나라도 있거나 어느 쪽이든 못 읽으면 **rc 2 로 멈추고 잎을
+  그대로 둔다**. 보유가 아니라 **미체결 주문**도 막는 이유: ACK 만 받고 체결되지 않은 지정가
+  진입이 있으면 보유는 0 이라 옛 검사는 「평탄」이라 답했고, 잎을 보관한 뒤 그 주문이 체결되면
+  그 포지션은 어느 증거 사슬의 것도 아니게 된다. 청산은 런타임이 못 하고(승인은 1주 진입 BUY 만 ·
+  #960) 취소는 아예 없다(#948) — 보유는 `mock_flatten.py <종목>`(모의 전용 시장가 전량 매도)로,
+  미체결 주문은 **모의투자 HTS 에서 손으로** 치운 뒤 다시 돌린다.
 - **승인은 시작 «전에» 치우고 `render ok` «뒤에» 쓴다.** 런타임은 부팅 시점에 그 경로에 있던
   승인을 결속하므로(`bind_at_boot`), 나중에 쓴 파일은 `digest_changed_since_bound` 로 거부되고
   그 세션은 송신 0 이다 — 그래서 스크립트는 러너를 띄우기 전에 옛 파일을 `approvals-archive/`
@@ -507,8 +513,15 @@ bash $MAIN/tools/tos_cp3/ops/restart_stock_tenant.sh <종목> [태그]   # 정�
   다른 주식 tenant 는 돌고 있으니, 분당 1회 한도에 걸려 새 세션의 첫 발급이 쿨다운
   (`token_reissue_min_interval_s`)만큼 늦어질 수 있다 — 캐시 토큰이 유효하면 그대로 쓴다(#1125).
 - rc: 0 시작됨 · 1 실패(정지 안 됨 · fetch · 워크트리 · 승인 쓰기) · 2 거부(지문·종목·평탄 아님) ·
-  4 `render ok` 전에 끝났다(승인 없음 = 송신 0). 시험 `tests/tools/test_cp3_ops_restart.py` ·
+  4 `render ok` 전에 끝났다(승인 없음 = 송신 0). **rc 4 와 승인 쓰기 실패는 손으로 쓸
+  `write-standing-approval` 한 줄을 그대로 찍는다** — 그 줄만 돌리면 그 세션은 살아난다(쓰다 만
+  파일이 있으면 `--replace`). 시험 `tests/tools/test_cp3_ops_restart.py` ·
   `tests/tools/test_cp3_ops_mock_tools.py`.
+- **정지는 pid 신원을 확인하고 보낸다.** `runner.pid` 의 번호를 다른 프로세스가 재사용하고 있을 수
+  있으므로 `/proc/<pid>/cmdline` 이 `run_tenant_session.sh` 인지(읽히면 `environ` 의
+  `TOS_STOCK_SESSION_ROOT` 가 그 자리인지)까지 보고, 아니면 **죽이지 않고 건너뛴다**. 기다리는
+  상한은 러너의 정지 상수 합(`SIGKILL_AFTER_S` + 생산자·밴드·대기자 유예 = 140s)을
+  `run_tenant_session.sh` 에서 **읽어서** 쓴다 — 여기에 숫자를 또 적지 않는다.
 
 **장 마감 뒤 수용.** 같은 attempt 하나에 아래가 모두 있으면 M2 수용 — 승인(`APPROVAL_STANDING_CONSUMED` 의 `rcl_command_id` = RCL `ConsumeApprovalDecision` `iap-consumption:standing-approval:<YYYYMMDD>:…`) · `CommitReservation` · VERIFY_ITEM 17 · `SEND_SEALED`/`TRANSPORT_SEND` · `ACK` · `FILL_OBSERVED` + `FULL_FILL|PARTIAL_FILL` · `POSTTRADE_FINALITY_PROOF`(`broker-fqp-proof:<attempt>`) · RCL `release-<attempt>` · `ENGINE_PROJECTION_RELEASED`. 질의는 종류·개수·id 접두만 찍는다(예약 id·payload 에는 계좌가 있다 — 옮겨 적지 않는다).
 ```bash

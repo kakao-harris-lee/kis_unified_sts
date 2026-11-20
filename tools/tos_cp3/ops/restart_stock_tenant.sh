@@ -12,10 +12,12 @@
 #
 # 무엇을 하는가 (하나라도 어긋나면 멈추고, 그때까지 치운 것은 없다):
 #   1. 지문·종목·주 체크아웃 확인. 모의 계좌 지문이 없으면 rc 2 — 여기까지 아무것도 건드리지 않는다.
-#   2. 오늘 이 tenant 의 살아 있는 run 전부 TERM (최대 120s 기다린다).
-#   3. 평탄 확인(GET 전용 · mock_flat_check.py). 보유가 있거나 잔고를 읽을 수 없으면 rc 2 로 끝내고
-#      **잎을 그대로 둔다** — 포지션이 열린 잎을 보관하면 그 포지션은 어느 증거 사슬의 것도 아니게 된다.
-#      보유가 있으면 mock_flatten.py 로 먼저 평탄하게 한 뒤 이 스크립트를 다시 돌린다.
+#   2. 오늘 이 tenant 의 살아 있는 run 전부 TERM. pid 는 /proc 로 신원을 확인하고 보내며(pid 재사용),
+#      기다리는 상한은 러너의 정지 상수 합에서 **읽는다**(아래 STOP_WAIT_S).
+#   3. 평탄 확인(GET 전용 · mock_flat_check.py). 보유가 있거나 **미체결 주문이 남아 있거나** 읽지
+#      못하면 rc 2 로 끝내고 **잎을 그대로 둔다** — 포지션이 열린 잎을 보관하면 그 포지션은 어느
+#      증거 사슬의 것도 아니게 된다. 보유는 mock_flatten.py 로, 미체결 주문은 모의투자 HTS 에서
+#      취소한 뒤(런타임에 취소가 없다 · #948) 이 스크립트를 다시 돌린다.
 #   4. 잎을 `<data>/archive/<종목>.<태그>-<날짜>-<시각>` 으로 **옮긴다**(지우지 않는다).
 #   5. origin/main 새 detached 워크트리 · 다음 run 번호 · 그날 정지 시각(달력에서 읽는다).
 #   6. **러너를 띄우기 전에** 상시 승인 파일을 approvals-archive/ 로 옮긴다. 런타임은 부팅 시점에
@@ -109,6 +111,7 @@ case " $STOCK_SYMBOLS " in
 *" $SYM "*) ;;
 *) echo "ERROR: $SYM 은 러너의 tenant 가 아니다 — STOCK_SYMBOLS 는 '$STOCK_SYMBOLS' 다" >&2; exit 2 ;;
 esac
+
 # 005930 만 호스트 경로에 종목이 없다 (2026-11-06 에 태어난 배포 그대로 · 러너의 같은 예외).
 SUF=""
 [ "$SYM" = "$STOCK_LEGACY_SYMBOL" ] || SUF="-$SYM"
@@ -117,6 +120,25 @@ LC=stock$SUF
 [ -x "$PY" ] || die 2 "$PY 가 없다 (주 체크아웃 = CP3_DAILY_MAIN=$MAIN)"
 [ -f "$ENV_MOCK" ] || die 2 "$ENV_MOCK 가 없다 (TOS_ENV_MOCK)"
 [ -d "$ST/cp3-sessions" ] || die 2 "$ST/cp3-sessions 가 없다 (CP3_DAILY_STATE=$ST)"
+
+# 정지 상한도 **세션 러너가 정본이다** — 120 을 여기에 또 적지 않는다. run_tenant_session.sh 의
+# 정지 경로는 차례로 run(SIGKILL_AFTER_S) → producer(PRODUCER_SIGKILL_AFTER_S) →
+# band(BAND_PROCESS_KILL_AFTER_S) → 대기자(stop_wait 의 5s)이고, 그 합이 TERM 한 번이 끝나는
+# 데 걸릴 수 있는 최대다. 셋 중 하나라도 못 읽으면 추측하지 않고 거부한다(아직 아무것도 안 건드렸다).
+SESSION_RUNNER=$SCRIPT_DIR/../runners/run_tenant_session.sh
+[ -f "$SESSION_RUNNER" ] || die 2 "$SESSION_RUNNER 가 없다 — 정지 상한을 읽을 수 없다"
+read_stop_const() { sed -n "s/^$1=\([0-9][0-9]*\)\$/\1/p" "$SESSION_RUNNER" | head -1; }
+RUN_KILL_S=$(read_stop_const SIGKILL_AFTER_S)
+PRODUCER_KILL_S=$(read_stop_const PRODUCER_SIGKILL_AFTER_S)
+BAND_KILL_S=$(read_stop_const BAND_PROCESS_KILL_AFTER_S)
+# stop_wait() 의 유예는 상수가 아니라 호출의 리터럴(`stop_supervised "$WAIT_PID" 5`)이다.
+WAITER_KILL_S=5
+if [ -z "$RUN_KILL_S" ] || [ -z "$PRODUCER_KILL_S" ] || [ -z "$BAND_KILL_S" ]; then
+  die 2 "$SESSION_RUNNER 에서 정지 상수(SIGKILL_AFTER_S · PRODUCER_SIGKILL_AFTER_S · BAND_PROCESS_KILL_AFTER_S)를 읽지 못했다"
+fi
+STOP_WAIT_S=$((RUN_KILL_S + PRODUCER_KILL_S + BAND_KILL_S + WAITER_KILL_S))
+STOP_POLL_S=2
+STOP_TRIES=$(((STOP_WAIT_S + STOP_POLL_S - 1) / STOP_POLL_S + 1))
 
 TODAY=$(TZ=Asia/Seoul date +%F)
 D=${TODAY//-/}
@@ -130,12 +152,31 @@ log "트리 코드 $REPO · 주 체크아웃 $MAIN · 상태 $ST · 계좌 지�
 for R in "$ST/cp3-sessions/$LC"-r*-"$D"; do
   [ -f "$R/runner.pid" ] || continue
   P=$(cat "$R/runner.pid")
-  if kill -0 "$P" 2>/dev/null; then
-    kill -TERM "$P"
-    log "stop sent $R (pid $P)"
-    for _ in $(seq 1 60); do kill -0 "$P" 2>/dev/null || break; sleep 2; done
-    kill -0 "$P" 2>/dev/null && die 1 "120s 뒤에도 살아 있다: $R (pid $P)"
+  kill -0 "$P" 2>/dev/null || continue
+  # pid 는 재사용된다. 세션이 죽은 뒤 runner.pid 에 남은 번호를 지금 다른 프로세스가 갖고
+  # 있으면, 여기서 TERM 을 보내는 것은 남의 프로세스를 죽이는 것이다. 그래서 보내기 전에
+  # /proc 로 신원을 확인하고, 맞지 않으면 **죽이지 않고 건너뛴다**(한 줄 남긴다).
+  CMDLINE=$(tr '\0' ' ' <"/proc/$P/cmdline" 2>/dev/null) || CMDLINE=""
+  case "$CMDLINE" in
+  *run_tenant_session.sh*) ;;
+  *)
+    log "skip $R (pid $P 는 run_tenant_session.sh 가 아니다 — pid 재사용으로 본다)"
+    continue
+    ;;
+  esac
+  # environ 은 같은 사용자의 프로세스만 읽을 수 있다. 읽히면 그 세션 자리까지 맞는지 보고,
+  # 못 읽으면 cmdline 확인만으로 간다(읽기 실패를 불일치로 읽지 않는다).
+  ENVIRON=$(tr '\0' '\n' <"/proc/$P/environ" 2>/dev/null) || ENVIRON=""
+  if [ -n "$ENVIRON" ] && printf '%s\n' "$ENVIRON" | grep -q '^TOS_STOCK_SESSION_ROOT='; then
+    printf '%s\n' "$ENVIRON" | grep -qxF "TOS_STOCK_SESSION_ROOT=$R" || {
+      log "skip $R (pid $P 의 TOS_STOCK_SESSION_ROOT 가 이 자리가 아니다)"
+      continue
+    }
   fi
+  kill -TERM "$P"
+  log "stop sent $R (pid $P · 상한 ${STOP_WAIT_S}s = 러너의 정지 상수 합)"
+  for _ in $(seq 1 "$STOP_TRIES"); do kill -0 "$P" 2>/dev/null || break; sleep "$STOP_POLL_S"; done
+  kill -0 "$P" 2>/dev/null && die 1 "${STOP_WAIT_S}s 뒤에도 살아 있다: $R (pid $P)"
 done
 
 # ── 3. 평탄 확인 — GET 전용. 보유가 있으면 잎을 그대로 두고 멈춘다 ────────
@@ -144,8 +185,9 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$REPO "$PY" -P \
   -m tools.tos_cp3.ops.mock_flat_check "$SYM" \
   --expect-account-fingerprint "$EXPECT_FP" --env-file "$ENV_MOCK" || rc=$?
 [ "$rc" = 0 ] ||
-  die 2 "평탄하지 않거나 잔고를 읽지 못했다 (mock_flat_check rc=$rc) — 잎을 그대로 두고 재시작하지 않았다.
-보유가 있으면 먼저: PYTHONPATH=$REPO $PY -P -m tools.tos_cp3.ops.mock_flatten $SYM --expect-account-fingerprint <지문> --env-file $ENV_MOCK"
+  die 2 "평탄하지 않거나(보유 · 미체결 주문) 읽지 못했다 (mock_flat_check rc=$rc) — 잎을 그대로 두고 재시작하지 않았다.
+보유가 있으면 먼저: PYTHONPATH=$REPO $PY -P -m tools.tos_cp3.ops.mock_flatten $SYM --expect-account-fingerprint <지문> --env-file $ENV_MOCK
+미체결 주문이 남아 있으면 모의투자 HTS 에서 취소한다 — 런타임에 취소가 없다(#948)"
 
 # ── 4. 잎 보관 (옮긴다 · 지우지 않는다) ───────────────────────────────────
 if [ -d "$DATA_PARENT/$SYM" ]; then
@@ -212,6 +254,12 @@ log "시작: $LC r$N pid $RUNNER_PID · 세션 $SESSION"
 # 그날 상시 승인은 **렌더된** 설정에 묶인다. 머지 뒤의 옛 승인은 `code_digest_mismatch` 이므로
 # 재시작마다 다시 쓴다 — `render ok` 뒤, 첫 진입 전. 대기는 유한하다(기본 20분): 장중 재시작의
 # 렌더는 개장 뒤라 몇 분 안에 오고, 걸린 세션에서 이 루프가 운영자 터미널을 영구히 붙잡지 않는다.
+# 승인을 손으로 쓰는 **그대로의** 명령. 아래 자동 쓰기가 실패했거나 rc 4 로 끝났을 때 이 한 줄을
+# 찍는다 — 운영자가 런북을 찾아 조립하지 않도록, 실제로 돌릴 수 있는 꼴로.
+approval_cmd() {
+  printf '%s\n' "cd $WT && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=tos/runtime/src:tos/src $PY -c 'import sys;from tos_runtime.compose.cli import main;sys.exit(main(sys.argv[1:]))' write-standing-approval --config-dir $SESSION/render --custody-root $CUSTODY_ROOT --environment-label paper --trading-date $TODAY"
+}
+
 i=0
 while [ "$i" -lt "$WAIT_TRIES" ]; do
   grep -q 'render ok' "$SESSION/session.log" 2>/dev/null && break
@@ -221,6 +269,8 @@ while [ "$i" -lt "$WAIT_TRIES" ]; do
 done
 if ! grep -q 'render ok' "$SESSION/session.log" 2>/dev/null; then
   if kill -0 "$RUNNER_PID" 2>/dev/null; then
+    log "복구 — 'render ok' 가 $SESSION/session.log 에 뜬 뒤 이 줄 그대로:"
+    log "  $(approval_cmd)"
     die 4 "$((WAIT_TRIES * WAIT_SLEEP_S))s 안에 'render ok' 가 없다 — 승인을 쓰지 않았다(송신 0). 세션은 그대로 둔다: $SESSION/session.log"
   fi
   die 4 "세션이 'render ok' 전에 끝났다 — 승인 없음(송신 0): $SESSION/runner.out"
@@ -234,5 +284,9 @@ arc=0
       --custody-root "$CUSTODY_ROOT" --environment-label paper --trading-date "$TODAY"
 ) >"$SESSION/approval.out" 2>&1 || arc=$?
 log "write-standing-approval rc=$arc ($SESSION/approval.out)"
-[ "$arc" = 0 ] || die 1 "상시 승인 쓰기 실패 rc=$arc — 승인 없이는 송신 0 ($SESSION/approval.out)"
+if [ "$arc" != 0 ]; then
+  log "복구 — 고친 뒤 이 줄 그대로(쓰다 만 파일이 이미 있으면 끝에 --replace):"
+  log "  $(approval_cmd)"
+  die 1 "상시 승인 쓰기 실패 rc=$arc — 승인 없이는 송신 0 ($SESSION/approval.out)"
+fi
 log "완료 — 볼 것: $SESSION/session.log (band line ok · === BOOT) · sts tos status"

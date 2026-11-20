@@ -307,3 +307,204 @@ def test_flatten_says_still_held_when_the_poll_bound_runs_out(
         flatten.main([_SYMBOL, "--poll-interval-s", "0", "--poll-tries", "1"])
         == flatten.EXIT_STILL_HELD
     )
+
+
+# --- the open-order read (#1130 review: a resting order is not flat) --------
+
+
+class _PagedClient(_Client):
+    """Answers a fixed sequence of pages and records what was asked for each."""
+
+    def __init__(self, pages: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.pages = list(pages)
+        self.sent: list[dict[str, Any]] = []
+
+    def trading_call(
+        self,
+        method: str,
+        path: str,
+        tr_id: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[int, dict[str, Any], float, str]:
+        self.calls.append((method, path, tr_id))
+        self.sent.append(dict(params or {}))
+        self.params = dict(params or {})
+        payload = self.pages.pop(0) if self.pages else {"rt_cd": "0", "output1": []}
+        return 200, payload, 1.0, tr_id
+
+
+def _page(rows: list[dict[str, Any]], *, fk: str = "", nk: str = "") -> dict[str, Any]:
+    return {"rt_cd": "0", "output1": rows, "ctx_area_fk100": fk, "ctx_area_nk100": nk}
+
+
+def _resting(odno: str = "0000000001", qty: str = "1") -> dict[str, Any]:
+    return {"pdno": _SYMBOL, "odno": odno, "rmn_qty": qty, "cncl_yn": "N"}
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"pdno": _SYMBOL, "rmn_qty": "1", "cncl_yn": "N"}, True),
+        ({"pdno": _SYMBOL, "rmn_qty": "0", "cncl_yn": "N"}, False),
+        ({"pdno": _SYMBOL, "rmn_qty": "1", "cncl_yn": "Y"}, False),
+        ({"pdno": "000660", "rmn_qty": "5", "cncl_yn": "N"}, False),
+        # Unattributable or unreadable working quantity is never read as flat.
+        ({"pdno": "", "rmn_qty": "1", "cncl_yn": "N"}, True),
+        ({"pdno": _SYMBOL, "rmn_qty": "??", "cncl_yn": "N"}, True),
+    ],
+)
+def test_row_is_open(row: dict[str, Any], expected: bool) -> None:
+    assert flat.row_is_open(row, _SYMBOL) is expected
+
+
+def test_open_orders_queries_the_mock_tr_with_the_runtimes_parameters() -> None:
+    client = _PagedClient([_page([_resting()])])
+    assert flat.open_orders(client, _Creds(), _SYMBOL) == [_resting()]
+    assert client.calls == [("GET", flat.ORDER_PATH, flat.ORDER_TR_ID)]
+    sent = client.sent[0]
+    assert sent["PDNO"] == _SYMBOL
+    assert sent["CANO"] == _Creds.cano
+    # 전체, not 미체결-only: a narrowing filter that returned nothing would read
+    # as "no open order" — the one error this check may not make.
+    assert sent["CCLD_DVSN"] == "00"
+    assert sent["INQR_STRT_DT"] == sent["INQR_END_DT"]
+    assert sent["EXCG_ID_DVSN_CD"] == "KRX"
+    assert (sent["CTX_AREA_FK100"], sent["CTX_AREA_NK100"]) == ("", "")
+
+
+def test_open_orders_walks_the_continuation_to_the_brokers_end() -> None:
+    client = _PagedClient(
+        [
+            _page([{"pdno": _SYMBOL, "rmn_qty": "0"}], fk="FK1", nk="NK1"),
+            _page([_resting(odno="0000000002")]),
+        ]
+    )
+    working = flat.open_orders(client, _Creds(), _SYMBOL)
+    assert [row["odno"] for row in working] == ["0000000002"]
+    assert len(client.sent) == 2
+    assert (client.sent[1]["CTX_AREA_FK100"], client.sent[1]["CTX_AREA_NK100"]) == (
+        "FK1",
+        "NK1",
+    )
+
+
+def test_open_orders_refuses_our_page_cap_rather_than_report_none() -> None:
+    client = _PagedClient([_page([], fk=f"FK{i}", nk=f"NK{i}") for i in range(9)])
+    with pytest.raises(flat.BalanceUnreadable, match="cap"):
+        flat.open_orders(client, _Creds(), _SYMBOL, max_pages=3)
+    assert len(client.sent) == 3
+
+
+def test_open_orders_refuses_a_cursor_that_does_not_advance() -> None:
+    client = _PagedClient([_page([], fk="FK1", nk="NK1") for _ in range(3)])
+    with pytest.raises(flat.BalanceUnreadable, match="did not advance"):
+        flat.open_orders(client, _Creds(), _SYMBOL)
+
+
+def test_open_orders_refuses_a_non_zero_rt_cd() -> None:
+    client = _PagedClient([{"rt_cd": "1", "msg1": "조회가 불가합니다"}])
+    with pytest.raises(flat.BalanceUnreadable):
+        flat.open_orders(client, _Creds(), _SYMBOL)
+
+
+def _wire_flat_check(
+    monkeypatch: pytest.MonkeyPatch, client: Any, held: dict[str, int]
+) -> None:
+    monkeypatch.setenv(flat.EXPECT_FP_ENV, _FP)
+    _no_env_file(monkeypatch, flat)
+    monkeypatch.setattr(flat, "build_client", lambda **kw: (client, _Creds()))
+    monkeypatch.setattr(flat, "holdings", lambda c, creds: held)
+
+
+def test_flat_check_calls_a_resting_order_not_flat(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The leaf must survive an ACKed, unfilled order (#948: no cancel exists)."""
+    client = _PagedClient([_page([_resting()])])
+    _wire_flat_check(monkeypatch, client, {})
+    assert flat.main([_SYMBOL]) == flat.EXIT_HELD
+    assert "open orders" in capsys.readouterr().out
+    assert client.closed == 1
+
+
+def test_flat_check_is_flat_only_with_no_holding_and_no_working_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _PagedClient([_page([{"pdno": _SYMBOL, "rmn_qty": "0", "cncl_yn": "N"}])])
+    _wire_flat_check(monkeypatch, client, {})
+    assert flat.main([_SYMBOL]) == flat.EXIT_FLAT
+
+
+def test_flat_check_reports_an_incomplete_order_read_as_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _PagedClient([_page([], fk=f"FK{i}", nk=f"NK{i}") for i in range(9)])
+    _wire_flat_check(monkeypatch, client, {})
+    assert flat.main([_SYMBOL]) == flat.EXIT_UNREADABLE
+    assert client.closed == 1
+
+
+def test_flat_check_spends_no_order_call_when_the_balance_already_says_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _PagedClient([])
+    _wire_flat_check(monkeypatch, client, {_SYMBOL: 1})
+    assert flat.main([_SYMBOL]) == flat.EXIT_HELD
+    assert client.sent == []
+
+
+# --- transport failures: rc 1, and no URL (the URL carries CANO) ------------
+
+
+_URL_IN_EXC = (
+    "HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): "
+    "Max retries exceeded with url: /uapi/domestic-stock/v1/trading/"
+    "inquire-balance?CANO=50000000&ACNT_PRDT_CD=01"
+)
+
+
+def _raise_transport(*_args: Any, **_kwargs: Any) -> dict[str, int]:
+    import requests
+
+    raise requests.ConnectionError(_URL_IN_EXC)
+
+
+def test_flat_check_maps_a_transport_failure_to_unknown_without_the_url(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = _Client()
+    monkeypatch.setenv(flat.EXPECT_FP_ENV, _FP)
+    _no_env_file(monkeypatch, flat)
+    monkeypatch.setattr(flat, "build_client", lambda **kw: (client, _Creds()))
+    monkeypatch.setattr(flat, "holdings", _raise_transport)
+    assert flat.main([_SYMBOL]) == flat.EXIT_UNREADABLE
+    printed = capsys.readouterr()
+    assert "ConnectionError" in printed.err
+    for leak in ("CANO", "50000000", "openapivts"):
+        assert leak not in printed.out + printed.err
+    assert client.closed == 1
+
+
+def test_flatten_maps_a_transport_failure_to_rejected_without_the_url(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = _Client()
+    monkeypatch.setenv(flat.EXPECT_FP_ENV, _FP)
+    _no_env_file(monkeypatch, flatten)
+    monkeypatch.setattr(flatten, "build_client", lambda **kw: (client, _Creds()))
+    monkeypatch.setattr(flatten, "holdings", _raise_transport)
+    assert flatten.main([_SYMBOL]) == flatten.EXIT_REJECTED
+    printed = capsys.readouterr()
+    assert "ConnectionError" in printed.err
+    for leak in ("CANO", "50000000", "openapivts"):
+        assert leak not in printed.out + printed.err
+    assert client.closed == 1
+
+
+def test_a_probe_error_is_caught_the_same_way() -> None:
+    """ProbeError is in the caught set, so it cannot print a call's detail either."""
+    from tools.broker_probes.common import ProbeError
+
+    assert issubclass(ProbeError, tuple(flat.broker_transport_errors()))
