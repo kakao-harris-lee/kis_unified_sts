@@ -36,13 +36,18 @@ if str(REPO_ROOT) not in sys.path:
 
 from tools.tos_cp3 import session_inputs as si  # noqa: E402
 from tools.tos_cp3 import status_board  # noqa: E402
+from tools.tos_cp3.inspect_session import (  # noqa: E402
+    TENANT_DATA_PARENT_SUFFIX,  # the one definition of the data-parent convention (#1120)
+)
 
 __all__ = [
     "Fill",
     "LeafReport",
     "PRICE_BASIS",
     "SymbolReport",
+    "TENANT_DATA_PARENT_SUFFIX",
     "TENANT_TREE_GLOB",
+    "UNKNOWN_SYMBOL",
     "build_report",
     "discover_leaves",
     "main",
@@ -55,17 +60,24 @@ __all__ = [
 SEND_SEALED_KIND = "SEND_SEALED"  # tos/src/tos/egressgw/seal.py (send_seal 블록)
 FILL_OBSERVED_KIND = "FILL_OBSERVED"  # posttrade/fill_observer.py::FILL_OBSERVED_KIND
 ACK_UNTRACKABLE_KIND = "FILL_OBSERVER_ACK_UNTRACKABLE"  # 같은 파일
+#: 브로커는 체결을 보여 줬는데 엔진이 그 attempt 의 예약을 쥐고 있지 않아 보류한 행.
+ENGINE_RESERVATION_ABSENT_KIND = "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT"  # 같은 파일
+#: 브로커가 취소를 보여 줬는데 이 경로가 취소 결과를 적용하지 못해 보류한 행.
+CANCEL_UNSUPPORTED_KIND = "FILL_OBSERVER_CANCEL_UNSUPPORTED"  # 같은 파일
 EGRESS_RESULT_CONSUMED_KIND = "EGRESS_RESULT_CONSUMED"  # engine 투영 전진
 VENUE_POLICY_BOUND_KIND = "VENUE_POLICY_BOUND"  # price_scale 의 출처
 
 FULL_FILL = "FULL_FILL"
+PARTIAL_FILL = "PARTIAL_FILL"  # tos.engine.vocabulary.EgressResultKind 의 철자
 NON_FILL_TERMINAL_KINDS = frozenset({"CANCEL_ACK", "EXPIRED", "REJECT"})
 
 BUY, SELL = "BUY", "SELL"
 
 TENANT_TREE_GLOB = "cp3-setup-d-stock-*"
-TENANT_DATA_PARENT_SUFFIX = "-data"  # tools/tos_cp3/inspect_session.py 와 같은 규약
 ARCHIVE_DIRNAME = "archive"
+#: 종목을 모르는 잎들의 묶음 이름. 디렉터리 이름으로 추측하지 않는다(#1120) — 보관된
+#: 잎 이름은 운영자가 붙인 라벨(`005930.stuck-20261105`)이라 종목이 아니다.
+UNKNOWN_SYMBOL = "종목 모름"
 
 PRICE_BASIS = "EXECUTION_PRICE_WITH_SEALED_FALLBACK"
 
@@ -87,6 +99,14 @@ PRICE_BASIS_NOTE_LINES: tuple[str, ...] = (
 )
 
 PRICE_BASIS_NOTE = " ".join(line.strip() for line in PRICE_BASIS_NOTE_LINES)
+
+#: 집계 규칙 중 숫자를 오해하게 둘 수 있는 두 가지(#1120 LOW).
+AGGREGATION_NOTE_LINES: tuple[str, ...] = (
+    "손익은 수수료·세금·슬리피지 전이다 — 증거에 그 값이 없다.",
+    "왕복·승은 FIFO 로 닫힌 lot 조각마다 센다 — 매수 둘을 한 번에 턴 매도는 왕복 2 다.",
+)
+
+AGGREGATION_NOTE = " ".join(line.strip() for line in AGGREGATION_NOTE_LINES)
 
 STATUS_FILLED = "FILLED"
 STATUS_NO_FILL = "NO_FILL"
@@ -282,6 +302,8 @@ def read_leaf(path: Path, *, leaf_order: int = 0) -> LeafReport:
                 SEND_SEALED_KIND,
                 FILL_OBSERVED_KIND,
                 ACK_UNTRACKABLE_KIND,
+                ENGINE_RESERVATION_ABSENT_KIND,
+                CANCEL_UNSUPPORTED_KIND,
                 EGRESS_RESULT_CONSUMED_KIND,
                 VENUE_POLICY_BOUND_KIND,
             ),
@@ -315,6 +337,12 @@ def _fold_leaf(
     last_result_kind: dict[str, str] = {}
     untrackable: dict[str, str] = {}
     fills: dict[str, Fill] = {}
+    #: 전량 체결 전에 관측된 **마지막** 부분 체결 수량 — 왜 따로 쥐는지는
+    #: :func:`_attempt_document` 의 주석에 있다(#1120 MEDIUM-1).
+    partial: dict[str, Decimal] = {}
+    #: 브로커 관측은 있는데 보류된 두 모양(#1120 MEDIUM-2).
+    absent: dict[str, dict[str, Any]] = {}
+    cancel_held: dict[str, str] = {}
     # 체결이 관측되지 않은 attempt 도 브로커 번호·거래일은 알 수 있다 — ACK 가 적는다.
     broker_id: dict[str, str] = {}
     acked_date: dict[str, str] = {}
@@ -354,7 +382,34 @@ def _fold_leaf(
             if isinstance(attempt, str):
                 untrackable[attempt] = str(record.get("reason"))
             _remember(broker_id, record, "broker_execution_id")
+        elif kind == ENGINE_RESERVATION_ABSENT_KIND:
+            attempt = record.get("attempt_id")
+            if isinstance(attempt, str):
+                absent[attempt] = {
+                    "kind": record.get("kind"),
+                    "filled_quantity": record.get("filled_quantity"),
+                    "reason": record.get("reason"),
+                }
+            _remember(broker_id, record, "broker_execution_id")
+            _remember(acked_date, record, "trading_date")
+        elif kind == CANCEL_UNSUPPORTED_KIND:
+            attempt = record.get("attempt_id")
+            if isinstance(attempt, str):
+                cancel_held[attempt] = str(record.get("reason"))
+            _remember(broker_id, record, "broker_execution_id")
+            _remember(acked_date, record, "trading_date")
         elif kind == FILL_OBSERVED_KIND:
+            if record.get("kind") == PARTIAL_FILL:
+                # 부분 체결은 FIFO 에 넣지 않는다 — 그 수량은 아직 움직이는 중이고,
+                # 다음 관측이 전량 체결이면 같은 주문을 두 번 세게 된다. 대신 마지막
+                # 관측 수량을 기억해 두었다가, 그 attempt 가 전량 체결 없이 끝나면
+                # «체결 관측 없음» 대신 그 수량을 적는다(#1120 MEDIUM-1: BUY 2 ·
+                # PARTIAL_FILL 1 · 취소면 실제로 1주를 들고 있다).
+                attempt = record.get("attempt_id")
+                quantity = _decimal(record.get("filled_quantity"))
+                if isinstance(attempt, str) and quantity is not None and quantity > 0:
+                    partial[attempt] = quantity
+                continue
             if record.get("kind") != FULL_FILL:
                 continue
             attempt = record.get("attempt_id")
@@ -407,6 +462,7 @@ def _fold_leaf(
                 if terminal in NON_FILL_TERMINAL_KINDS
                 else STATUS_UNRESOLVED
             )
+        partial_quantity = partial.get(attempt)
         report.attempts.append(
             {
                 "attempt_id": attempt,
@@ -428,6 +484,13 @@ def _fold_leaf(
                 ),
                 "last_egress_result_kind": last_result_kind.get(attempt),
                 "ack_untrackable_reason": untrackable.get(attempt),
+                # 집계에 들어가지 않은 **관측된 사실** 셋. 셋 다 비면 그때만 정말로
+                # «체결 관측 없음» 이다(#1120 MEDIUM-1/2).
+                "partial_filled_quantity": (
+                    None if partial_quantity is None else _num(partial_quantity)
+                ),
+                "engine_reservation_absent": absent.get(attempt),
+                "cancel_unsupported_reason": cancel_held.get(attempt),
                 "leaf": str(report.path),
             }
         )
@@ -453,6 +516,14 @@ def build_report(leaves: list[LeafReport]) -> dict[str, Any]:
     FIFO 는 한 tenant 안에서만 돈다 — 커널이 tenant 당 한 번에 한 포지션을
     보장한다(계획 ``2026-11-19-tos-usage-plan.md`` §7 U1). 체결은 거래일 ·
     잎 순서 · seq 로 줄 세운다.
+
+    ⚠ **같은 거래일에 두 잎이 걸치면 그 날의 순서는 인자 순서다**(#1120 LOW). 잎끼리
+    비교할 수 있는 시각이 증거에 없다 — ``entries`` 의 유일한 시간 열
+    ``appended_at_monotonic_ns`` 는 프로세스마다 기준이 다르고, ``SEND_SEALED`` 에는
+    벽시계가 없으며, 보관된 잎의 디렉터리 이름은 운영자 라벨이다. 장중에 잎을 갈아
+    끼운 날(11-12 · 11-20)은 ``--leaf`` 를 **보관된 잎 → 살아 있는 잎** 순서로 주면
+    그 순서가 맞는다. 같은 잎을 두 번 주어도 두 번 세지는 않는다 — :func:`run` 이
+    resolve 한 경로로 중복을 지운다.
     """
     by_symbol: dict[str, SymbolReport] = {}
     fills_by_symbol: dict[str, list[Fill]] = {}
@@ -461,12 +532,10 @@ def build_report(leaves: list[LeafReport]) -> dict[str, Any]:
             # 주문도 체결도 없는 잎(부팅만 한 날)은 종목 칸을 만들지 않는다 —
             # 종목 이름을 디렉터리에서 추측하느니 «읽은 잎» 줄로만 남긴다.
             continue
-        symbol = leaf.symbol or leaf.path.name
+        symbol = leaf.symbol or UNKNOWN_SYMBOL
         report = by_symbol.setdefault(symbol, SymbolReport(symbol=symbol))
         report.unresolved_attempts.extend(
-            attempt
-            for attempt in leaf.attempts
-            if attempt["status"] == STATUS_UNRESOLVED
+            attempt for attempt in leaf.attempts if _needs_an_operators_eye(attempt)
         )
         report.unattributed_fills.extend(leaf.unattributed_fills)
         fills_by_symbol.setdefault(symbol, []).extend(leaf.fills)
@@ -485,6 +554,7 @@ def build_report(leaves: list[LeafReport]) -> dict[str, Any]:
             ),
             "note": PRICE_BASIS_NOTE,
         },
+        "aggregation_note": AGGREGATION_NOTE,
         "leaves": [
             {
                 "path": str(leaf.path),
@@ -502,8 +572,29 @@ def build_report(leaves: list[LeafReport]) -> dict[str, Any]:
     }
 
 
+def _needs_an_operators_eye(attempt: dict[str, Any]) -> bool:
+    """집계에 들어가지 않았는데 브로커 쪽에 무언가 있었던 attempt.
+
+    미해결(전량 체결도 비체결 종료도 관측되지 않음)이거나, 비체결로 끝났지만 그 전에
+    **부분 체결이 관측된** 경우다 — 후자는 수량이 실제로 계좌에 남는데 상태만 보면
+    사라진다(#1120 MEDIUM-1). 전량 체결로 집계에 들어간 attempt 는 여기 오지 않는다.
+    """
+    if attempt["status"] == STATUS_FILLED:
+        return False
+    return (
+        attempt["status"] == STATUS_UNRESOLVED
+        or attempt["partial_filled_quantity"] is not None
+    )
+
+
 def _fifo(report: SymbolReport, fills: list[Fill]) -> None:
-    """FIFO 매칭. 가격을 모르는 체결은 손익에서 빼고 그 날을 «손익 모름» 으로 표시한다."""
+    """FIFO 매칭. 가격을 모르는 체결은 손익에서 빼고 그 날을 «손익 모름» 으로 표시한다.
+
+    ⚠ **왕복·승은 닫힌 lot 조각마다 센다**(#1120 LOW, 문서화로 처리). 매수 둘을 한 번에
+    터는 매도 하나는 왕복 2 · 승 0~2 다 — 조각마다 그 lot 의 가격으로 손익을 보기
+    때문이고, 손익 합계는 어느 쪽으로 세든 같다. 지금 설정(주문 1주 고정, tenant 당
+    포지션 하나)에서는 조각과 매도 건수가 언제나 1:1 이라 두 셈이 같은 수를 낸다.
+    """
     lots: deque[list[Any]] = deque()
     for fill in fills:
         row = report.days.setdefault(fill.trading_date, _DayRow())
@@ -653,13 +744,16 @@ def render_text(document: dict[str, Any]) -> str:
     lines.append(f"가격 기준: {document['price_basis']['basis']}")
     lines.extend(f"  {line}" for line in PRICE_BASIS_NOTE_LINES)
     lines.append("")
+    lines.append("집계 규칙:")
+    lines.extend(f"  {line}" for line in AGGREGATION_NOTE_LINES)
+    lines.append("")
     lines.append("읽은 잎:")
     for leaf in document["leaves"]:
         if leaf["error"]:
             lines.append(f"  ✗ {leaf['path']} — {leaf['error']}")
             continue
         lines.append(
-            f"  {leaf['symbol'] or '종목 모름':<8} {leaf['path']}"
+            f"  {leaf['symbol'] or UNKNOWN_SYMBOL:<8} {leaf['path']}"
             f"  (price_scale={leaf['price_scale']}, 체결 {leaf['fills']}건)"
         )
     if not document["leaves"]:
@@ -737,17 +831,39 @@ def _render_leftovers(document: dict[str, Any]) -> list[str]:
                 f"odno={stray['broker_execution_id']} · 사유 {stray['reason']}"
             )
         for attempt in symbol["unresolved_attempts"]:
-            reason = (
-                attempt["ack_untrackable_reason"]
-                or f"마지막 결과 {attempt['last_egress_result_kind']}"
+            label = (
+                "미해결" if attempt["status"] == STATUS_UNRESOLVED else "비체결 종료"
             )
             lines.append(
-                f"  {name} 미해결 {attempt['side']} {attempt['quantity']}주 "
+                f"  {name} {label} {attempt['side']} {attempt['quantity']}주 "
                 f"@지정가 {_money(attempt['order_price_krw'])} — "
-                f"odno={attempt['broker_execution_id']} · 사유 {reason} · "
-                "체결 관측 없음(채워졌는지 모른다)"
+                f"odno={attempt['broker_execution_id']} · "
+                f"사유 {_attempt_cause(attempt)} · {_attempt_observation(attempt)}"
             )
     return ["", "집계 밖:", *lines] if lines else []
+
+
+def _attempt_cause(attempt: dict[str, Any]) -> str:
+    """이 attempt 가 집계 밖에 있는 사유 — 런타임이 적은 것 중 가장 구체적인 것."""
+    if attempt["cancel_unsupported_reason"] is not None:
+        return f"취소 보류({attempt['cancel_unsupported_reason']})"
+    if attempt["ack_untrackable_reason"] is not None:
+        return str(attempt["ack_untrackable_reason"])
+    return f"마지막 결과 {attempt['last_egress_result_kind']}"
+
+
+def _attempt_observation(attempt: dict[str, Any]) -> str:
+    """브로커 쪽에서 **관측된** 것. «체결 관측 없음» 은 정말로 없을 때만 적는다(#1120)."""
+    partial = attempt["partial_filled_quantity"]
+    if partial is not None:
+        return f"부분 체결 {partial}주 관측(전량 체결은 관측되지 않았다)"
+    absent = attempt["engine_reservation_absent"]
+    if absent is not None:
+        quantity = absent.get("filled_quantity")
+        observed = absent.get("kind") or "결과"
+        tail = "" if quantity is None else f" {quantity}주"
+        return f"브로커 체결 관측 · 엔진 미보유({observed}{tail})"
+    return "체결 관측 없음(채워졌는지 모른다)"
 
 
 def run(
@@ -764,7 +880,13 @@ def run(
     ``leaf_paths`` 를 주면 탐색하지 않는다 — 상태판 설정도 그때는 읽지 않는다.
     """
     if leaf_paths:
-        paths = [Path(p).expanduser() for p in leaf_paths]
+        # 같은 잎을 두 번(혹은 심볼릭 링크로 돌려) 주면 그 잎의 체결이 두 번 집계된다
+        # — resolve 한 경로로 중복을 지우고, 남은 것은 준 순서를 지킨다(#1120 LOW).
+        paths = []
+        for raw in leaf_paths:
+            resolved = Path(raw).expanduser().resolve()
+            if resolved not in paths:
+                paths.append(resolved)
     else:
         root = (
             status_board.expand_path(state_dir)
