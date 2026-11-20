@@ -228,7 +228,7 @@ def test_non_200_http_status_raises_even_when_the_body_looks_successful(
 
 
 def test_a_non_200_says_what_kis_called_it(server: FakeKisGetServer) -> None:
-    """#1124: on 2026-11-20 every witness read failed with `returned HTTP 500` and nothing
+    """#1125: on 2026-11-20 every witness read failed with `returned HTTP 500` and nothing
 
     else, and the KIS mock answers 500 for an expired token AND for EGW00201 — so the
     rate limit could not be told from an auth failure without a manual POST.

@@ -1,4 +1,4 @@
-"""The cross-process shared token cache (#1124 — 2026-11-20's three-tenant token collision).
+"""The cross-process shared token cache (#1125 — 2026-11-20's three-tenant token collision).
 
 Each test builds TWO independent registries over ONE cache file: that is what the three stock
 tenants are — three processes, one KIS 모의투자 app key, one token a minute.
@@ -131,7 +131,9 @@ def _tenant(
 def _entry(path: Path) -> dict[str, Any]:
     document = json.loads(path.read_text(encoding="utf-8"))
     assert document["version"] == 1
-    return document["entries"][app_key_fingerprint(_APP_KEY)]
+    entry = document["entries"][app_key_fingerprint(_APP_KEY)]
+    assert isinstance(entry, dict)
+    return entry
 
 
 def test_two_tenants_sharing_a_cache_issue_exactly_one_token(tmp_path: Path) -> None:
@@ -354,7 +356,7 @@ def test_the_lock_file_is_a_sibling_and_is_not_the_cache(tmp_path: Path) -> None
 
 
 def _uncached_tenant(client: Any) -> KisCredentialSession:
-    """A tenant whose transport config names no cache — the pre-#1124 wiring."""
+    """A tenant whose transport config names no cache — the pre-#1125 wiring."""
     return KisCredentialSessions(
         custody=_custody(),
         monotonic=FakeMonotonicSource(start_ms=1_000),
@@ -371,7 +373,7 @@ def _uncached_tenant(client: Any) -> KisCredentialSession:
 
 
 def test_without_a_cache_each_lifecycle_issues_its_own() -> None:
-    """The pre-#1124 behaviour is still what an unconfigured tenant gets."""
+    """The pre-#1125 behaviour is still what an unconfigured tenant gets."""
     first_client, second_client = (
         _CountingTokenClient(name="a"),
         _CountingTokenClient(name="b"),

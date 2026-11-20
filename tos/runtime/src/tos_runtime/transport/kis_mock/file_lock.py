@@ -1,4 +1,4 @@
-"""The one exclusive file lock the cross-process KIS app-key state is held under (#1124).
+"""The one exclusive file lock the cross-process KIS app-key state is held under (#1125).
 
 Two things about one KIS app key live outside any single tenant process: its OAuth token
 (``token_cache``) and its request rate (``shared_pacer``). Both are files, both are shared by

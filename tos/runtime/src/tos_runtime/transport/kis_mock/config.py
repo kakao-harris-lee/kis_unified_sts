@@ -70,13 +70,13 @@ class KisMockTransportConfig:
     token_reissue_min_interval_s: int
     request_timeout_s: float
     allow_plaintext_for_tests: bool
-    # The file every tenant process sharing this app key reads its token from (#1124), and
+    # The file every tenant process sharing this app key reads its token from (#1125), and
     # how long before real expiry a cached token is due for reissue. Absent = no sharing:
     # this process issues and holds its own token, as every tenant did before 2026-11-20.
     token_cache_path: str | None = None
     token_cache_refresh_margin_s: int | None = None
     # The file every tenant process sharing this app key takes its request slot from, and the
-    # aggregate rate it hands out (#1124). Absent = each process paces only itself, which is
+    # aggregate rate it hands out (#1125). Absent = each process paces only itself, which is
     # how three tenants put three requests into one second on 2026-11-20.
     shared_pacer_path: str | None = None
     shared_max_rps: float | None = None

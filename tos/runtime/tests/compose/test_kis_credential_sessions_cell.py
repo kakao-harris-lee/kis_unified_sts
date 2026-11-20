@@ -75,7 +75,7 @@ class TestACallbackFailureIsTheCallersProblem:
 
 
 class TestTheSharedTokenCacheComesFromTheTransportConfig:
-    """#1124: ``kis_mock_transport.yaml`` is where a boot learns it shares a token."""
+    """#1125: ``kis_mock_transport.yaml`` is where a boot learns it shares a token."""
 
     @staticmethod
     def _config(**overrides: Any) -> KisMockTransportConfig:

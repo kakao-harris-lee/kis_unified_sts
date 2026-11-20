@@ -378,7 +378,7 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
   `PDNO=<자기 종목>` 으로 질의 · 잔고도 같은 종목으로 거른다) 다른 tenant 의 주문이 이
   tenant 의 읽기에 들어오지 않는다 — 그래서 `ORPHAN_BROKER_ORDER` 로 해제가 멎지 않는다.
   **종목이 겹치면 그 보장이 깨진다**: 한 종목에 두 tenant 를 두지 말 것.
-- **요청률은 더해진다.** `KisAppKeyPacer` 는 프로세스마다 하나다 — 그래서 #1124 부터
+- **요청률은 더해진다.** `KisAppKeyPacer` 는 프로세스마다 하나다 — 그래서 #1125 부터
   `shared_pacer_path` 가 앱 키 하나의 **합산** 대기열을 맡는다(`shared_max_rps: 2.0`,
   어떤 두 요청도 0.5 s 안에 붙지 않는다). 아래 수치는 그 게이트가 없을 때의 산술이다.
   그래서 세 트리의
@@ -392,7 +392,7 @@ for d in 2026-11-12 2026-11-13; do for dir in LONG SHORT; do
   `TokenResponseError` 뒤 쿨다운(`token_reissue_min_interval_s`)을 기다린다 — 2026-11-20 에
   005930 이 그렇게 하루를 잃었다(모든 시도 실패 → 브로커 사실 `None` → `SEND_REFUSED`).
   **고침은 토큰을 공유하는 것이다**: `token_cache_path` 가 가리키는 한 파일을 세 tenant 가
-  `flock` 아래에서 함께 쓰고, 먼저 온 프로세스만 발급한다(#1124 · `tos-kis-mock-transport.md` §4).
+  `flock` 아래에서 함께 쓰고, 먼저 온 프로세스만 발급한다(#1125 · `tos-kis-mock-transport.md` §4).
   `TENANT_BOOT_DELAY_S` 는 그대로 둔다 — 캐시가 비어 있는 첫 부팅과 생산자 쪽 요청률을 아직 벌려 준다 —
   `cp3_tenant_daily.sh` 가 `STOCK_SYMBOLS` 안 **순번 × 70 s** 로 정한다(005930 은 0).
   손으로 시작할 때는 위 블록의 `SYM_BOOT_DELAY` 가 같은 자리다.
@@ -416,7 +416,7 @@ bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once
 - 스크립트가 쓰는 `$ST/cp3-setup-d-stock-ops/kis_mock_transport.yaml`(0600) = `tos-kis-mock-transport.md` §4 값 + `mode: live` · `endpoint_rest_base: "https://openapivts.koreainvestment.com:29443"`
   · `price_scale: 100` · `request_timeout_s: 10` · `min_send_interval_ms: 2000` · `app_key_request_wait_budget_ms: 4000` · `token_reissue_min_interval_s: 65` · `allow_plaintext_for_tests: false`
   · `token_cache_path: "$ST/kis-mock-token/stock-mock.json"` + `token_cache_refresh_margin_s: 600` · `shared_pacer_path: "$ST/kis-mock-token/stock-mock.pace"` + `shared_max_rps: 2.0`
-    (#1124 — 앱 키를 공유하는 tenant 전부가 **같은** 네 값. 토큰 한 장과 요청 대기열 하나를 함께 쓴다. 스크립트가 그 디렉터리를 700 으로 만든다)
+    (#1125 — 앱 키를 공유하는 tenant 전부가 **같은** 네 값. 토큰 한 장과 요청 대기열 하나를 함께 쓴다. 스크립트가 그 디렉터리를 700 으로 만든다)
   · `ACNT_PRDT_CD` = **계좌 뒤 2자리**(다르면 코덱이 송신 거부). §4 표의 「`mode: live` 무조건 거부」는 옛 문장 — 지금은 compose 가 `codec_bound=True` 를 준다.
   · ⚠ **이 파일은 준비 때 한 번 쓰이고 그 뒤 갱신되지 않는다.** 준비 뒤 main 에 새 필수 키가 생기면 부팅이 `KisMockTransportConfigError: … missing entry '<키>'` 로 거부한다(송신 0).
     실제 사례 2026-10-30 첫 세션: 10-26 준비본에 #979(10-28)의 `app_key_request_wait_budget_ms` 가 없어 r1 부팅 거부. 고침은 그 키 한 줄을

@@ -462,7 +462,7 @@ def test_price_scale_is_loaded(tmp_path: Path) -> None:
 
 
 def test_a_config_without_a_token_cache_shares_nothing(tmp_path: Path) -> None:
-    """#1124: the key pair is optional, and absent means the pre-11-20 per-process token."""
+    """#1125: the key pair is optional, and absent means the pre-11-20 per-process token."""
     config = _load(_write(tmp_path, _valid_raw()))
     assert config.token_cache_path is None
     assert config.token_cache_refresh_margin_s is None
@@ -528,7 +528,7 @@ def test_a_null_token_cache_field_refuses(tmp_path: Path, field: str) -> None:
 
 
 def test_a_config_without_a_shared_pacer_paces_only_itself(tmp_path: Path) -> None:
-    """#1124: absent means the pre-11-20 per-process pacing, which is what let three"""
+    """#1125: absent means the pre-11-20 per-process pacing, which is what let three"""
     config = _load(_write(tmp_path, _valid_raw()))
     assert config.shared_pacer_path is None
     assert config.shared_max_rps is None

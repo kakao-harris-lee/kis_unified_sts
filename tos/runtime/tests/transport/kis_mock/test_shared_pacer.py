@@ -1,4 +1,4 @@
-"""The cross-process app-key request gate (#1124 — 2026-11-20 13:00–13:20 KST).
+"""The cross-process app-key request gate (#1125 — 2026-11-20 13:00–13:20 KST).
 
 Three tenants each paced themselves at one request per 2 s on ONE app key, so three requests
 landed in the same second: `VTTC0081R`/`VTTC8434R` answered HTTP 500 (the KIS mock's answer

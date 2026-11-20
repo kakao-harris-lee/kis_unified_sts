@@ -3,7 +3,7 @@
 The unit tests prove the cache and the gate behave; this proves the two config pairs
 actually reach a composed runtime, and that every consumer of this app key takes the same
 session — which is why the fill witness and the loop witness (built in
-``_broker_posttrade_wiring``) cannot open a second token lifecycle of their own (#1124).
+``_broker_posttrade_wiring``) cannot open a second token lifecycle of their own (#1125).
 """
 
 from __future__ import annotations

@@ -163,7 +163,7 @@ def test_rerun_refuses_to_overwrite(host: tuple[Path, Path]) -> None:
 def test_every_tenant_is_pointed_at_one_shared_token_cache(
     host: tuple[Path, Path],
 ) -> None:
-    """#1124: one KIS app key, one token a minute, so one token FILE for every tenant.
+    """#1125: one KIS app key, one token a minute, so one token FILE for every tenant.
 
     2026-11-20 12:50 KST: 005930's own token issuance lost the per-minute race to 000660
     and 005380 on every retry, which left its broker facts None and every signal at

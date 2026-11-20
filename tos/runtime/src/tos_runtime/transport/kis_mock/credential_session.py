@@ -149,7 +149,7 @@ class KisCredentialSessions:
         self._evidence_sink = evidence_sink
         # One cache and one cross-process gate for every session this boot builds: both are
         # the app KEY's, and the processes that share an app key are what they serialize
-        # (#1124 — the token, so only one process issues; the gate, so only one process
+        # (#1125 — the token, so only one process issues; the gate, so only one process
         # sends at a time).
         self._token_cache = token_cache
         self._shared_gate = shared_gate
