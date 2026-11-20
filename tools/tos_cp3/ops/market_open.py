@@ -23,6 +23,11 @@ session it starts cannot disagree, and a known holiday costs no broker call.
 Step 5 is the fallback the old year-coverage refusal replaced: an unlisted
 weekday is a trading day.
 
+Exit codes: 0 open · 10 closed by steps 1-3 · 11 closed by step 4 (``opnd_yn=N``) ·
+anything else an error. 10 and 11 are both silent SKIPs for the session; the cron
+wrapper tells them apart because only 11 — a closure nobody's calendar lists —
+is worth one informational message a day.
+
 GET only, REAL key, no order path. KIS asks for 「가급적 1일 1회 호출」, so the
 day's answer is cached under ``--cache-dir`` and the five tenants' cron lines
 share it under one ``flock``: one broker call per host per day.
@@ -68,6 +73,11 @@ DEFAULT_TIMEOUT_S = 10.0
 
 EXIT_OPEN = 0
 EXIT_CLOSED = 10
+# The BROKER closed the day, not the calendar: a weekday no tenant calendar lists
+# and KRX did not open. Still a silent SKIP for the session, but the cron wrapper
+# tells the operator once a day — an unlisted closure is the one they have no
+# record of, and the only way the calendar gets the entry is someone noticing.
+EXIT_CLOSED_UNLISTED = 11
 EXIT_ERROR = 2
 
 
@@ -181,7 +191,16 @@ def fetch_opnd_yn(
             status, parsed, _elapsed_ms, _text = http_json(
                 session, "GET", url, headers=headers, params=params, timeout=timeout_s
             )
-    except (requests.RequestException, ProbeError, ValueError, OSError) as exc:
+    # SAFETY: ImportError belongs here too — `read_explicit_dotenv` imports
+    # `python-dotenv` INSIDE the call, so a checkout without it would otherwise
+    # traceback out of this gate instead of falling back to «run» as promised.
+    except (
+        requests.RequestException,
+        ProbeError,
+        ValueError,
+        OSError,
+        ImportError,
+    ) as exc:
         raise MarketOpenUnreadable(f"{type(exc).__name__}: {exc}") from exc
     return opnd_yn_of(parsed, day, status=status)
 
@@ -344,7 +363,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{source}, calendar fallback: {args.date} is not a listed holiday")
         return EXIT_OPEN
     print(f"KIS 개장일여부 opnd_yn={answer} ({source})")
-    return EXIT_OPEN if answer == OPEN_YES else EXIT_CLOSED
+    return EXIT_OPEN if answer == OPEN_YES else EXIT_CLOSED_UNLISTED
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI

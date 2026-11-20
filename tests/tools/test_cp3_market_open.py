@@ -138,7 +138,10 @@ def test_opnd_yn_n_skips_the_day(
 ) -> None:
     """An unlisted KRX closure — the day the old year-coverage refusal could not see."""
     fetch = _Fetch("N")
-    assert _run(monkeypatch, tmp_path, _OPEN_DAY, fetch) == mo.EXIT_CLOSED
+    # 11, not 10: the wrapper tells a broker-named closure from a calendar one by the
+    # exit code, and only the first gets the informational telegram.
+    assert _run(monkeypatch, tmp_path, _OPEN_DAY, fetch) == mo.EXIT_CLOSED_UNLISTED
+    assert mo.EXIT_CLOSED_UNLISTED != mo.EXIT_CLOSED
     assert "opnd_yn=N" in capsys.readouterr().out
 
 
@@ -155,7 +158,7 @@ def test_an_unreadable_broker_falls_back_to_the_calendar(
     ("answer", "expected"),
     [
         ("Y", mo.EXIT_OPEN),
-        ("N", mo.EXIT_CLOSED),
+        ("N", mo.EXIT_CLOSED_UNLISTED),
         (mo.MarketOpenUnreadable("no credentials"), mo.EXIT_OPEN),
     ],
 )
@@ -242,10 +245,12 @@ def test_cache_only_never_asks_the_broker(
     assert "--cache-only" in capsys.readouterr().out
 
     monkeypatch.setattr(mo, "fetch_opnd_yn", _Fetch("N"))
-    assert mo.main(_argv(tmp_path, _OPEN_DAY)) == mo.EXIT_CLOSED
+    assert mo.main(_argv(tmp_path, _OPEN_DAY)) == mo.EXIT_CLOSED_UNLISTED
     capsys.readouterr()
+    # A cached broker N keeps its own exit code, so `--preflight` reports CLOSED for
+    # the same reason the morning run did.
     rc = mo.main(_argv(tmp_path, _OPEN_DAY, "--cache-only"))
-    assert rc == mo.EXIT_CLOSED
+    assert rc == mo.EXIT_CLOSED_UNLISTED
     assert "(cached)" in capsys.readouterr().out
 
 
@@ -359,6 +364,25 @@ def test_a_credential_file_without_the_keys_is_unreadable_not_a_crash(
 
     monkeypatch.setattr(dotenv_guard, "read_explicit_dotenv", lambda path, *, keys: {})
     with pytest.raises(mo.MarketOpenUnreadable, match="KIS_STOCK_APP_KEY"):
+        mo.fetch_opnd_yn(
+            date(2026, 11, 20),
+            env_file=tmp_path / ".env.real",
+            token_cache_dir=tmp_path / "token",
+        )
+
+
+def test_a_missing_dotenv_package_is_unreadable_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`read_explicit_dotenv` imports python-dotenv INSIDE the call, so its absence"""
+
+    def _no_dotenv(path: Path, *, keys: object) -> dict[str, str]:
+        raise ImportError("No module named 'dotenv'")
+
+    from shared.config import dotenv_guard
+
+    monkeypatch.setattr(dotenv_guard, "read_explicit_dotenv", _no_dotenv)
+    with pytest.raises(mo.MarketOpenUnreadable, match="ImportError"):
         mo.fetch_opnd_yn(
             date(2026, 11, 20),
             env_file=tmp_path / ".env.real",

@@ -69,7 +69,8 @@
 #      국내휴장일조회(개장일여부) GET answers, cached once a day for every tenant
 #      (#1143, tools/tos_cp3/ops/market_open.py). An unlisted weekday KIS cannot be
 #      reached about is a trading day. Closed means SKIP: worktree removed, exit 0,
-#      no alert.
+#      no alert — except that a closure the BROKER named and no calendar lists also
+#      sends ONE informational telegram a day for the whole host (step 7).
 #   5b. STOCK only, after the holiday check and before the runner — two steps
 #      that decide whether the session can send at all:
 #        * the operation transport config
@@ -95,6 +96,10 @@
 #      alone; a failed write alerts but never stops the session.
 #   7. one telegram line at the end: rc 0/143 is a normal end, anything else is a
 #      failure line. Pre-runner refusals (1-3, 5b, fetch, worktree) are failure lines.
+#      A step-5 SKIP sends nothing, with ONE exception: a closure the BROKER named
+#      on a day no calendar lists sends one INFORMATIONAL line (not a failure), at
+#      most once a day for the whole host — the message that gets the date into the
+#      calendars. The dedupe marker lives beside the day's cached answer.
 #
 # What `--catch-up HH:MM` adds (#1038 — the 2026-11-06 reboot): the host came back
 # at 09:00:53 and this cron (Ubuntu 3.0pl1) does NOT replay a missed line, so the
@@ -365,10 +370,12 @@ cron 로그 $STATE/cp3-$lc-tenant-daily.cron.log"
   exit "$1"
 }
 
-# market_open TREE_ROOT CALENDAR_FILE [extra args] — exit 0 open, 10 closed; ONE
-# reason line on stdout. Every other code — a traceback (exit 1: bad date, missing
-# yaml), an unreadable calendar (2) — is an error, never a skip: only 10 may become
-# a silent SKIP.
+# market_open TREE_ROOT CALENDAR_FILE [extra args] — exit 0 open, 10 closed by the
+# calendar (weekend · extra · a listed holiday), 11 closed by the BROKER
+# (opnd_yn=N on a day no calendar lists); ONE reason line on stdout. Every other
+# code — a traceback (exit 1: bad date, missing yaml), an unreadable calendar (2) —
+# is an error, never a skip: only 10 and 11 may become a silent SKIP, and 11 also
+# gets one informational telegram a day (notify_unlisted_closure below).
 #
 # The decision is tools/tos_cp3/ops/market_open.py, run from TREE_ROOT exactly as
 # `session_day` below (`-P`, PYTHONPATH=TREE_ROOT, no bytecode). What it decides,
@@ -383,6 +390,7 @@ cron 로그 $STATE/cp3-$lc-tenant-daily.cron.log"
 # cron lines share it under one flock — one KIS call per host per day, which is
 # what KIS asks for.
 MARKET_CLOSED=10
+MARKET_CLOSED_UNLISTED=11
 MARKET_OPEN_CACHE=${CP3_DAILY_MARKET_OPEN_CACHE:-$STATE/market-open}
 market_open() {
   local root=$1 cal=$2
@@ -390,6 +398,33 @@ market_open() {
   PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$root "$PY" -P -m tools.tos_cp3.ops.market_open \
     --date "$TODAY" --calendar "$cal" --cache-dir "$MARKET_OPEN_CACHE" \
     --extra-closed "$EXTRA_CLOSED" --repo-root "$root" "$@"
+}
+
+# notify_unlisted_closure — ONE informational telegram a day for the whole host,
+# for the one closure nobody has a record of: KRX did not open on a weekday that
+# no tenant calendar lists. Every tenant still SKIPs silently (rc 0, no failure);
+# this is the message that makes somebody add the date to the calendars.
+#
+# The dedupe is the marker's CREATE, not a check-then-write: `set -o noclobber`
+# makes `>` an O_EXCL open, so exactly one of the five cron calls wins it even
+# when two land in the same second, and the losers say so and stay quiet. It sits
+# beside the day's answer, so clearing the answer clears the message too.
+#
+# Body discipline (§7.2 좌표 규율): date, paths and this fixed text only — never
+# the gate's output, which can carry a broker response body with it.
+notify_unlisted_closure() {
+  local marker=$MARKET_OPEN_CACHE/$STAMP.notified
+  mkdir -p "$MARKET_OPEN_CACHE" 2>/dev/null
+  if ! (set -o noclobber; : >"$marker") 2>/dev/null; then
+    log "unlisted-closure 안내는 오늘 이미 보냈다 ($marker) — 다시 보내지 않는다"
+    return 0
+  fi
+  notify "CP-3 tenant 세션 없음 ($TODAY) — KIS 휴장 응답, 달력에 없음
+평일이고 어느 tenant 달력에도 없는 날인데 KIS 국내휴장일조회가 개장일여부 N 으로 답했다. 다섯 tenant 모두 조용한 SKIP 이고 실패가 아니다.
+할 일: 이 날짜를 각 tenant 달력의 holidays 에 넣는다 (config/tos_runtime/*/calendar.yaml).
+그래도 오늘 세션을 돌려야 하면: $MARKET_OPEN_CACHE/$STAMP.json 의 opnd_yn 을 Y 로 고친 뒤 그 tenant 의 --catch-up 을 정규 분으로 다시 돌린다.
+KIS 에 다시 묻고 싶으면 그 파일을 지우고 다시 돌린다 (답이 같으면 또 SKIP 이다).
+cron 로그 $STATE/cp3-$lc-tenant-daily.cron.log"
 }
 
 # session_day CMD TREE_ROOT PRODUCER_CONFIG [CALENDAR] — one value on stdout from
@@ -588,7 +623,9 @@ if [ "$MODE" = preflight ]; then
   mrc=$?
   case $mrc in
   0) open=OPEN ;;
-  "$MARKET_CLOSED") open=CLOSED ;;
+  # Both closed codes, and NEITHER notifies here: this mode is read-only, so it
+  # must not spend the day's one unlisted-closure message either.
+  "$MARKET_CLOSED" | "$MARKET_CLOSED_UNLISTED") open=CLOSED ;;
   *) log "PREFLIGHT calendar check failed (rc=$mrc): $mreason"; exit 2 ;;
   esac
   if [ "$open" = OPEN ]; then
@@ -716,8 +753,13 @@ mreason=$(market_open "$WT" "$WT/$CAL_REL" --producer-config "$WT/$PRODUCER_REL"
 mrc=$?
 case $mrc in
 0) log "market open on $TODAY — $mreason" ;;
-"$MARKET_CLOSED")
-  log "market closed on $TODAY ($mreason) — SKIP"
+"$MARKET_CLOSED" | "$MARKET_CLOSED_UNLISTED")
+  # `source=` is the EXIT CODE's own answer, not a guess from the reason text:
+  # calendar = weekend · extra · a listed holiday; broker = opnd_yn=N on a day no
+  # calendar lists. Only the second gets the telegram.
+  if [ "$mrc" = "$MARKET_CLOSED_UNLISTED" ]; then msrc=broker; else msrc=calendar; fi
+  log "market closed on $TODAY (source=$msrc · $mreason) — SKIP"
+  [ "$msrc" = broker ] && notify_unlisted_closure
   git -C "$MAIN" worktree remove "$WT" && log "removed $WT"
   exit 0
   ;;

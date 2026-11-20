@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import re
 import shutil
@@ -714,8 +715,62 @@ def test_1143_the_gate_asks_no_broker_on_a_weekend_or_a_listed_holiday(
     """A closed day costs no KIS call and writes no answer file (KIS: 「1일 1회」)."""
     _data_parents(env)
     for day in (_HOLIDAY, "2026-10-24"):
-        assert "SKIP" in env.daily("SHORT", CP3_DAILY_TODAY=day).stdout
+        r = env.daily("SHORT", CP3_DAILY_TODAY=day)
+        assert f"market closed on {day} (source=calendar · " in r.stdout
+        assert "SKIP" in r.stdout
+        # No telegram: the operator already knows about a weekend or a listed holiday.
+        assert "notify-body" not in r.stdout
     assert not (env.state / "market-open").exists()
+
+
+def _cache_closed(env: Env, day: str) -> Path:
+    """Pre-seed the day's broker answer as `N`, so the gate takes it without a call."""
+    cache = env.state / "market-open"
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / f"{day.replace('-', '')}.json"
+    path.write_text(
+        json.dumps({"bass_dt": day.replace("-", ""), "opnd_yn": "N"}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_1143_an_unlisted_broker_closure_telegrams_once_for_the_whole_host(
+    env: Env,
+) -> None:
+    """A weekday KRX did not open and no calendar lists: every tenant SKIPs silently,"""
+    _data_parents(env)
+    _cache_closed(env, _OPEN_DAY)
+    marker = env.state / f"market-open/{_OPEN_DAY.replace('-', '')}.notified"
+
+    first = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert f"market closed on {_OPEN_DAY} (source=broker · " in first.stdout
+    assert "opnd_yn=N" in first.stdout and "SKIP" in first.stdout
+    assert "일일 세션 실패" not in first.stdout
+    assert "KIS 휴장 응답, 달력에 없음" in first.stdout
+    assert marker.is_file()
+    assert not (env.state / "cp3-sessions").exists()
+
+    # The second tenant of the day: same SKIP, no second message.
+    second = env.daily("SHORT", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert f"market closed on {_OPEN_DAY} (source=broker · " in second.stdout
+    assert "이미 보냈다" in second.stdout
+    assert "notify-body" not in second.stdout
+
+    # The body carries the date, the cache path and the recovery — no gate output.
+    body = first.stdout.split("notify-body: ", 1)[1]
+    assert _OPEN_DAY in body
+    assert f"{env.state}/market-open/{_OPEN_DAY.replace('-', '')}.json" in body
+    assert "opnd_yn 을 Y 로" in body and "--catch-up" in body
+
+    # Read-only: `--preflight` reports CLOSED and spends no message of its own.
+    marker.unlink()
+    pre = env.daily("LONG", "--preflight", _OPEN_DAY)
+    assert pre.returncode == 0 and "market=CLOSED" in pre.stdout
+    assert not marker.exists()
+    assert "notify-body" not in pre.stdout
 
 
 def test_n1_a_non_kst_host_zone_is_refused_at_run_time(env: Env) -> None:
