@@ -197,6 +197,29 @@ describe('SymbolsPanel', () => {
     expect(row.queryByText(/체결가/)).not.toBeInTheDocument();
   });
 
+  it('does not call a time 주문 봉 when the document names another basis', async () => {
+    // 「주문 봉」 is a claim about where the time came from. A future exporter
+    // basis must print its own name, not inherit this label.
+    const row = traded();
+    row.buy!.last!.time_basis = 'BROKER_CLOCK';
+    mocked.mockResolvedValue(response({ document: fixture({ symbols: [row] }) }));
+    renderPanel();
+    await screen.findByRole('rowheader', { name: '005930' });
+    const cell = within(rowFor('005930'));
+    expect(cell.getByText(/BROKER_CLOCK 14:36/)).toBeInTheDocument();
+    expect(cell.queryByText(/주문 봉 14:36/)).not.toBeInTheDocument();
+  });
+
+  it('does not call the holding TOS 기준 when the document names another basis', async () => {
+    mocked.mockResolvedValue(
+      response({ document: fixture({ holding_basis: 'BROKER_BALANCE' }) }),
+    );
+    renderPanel();
+    await screen.findByRole('rowheader', { name: '005930' });
+    expect(screen.getByRole('columnheader', { name: /보유 \(BROKER_BALANCE\)/ })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /TOS 기준/ })).not.toBeInTheDocument();
+  });
+
   it('says 시각 없음 rather than inventing one when the order bar is unknown', async () => {
     mocked.mockResolvedValue(response());
     renderPanel();

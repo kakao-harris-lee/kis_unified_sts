@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import config from '@/config/tos-control-plane.json';
 import {
+  ORDER_BAR_TIME_BASIS,
+  TOS_LEDGER_HOLDING_BASIS,
   isAcceptedSymbolsDocument,
   isTodaysDocument,
   sessionPhase,
@@ -93,7 +95,14 @@ function SideCell({ side }: { side: TosSymbolSide | null | undefined }) {
       {last && (
         <div className="text-xs text-slate-500 dark:text-slate-400">
           {priceLabel(last)}
-          {last.time_kst ? ` · 주문 봉 ${last.time_kst}` : ' · 시각 없음'}
+          {/* 「주문 봉」 is a claim about where the time came from, so it is
+              printed only while the document still says ORDER_BAR. A future
+              basis prints its own name rather than inheriting this label. */}
+          {last.time_kst == null
+            ? ' · 시각 없음'
+            : last.time_basis === ORDER_BAR_TIME_BASIS
+              ? ` · 주문 봉 ${last.time_kst}`
+              : ` · ${last.time_basis ?? '기준 모름'} ${last.time_kst}`}
           {last.broker_execution_id ? ` · ${last.broker_execution_id}` : ''}
         </div>
       )}
@@ -292,7 +301,16 @@ export default function SymbolsPanel() {
                 <th scope="col" className="py-2 pr-3">세션</th>
                 <th scope="col" className="py-2 pr-3">오늘 매수</th>
                 <th scope="col" className="py-2 pr-3">오늘 매도</th>
-                <th scope="col" className="py-2 pr-3">보유 (TOS 기준)</th>
+                {/* 「TOS 기준」 is a claim about the source of the number, so
+                    the header follows the document's own basis: a future basis
+                    names itself instead of being read as TOS's ledger. */}
+                <th scope="col" className="py-2 pr-3">
+                  보유 (
+                  {document.holding_basis === TOS_LEDGER_HOLDING_BASIS
+                    ? 'TOS 기준'
+                    : (document.holding_basis ?? '기준 모름')}
+                  )
+                </th>
                 <th scope="col" className="py-2">마지막 차단 사유</th>
               </tr>
             </thead>
