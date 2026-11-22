@@ -30,8 +30,10 @@ fields:
   - {name: atr, op: atr, params: {period: 14}}
   - {name: mso, op: session.minutes_since_open, params: {open_hour: 9, open_minute: 0}}
 
-  # 진입창 09:15~14:45 — 005930 트리와 같은 값(그 트리 fields.yaml, 운영자 결정 2026-10-22
-  # 주식 정규장 09:00~15:30 안쪽). 개장 15분은 시가 변동성, 마감 45분은 청산 여유다.
+  # 진입창 09:15~14:45 — 005930 트리와 같은 값(그 트리 fields.yaml). 그 둘의 원천은 레거시
+  # Setup D YAML 의 `valid_minutes_min: 15`(「skip the open auction」)과
+  # `no_entry_after_minutes_since_open: 345`(「force-close avoidance」)이고, 주식은 개장이
+  # 09:00 이라 같은 숫자가 09:15~14:45 로 읽힌다.
   - {name: entry_window, op: between, inputs: [mso], params: {lo: 15, hi: 345}}
 
   - {name: atr_pos, op: gt, inputs: [atr], params: {const: 0}}
@@ -72,8 +74,9 @@ fields:
   - {name: rsi_recovered_raw, op: ge, inputs: [rsi14], params: {const: 50.0}}
   - {name: rsi_recovered, op: permissive, inputs: [rsi_recovered_raw], params: {when_missing: false}}
 
-  # 005930 트리와 같은 EOD 청산 시각(그 트리 fields.yaml) — 주식 정규장 종료 15:30 전,
-  # 15:20 단일가 전에 끝낸다.
+  # 005930 트리와 같은 EOD 청산 시각(그 트리 fields.yaml) — 달력의 krx-stock CONTINUOUS
+  # 종료 15:30 전이고, 종가 단일가(15:20~15:30, `config/tos_probes/
+  # cp3-live-producer-stock-005380.yaml::min_bars_per_day` 주석) 전이다.
   - {name: eod, op: time_ge, params: {at: "15:15"}}
 
 publish:
