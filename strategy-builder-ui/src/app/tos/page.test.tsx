@@ -29,8 +29,14 @@ vi.mock('@/lib/dashboard/tos', async () => {
 // the projection. The symbols panel made that concrete — its connection-error
 // hint also contains 「마지막 조회 기록」, which is what the retained-data test
 // asserts, so the two matched and that test failed for an unrelated reason.
-vi.mock('./BarsPanel', () => ({ default: () => null }));
-vi.mock('./SymbolsPanel', () => ({ default: () => null }));
+//
+// The stubs render NOTHING but count their own mounts, so the page can still be
+// asserted to CARRY both panels. A stub that merely returned null would let a
+// refactor drop a panel from the page with the whole suite staying green — and
+// for the symbols panel that panel IS the acceptance («세 종목이 한 화면»).
+const mounted = vi.hoisted(() => ({ bars: 0, symbols: 0 }));
+vi.mock('./BarsPanel', () => ({ default: () => { mounted.bars += 1; return null; } }));
+vi.mock('./SymbolsPanel', () => ({ default: () => { mounted.symbols += 1; return null; } }));
 
 let client: QueryClient;
 function mount(response?: Partial<TosProjectionResponse>) {
@@ -50,6 +56,15 @@ describe('TOS read-only page', () => {
     expect(within(screen.getByRole('region', { name: '위험 원장과 증거' })).getByText('0')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: '릴리스 상태' })).getByText('거부')).toBeInTheDocument();
     expect(screen.getAllByRole('button').map(b => b.textContent)).toEqual(['새로고침']);
+  });
+  it('carries both read-model panels, so neither can be dropped silently', async () => {
+    mount({});
+    await screen.findByText('최근 상태를 조회했습니다');
+    // Each panel owns its own suite; what this file guards is that the page
+    // still mounts them at all. The symbols panel is the usage plan §5
+    // acceptance («세 종목이 한 화면»), which no other test can see from here.
+    expect(mounted.symbols).toBeGreaterThan(0);
+    expect(mounted.bars).toBeGreaterThan(0);
   });
   it('renders whole null groups as unknown, including alert counts', async () => {
     mount({ projection: unknown });
