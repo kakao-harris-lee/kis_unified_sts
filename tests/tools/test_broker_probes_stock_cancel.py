@@ -334,8 +334,10 @@ class _KisOpen:
 
     def __call__(self, day: date, **_kwargs: Any) -> str:
         self.days.append(day)
-        # What the real fetch does before it calls KIS (market_open.py:173): it
-        # puts the REAL stock credential pair into this process's environment.
+        # A transport that leaks the REAL stock credential pair into this
+        # process's environment. `market_open.fetch_opnd_yn` does NOT do this
+        # (#1151 review removed its `os.environ.update`); this stub plays the
+        # future one that might, which is what the gate's restore is for.
         os.environ.update(self.exports)
         if isinstance(self.answer, Exception):
             raise self.answer
@@ -684,11 +686,13 @@ def test_the_kis_gate_leaves_the_environment_as_it_found_it(
 ) -> None:
     """The REAL key the day gate resolves must not become the ORDER key.
 
-    ``market_open.fetch_opnd_yn`` exports ``KIS_STOCK_APP_KEY`` /
-    ``KIS_STOCK_APP_SECRET`` from the producer's ``env_file`` into this process
-    (market_open.py:173). P-SC then sends 모의투자 orders with whatever the
-    environment names, so a leak here would put a REAL credential on an
-    order-emitting path — the one thing this probe must never do.
+    ``market_open.fetch_opnd_yn`` reads ``KIS_STOCK_APP_KEY`` /
+    ``KIS_STOCK_APP_SECRET`` out of the producer's ``env_file`` and keeps them in
+    a credential object (``test_fetch_leaves_the_process_environment_untouched``
+    pins that). This test is the second lock: the stub plays a transport that
+    does leak them into ``os.environ``, because P-SC then sends 모의투자 orders
+    with whatever the environment names — a leak on this path would put a REAL
+    credential on an order-emitting one.
     """
     kis_open.answer = "Y"
     kis_open.exports = {

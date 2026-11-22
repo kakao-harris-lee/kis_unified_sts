@@ -478,11 +478,13 @@ def _ask_kis_open(cfg: Config, day: date) -> tuple[str | None, str]:
     """
     from tools.tos_cp3.ops import market_open as mo
 
-    # SAFETY: `market_open.fetch_opnd_yn` exports the REAL stock credential pair
-    # into THIS process (market_open.py:173 `os.environ.update`) because that is
-    # how `resolve_credentials` reads it. P-SC sends 모의투자 orders with whatever
-    # the environment names, so the REAL key must not survive this call — the
-    # environment is put back exactly as it was, before `_setup` resolves anything.
+    # SAFETY: `market_open.fetch_opnd_yn` builds its credential object straight
+    # from the producer's `env_file` and never writes to `os.environ` (#1151
+    # review). This restore is the second lock on the same door: P-SC sends
+    # 모의투자 orders with whatever the environment names, so a REAL key left
+    # behind by this call — by a future transport, a library, anything on the way —
+    # would become an ORDER key. The environment is put back exactly as it was,
+    # before `_setup` resolves anything.
     saved = dict(os.environ)
     try:
         return mo.broker_answer(
