@@ -338,13 +338,20 @@ CRON_TZ=Asia/Seoul
 0  18 * * 1-5 $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup.cron.log 2>&1 # cold-backup-nightly
 20 18 * * 1-5 COLD_DATA_DIR=$HOME/.local/state/tos/cp3-setup-d-long-data COLD_CONFIG_DIR=$HOME/.local/state/tos/cp3-setup-d-long-ops COLD_TARGET_BORN_ON=2026-10-15 COLD_LOG=$HOME/.local/state/tos/cold-backup-cp3-long.log $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup-cp3-long.cron.log 2>&1 # cold-backup-cp3-long
 40 18 * * 1-5 COLD_DATA_DIR=$HOME/.local/state/tos/cp3-setup-d-short-data COLD_CONFIG_DIR=$HOME/.local/state/tos/cp3-setup-d-short-ops COLD_TARGET_BORN_ON=2026-10-23 COLD_LOG=$HOME/.local/state/tos/cold-backup-cp3-short.log $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup-cp3-short.cron.log 2>&1 # cold-backup-cp3-short
+0 19 * * 1-5 COLD_DATA_DIR=$HOME/.local/state/tos/cp3-setup-d-stock-005930-data COLD_CONFIG_DIR=$HOME/.local/state/tos/cp3-setup-d-stock-ops COLD_CUSTODY_ROOT=$HOME/.local/state/tos/cp3-setup-d-stock-custody COLD_TARGET_BORN_ON=2026-11-20 COLD_LOG=$HOME/.local/state/tos/cold-backup-stock-005930.log $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup-stock-005930.cron.log 2>&1 # cold-backup-stock-005930
+5 19 * * 1-5 COLD_DATA_DIR=$HOME/.local/state/tos/cp3-setup-d-stock-000660-data COLD_CONFIG_DIR=$HOME/.local/state/tos/cp3-setup-d-stock-000660-ops COLD_CUSTODY_ROOT=$HOME/.local/state/tos/cp3-setup-d-stock-000660-custody COLD_TARGET_BORN_ON=2026-11-20 COLD_LOG=$HOME/.local/state/tos/cold-backup-stock-000660.log $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup-stock-000660.cron.log 2>&1 # cold-backup-stock-000660
+10 19 * * 1-5 COLD_DATA_DIR=$HOME/.local/state/tos/cp3-setup-d-stock-005380-data COLD_CONFIG_DIR=$HOME/.local/state/tos/cp3-setup-d-stock-005380-ops COLD_CUSTODY_ROOT=$HOME/.local/state/tos/cp3-setup-d-stock-005380-custody COLD_TARGET_BORN_ON=2026-11-20 COLD_LOG=$HOME/.local/state/tos/cold-backup-stock-005380.log $HOME/.config/kis-probes/cold-backup-nightly.sh >> $HOME/.local/state/tos/cold-backup-stock-005380.cron.log 2>&1 # cold-backup-stock-005380
 ```
 
 - ⚠ **`CRON_TZ=Asia/Seoul` 은 실행 줄보다 앞에 와야 한다.** cron 의 환경 설정은 뒤따르는
   줄에만 적용되므로 순서가 뒤집히면 KST 가 아니라 시스템 TZ 로 돈다 — 모양이 아니라 동작의
   문제다.
-- ⚠ **주식 MOCK tenant(005930 · 000660 · 005380)에는 콜드 백업 줄이 없다**(2026-11-20
-  실측). 그 잎의 증거는 백업되지 않는다 — 켤지는 운영자 결정이다.
+- **주식 MOCK tenant(005930 · 000660 · 005380)는 19:00 · 19:05 · 19:10** 에 돈다(운영자
+  2026-11-22 「백업 추가해」). 세 가지가 선물 줄과 다르다: ① **`COLD_CUSTODY_ROOT` 를 tenant
+  별 커스터디로** 준다 — 기본값 `paper-custody` 로는 증거 체인 재검증이 `contract ⑤ — replay
+  mismatch` 로 거부된다(11-22 첫 실행 실측). ② 잎 이름이 KRX 6자리 종목코드다(아래 «잎을
+  열거한다»). ③ 부모 밑의 `archive/`(장중 재시작이 옮긴 은퇴 잎)는 잎도 경고 대상도 아니다.
+  첫 실행 11-22: 세 잎 모두 gen1 OK(약 1.6 MB → 90 KB, 5 파일 다이제스트 + 증거 체인).
 - 새 tenant 를 더할 때는 **`COLD_TARGET_BORN_ON` 을 그 잎의 genesis 날짜로** 적는다. 그
   날짜 전에는 「대상 없음」이 `PRE-GENESIS` rc 0 이고, 그 날부터는 같은 부재가 `refused`
   rc 1 이다(§4-5-4).
@@ -376,7 +383,7 @@ CRON_TZ=Asia/Seoul
 - **잎을 열거한다**(2026-10-04 · 운영자 결정 「계약월마다 durable set 하나」). `COLD_DATA_DIR`
   (기본 `~/.local/state/tos/paper-data`)은 **부모**이고 그 바로 밑에는 스토어가 없다 — 부모를
   그대로 `--data-dir` 로 넘기면 스토어가 하나도 없는 트리를 뜬다. 그래서 래퍼는 부모 밑의
-  디렉터리 중 이름이 `A0[0-9][0-9][0-9][0-9]` 인 것만 **잎**으로 세고(글로브가 이름 전체에
+  디렉터리 중 이름이 `A0[0-9][0-9][0-9][0-9]`(선물 계약월) 또는 `[0-9]{6}`(주식 종목코드, 2026-11-22) 인 것만 **잎**으로 세고 — `archive` 는 조용히 건너뛰고 —(글로브가 이름 전체에
   맞아 길이까지 고정된다 — `A056100` 은 잎이 아니다), 그 밖의 항목(파일 · 다른 이름의
   디렉터리 · 숨은 항목)은 **거부하지 않고 세어서 ⚠ 줄로 로그와 텔레그램 본문에 싣는다**
   (거부 본문과 PRE-GENESIS 본문 포함). 침묵은 잎 밖에 쓴 무언가를 숨긴다.
