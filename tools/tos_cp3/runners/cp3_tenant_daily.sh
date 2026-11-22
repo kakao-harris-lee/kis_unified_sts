@@ -980,6 +980,37 @@ else
     --state-dir "$STATE" >>"$SESSION/bars-export.out" 2>&1
   bars_rc=$?
   log "=== END BARS EXPORT rc=$bars_rc (record: $SESSION/bars-export.out · this rc does NOT change the session's)"
+
+  # --- the per-symbol document (usage plan §5 「종목별 운영 화면」) ----------
+  #
+  # Inside this `else` on purpose: it inherits every guard the bars export
+  # already made (the destination variable is set, absolute, and the worktree
+  # carries the tool), and it is held to the same discipline — read-only,
+  # `timeout`-wrapped, its rc logged and discarded.
+  #
+  # It is NOT about this session alone: the document carries one row per stock
+  # tenant, so whichever tenant's cron finishes last writes the most complete
+  # one. Rebuilding the whole document each time is what makes that safe —
+  # there is no partial update to merge, and `os.replace` means the page never
+  # reads a half-written file. The cost is reading three leaves instead of one.
+  #
+  # ⚠ This is a per-SESSION-END refresh, so between the morning boot and the
+  # first tenant's close the page serves the previous day's document and says
+  # so (the document carries `date`, and the panel compares it against today in
+  # KST). An intraday refresh is a cron line of its own — `sts tos
+  # export-symbols` is safe to run at any time — and is an operator decision,
+  # not something this wrapper should decide by running more often.
+  if [ ! -f "$WT/tools/tos_cp3/export_symbols.py" ]; then
+    log "=== SYMBOLS EXPORT SKIPPED — $WT/tools/tos_cp3/export_symbols.py is absent at this origin/main revision (this does NOT affect the session)"
+  else
+    log "=== SYMBOLS EXPORT -> ${TOS_OPERATOR_PROJECTION_DIR}/symbols ceiling ${BARS_CEILING_S}s"
+    timeout --kill-after=5s "${BARS_CEILING_S}s" \
+      "$PY" "$WT/tools/tos_cp3/export_symbols.py" \
+      --out-dir "$TOS_OPERATOR_PROJECTION_DIR" \
+      --state-dir "$STATE" >>"$SESSION/symbols-export.out" 2>&1
+    symbols_rc=$?
+    log "=== END SYMBOLS EXPORT rc=$symbols_rc (record: $SESSION/symbols-export.out · this rc does NOT change the session's)"
+  fi
 fi
 
 # Exit codes: runbook §7.2-d 「종료 코드」.

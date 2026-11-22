@@ -131,6 +131,12 @@ class Fill:
     quantity: Decimal
     order_price: Decimal | None
     execution_price: Decimal | None = None
+    #: 이 체결을 낳은 ``SEND_SEALED`` 의 evidence seq, 또는 그 행이 없으면 ``None``.
+    #: 증거에는 브로커 체결 **시각**이 없으므로(``FILL_OBSERVED`` 는 ``trading_date``
+    #: 만 적는다), 주문을 낸 결정 봉을 찾으려면 체결의 seq 가 아니라 **주문의** seq 가
+    #: 필요하다 — 체결은 몇 봉 뒤에 관측될 수 있다. ``export_symbols`` 가 이 값으로
+    #: 그 봉의 시각을 적는다. 집계에는 쓰이지 않고 ``--json`` 출력에도 나가지 않는다.
+    order_seq: int | None = None
 
     @property
     def price(self) -> Decimal | None:
@@ -416,6 +422,7 @@ def _fold_leaf(
                 quantity=quantity,
                 order_price=order.order_price if order is not None else None,
                 execution_price=_positive(_decimal(record.get("avg_execution_price"))),
+                order_seq=order.seq if order is not None else None,
             )
 
     report.fills = sorted(fills.values(), key=lambda f: f.seq)

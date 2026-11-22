@@ -2,7 +2,7 @@
 
 After the legacy-removal plan's L4
 (``docs/plans/2026-11-07-legacy-removal-plan.md`` §3) this app mounts exactly
-three things:
+four things:
 
 * ``GET /api/tos/projection`` (``routes/tos_projection.py``) — the read-only
   tos_runtime operator projection the Next.js ``/tos`` page polls.
@@ -11,6 +11,12 @@ three things:
   ``tools/tos_cp3/export_bars.py`` (roadmap
   ``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1). Same boundary as the
   projection: a file opened by path, no ``tos``/``tos_runtime`` import.
+* ``GET /api/tos/symbols/today`` (``routes/tos_symbols.py``) — the read-only
+  per-symbol operator rows (today's buys/sells, the holding TOS's own ledger
+  knows about, the last halt), exported on the host by
+  ``tools/tos_cp3/export_symbols.py`` (usage plan
+  ``docs/plans/2026-11-19-tos-usage-plan.md`` §5). Same boundary again, and no
+  broker call: the holding is TOS's FIFO open lots, never a KIS balance read.
 * ``GET /health`` — the container health check. ``Dockerfile.dashboard``'s
   ``HEALTHCHECK`` and ``docker-compose.yml`` both curl it, and
   ``strategy-builder-ui`` / ``caddy`` wait on ``service_healthy``, so it stays
@@ -129,11 +135,12 @@ def create_app(
 
 
 def _register_routes(app: FastAPI) -> None:
-    """Register the two TOS read-model routers and the container health endpoint."""
-    from services.dashboard.routes import tos_bars, tos_projection
+    """Register the three TOS read-model routers and the container health endpoint."""
+    from services.dashboard.routes import tos_bars, tos_projection, tos_symbols
 
     app.include_router(tos_projection.router)
     app.include_router(tos_bars.router)
+    app.include_router(tos_symbols.router)
 
     @app.get("/health")
     async def health_check():

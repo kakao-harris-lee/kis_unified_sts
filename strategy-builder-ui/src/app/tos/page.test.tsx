@@ -20,13 +20,17 @@ vi.mock('@/lib/dashboard/tos', async () => {
     isAcceptedProjection: (p: unknown) => (shared.accept ?? actual.isAcceptedProjection)(p as TosProjection),
   };
 });
-// The bar panel is a SECOND read model with its own query, its own banner
-// (`role=status`/`alert`) and its own button, and it has its own suite
-// (BarsPanel.test.tsx). Stubbed here so this file keeps asserting the
-// projection page: without it `findByRole('status')` and
-// `getAllByRole('button')` below match two independent components and fail on
-// ambiguity rather than on anything about the projection.
+// The bar panel and the symbols panel are SEPARATE read models, each with its
+// own query, its own banner (`role=status`/`alert`) and its own suite
+// (BarsPanel.test.tsx, SymbolsPanel.test.tsx). Both are stubbed here so this
+// file keeps asserting the projection page: without them `findByRole('status')`,
+// `getAllByRole('button')` and any whole-screen text query below match several
+// independent components and fail on ambiguity rather than on anything about
+// the projection. The symbols panel made that concrete — its connection-error
+// hint also contains 「마지막 조회 기록」, which is what the retained-data test
+// asserts, so the two matched and that test failed for an unrelated reason.
 vi.mock('./BarsPanel', () => ({ default: () => null }));
+vi.mock('./SymbolsPanel', () => ({ default: () => null }));
 
 let client: QueryClient;
 function mount(response?: Partial<TosProjectionResponse>) {

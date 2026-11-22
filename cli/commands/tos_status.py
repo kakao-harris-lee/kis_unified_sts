@@ -14,6 +14,9 @@
 * ``perf`` → ``tools/tos_cp3/perf.py`` (활용 계획
   ``docs/plans/2026-11-19-tos-usage-plan.md`` §5 «`sts tos perf` 최소판»).
   tenant 잎 evidence 만 읽어 종목·날짜별 체결 수 · 손익 · 승 · 보유 수량을 센다.
+* ``export-symbols`` → ``tools/tos_cp3/export_symbols.py`` (같은 계획 §5
+  «종목별 운영 화면»). ``perf`` 와 ``status`` 가 이미 센 것을 종목 하나의 줄로 모아
+  ``export-bars`` 와 같은 디렉터리에 쓴다. 대시보드는 그 파일을 경로로만 연다.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ def tos_cmd() -> None:
         sts tos status --json
         sts tos inspect stock-r1-20261110 --from 09:00 --to 10:00
         sts tos perf
+        sts tos export-symbols
     """
 
 
@@ -246,6 +250,64 @@ def tos_export_bars(
                 *(["--out-dir", out_dir] if out_dir else []),
                 *(["--data-dir", data_dir] if data_dir else []),
                 *(["--state-dir", state_dir] if state_dir else []),
+            ]
+        )
+    )
+
+
+@tos_cmd.command("export-symbols")
+@click.option(
+    "--out-dir",
+    default=None,
+    help="대상 루트 (기본: $TOS_OPERATOR_PROJECTION_DIR — 컨테이너가 읽는 그 디렉터리)",
+)
+@click.option("--date", "date", default=None, help="YYYY-MM-DD (기본: 오늘 KST)")
+@click.option(
+    "--state-dir",
+    default=None,
+    help="상태 루트 (기본: config/tos_status_board.yaml 의 state_dir)",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="상태판 설정 YAML (기본: config/tos_status_board.yaml)",
+)
+def tos_export_symbols(
+    out_dir: str | None,
+    date: str | None,
+    state_dir: str | None,
+    config_path: Path | None,
+) -> None:
+    """종목마다 오늘 한 줄을 대시보드가 읽는 JSON 으로 내보낸다.
+
+    종목(= tenant)마다 그날의 매수 · 매도 체결(건수 · 수량 · 마지막 한 건의 가격과
+    주문 봉 시각) · TOS 원장이 아는 보유 수량 · 마지막 차단 사유 · 세션 상태를
+    `<dir>/symbols/today.json` 에 원자적으로(tmp + rename) 쓴다. 세는 규칙은
+    `sts tos perf` 와 `sts tos status` 의 것을 그대로 부른다 — 여기서 다시 세지 않는다.
+
+    보유 수량은 **브로커 잔고 조회가 아니다**. TOS 자신의 증거에서 아직 닫히지 않은
+    FIFO lot 이고(`holding_basis`), 화면도 «TOS 기준» 으로 적는다. 이 명령도,
+    대시보드도 KIS 를 부르지 않는다.
+
+    \b
+    Examples:
+        sts tos export-symbols
+        sts tos export-symbols --date 2026-11-21 --out-dir /tmp/dry-run
+    """
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from tools.tos_cp3 import export_symbols, status_board
+
+    sys.exit(
+        export_symbols.main(
+            [
+                *(["--out-dir", out_dir] if out_dir else []),
+                *(["--date", date] if date else []),
+                *(["--state-dir", state_dir] if state_dir else []),
+                "--config",
+                str(config_path or status_board.DEFAULT_CONFIG_PATH),
             ]
         )
     )
