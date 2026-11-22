@@ -29,7 +29,7 @@ true` 셋 다, 2026-11-20 실측). 전략이 아니라 「경로가 살아 있�
 역할 분화(000660 Setup D · 005380 RSI/%R)는 [활용 계획](plans/2026-11-19-tos-usage-plan.md) §4.1
 의 다음 단계다.
 
-콜드 백업은 18:00(paper) · 18:20(LONG) · 18:40(SHORT) 에 돈다
+콜드 백업은 18:00(paper) · 18:20(LONG) · 18:40(SHORT) · 19:00/19:05/19:10(주식 005930·000660·005380) 에 돈다
 ([런북](runbooks/tos-evidence-cold-backup.md)). 부팅·재시작 절차는
 [paper 운영 런북](runbooks/tos-paper-boot.md).
 
