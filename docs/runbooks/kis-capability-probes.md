@@ -1142,7 +1142,7 @@ UNSUPPORTED` 1회 기록 + 예약 유지), #948 순서 2·3 과 #980 은 추측 
 | 모의 호스트·모의 TR | `assert_mock_host()` · `assert_mock_trading_tr()` — 클라이언트의 단일 전송 지점, 우회 불가 |
 | 모의 **자격증명** | `assert_mock_only_env()` — `KIS_STOCK_MARKET`/`KIS_FUTURES_MARKET` 이 `mock` 이 아니거나 `KIS_REAL_TRADING` 이 참이면 첫 소켓 전에 거부. paper 스택은 실제로 `KIS_STOCK_MARKET=real` 로 돈다(주식 시세가 실전 키를 요구한다) — 즉 paper `.env` 를 소싱한 실수가 실주문 자격증명이 된다 |
 | `--asset stock` | 취소 TR(`VTTC0013U`)과 두 조회면(`VTTC0081R`·`VTTC8434R`)이 전부 국내주식. 선물은 거부 |
-| 거래일 09:00-15:20 KST | `assert_session_window()` — 휴장일은 `config/tos_runtime/paper/calendar.yaml` 의 `holidays`(`tools/tos_cp3/session_day.py` 가 유일한 판독기), 창은 YAML `session.window`. 시간 이동용 플래그는 **없다** |
+| 거래일 09:00-15:20 KST | `assert_session_window()` — 휴장일은 `config/tos_runtime/paper/calendar.yaml` 의 `holidays`(`tools/tos_cp3/session_day.py` 가 유일한 판독기), 창은 YAML `session.window`. 시간 이동용 플래그는 **없다**. 거래일 판정은 **두 단계**다(#1149): 달력이 거부하지 않은 날은 KIS 국내휴장일조회(`CTCA0903R`, GET 전용·하루 1회 캐시 — `tools/tos_cp3/ops/market_open.py`, CP-3 cron tenant 게이트와 같은 캐시)에 묻고 `opnd_yn=N` 이면 거부한다. 달력에 **적히지 않은** 휴장일(예: 2027-01-01 신정)에 닫힌 시장으로 MOCK 주문을 보내지 않기 위해서다. KIS 를 읽지 못하면 달력 규칙(주말·적힌 휴장일)만으로 판정하고, 아티팩트의 `session_gate.market_open` 이 어느 쪽이 답했는지 남긴다 |
 | 계좌가 비어 있음 | `assert_flat_start()` — 대상 종목 보유 0 **과** 미결 주문 0 을 GET 으로 증명해야 시작한다. 잔고는 연속조회 키를 걸어 페이지를 넘긴다(1페이지만 읽으면 2페이지 보유가 「미보유」로 읽힌다 — P-BAL 실측). 읽기가 **답하지 못하면**(페이지 캡·거부·스로틀·꽉 찬 페이지) 그것도 거부다 |
 | 주문 호출 예산 | `OrderBudget` — YAML `limits.max_order_calls`. 초과 시도는 `SafetyViolation`(아티팩트 없음, exit 3) |
 | 정리 | `_cleanup()` 이 `finally` 에서 돈다 — 남은 주문 취소 → 체결분 **시장가** 되팔기 → 잔고 GET 으로 flat 확인. 자기 결과를 기록하고 예외를 올리지 않는다(정리 traceback 이 측정 결과를 덮어쓰면 운영자는 계좌 상태를 알 수 없게 된다) |

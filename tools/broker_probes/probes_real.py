@@ -61,8 +61,9 @@ ALLOWLIST: tuple[ReadOnlyCall, ...] = (
         "CTFN6118R",
         _NIGHT_BALANCE_PATH,
         "N-16 night futures balance — response schema only (plan §1 T2:36). "
-        "Read-only inquiry; the day-session sibling CTFO6118R is used the same "
-        "way at shared/kis/client.py:1049 but on the DAY path "
+        "Read-only inquiry; the day-session sibling CTFO6118R was used the same "
+        "way at shared/kis/client.py:1049 (module removed 2026-11-13; see git "
+        "history) but on the DAY path "
         "(/trading/inquire-balance). The night path is inquire-ngt-balance per "
         "collation #16 (2026-07-29-tos-p02-n17-spec-collation.md:60).",
     ),

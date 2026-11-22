@@ -803,7 +803,11 @@ class MockTradingClient:
     def stock_balance_verbose(
         self, *, fk: str = "", nk: str = ""
     ) -> tuple[int, dict[str, Any], str, float]:
-        """Mirror of ``shared/kis/client.py:920-933`` params, mock TR."""
+        """Mirror of ``shared/kis/client.py:920-933`` params, mock TR.
+
+        That module was removed 2026-11-13; see git history for the mirrored
+        params.
+        """
         tr_id = "VTTC8434R"
         assert_mock_trading_tr(tr_id)
         params = {
@@ -2429,7 +2433,8 @@ def probe_p11(args: argparse.Namespace) -> ProbeRun:
             "futures balance leg",
             "모의투자 does not serve futures balance inquiry "
             "(shared/kis/client.py:1030-1032: 'NOT supported on mock server; "
-            "is_real=True required'). Run the stock leg on mock; the futures leg "
+            "is_real=True required' — module removed 2026-11-13; see git "
+            "history). Run the stock leg on mock; the futures leg "
             "is REAL-only and out of scope for P0-2 mock measurement.",
         )
         if client:

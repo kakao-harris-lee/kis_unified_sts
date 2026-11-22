@@ -43,21 +43,23 @@ ALLOWLIST: tuple[ReadOnlyCall, ...] = (
         "P-BAL real stock balance — the target that matters. The destructive "
         "consumer (services/trading/broker_verification.py:187-190) runs against "
         "the live stock environment. Read-only inquiry; TR/path from "
-        "shared/kis/client.py:919,935.",
+        "shared/kis/client.py:919,935 (module removed 2026-11-13; see git "
+        "history).",
     ),
     ReadOnlyCall(
         _STOCK_TR_MOCK,
         _STOCK_BALANCE_PATH,
-        "P-BAL mock stock balance — same path, mock TR (client.py:919). Useful as "
-        "a shape rehearsal; a mock row count does not transfer to real "
-        "(ADR-002-004 §13.14).",
+        "P-BAL mock stock balance — same path, mock TR (client.py:919; module "
+        "removed 2026-11-13, see git history). Useful as a shape rehearsal; a "
+        "mock row count does not transfer to real (ADR-002-004 §13.14).",
     ),
     ReadOnlyCall(
         _FUT_TR_REAL,
         _FUT_BALANCE_PATH,
-        "P-BAL real futures balance — day-session TR (client.py:1048,1059). The "
-        "night sibling CTFN6118R lives on a different path and is N-16's subject; "
-        "it is NOT on this allowlist.",
+        "P-BAL real futures balance — day-session TR (client.py:1048,1059; "
+        "module removed 2026-11-13, see git history). The night sibling "
+        "CTFN6118R lives on a different path and is N-16's subject; it is NOT "
+        "on this allowlist.",
     ),
 )
 
@@ -90,7 +92,8 @@ _MOCK_FUTURES_SKIP_REASON = (
     "the broker does not serve a futures balance query on 모의투자 — "
     "shared/kis/client.py:1026 states '모의서버는 선물 잔고조회 미지원. "
     "is_real=True 필수' and the guard at :1031-1033 returns an empty list before "
-    "any request is built. The same fact is already carried as a P-11 "
+    "any request is built (that module was removed 2026-11-13; see git "
+    "history). The same fact is already carried as a P-11 "
     "prerequisite in tools/broker_probes/registry.py. This is a SKIP, not an "
     "error: the probe could not observe, and a broker-unsupported query must not "
     "be recorded as 'no truncation risk'."
@@ -179,7 +182,8 @@ def truncation_verdict(
             f"established. {why}: the page size is NOT {largest}, and {largest} is "
             "recorded as a LOWER BOUND (page_size_lower_bound). This run neither "
             "demonstrates nor refutes the truncation risk at "
-            "shared/kis/client.py:931-932."
+            "shared/kis/client.py:931-932 (module removed 2026-11-13; see git "
+            "history)."
         )
     elif rows_seen > page_size:
         verdict = _RISK_DEMONSTRATED
@@ -198,8 +202,9 @@ def truncation_verdict(
             f"page size {page_size} ({page_size_source}). Truncation is not "
             "reachable at this holdings count. This is a bound on THIS account at "
             "THIS moment, not a property of the code: the defect at "
-            "shared/kis/client.py:931-932 is unchanged and becomes live as soon as "
-            f"holdings exceed {page_size}."
+            "shared/kis/client.py:931-932 (module removed 2026-11-13; see git "
+            "history) was unchanged when the module went, and returns with any "
+            f"transport that repeats it once holdings exceed {page_size}."
         )
     else:
         verdict = _RISK_UNESTABLISHED
@@ -340,7 +345,11 @@ def _key_fingerprint(value: str) -> str:
 
 
 def _positive_qty_rows(rows: list[Any], qty_field: str) -> int:
-    """Count rows the RUNTIME would keep (``qty > 0``) — ``client.py:1002``/``:1091``."""
+    """Count rows the RUNTIME would keep (``qty > 0``).
+
+    The coordinates are ``shared/kis/client.py:1002``/``:1091``; that module was
+    removed 2026-11-13, so read them in git history.
+    """
     kept = 0
     for row in rows:
         if not isinstance(row, dict):
@@ -415,7 +424,8 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
             ],
             "row_qty_field": target.row_qty_field,
             "tr_id_source": (
-                "shared/kis/client.py:919 (stock real/mock split), :1048 (futures)"
+                "shared/kis/client.py:919 (stock real/mock split), :1048 "
+                "(futures) — module removed 2026-11-13; see git history"
             ),
         },
     )
@@ -547,7 +557,8 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
                     "not a more-follows code — the BROKER signalled end-of-set. "
                     "KIS's official inquire_balance example continues only on "
                     "tr_cont in ('M', 'F') and treats every other value as "
-                    "fetch-complete; shared/kis/client.py:354 stops on the same "
+                    "fetch-complete; shared/kis/client.py:354 (module removed "
+                    "2026-11-13; see git history) stopped on the same "
                     "header. Continuation keys are recorded verbatim but not "
                     "walked past this signal, so the row total across counted "
                     "pages is a total, not a lower bound."
@@ -665,9 +676,10 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
             "tr_cont_access_note",
             "The tr_cont response header is read directly from the transport by "
             "this module's _get(): common.http_json discards response headers and "
-            "cannot answer this question. shared/kis/client.py:341 reads the same "
-            "header the same way for fetch_invest_opinion; the balance methods "
-            "(:901-1114) never read it at all. 'M' and 'F' are interpreted as "
+            "cannot answer this question. shared/kis/client.py:341 read the same "
+            "header the same way for fetch_invest_opinion and the balance methods "
+            "(:901-1114) never read it at all — that module was removed "
+            "2026-11-13; see git history. 'M' and 'F' are interpreted as "
             "'more' (client.py:354; KIS's official inquire_balance example "
             "recurses on both) and any other NON-EMPTY value ends the walk as "
             "the broker's end-of-set signal — every value is also recorded "
@@ -675,10 +687,11 @@ def probe_pbal(args: argparse.Namespace) -> ProbeRun:
         )
         run.measure(
             "runtime_defect",
-            "shared/kis/client.py:931-932 (stock) and :1055-1056 (futures) send "
+            "shared/kis/client.py:931-932 (stock) and :1055-1056 (futures) sent "
             "empty continuation keys and the surrounding methods never read the "
-            "response keys, the tr_cont header, or the row count. A correct walk "
-            "already exists at :303-356 (fetch_invest_opinion). Futures has a "
+            "response keys, the tr_cont header, or the row count — that module "
+            "was removed 2026-11-13; read these coordinates in git history. A "
+            "correct walk existed at :303-356 (fetch_invest_opinion). Futures has a "
             "second, independent defect: the runtime omits MGNA_DVSN and "
             "EXCC_STAT_CD, which REAL_PROD requires (rt_cd=7 APMP0001, measured "
             "P-BAL-20260731T084304Z) — its futures balance query therefore "

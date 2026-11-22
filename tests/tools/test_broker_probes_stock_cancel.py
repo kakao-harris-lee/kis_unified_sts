@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,8 +49,10 @@ from tools.broker_probes.probes_stock_cancel import (
     load_config,
     probe_psc,
 )
+from tools.tos_cp3.ops import market_open
 
 _ACCOUNT = "1234567890"
+_PRODUCER_CONFIG = "config/tos_probes/cp3-live-producer.yaml"
 _SYMBOL = "005930"
 _LAST_PRICE = "70200"
 _ASPR_UNIT = "100"
@@ -315,6 +318,45 @@ def _client(run: ProbeRun) -> Any:
     )
 
 
+class _KisOpen:
+    """Stands in for the day gate's ONE KIS 개장일여부 call, and counts it.
+
+    ``market_open.fetch_opnd_yn`` is the seam on purpose: everything between it
+    and ``assert_session_window`` — the cache, the lock, the fallback, the
+    environment restore — is then the real code under test, and no test can
+    reach the broker.
+    """
+
+    def __init__(self, answer: str | Exception = "Y") -> None:
+        self.answer = answer
+        self.days: list[date] = []
+        self.exports: dict[str, str] = {}
+
+    def __call__(self, day: date, **_kwargs: Any) -> str:
+        self.days.append(day)
+        # A transport that leaks the REAL stock credential pair into this
+        # process's environment. `market_open.fetch_opnd_yn` does NOT do this
+        # (#1151 review removed its `os.environ.update`); this stub plays the
+        # future one that might, which is what the gate's restore is for.
+        os.environ.update(self.exports)
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+
+@pytest.fixture(autouse=True)
+def kis_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _KisOpen:
+    """No test reaches KIS, and the day's answer is cached under ``tmp_path``.
+
+    The default answer is «unreadable», so every test that does not ask for one
+    exercises the calendar fallback — the behaviour P-SC had before #1149.
+    """
+    stub = _KisOpen(market_open.MarketOpenUnreadable("stubbed: no test calls KIS"))
+    monkeypatch.setattr(market_open, "fetch_opnd_yn", stub)
+    monkeypatch.setenv("CP3_DAILY_MARKET_OPEN_CACHE", str(tmp_path / "market-open"))
+    return stub
+
+
 @pytest.fixture
 def mock_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exactly the env vars the stock credential path reads, all mock."""
@@ -333,6 +375,7 @@ def _config_file(tmp_path: Path, **overrides: Any) -> Path:
         "schema_version": 1,
         "session": {
             "calendar_path": "config/tos_runtime/paper/calendar.yaml",
+            "market_open_producer_config": _PRODUCER_CONFIG,
             "window": {"start": "09:00", "end": "15:20"},
         },
         "limits": {
@@ -577,6 +620,137 @@ def test_a_listed_holiday_in_a_later_year_is_still_refused(tmp_path: Path) -> No
     saturday = datetime(2027, 11, 20, 10, 0, tzinfo=probes_stock_cancel.KST)
     with pytest.raises(ProbeError, match="not a KRX trading day"):
         assert_session_window(cfg, saturday)
+
+
+def test_refuses_a_day_kis_says_is_closed(tmp_path: Path, kis_open: _KisOpen) -> None:
+    """#1149's failing input: an unlisted holiday — the calendar admits, KIS does not.
+
+    2027-01-01 (신정, a Friday) is in no tenant calendar, so before this gate the
+    probe would have POSTed MOCK orders into a closed market.
+    """
+    kis_open.answer = "N"
+    newyear = datetime(2027, 1, 1, 10, 0, tzinfo=probes_stock_cancel.KST)
+    with pytest.raises(ProbeError, match="opnd_yn=N"):
+        assert_session_window(load_config(_config_file(tmp_path)), newyear)
+    assert kis_open.days == [date(2027, 1, 1)]
+
+
+def test_admits_a_day_kis_says_is_open(tmp_path: Path, kis_open: _KisOpen) -> None:
+    kis_open.answer = "Y"
+    record = assert_session_window(load_config(_config_file(tmp_path)), _IN_WINDOW)
+    assert record["trading_day"] is True
+    assert record["market_open"]["opnd_yn"] == "Y"
+    assert record["market_open"]["verdict"] == "KIS_ANSWERED"
+    assert record["market_open"]["tr_id"] == market_open.HOLIDAY_TR
+    assert kis_open.days == [_IN_WINDOW.date()]
+
+
+def test_falls_back_to_the_calendar_when_kis_is_unreadable(
+    tmp_path: Path, kis_open: _KisOpen
+) -> None:
+    """The fixture's default: KIS unreadable — the pre-#1149 rule decides alone."""
+    record = assert_session_window(load_config(_config_file(tmp_path)), _IN_WINDOW)
+    assert record["trading_day"] is True
+    assert record["market_open"]["verdict"] == "CALENDAR_FALLBACK"
+    assert record["market_open"]["opnd_yn"] is None
+    assert "KIS unreadable" in record["market_open"]["source"]
+
+
+def test_the_kis_answer_is_cached_for_the_day(
+    tmp_path: Path, kis_open: _KisOpen
+) -> None:
+    """One broker call per host per day, shared with the cron tenant gate."""
+    kis_open.answer = "Y"
+    cfg = load_config(_config_file(tmp_path))
+    assert_session_window(cfg, _IN_WINDOW)
+    assert_session_window(cfg, _IN_WINDOW)
+    assert len(kis_open.days) == 1
+    assert (tmp_path / "market-open" / "20261102.json").is_file()
+
+
+def test_a_refused_day_never_asks_kis(tmp_path: Path, kis_open: _KisOpen) -> None:
+    """A weekend, a listed holiday and the wrong hour cost no credential."""
+    cfg = load_config(_config_file(tmp_path))
+    for when in (
+        datetime(2026, 11, 7, 10, 0, tzinfo=probes_stock_cancel.KST),  # Saturday
+        datetime(2026, 12, 25, 10, 0, tzinfo=probes_stock_cancel.KST),  # listed
+        datetime(2026, 11, 2, 16, 0, tzinfo=probes_stock_cancel.KST),  # after close
+    ):
+        with pytest.raises(ProbeError):
+            assert_session_window(cfg, when)
+    assert kis_open.days == []
+
+
+def test_the_kis_gate_leaves_the_environment_as_it_found_it(
+    mock_env: None, tmp_path: Path, kis_open: _KisOpen
+) -> None:
+    """The REAL key the day gate resolves must not become the ORDER key.
+
+    ``market_open.fetch_opnd_yn`` reads ``KIS_STOCK_APP_KEY`` /
+    ``KIS_STOCK_APP_SECRET`` out of the producer's ``env_file`` and keeps them in
+    a credential object (``test_fetch_leaves_the_process_environment_untouched``
+    pins that). This test is the second lock: the stub plays a transport that
+    does leak them into ``os.environ``, because P-SC then sends 모의투자 orders
+    with whatever the environment names — a leak on this path would put a REAL
+    credential on an order-emitting one.
+    """
+    kis_open.answer = "Y"
+    kis_open.exports = {
+        "KIS_STOCK_APP_KEY": "REAL-key-from-env_file",
+        "KIS_STOCK_APP_SECRET": "REAL-secret-from-env_file",
+    }
+    before = dict(os.environ)
+    assert_session_window(load_config(_config_file(tmp_path)), _IN_WINDOW)
+    assert os.environ["KIS_STOCK_APP_KEY"] == "test-key"
+    assert os.environ["KIS_STOCK_APP_SECRET"] == "test-secret"
+    assert dict(os.environ) == before
+
+
+def test_a_day_kis_says_is_closed_sends_no_order(
+    mock_env: None,
+    install: Any,
+    tmp_path: Path,
+    kis_open: _KisOpen,
+) -> None:
+    """The refusal reaches the run that would place orders, not just the gate."""
+    broker = install(
+        _Broker(), now=datetime(2027, 1, 1, 10, 0, tzinfo=probes_stock_cancel.KST)
+    )
+    kis_open.answer = "N"
+    with pytest.raises(ProbeError, match="opnd_yn=N"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.calls == [], "a refused run must not have touched the broker"
+
+
+def test_the_shipped_config_names_a_producer_config_that_exists() -> None:
+    """The gate's one configuration value, checked against the shipped file."""
+    raw = yaml.safe_load(
+        (
+            probes_stock_cancel._REPO_ROOT
+            / "config/broker_probes/stock_cancel_probe.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    declared = raw["session"]["market_open_producer_config"]
+    assert declared == _PRODUCER_CONFIG
+    assert (probes_stock_cancel._REPO_ROOT / declared).is_file()
+    assert load_config().session.market_open_producer_config.is_file()
+
+
+def test_refuses_a_config_without_a_producer_config(tmp_path: Path) -> None:
+    with pytest.raises(ProbeError, match="market_open_producer_config"):
+        load_config(
+            _config_file(tmp_path, **{"session.market_open_producer_config": _DELETE})
+        )
+
+
+def test_refuses_a_producer_config_that_does_not_exist(tmp_path: Path) -> None:
+    with pytest.raises(ProbeError, match="does not exist"):
+        load_config(
+            _config_file(
+                tmp_path,
+                **{"session.market_open_producer_config": "config/nope.yaml"},
+            )
+        )
 
 
 def test_the_shipped_config_declares_no_covered_years() -> None:

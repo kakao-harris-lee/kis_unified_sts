@@ -63,7 +63,9 @@ HOLIDAY_TR = "CTCA0903R"
 # producer configs name the same `env_file`, so this reads the same pair the stock
 # producer does — and the day's cache means only the first cron line of the day
 # resolves a credential at all.
-CREDENTIAL_KEYS = ("KIS_STOCK_APP_KEY", "KIS_STOCK_APP_SECRET")
+APP_KEY_KEY = "KIS_STOCK_APP_KEY"
+APP_SECRET_KEY = "KIS_STOCK_APP_SECRET"
+CREDENTIAL_KEYS = (APP_KEY_KEY, APP_SECRET_KEY)
 
 OPEN_YES = "Y"
 OPEN_NO = "N"
@@ -143,12 +145,12 @@ def fetch_opnd_yn(
         from shared.kis.auth import KISAuthManager
         from tools.broker_probes.common import (
             REAL_BASE_URL,
+            ProbeCredentials,
             ProbeError,
             ReadOnlyCall,
             assert_read_only_call,
             build_auth_config,
             http_json,
-            resolve_credentials,
         )
     except ImportError as exc:  # a bare checkout: the calendar answers instead
         raise MarketOpenUnreadable(f"broker transport unavailable: {exc}") from exc
@@ -167,11 +169,22 @@ def fetch_opnd_yn(
         missing = [key for key in CREDENTIAL_KEYS if not values.get(key)]
         if missing:
             raise MarketOpenUnreadable(f"{env_file} carries no {', '.join(missing)}")
-        # SAFETY: the keys enter THIS short-lived process only; it starts no child,
-        # so nothing of the runner's credential separation (run_tenant_session.sh
-        # step 3) is weakened by them being here.
-        os.environ.update(values)
-        creds = resolve_credentials("stock", is_real=True)
+        # SAFETY: the pair goes STRAIGHT from the parsed file into the credential
+        # object and is never written to `os.environ` (#1151 review). This function
+        # is also called in-process by a probe that then sends 모의투자 ORDERS with
+        # whatever the environment names (probes_stock_cancel.py::
+        # assert_session_window), so a REAL key left in the environment would
+        # become an order key. Nothing here starts a child either, so the runner's
+        # credential separation (run_tenant_session.sh step 3) stays intact.
+        creds = ProbeCredentials(
+            app_key=values[APP_KEY_KEY],
+            app_secret=values[APP_SECRET_KEY],
+            # 개장일여부 is one market-wide fact: the TR carries no account field,
+            # and an empty account cannot be mistaken for one that may be traded.
+            account_no="",
+            is_real=True,
+            asset="stock",
+        )
         auth = KISAuthManager(
             build_auth_config(creds, token_cache_dir), use_singleton=False
         )

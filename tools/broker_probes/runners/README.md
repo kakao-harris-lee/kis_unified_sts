@@ -214,8 +214,9 @@ Notes:
   through the balance and classifies the result. It prints exactly one of
   `HELD=<n>` (exit 0) or `HOLDING_QUERY_FAILED=<kind>:<detail>` (exit
   non-zero), and the runner parses only those two anchored forms. It does
-  **not** use `shared/kis/client.py::get_stock_balance`, which returns `[]` on
-  every failure and reads page 1 only — that is how the 09-30 10:58 attempt
+  **not** use `shared/kis/client.py::get_stock_balance`, which returned `[]` on
+  every failure and read page 1 only (module removed 2026-11-13; see git
+  history) — that is how the 09-30 10:58 attempt
   logged `held qty=0` for a query that had errored (a direct GET two minutes
   later showed qty 1), and how a holding on page 2 of the 25-row mock account
   would read as "not held".

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -312,10 +313,9 @@ def test_fetch_issues_one_get_of_the_holiday_tr(
     from shared.kis import auth as kis_auth
     from tools.broker_probes import common
 
-    # SAFETY: setenv (not a bare os.environ write) so the placeholder credentials this
-    # test puts where resolve_credentials reads cannot outlive it.
-    for key in mo.CREDENTIAL_KEYS:
-        monkeypatch.setenv(key, "placeholder")
+    # The credentials come from the parsed file below and from nowhere else — this
+    # test exports none, so a future read of `os.environ` fails here rather than
+    # silently picking up whatever the caller's process happens to carry.
     monkeypatch.setattr(
         dotenv_guard,
         "read_explicit_dotenv",
@@ -355,6 +355,66 @@ def test_fetch_issues_one_get_of_the_holiday_tr(
     assert method == "GET" and json_body is None
     assert url == common.REAL_BASE_URL + mo.HOLIDAY_PATH
     assert params == {"BASS_DT": "20261120", "CTX_AREA_FK": "", "CTX_AREA_NK": ""}
+
+
+def test_fetch_leaves_the_process_environment_untouched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The REAL key reaches the request and NOTHING else (#1151 review MEDIUM).
+
+    This function is called in-process by `probes_stock_cancel`'s day gate, and
+    that probe then sends 모의투자 ORDERS with whatever the environment names. A
+    REAL app key written to `os.environ` here would therefore become an ORDER
+    credential — the one thing that path must never carry. So: byte-identical
+    environment before and after, with the real transport boundary stubbed.
+    """
+    from shared.config import dotenv_guard
+    from shared.kis import auth as kis_auth
+    from tools.broker_probes import common
+
+    for key in mo.CREDENTIAL_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(
+        dotenv_guard,
+        "read_explicit_dotenv",
+        lambda path, *, keys: {key: f"REAL-{key}" for key in keys},
+    )
+    monkeypatch.setattr(kis_auth, "KISAuthManager", _Auth)
+    sent: list[dict[str, str]] = []
+
+    def fake_http_json(
+        session: Any,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        timeout: float = 15.0,
+    ) -> tuple[int, dict[str, Any], float, str]:
+        sent.append(dict(headers))
+        return (
+            200,
+            {"rt_cd": "0", "output": [{"bass_dt": "20261120", "opnd_yn": "Y"}]},
+            1.0,
+            "",
+        )
+
+    monkeypatch.setattr(common, "http_json", fake_http_json)
+    before = dict(os.environ)
+    answer = mo.fetch_opnd_yn(
+        date(2026, 11, 20),
+        env_file=tmp_path / ".env.real",
+        token_cache_dir=tmp_path / "token",
+    )
+    assert answer == "Y"
+    # The key DID reach the request — otherwise «environment unchanged» would be
+    # true of a call that simply never used the credential.
+    assert sent[0]["appkey"] == f"REAL-{mo.APP_KEY_KEY}"
+    assert sent[0]["appsecret"] == f"REAL-{mo.APP_SECRET_KEY}"
+    assert dict(os.environ) == before
+    for key in mo.CREDENTIAL_KEYS:
+        assert key not in os.environ
 
 
 def test_a_credential_file_without_the_keys_is_unreadable_not_a_crash(

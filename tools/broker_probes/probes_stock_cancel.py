@@ -99,6 +99,18 @@ _REAL_MARKET_ENV = ("KIS_STOCK_MARKET", "KIS_FUTURES_MARKET")
 _REAL_TRADING_ENV = "KIS_REAL_TRADING"
 _TRUTHY = {"1", "true", "yes", "on"}
 
+# The day's KIS 개장일여부 answer is cached where the CP-3 cron tenant gate caches
+# it (tools/tos_cp3/runners/cp3_tenant_daily.sh:394 and its `STATE` default), so a
+# P-SC run on a morning the cron already asked costs no second broker call — KIS
+# asks for 「가급적 1일 1회 호출」 and this host answers that per host, not per tool.
+_MARKET_OPEN_CACHE_ENV = "CP3_DAILY_MARKET_OPEN_CACHE"
+_MARKET_OPEN_STATE_ENV = "CP3_DAILY_STATE"
+_MARKET_OPEN_STATE_DEFAULT = "~/.local/state/tos"
+_MARKET_OPEN_CACHE_LEAF = "market-open"
+
+_MARKET_OPEN_ASKED = "KIS_ANSWERED"
+_MARKET_OPEN_FALLBACK = "CALENDAR_FALLBACK"
+
 
 @dataclass(frozen=True)
 class SessionLimits:
@@ -107,6 +119,7 @@ class SessionLimits:
     calendar_path: Path
     start: clock_time
     end: clock_time
+    market_open_producer_config: Path
 
 
 @dataclass(frozen=True)
@@ -181,6 +194,9 @@ class Config:
             "session": {
                 "calendar_path": _repo_relative(self.session.calendar_path),
                 "window_kst": f"{self.session.start:%H:%M}-{self.session.end:%H:%M}",
+                "market_open_producer_config": _repo_relative(
+                    self.session.market_open_producer_config
+                ),
             },
             "limits": {
                 "pace_s": self.limits.pace_s,
@@ -285,6 +301,19 @@ def load_config(path: Path | str | None = None) -> Config:
     )
     if not calendar_path.is_file():
         raise ProbeError(f"session.calendar_path does not exist: {calendar_path}")
+    producer_raw = Path(
+        str(_require(session_block, "market_open_producer_config", "session"))
+    )
+    producer_path = (
+        producer_raw if producer_raw.is_absolute() else _REPO_ROOT / producer_raw
+    )
+    if not producer_path.is_file():
+        raise ProbeError(
+            f"session.market_open_producer_config does not exist: {producer_path}. "
+            "The KIS 개장일여부 gate reads ONE key out of it — `env_file`, the REAL "
+            "stock credential pair's file — and a missing file is a configuration "
+            "error, not a broker outage, so it is refused rather than fallen back"
+        )
     start = _req_hhmm(window_block, "start", "session.window")
     end = _req_hhmm(window_block, "end", "session.window")
     if start >= end:
@@ -363,6 +392,7 @@ def load_config(path: Path | str | None = None) -> Config:
             calendar_path=calendar_path,
             start=start,
             end=end,
+            market_open_producer_config=producer_path,
         ),
         limits=limits,
         observation=observation,
@@ -429,9 +459,63 @@ def _holidays(cfg: Config) -> frozenset[date]:
         raise ProbeError(f"{cfg.session.calendar_path}: {exc}") from exc
 
 
+def _market_open_cache_dir() -> Path:
+    """Where the day's KIS 개장일여부 answer lives — the cron gate's convention."""
+    raw = os.getenv(_MARKET_OPEN_CACHE_ENV, "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    state = os.getenv(_MARKET_OPEN_STATE_ENV, "").strip() or _MARKET_OPEN_STATE_DEFAULT
+    return Path(state).expanduser() / _MARKET_OPEN_CACHE_LEAF
+
+
+def _ask_kis_open(cfg: Config, day: date) -> tuple[str | None, str]:
+    """*day*'s ``opnd_yn`` (``"Y"``/``"N"``) and its source, or ``(None, why not)``.
+
+    The one broker call this probe's day gate makes, and it is not this module's:
+    ``tools/tos_cp3/ops/market_open.py`` (#1143) owns the KIS 국내휴장일조회 read,
+    its allowlist assertion, its once-a-day cache and its credential handling.
+    GET only, REAL key, no order path — nothing here sends anything.
+    """
+    from tools.tos_cp3.ops import market_open as mo
+
+    # SAFETY: `market_open.fetch_opnd_yn` builds its credential object straight
+    # from the producer's `env_file` and never writes to `os.environ` (#1151
+    # review). This restore is the second lock on the same door: P-SC sends
+    # 모의투자 orders with whatever the environment names, so a REAL key left
+    # behind by this call — by a future transport, a library, anything on the way —
+    # would become an ORDER key. The environment is put back exactly as it was,
+    # before `_setup` resolves anything.
+    saved = dict(os.environ)
+    try:
+        return mo.broker_answer(
+            day,
+            cache_dir=_market_open_cache_dir(),
+            cache_only=False,
+            producer_config=cfg.session.market_open_producer_config,
+            repo_root=_REPO_ROOT,
+            timeout_s=mo.DEFAULT_TIMEOUT_S,
+        )
+    except (mo.MarketOpenUnreadable, OSError) as exc:
+        # A cache dir that cannot be made or locked is the same kind of «could not
+        # ask» as a broker that did not answer: never a silent admit, never a
+        # traceback — the calendar rule decides, and the record says it did.
+        return None, f"KIS unreadable ({type(exc).__name__}: {exc})"
+    finally:
+        for key in set(os.environ) - set(saved):
+            os.environ.pop(key, None)
+        os.environ.update(saved)
+
+
 def assert_session_window(cfg: Config, now: datetime) -> dict[str, Any]:
-    """Refuse outside the configured KRX window, and on a non-trading day."""
+    """Refuse outside the configured KRX window, and on a non-trading day.
+
+    A non-trading day is two things: one the calendar lists (or a weekend), and
+    one only the broker knows — KIS 국내휴장일조회 (#1149). When KIS cannot be read
+    the calendar rule alone decides, exactly as it did before, and the returned
+    record says which of the two answered.
+    """
     from tools.tos_cp3 import session_day as sd
+    from tools.tos_cp3.ops import market_open as mo
 
     kst = now.astimezone(KST)
     holidays = _holidays(cfg)
@@ -451,12 +535,36 @@ def assert_session_window(cfg: Config, now: datetime) -> dict[str, Any]:
             f"{cfg.session.start:%H:%M}-{cfg.session.end:%H:%M}. P-SC sends orders, "
             "so the window is a refusal and not a warning"
         )
+    # The calendar lists the holidays somebody wrote down; KIS knows the ones
+    # nobody did (#1149 — 2027-01-01 is the example). Asked LAST, after the three
+    # local refusals: those cost no broker call, and a run that is refused anyway
+    # must not spend a credential. The answer is the cron tenant gate's, cached in
+    # the same directory, so the two gates on this host cannot disagree.
+    answer, source = _ask_kis_open(cfg, kst.date())
+    if answer == mo.OPEN_NO:
+        raise ProbeError(
+            f"{kst:%Y-%m-%d} (KST): KIS 국내휴장일조회 answered opnd_yn=N — KRX did "
+            f"not open on a weekday {cfg.session.calendar_path.name} does not list "
+            f"({source}). P-SC sends MOCK orders and a closed market fills none of "
+            "them, so this is a refusal and not a warning. Add the date to that "
+            "calendar's `holidays` so every gate on this host agrees"
+        )
     return {
         "now_kst": kst.isoformat(),
         "trading_day": True,
         "window_kst": f"{cfg.session.start:%H:%M}-{cfg.session.end:%H:%M}",
         "calendar": _repo_relative(cfg.session.calendar_path),
         "holidays_declared": len(holidays),
+        "market_open": {
+            "verdict": (
+                _MARKET_OPEN_ASKED if answer is not None else _MARKET_OPEN_FALLBACK
+            ),
+            "opnd_yn": answer,
+            "source": source,
+            "tr_id": mo.HOLIDAY_TR,
+            "producer_config": _repo_relative(cfg.session.market_open_producer_config),
+            "cache_dir": str(_market_open_cache_dir()),
+        },
     }
 
 

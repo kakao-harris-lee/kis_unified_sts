@@ -326,8 +326,9 @@ fi
 # query had in fact errored after 32 s — a direct GET two minutes later showed
 # qty 1. The check therefore runs on the PROBE's own reader
 # (`probes_ca.check_holding`, which pages and classifies) and not on
-# `shared/kis/client.py::get_stock_balance`, which returns [] on every failure
-# and reads page 1 only. It prints exactly one of two anchored lines.
+# `shared/kis/client.py::get_stock_balance`, which returned [] on every failure
+# and read page 1 only (that module was removed 2026-11-13; see git history).
+# It prints exactly one of two anchored lines.
 
 # --retry-wait-ms is this trial's own polling interval: a ledger throttle
 # (EGW00215) is answered by waiting a whole interval, not by asking again at
