@@ -9,7 +9,7 @@
 | 축 | 지금 | 정본 |
 | --- | --- | --- |
 | 실행 권한 | TOS 커널(`tos/`) + 런타임(`tos/runtime/`). 레거시 거래 런타임은 없다(L1–L7, 코드는 태그 `legacy-final` `6fc17c0f8d25`) | [legacy removal](plans/2026-11-07-legacy-removal-plan.md) |
-| 운영자 표면 | `sts tos status` · `inspect` · `perf` · `export-bars`, 대시보드 `/api/tos/*`+`/health`, UI `/tos` | [public interfaces](architecture/tos-public-interfaces.md) |
+| 운영자 표면 | `sts tos status` · `inspect` · `perf` · `export-bars` · `export-symbols`, 대시보드 `/api/tos/*`+`/health`, UI `/tos`(운영 상태 · 종목별 한 줄 · 바별 점검) | [public interfaces](architecture/tos-public-interfaces.md) |
 | 웹 입구 | Caddy 호스트 `DASHBOARD_HOST_PORT=5081` 하나. `dashboard:8001` · `strategy-builder-ui:3100` 은 내부 전용 | [ports](ports.md) |
 | 실주문 | **0.** 실전 키는 GET 전용, 선물은 SYNTHETIC, 실전 선물 주문·증거금은 영구 정책 차단 | CLAUDE.md 비협상 규칙 |
 

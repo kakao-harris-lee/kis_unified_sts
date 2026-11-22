@@ -34,7 +34,11 @@ export const directRoots = new Set(["tos"]);
 // consulting isDirectPath(); the hazard was the next edit that trusted
 // isDirectPath() and rewrote /api/tos/projection to /api/kis-builder/....
 export const exactPathRoots = new Map<string, ReadonlySet<string>>([
-  ["tos", new Set(["tos/projection"])],
+  // `tos/symbols/today` is an exact path, not a pattern: the symbols document's
+  // name is fixed on the exporter side (export_symbols.DOCUMENT_NAME), so this
+  // surface carries no caller-supplied segment at all and must not be widened
+  // into one. Compare `tos/sessions/*/bars` below, which does carry one.
+  ["tos", new Set(["tos/projection", "tos/symbols/today"])],
 ]);
 
 // The same allowlist discipline for a surface that carries one caller-supplied
@@ -64,8 +68,9 @@ export function matchesPathPattern(path: string[], pattern: string): boolean {
 
 // Roots this proxy forwards only as GET. The dashboard's TOS surface is
 // read-only: services/dashboard/routes/tos_projection.py declares
-// `@router.get("/projection")` and tos_bars.py declares
-// `@router.get("/sessions/{session_id}/bars")`, and nothing else, and
+// `@router.get("/projection")`, tos_bars.py declares
+// `@router.get("/sessions/{session_id}/bars")` and tos_symbols.py declares
+// `@router.get("/symbols/today")`, and nothing else, and
 // FastAPI's APIRoute — unlike
 // Starlette's Route — does not add HEAD to a GET route, so the dashboard itself
 // answers 405 to HEAD and to every mutating method there. Refusing them here
