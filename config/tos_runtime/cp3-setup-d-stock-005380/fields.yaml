@@ -64,6 +64,11 @@ fields:
   - {name: wr_oversold, op: permissive, inputs: [wr_oversold_raw], params: {when_missing: false}}
   # 근거: RSI 50 = 평균 상승폭과 평균 하락폭이 같아지는 중앙선(Wilder 정의상). 되돌림이
   # 끝났다는 뜻이므로 청산선으로 쓴다. 30 < 50 이라 진입 규칙과 동시에 참이 될 수 없다.
+  # ⚠ **교차가 아니라 수준**이다 — 「RSI 가 50 을 위로 통과한 그 한 바」가 아니라 「RSI 가
+  # 50 이상인 모든 바」에서 참이다(Setup D 의 `vwap_reverted` 와 같은 모양). 그래서 청산
+  # 제안이 잦고(실측: 005380 2026-09-01~10-08 기록 봉의 42.5 %, Setup D 는 6.2 %), 포지션이
+  # 없는 바에서는 아무것도 보내지 않고 끝난다. 그 대가로 **청산 송신이 한 번 실패해도 다음
+  # 바에서 다시 제안한다** — 교차로 만들면 그 한 번을 놓친 포지션은 EOD 까지 남는다.
   - {name: rsi_recovered_raw, op: ge, inputs: [rsi14], params: {const: 50.0}}
   - {name: rsi_recovered, op: permissive, inputs: [rsi_recovered_raw], params: {when_missing: false}}
 
