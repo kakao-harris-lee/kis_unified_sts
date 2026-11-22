@@ -212,7 +212,7 @@ docs/                architecture, plans, runbooks, broker profiles
 | [tos-rcl-schema-migration.md](docs/runbooks/tos-rcl-schema-migration.md) | RCL sqlite schema v1→v2 migration ordering, backup-before-migrate, rollback scope |
 | [tos-kis-mock-transport.md](docs/runbooks/tos-kis-mock-transport.md) | `--transport kis-mock` wiring, custody, and non-live admission |
 | [tos-paper-boot.md](docs/runbooks/tos-paper-boot.md) | TOS paper **운영** 런북 — 상주 세션(start/stop·cron) · CP-3 tenant 세션(genesis·band·롤) · 콜드 백업 시간 관계 · 아침 결말 표 · digest 재도출 |
-| [tos-paper-boot-history.md](docs/runbooks/tos-paper-boot-history.md) | 위 런북의 **부록** — 2026-11-20 에 다른 문서·코드·설정이 절 번호로 가리키는 절만 남겼다: 커스터디 루트(§1) · 정지와 확인(§4) · `migrate` v1→v2(§4-A) · 수동 압축 백업(§4-B) · 실측 차단 이력 ④⑤(§5) · 좌표 규율(§7.2) · 결정과 남은 위험(§7.10). 절 번호는 운영 런북과 같다 |
+| [tos-paper-boot-history.md](docs/runbooks/tos-paper-boot-history.md) | 위 런북의 **부록** — 2026-11-20 에 다른 문서·코드·설정이 절 번호로 가리키는 절만 남겼다: 커스터디 루트(§1) · 정지와 확인(§4) · `migrate` v1→v2(§4-A) · 수동 압축 백업(§4-B) · 실측 차단 이력 ④⑤(§5) · 좌표 규율(§7.2) · 월물별 잎 드라이런(§7.9-leaf) · 결정과 남은 위험(§7.10). 절 번호는 운영 런북과 같다 |
 | [tos-evidence-cold-backup.md](docs/runbooks/tos-evidence-cold-backup.md) | TOS 증거 콜드 백업 — 설정 기반 `cold-backup` 하위 명령(자동 세대 · xz · 되읽기 검증 · JSON 보고서 · 용량 바닥) · KST cron 한 줄 · 거부 대응표. **아무것도 지우지 않고 보존 손잡이도 없다**(파기는 트랙 B) |
 | [tos-paper-projection-connection.md](docs/runbooks/tos-paper-projection-connection.md) | CP-1 operator projection 출력 연결 — host wrapper/driver 좌표, 전용 0700 디렉터리, 읽기 전용 **디렉터리** mount(파일 단독 bind 금지), scratch 격리, 복구 절차 |
 | [kis-capability-probes.md](docs/runbooks/kis-capability-probes.md) | KIS broker capability probes (P0-2 / T2) — measurement only, approval is human |

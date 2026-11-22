@@ -370,7 +370,11 @@ def _get(
 
 
 def _balance_params(creds: Any, *, fk: str = "", nk: str = "") -> dict[str, str]:
-    """Mirror the runtime's stock balance params (client.py:921-933), with the"""
+    """Mirror the runtime's stock balance params (``client.py:921-933``).
+
+    ``shared/kis/client.py`` was removed 2026-11-13; see git history. (The
+    sentence this docstring used to trail off mid-clause went with it.)
+    """
     return {
         "CANO": creds.cano,
         "ACNT_PRDT_CD": creds.acnt_prdt_cd,

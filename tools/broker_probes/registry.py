@@ -570,7 +570,8 @@ PROBES: dict[str, ProbeSpec] = {
         requires_confirm=True,
         prerequisites=(
             "REAL token (mock has no futures balance at all — "
-            "shared/kis/client.py:1030-1032)",
+            "shared/kis/client.py:1030-1032, module removed 2026-11-13, "
+            "read it in git history)",
             "night session window 18:00-05:00 KST (config/market_schedule.yaml:29-33)",
             "operator approval for a real-credential call; READ-ONLY, no order",
             "the follow-on config/kis/tr_ids.yaml edit is a SEPARATE commit",
@@ -695,7 +696,8 @@ PROBES: dict[str, ProbeSpec] = {
             "an account that actually HOLDS positions — zero rows establishes "
             "nothing about pagination",
             "--asset futures --env mock SKIPS: the broker serves no futures "
-            "balance on 모의 (shared/kis/client.py:1026 NOTE, guard :1031-1033)",
+            "balance on 모의 (shared/kis/client.py:1026 NOTE, guard :1031-1033 "
+            "— module removed 2026-11-13, read it in git history)",
             "never cross-route stock/futures credentials "
             "(common.py::resolve_credentials docstring)",
         ),
@@ -850,7 +852,7 @@ PROBES: dict[str, ProbeSpec] = {
             "1차 관측, 독립 참조원 §13.13 미확정 — P-CA t0는 operator 공급 유지)",
             "operator가 관련 7-시각(ex/effective/payable/settlement)을 프롬프트 시 축자 기록 (P-EXT 문형)",
             "대상 종목 선행 보유 — 모의=KIS 모의투자 주문 산물 / 실전=기존 실주식 보유; 보유 0이면 확립 불가 (P-BAL 문형)",
-            "선물 제외 — 모의 선물잔고 미지원(shared/kis/client.py:1031 NOTE·가드 :1047) + 실선물 무증거금·무보유",
+            "선물 제외 — 모의 선물잔고 미지원(shared/kis/client.py:1031 NOTE·가드 :1047 — 2026-11-13 삭제, git 이력) + 실선물 무증거금·무보유",
             "READ-ONLY: GET 폴링만, 모듈에 주문 경로 없음 (P-BAL 문형)",
             "--env real 시 운영자 승인 (실 자격증명); MOCK 아티팩트는 REAL_PROD 문서 인용 불가(§6.2·ADR-002-004 §13.14)",
         ),
