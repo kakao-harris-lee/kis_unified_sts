@@ -43,14 +43,21 @@ difference from the LONG tree by file and key path.
 `cp3-setup-d-stock-000660/` and `cp3-setup-d-stock-005380/` are **two more stock
 tenants**, one per symbol (operator directive 2026-11-19: 「유동성이 큰 대형주들로
 최종 모의투자에서 매수/매도가 잘 동작하게 완료해」 — one open position per symbol, so
-three concurrent slots come from three symbols; 1 share stays). Each is a derivation of
-the 005930 tree in which **only the symbol moves**: the file set is identical and every
-file is a byte copy except `README.md`, `RENDER.yaml` (`tree_id` ·
-`instrument.pattern`), the two `policy_id`-carrying policies, and two files whose
-comments name the symbol. `strategies/`, `strategy_bindings.yaml` and `engine.yaml` are
-byte copies in particular, which is why all three stock tenants measure ONE decision
-digest in `decision_generations.yaml`; the KRX 호가가격단위 ladder is chosen by price,
-not by symbol, so `venue_constraint_policy.yaml`'s table is byte-identical too.
+three concurrent slots come from three symbols; 1 share stays). They started as
+derivations of the 005930 tree in which only the symbol moved; since 2026-11-22 each
+also carries its **own strategy role** (`docs/plans/2026-11-19-tos-usage-plan.md` §4.1,
+operator decision 2026-11-19 §8-②):
+
+| tenant | role | what differs from 005930 beyond the symbol |
+| --- | --- | --- |
+| `cp3-setup-d-stock-005930` | canary — proves the order path is alive daily | — (R4 M2 probe stays ON) |
+| `cp3-setup-d-stock-000660` | experiment A — Setup D LONG | `strategy_bindings.yaml::m2_probe_entry_enabled: false` (one line; the R4 rule stays in the strategy file and simply cannot fire) |
+| `cp3-setup-d-stock-005380` | experiment B — RSI / Williams %R reversion | its own strategy file (`strategies/rsi_wr_reversion_long.strategy.yaml`, no `setup_d_long.strategy.yaml`), its own `fields.yaml` (13 published fields, not 15), the matching `critical_input_policy.yaml` field list, `strategies: {}` bindings, and three `RENDER.yaml` slot file names |
+
+So the three stock tenants now measure **three different decision digests** in
+`decision_generations.yaml` — equal digests would mean a role had silently drifted back.
+The KRX 호가가격단위 ladder is chosen by price, not by symbol, so
+`venue_constraint_policy.yaml`'s table is byte-identical in all three.
 `tos/runtime/tests/compose/test_tenant_tree_stock_siblings.py` pins the step from the
 005930 tree to a sibling and boots each sibling. The three tenants share the KIS
 모의투자 stock account and its app key but never a custody root — read the siblings'

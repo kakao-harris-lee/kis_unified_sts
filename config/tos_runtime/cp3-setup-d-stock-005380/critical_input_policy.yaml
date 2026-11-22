@@ -1,5 +1,5 @@
-# critical_input_policy.yaml — CP-3 tenant (Setup D / LONG) **필드 선언**
-# ── `max_age_ms` ×15 = 800 — 「운영자 결정 2026-10-09: 800 ms (= 커널 시간 예산 1000 − Σ지연 200)」 · 등급 A(운영자 결정 2026-10-09) ──
+# critical_input_policy.yaml — CP-3 tenant (005380 / 실험 B: RSI·%R 되돌림, LONG) **필드 선언**
+# ── `max_age_ms` ×13 = 800 — 「운영자 결정 2026-10-09: 800 ms (= 커널 시간 예산 1000 − Σ지연 200)」 · 등급 A(운영자 결정 2026-10-09) ──
 # ── 등급 A(운영자 결정 2026-10-09) ─────────────────────────────────────────────
 # 등급 어휘는 `docs/plans/2026-09-12-tos-operator-value-proposals.md:4` 다. **A** 는 「규범
 # 문서에 이미 승인된 값(VER-002 `APPROVED`)」이고, 800 을 만드는 **두 항이 모두 그것**이다
@@ -29,7 +29,7 @@
 # `max_age_ms` 와 커널 시간 경로는 **같은 양**을 잰다 —
 # `tos_runtime/marketfeed/snapshot.py::_derive_field_state` 의 `if now_ms - as_of_ms >
 # spec.max_age_ms: return FieldState.UNKNOWN, "stale"` 와 `marketfeed/time_projection.py` 의
-# `source_age = wall_clock_now() - as_of`. 그러므로 **현행 B1a 의미론에서는 열다섯 전부
+# `source_age = wall_clock_now() - as_of`. 그러므로 **현행 B1a 의미론에서는 열셋 전부
 # STALE 이다**: `as_of_ms` 가 봉의 **라벨(OPEN)** 이고(`produce_fields.derive_as_of_ms`
 # 독스트링: 「Epoch milliseconds of the bar's LABELLED minute. **The label, not label+60s**」)
 # B1a 가 쓰는 봉은 1분이므로(`derive_raw_event_id`: `<symbol>:1m:<...>`) 관측이 가질 수 있는
@@ -41,7 +41,7 @@
 # time」을 찍는다 — `marketfeed/scheduler.py::_finalize_pending`). 라벨 스탬프 생산자는 이
 # 트리를 **결코** 결정까지 끌고 가지 못하고, 그것은 한도를 올려서 고칠 수 있는 문제가
 # **아니다** — 올리면 커널 시간 경로가 같은 관측을 같은 양으로 재서 STALE 로 거부한다.
-# ③ 착지 시 이 셋이 **한 예산을 나눠 쓴다**: 이 키 ×15 · `poll_interval_ms` ·
+# ③ 착지 시 이 셋이 **한 예산을 나눠 쓴다**: 이 키 ×13 · `poll_interval_ms` ·
 # `journal_pass_allowance_ms`(저널 pacing 가드가 뒤 둘의 합을 같은 800 ms 에 댄다 —
 # `compose/_marketfeed_wiring.py::_load_config_within_freshness_budget`).
 # ── 180000 은 폐기됐다 (연혁) ───────────────────────────────────────────────────
@@ -78,6 +78,14 @@ environment: "paper"
 decision_class: "entry"
 intended_use: "entry-decision"
 
+# ⚠ 이 목록은 이 트리 `fields.yaml` 의 `publish` 집합과 **정확히 같아야** 한다 — 생산자가
+# 기동 때 둘을 비교하고 다르면 거부한다
+# (`tools/tos_cp3/produce_fields.py::assert_publish_matches_critical_inputs`): 선언에 없는
+# 필드는 신선도 한도 없이 스냅샷에 닿고, 공개되지 않은 필드는 커널이 매분 폴 전체를 거부한다.
+# 실험 B(RSI / Williams %R 되돌림, 운영자 결정 2026-11-19 §8-②)로 바뀌면서 Setup D 의 다섯
+# 필드(`z_x1000` · `hi_vol` · `stall_ok` · `reversal_ok` · `vwap_reverted`)가 빠지고 셋
+# (`rsi_oversold` · `wr_oversold` · `rsi_recovered`)이 들어와 열다섯에서 **열셋**이 됐다.
+# `close_x100` 은 전략과 무관하게 남는다 — `construction.yaml::price_field_key` 가 그것이다.
 fields:
   - field_key: "open_x100"
     unit: "index_point"
@@ -127,37 +135,25 @@ fields:
     multiplier: "100"
     sign: "unsigned"
     max_age_ms: 800
-  - field_key: "z_x1000"
-    unit: "atr"
-    scale: "thousandths"
-    multiplier: "1000"
-    sign: "signed"
-    max_age_ms: 800
-  - field_key: "hi_vol"
-    unit: "bool"
-    scale: "none"
-    multiplier: "1"
-    sign: "unsigned"
-    max_age_ms: 800
-  - field_key: "stall_ok"
-    unit: "bool"
-    scale: "none"
-    multiplier: "1"
-    sign: "unsigned"
-    max_age_ms: 800
-  - field_key: "reversal_ok"
-    unit: "bool"
-    scale: "none"
-    multiplier: "1"
-    sign: "unsigned"
-    max_age_ms: 800
   - field_key: "entry_window"
     unit: "bool"
     scale: "none"
     multiplier: "1"
     sign: "unsigned"
     max_age_ms: 800
-  - field_key: "vwap_reverted"
+  - field_key: "rsi_oversold"
+    unit: "bool"
+    scale: "none"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: 800
+  - field_key: "wr_oversold"
+    unit: "bool"
+    scale: "none"
+    multiplier: "1"
+    sign: "unsigned"
+    max_age_ms: 800
+  - field_key: "rsi_recovered"
     unit: "bool"
     scale: "none"
     multiplier: "1"

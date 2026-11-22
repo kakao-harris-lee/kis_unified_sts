@@ -129,6 +129,25 @@ def test_every_persistent_leaf_tenant_pins_a_well_formed_token(tenant: str) -> N
     ]
 
 
+def test_each_stock_tenant_pins_its_own_decision_digest() -> None:
+    """The role split: 005930 canary · 000660 Setup D · 005380 RSI/%R.
+
+    Until 2026-11-22 the three stock tenants measured ONE digest, because their strategy,
+    bindings and engine bounds were byte copies. ``docs/plans/2026-11-19-tos-usage-plan.md``
+    §4.1 (operator decision 2026-11-19 §8-②) gave each its own role, so an EQUAL pair here
+    now means one of them has silently drifted back onto another's contract — and that is
+    exactly the kind of change the leaf cannot survive unnoticed.
+    """
+    registry = _registry()
+    stock = {
+        tenant: registry[tenant]["decision_digest"]
+        for tenant in _PERSISTENT_LEAF_TENANTS
+        if tenant.startswith("cp3-setup-d-stock-")
+    }
+    assert len(stock) == 3, stock
+    assert len(set(stock.values())) == 3, stock
+
+
 def _runner_stock_symbols(text: str) -> tuple[str, ...]:
     """The runner's own ``STOCK_SYMBOLS`` line — the set of stock tenants it will run."""
     match = re.search(r'^STOCK_SYMBOLS="([^"]+)"', text, flags=re.MULTILINE)

@@ -1,4 +1,19 @@
-# CP-3 STOCK (005380, KIS MOCK) tenant — declarative indicator fields (P2-b).
+# CP-3 STOCK (005380, KIS MOCK) tenant — declarative indicator fields (실험 B).
+#
+# 역할: docs/plans/2026-11-19-tos-usage-plan.md §4.1 표 — 005930 카나리아(R4 프로브) ·
+# 000660 실험 A(Setup D LONG) · **005380 실험 B(RSI / Williams %R 되돌림)**.
+# 운영자 결정 2026-11-19 §8-② 「채택 — R4 는 005930 에만 남긴다」.
+# 연산 `rsi` · `williams_r` 는 카탈로그가 #1119 부터 제공한다(TA-Lib 참조 구현과 비트 동치,
+# `shared/indicators/fields/stateful.py` part 2). 전략 이름이 아니라 `period` 만 받는
+# 일반 지표다 — 이 파일은 그 파라미터와 임계값만 선언한다.
+#
+# ⚠ 임계값이 `strategy_bindings.yaml` 이 아니라 여기 `const` 인 이유.
+#   공개 필드는 **모든 바에서 값이 있어야** 한다(`tos_runtime/marketfeed/journal.py` 는 키가
+#   하나만 비어도 그 폴 전체를 거부한다). `rsi` · `williams_r` 는 웜업 동안 값이 없고
+#   (`shared/indicators/fields/catalog.py::WARMUP_MISSING_OPS`), 값 없음을 해소하는
+#   `permissive` 는 **bool 전용**이다. 그래서 RSI 수치 자체는 공개할 수 없고 비교가 선언
+#   쪽에서 끝나야 한다 — 전략 DSL 은 그 결과 bool 관문만 읽는다. 바인딩으로 옮기려면 커널
+#   쪽 변경이 필요하므로 지금의 선언형 약속(코드 diff 0) 안에서는 이 모양이 유일하다.
 
 schema: tos-fields/1
 catalog: tos-field-catalog/1
@@ -15,72 +30,45 @@ fields:
   - {name: atr, op: atr, params: {period: 14}}
   - {name: mso, op: session.minutes_since_open, params: {open_hour: 9, open_minute: 0}}
 
+  # 진입창 09:15~14:45 — 005930 트리와 같은 값(그 트리 fields.yaml, 운영자 결정 2026-10-22
+  # 주식 정규장 09:00~15:30 안쪽). 개장 15분은 시가 변동성, 마감 45분은 청산 여유다.
   - {name: entry_window, op: between, inputs: [mso], params: {lo: 15, hi: 345}}
 
   - {name: atr_pos, op: gt, inputs: [atr], params: {const: 0}}
   - {name: close_pos, op: gt, inputs: [close], params: {const: 0}}
   - {name: usable, op: all, inputs: [entry_window, atr_pos, close_pos]}
 
-  - {name: prev_close, op: gated_lag, inputs: [close], params: {sample_when: usable}}
+  # 이 전략은 변동성 관문을 쓰지 않지만 `vol_ref` 선언 자체는 남는다: 생산자가 시드 길이를
+  # 이 창으로 검증한다(`tools/tos_cp3/produce_fields.py::assert_declaration_binds_to_the_run`
+  # — 전략 YAML 의 vol_window_bars/vol_warmup_bars/vol_percentile 과 같아야 기동한다).
+  # 값은 005930 트리와 같다(config/strategies/futures/setup_d_vwap_reversion.yaml).
   - name: vol_ref
     op: gated_percentile
     inputs: [atr]
     params: {q: 90.0, window: 780, warmup: 120, sample_when: usable}
-  - name: recent_high
-    op: gated_max
-    inputs: [close]
-    params: {window: 15, warmup: 5, sample_when: usable}
-  - name: recent_low
-    op: gated_min
-    inputs: [close]
-    params: {window: 15, warmup: 5, sample_when: usable}
 
-  - {name: vol_ref_pos, op: gt, inputs: [vol_ref], params: {const: 0}}
-  - {name: vol_gate_on, op: permissive, inputs: [vol_ref_pos], params: {when_missing: false}}
-  - {name: vol_gate_off, op: not, inputs: [vol_gate_on]}
-  - {name: vol_ok_raw, op: ge, inputs: [atr, vol_ref], params: {mult: 0.9}}
-  - {name: vol_ok, op: permissive, inputs: [vol_ok_raw], params: {when_missing: true}}
-  - {name: vol_pass, op: any, inputs: [vol_gate_off, vol_ok]}
-  - {name: hi_vol, op: all, inputs: [usable, vol_pass]}
+  # 근거: J. W. Wilder Jr., *New Concepts in Technical Trading Systems*(1978) — RSI 기본 창
+  # 14봉. TA-Lib `TA_RSI` 기본값도 14다. 카탈로그 상한 20 이하(`RSI_MAX_PERIOD`: 시드 780봉이
+  # 실을 수 있는 Wilder 기억이 780/35 ≈ 22 이므로 14 는 생산·리플레이가 같은 값을 낸다).
+  - {name: rsi14, op: rsi, params: {period: 14}}
+  # 근거: Larry Williams %R 기본 창 14봉 — TA-Lib `TA_WILLR` 기본값과 같다.
+  - {name: wr14, op: williams_r, params: {period: 14}}
 
-  - {name: z, op: ratio_z, inputs: [close, vwap, atr]}
-  - {name: abs_z, op: abs, inputs: [z]}
-  - {name: z_short_side, op: ge, inputs: [z], params: {const: 1.8}}
-  - {name: z_long_side, op: le, inputs: [z], params: {const: -1.8}}
-  - {name: extreme, op: any, inputs: [z_short_side, z_long_side]}
-  - {name: through_extreme, op: all, inputs: [hi_vol, extreme]}
+  # 근거: Wilder(1978)의 RSI 과매도선 30. 되돌림 진입의 관례값이다.
+  - {name: rsi_oversold_raw, op: le, inputs: [rsi14], params: {const: 30.0}}
+  - {name: rsi_oversold, op: permissive, inputs: [rsi_oversold_raw], params: {when_missing: false}}
+  # 근거: Williams %R 과매도선 −80(−20/−80 밴드가 이 지표의 관례값). %R 은 창이 평평하면
+  # (상·하한가 잠김) 값이 없고, 그때 `when_missing: false` 가 진입을 막는다 — TA-Lib 의
+  # 0.0(「종가가 창 고점」)을 진입 신호로 읽지 않기 위한 카탈로그 결정(stateful.py 결정 2).
+  - {name: wr_oversold_raw, op: le, inputs: [wr14], params: {const: -80.0}}
+  - {name: wr_oversold, op: permissive, inputs: [wr_oversold_raw], params: {when_missing: false}}
+  # 근거: RSI 50 = 평균 상승폭과 평균 하락폭이 같아지는 중앙선(Wilder 정의상). 되돌림이
+  # 끝났다는 뜻이므로 청산선으로 쓴다. 30 < 50 이라 진입 규칙과 동시에 참이 될 수 없다.
+  - {name: rsi_recovered_raw, op: ge, inputs: [rsi14], params: {const: 50.0}}
+  - {name: rsi_recovered, op: permissive, inputs: [rsi_recovered_raw], params: {when_missing: false}}
 
-  - {name: stall_short_ratio, op: ratio_z, inputs: [close, recent_high, atr]}
-  - {name: stall_long_ratio, op: ratio_z, inputs: [recent_low, close, atr]}
-  - {name: stall_short_raw, op: le, inputs: [stall_short_ratio], params: {const: 1.5}}
-  - {name: stall_long_raw, op: le, inputs: [stall_long_ratio], params: {const: 1.5}}
-  - {name: stall_short_ok, op: permissive, inputs: [stall_short_raw], params: {when_missing: true}}
-  - {name: stall_long_ok, op: permissive, inputs: [stall_long_raw], params: {when_missing: true}}
-  - {name: not_short_side, op: not, inputs: [z_short_side]}
-  - {name: not_long_side, op: not, inputs: [z_long_side]}
-  - {name: stall_short_gate, op: any, inputs: [not_short_side, stall_short_ok]}
-  - {name: stall_long_gate, op: any, inputs: [not_long_side, stall_long_ok]}
-  - {name: stall_ok, op: all, inputs: [through_extreme, stall_short_gate, stall_long_gate]}
-
-  - {name: prev_close_pos, op: gt, inputs: [prev_close], params: {const: 0}}
-  - {name: prev_close_known, op: permissive, inputs: [prev_close_pos], params: {when_missing: false}}
-  - {name: prev_z, op: ratio_z, inputs: [prev_close, vwap, atr]}
-  - {name: abs_prev_z, op: abs, inputs: [prev_z]}
-  - {name: turn_long_raw, op: gt, inputs: [close, prev_close]}
-  - {name: turn_short_raw, op: lt, inputs: [close, prev_close]}
-  - {name: turn_long, op: permissive, inputs: [turn_long_raw], params: {when_missing: false}}
-  - {name: turn_short, op: permissive, inputs: [turn_short_raw], params: {when_missing: false}}
-  - {name: turn_long_gate, op: any, inputs: [not_long_side, turn_long]}
-  - {name: turn_short_gate, op: any, inputs: [not_short_side, turn_short]}
-  - {name: one, op: const, params: {value: 1.0}}
-  - {name: z_improvement, op: ratio_z, inputs: [abs_prev_z, abs_z, one]}
-  - {name: improve_raw, op: ge, inputs: [z_improvement], params: {const: 0.2}}
-  - {name: improve_ok, op: permissive, inputs: [improve_raw], params: {when_missing: false}}
-  - name: reversal_ok
-    op: all
-    inputs: [stall_ok, prev_close_known, turn_long_gate, turn_short_gate, improve_ok]
-
-  - {name: vwap_reverted, op: le, inputs: [abs_z], params: {const: 0.2}}
+  # 005930 트리와 같은 EOD 청산 시각(그 트리 fields.yaml) — 주식 정규장 종료 15:30 전,
+  # 15:20 단일가 전에 끝낸다.
   - {name: eod, op: time_ge, params: {at: "15:15"}}
 
 publish:
@@ -92,10 +80,8 @@ publish:
   - {field: token, as: session_token}
   - {field: vwap, as: vwap_x100, scale: {mult: 100, round: half_up}}
   - {field: atr, as: atr14_x100, scale: {mult: 100, round: half_up}}
-  - {field: z, as: z_x1000, scale: {mult: 1000, round: toward_zero}}
-  - {field: hi_vol, as: hi_vol}
-  - {field: stall_ok, as: stall_ok}
-  - {field: reversal_ok, as: reversal_ok}
   - {field: entry_window, as: entry_window}
-  - {field: vwap_reverted, as: vwap_reverted}
+  - {field: rsi_oversold, as: rsi_oversold}
+  - {field: wr_oversold, as: wr_oversold}
+  - {field: rsi_recovered, as: rsi_recovered}
   - {field: eod, as: eod}

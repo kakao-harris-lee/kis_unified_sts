@@ -1,7 +1,7 @@
-# CP-3 tenant (Setup D / LONG) — config-sourced 피연산자 바인딩.
-strategies:
-  setup_d_long.strategy:
-    config_binding_version: cp3-b1b-bind-1
-    bindings:
-      z_entry_max_x1000: -1800
-      m2_probe_entry_enabled: true
+# CP-3 주식 tenant 005380 (실험 B: RSI / Williams %R 되돌림) — config-sourced 피연산자 바인딩.
+# 이 전략은 `config` 출처 피연산자를 하나도 읽지 않는다: 임계값(RSI 30·50, %R −80)은 공개
+# 필드가 될 수 없는 값(웜업 동안 값 없음)이라 fields.yaml 의 `const` 에서 비교가 끝난다 —
+# 이유는 그 파일 머리 주석. 그래서 항목이 비어 있다. 쓰지 않는 키를 남기면 기동이 거부되므로
+# (tos_runtime/strategy/resolve.py 규칙 4 「unused knob is misconfiguration」) 005930 에서
+# 베껴 온 `z_entry_max_x1000` · `m2_probe_entry_enabled` 도 함께 지웠다.
+strategies: {}

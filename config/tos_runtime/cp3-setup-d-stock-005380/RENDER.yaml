@@ -91,17 +91,17 @@ slots:
     anchor: 'outbound_side: "BUY"'
     replacement: 'outbound_side: "{value}"'
     value: "direction_side"
-  - file: "strategies/setup_d_long.strategy.yaml"
+  - file: "strategies/rsi_wr_reversion_long.strategy.yaml"
     key: "policy.rules[0].decision.target.account"
     anchor: '          account: &account "TBD"'
     replacement: '          account: &account "{value}"'
     value: "account"
-  - file: "strategies/setup_d_long.strategy.yaml"
+  - file: "strategies/rsi_wr_reversion_long.strategy.yaml"
     key: "policy.rules[0].decision.target.instrument"
     anchor: '          instrument: &instrument "TBD"'
     replacement: '          instrument: &instrument "{value}"'
     value: "instrument"
-  - file: "strategies/setup_d_long.strategy.yaml"
+  - file: "strategies/rsi_wr_reversion_long.strategy.yaml"
     key: "policy.rules[0].decision.target.direction"
     anchor: "          direction: LONG"
     replacement: "          direction: {value}"

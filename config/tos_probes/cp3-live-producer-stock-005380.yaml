@@ -27,7 +27,13 @@ env_file: /home/deploy/project/kis_unified_sts/.env.real
 token_cache_dir: /home/deploy/.cache/tos-cp3-live-producer-stock/token
 
 # --- 입력 파일 ---
-# 규칙은 선물 Setup D YAML 을 **그대로** 쓴다(운영자 결정: 규칙 재사용).
+# ⚠ 이 트리의 **규칙은 여기서 오지 않는다** — 실험 B(RSI / Williams %R 되돌림)의 규칙은
+# tenant 트리의 `strategies/rsi_wr_reversion_long.strategy.yaml` 과 `fields.yaml` 이고,
+# 생산자는 선언형으로 그 `fields.yaml` 을 평가한다(`produce_bars_declarative`).
+# 이 키가 남는 이유는 둘뿐이다: ① 시드 길이를 `vol_window_bars` 로 정한다
+# (`live_producer/frame.py::build_seed`), ② 그 값과 `fields.yaml::vol_ref` 의 창이 같은지
+# 기동 때 대조한다(`produce_fields.py::assert_declaration_binds_to_the_run`).
+# 그래서 다른 두 주식 tenant 와 같은 파일을 가리킨다.
 strategy_yaml: config/strategies/futures/setup_d_vwap_reversion.yaml
 calendar_yaml: config/tos_runtime/cp3-setup-d-stock-005380/calendar.yaml
 # The tree's venue policy: the band probe compares the broker's aspr_unit (호가단위)
