@@ -59,6 +59,8 @@ ORDER_PARAMS: dict[str, str] = {
 
 MAX_PAGES = 5
 
+CANCEL_CONFIRMED_QTY_KEYS = ("cnc_cfrm_qty", "cncl_cfrm_qty")
+
 TR_CONT_REQUEST_NEXT = "N"
 TR_CONT_MORE_CODES = ("M", "F")
 
@@ -291,8 +293,16 @@ def holdings(client: MockTradingClient, creds: ProbeCredentials) -> dict[str, in
     held: dict[str, int] = {}
     for row in rows:
         code = str(row.get("pdno") or "")
-        if code:
-            held[code] = held.get(code, 0) + int(row.get("hldg_qty") or 0)
+        if not code:
+            continue
+        qty = int_or_none(row.get("hldg_qty"))
+        if qty is None:
+            # SAFETY: a blank 보유수량 summed as 0 reports a held account flat.
+            raise BalanceUnreadable(
+                f"balance not readable: the {code} row carried hldg_qty="
+                f"{row.get('hldg_qty')!r}, which is not a quantity"
+            )
+        held[code] = held.get(code, 0) + qty
     return held
 
 
@@ -304,6 +314,14 @@ def int_or_none(value: Any) -> int | None:
         return int(str(value).strip())
     except (TypeError, ValueError):
         return None
+
+
+def cancel_confirmed_qty(row: dict[str, Any]) -> int | None:
+    """취소확인수량 — what the broker says the cancel withdrew (v1_국내주식-005)."""
+    for key in CANCEL_CONFIRMED_QTY_KEYS:
+        if key in row:
+            return int_or_none(row.get(key))
+    return None
 
 
 def row_is_open(row: dict[str, Any], symbol: str) -> bool:
@@ -320,9 +338,14 @@ def row_is_open(row: dict[str, Any], symbol: str) -> bool:
         return True
     if ordered is not None and filled is not None and filled + remaining != ordered:
         return True
-    if str(row.get("cncl_yn") or "").strip().upper() == "Y":
+    if remaining == 0:
         return False
-    return remaining > 0
+    if str(row.get("cncl_yn") or "").strip().upper() == "Y":
+        # SAFETY: cncl_yn=Y is the cancel ACCEPTED, not the remainder withdrawn — a
+        # row with quantity left can still fill, so only 취소확인수량 closes it.
+        confirmed = cancel_confirmed_qty(row)
+        return confirmed is None or confirmed < remaining
+    return True
 
 
 def open_orders(
