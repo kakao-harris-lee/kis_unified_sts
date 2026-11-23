@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from datetime import time as clock_time
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ from tools.broker_probes.registry import get
 # pull the ops stack into the probe.
 from tools.tos_cp3.ops.mock_flat_check import (
     cancel_confirmed_qty,
+    cancel_parent_odnos,
     row_has_working_quantity,
 )
 
@@ -705,20 +707,35 @@ def read_holding(client: MockTradingClient, symbol: str, cfg: Config) -> dict[st
     }
 
 
-def _row_is_live(row: dict[str, Any]) -> bool:
+def _row_is_live(
+    row: dict[str, Any], *, cancel_parents: frozenset[str] = frozenset()
+) -> bool:
     """A row that still has quantity working on the book — ``mock_flat_check``'s ONE reading."""
-    return row_has_working_quantity(row)
+    return row_has_working_quantity(row, cancel_parents=cancel_parents)
+
+
+def _live_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The rows of ONE read that still have quantity working, judged against that whole read."""
+    parents = cancel_parent_odnos(rows)
+    return [r for r in rows if _row_is_live(r, cancel_parents=parents)]
 
 
 def _confirmation_basis(row: dict[str, Any]) -> str:
-    """Which of the two rules closed this row, for the artifact."""
+    """Which rule closed this row, for the artifact."""
     remaining = _ccld_int(row, "rmn_qty")
+    ordered = _ccld_int(row, "ord_qty")
+    filled = _ccld_int(row, "tot_ccld_qty")
+    confirmed = cancel_confirmed_qty(row)
     if remaining is not None and remaining > 0:
+        return f"취소확인수량 cncl_cfrm_qty={confirmed} covers rmn_qty={remaining}"
+    if ordered is not None and filled is not None and ordered - filled > 0:
         return (
-            f"취소확인수량 cncl_cfrm_qty={cancel_confirmed_qty(row)} covers "
-            f"rmn_qty={remaining}"
+            f"rmn_qty=0 and the 주문수량 − 총체결수량 shortfall {ordered - filled} is "
+            f"accounted for (cncl_yn={row.get('cncl_yn')!r}, "
+            f"rjct_qty={_ccld_int(row, 'rjct_qty')}, cncl_cfrm_qty={confirmed}, "
+            "or another row of this read names this one as its 원주문)"
         )
-    return f"no working remainder (rmn_qty={remaining!r})"
+    return f"nothing was outstanding (rmn_qty={remaining!r}, ord_qty == tot_ccld_qty)"
 
 
 def read_order_rows(
@@ -779,7 +796,7 @@ def read_order_rows(
                 "status": status,
                 "rows": rows,
                 "rows_returned": page_counts,
-                "live_rows": [r for r in rows if _row_is_live(r)],
+                "live_rows": _live_rows(rows),
                 "continuation_pending": bool(next_fk or next_nk),
             }
         if not next_fk and not next_nk:
@@ -787,14 +804,14 @@ def read_order_rows(
                 "status": _READ_OK,
                 "rows": rows,
                 "rows_returned": page_counts,
-                "live_rows": [r for r in rows if _row_is_live(r)],
+                "live_rows": _live_rows(rows),
             }
         fk, nk = next_fk, next_nk
     return record | {
         "status": _READ_CAPPED,
         "rows": rows,
         "rows_returned": page_counts,
-        "live_rows": [r for r in rows if _row_is_live(r)],
+        "live_rows": _live_rows(rows),
         "page_cap": pages,
         "note": (
             "the walk hit the page cap before the broker ended the set, so "
@@ -839,7 +856,9 @@ def assert_flat_start(
     return record
 
 
-def _cancel_row_summary(row: dict[str, Any]) -> dict[str, Any]:
+def _cancel_row_summary(
+    row: dict[str, Any], *, cancel_parents: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """The fields #948 순서 1 asks for, named, for a row a cancel may have produced."""
     return {
         "odno": row.get("odno"),
@@ -849,17 +868,19 @@ def _cancel_row_summary(row: dict[str, Any]) -> dict[str, Any]:
         "rmn_qty": _ccld_int(row, "rmn_qty"),
         "cncl_yn": row.get("cncl_yn"),
         "cancel_confirmed_qty": cancel_confirmed_qty(row),
-        "still_working": row_has_working_quantity(row),
+        "still_working": row_has_working_quantity(row, cancel_parents=cancel_parents),
     }
 
 
-def _row_view(row: dict[str, Any]) -> dict[str, Any]:
+def _row_view(
+    row: dict[str, Any], *, cancel_parents: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """One query row, verbatim, plus the two identifier encodings."""
     return {
         "raw": dict(row),
         "odno_encoding": _odno_encoding(str(row.get("odno", ""))),
         "orgn_odno_encoding": _odno_encoding(str(row.get("orgn_odno", ""))),
-        "live": _row_is_live(row),
+        "live": _row_is_live(row, cancel_parents=cancel_parents),
     }
 
 
@@ -875,6 +896,8 @@ def _snapshot(
     """One read of the order surface, classified against the original ODNO."""
     read = read_order_rows(client, symbol, cfg, walk=False)
     rows = read.get("rows") or []
+    parents = cancel_parent_odnos(rows)
+    view = partial(_row_view, cancel_parents=parents)
     original: dict[str, Any] | None = None
     derived: list[dict[str, Any]] = []
     unreadable: list[dict[str, Any]] = []
@@ -883,25 +906,26 @@ def _snapshot(
             own = odno_key(row.get("odno"))
             parent = odno_key(row.get("orgn_odno"))
         except ProbeError as exc:
-            unreadable.append(_row_view(row) | {"odno_key_error": str(exc)})
+            unreadable.append(view(row) | {"odno_key_error": str(exc)})
             continue
         if own == original_key:
             if original is None:
-                original = _row_view(row)
+                original = view(row)
             else:
-                derived.append(_row_view(row) | {"duplicate_of_original_odno": True})
+                derived.append(view(row) | {"duplicate_of_original_odno": True})
         elif parent == original_key:
-            derived.append(_row_view(row))
+            derived.append(view(row))
     snapshot = {
         "label": label,
         "t_offset_ms": round((time.monotonic() - t0_monotonic) * 1000.0, 1),
         "read_status": read.get("status"),
         "rows_returned": read.get("rows_returned"),
         "continuation_pending": read.get("continuation_pending"),
-        "rows": [_row_view(r) for r in rows],
+        "rows": [view(r) for r in rows],
         "original_row": original,
         "derived_rows": derived,
         "unreadable_rows": unreadable,
+        "cancel_parent_odnos": sorted(parents),
         "original_cncl_yn": (original or {}).get("raw", {}).get("cncl_yn"),
         "original_rmn_qty": _ccld_int((original or {}).get("raw", {}), "rmn_qty"),
         "original_tot_ccld_qty": _ccld_int(
@@ -911,9 +935,13 @@ def _snapshot(
             None if original is None else cancel_confirmed_qty(original["raw"])
         ),
         "original_still_working": (
-            None if original is None else row_has_working_quantity(original["raw"])
+            None
+            if original is None
+            else row_has_working_quantity(original["raw"], cancel_parents=parents)
         ),
-        "derived_row_summaries": [_cancel_row_summary(d["raw"]) for d in derived],
+        "derived_row_summaries": [
+            _cancel_row_summary(d["raw"], cancel_parents=parents) for d in derived
+        ],
     }
     if "evidence" in read:
         snapshot["evidence"] = read["evidence"]
@@ -991,7 +1019,10 @@ def classify_cancel_confirmed(
         if not row:
             continue
         rows_seen += 1
-        if not row_has_working_quantity(row):
+        # The same read's own parent set, so «confirmed» here and «live» in `live_rows`
+        # cannot disagree about a shortfall another row of that read explains (#948 리뷰 M1).
+        parents = frozenset(snapshot.get("cancel_parent_odnos") or ())
+        if not row_has_working_quantity(row, cancel_parents=parents):
             return {
                 "confirmed": True,
                 "original_odno_key": original_key,

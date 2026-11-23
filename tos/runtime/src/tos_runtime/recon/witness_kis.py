@@ -260,13 +260,25 @@ class KisOrderRow:
         """Whether this row's OWN quantities prove the cancel took the whole working remainder."""
         if not self.cancelled or self.rmn_qty is None or self.rmn_qty < 0:
             return False
-        if self.rmn_qty == 0:
+        outstanding = self.rmn_qty
+        if self.ord_qty is not None and self.tot_ccld_qty is not None:
+            # SAFETY: `rmn_qty=0` alone is NOT the withdrawal — KIS may zero 잔량 when it
+            # ACCEPTS the cancel, before the exchange confirms it (unmeasured as of
+            # 2026-11-23). The quantity that must be proven withdrawn is therefore the
+            # larger of the stated remainder and the 주문수량 − 총체결수량 shortfall
+            # (#948 리뷰 MEDIUM 2).
+            outstanding = max(outstanding, self.ord_qty - self.tot_ccld_qty)
+        elif outstanding == 0:
+            # SAFETY: a zero remainder whose ordered/filled quantities cannot be read proves
+            # nothing — there may be a shortfall this row does not let us compute.
+            return False
+        if outstanding <= 0:
             return True
         # SAFETY: cncl_yn=Y is the cancel ACCEPTED, not the remainder withdrawn — a row with
         # quantity left can still fill, so only 취소확인수량 covering it closes the row.
         return (
             self.cancel_confirmed_qty is not None
-            and self.cancel_confirmed_qty >= self.rmn_qty
+            and self.cancel_confirmed_qty >= outstanding
         )
 
     @classmethod

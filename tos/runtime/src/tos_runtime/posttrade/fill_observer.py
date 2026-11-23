@@ -953,9 +953,11 @@ def _fill_state(
         if filled != 0:
             return EgressResultKind.UNKNOWN, None, None, "cancelled_after_fill"
         if not row.cancel_withdrew_remainder:
-            # SAFETY: cncl_yn=Y is the cancel ACCEPTED, not the remainder withdrawn — reading
-            # it as a terminal non-execution would release the capacity of an order that can
-            # still fill (#1158 리뷰 · mock_flat_check.row_is_open 과 같은 규칙).
+            # SAFETY: cncl_yn=Y is the cancel ACCEPTED, not the remainder withdrawn, and a
+            # zeroed rmn_qty may be that acceptance rather than the exchange's confirmation
+            # (unmeasured) — releasing on either would free the capacity of an order that can
+            # still fill (#1158 리뷰 · #948 리뷰 MEDIUM 2 · same rule as
+            # mock_flat_check.row_has_working_quantity).
             return EgressResultKind.UNKNOWN, None, None, "cancel_remainder_working"
         # SAFETY: this reads the RE-QUERIED order row, never the cancel POST's own ack — the
         # cancel is its own order with its own ODNO and proves nothing about the original's

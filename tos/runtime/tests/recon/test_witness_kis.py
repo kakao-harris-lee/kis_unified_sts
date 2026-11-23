@@ -942,14 +942,26 @@ def test_the_cancel_confirmed_quantity_is_read_under_either_wire_spelling(
 @pytest.mark.parametrize(
     "row,withdrew",
     [
-        (_wire_row(cncl_yn="Y", rmn_qty="0"), True),
         (_wire_row(cncl_yn="Y", cncl_cfrm_qty="3"), True),
         (_wire_row(cncl_yn="Y", cncl_cfrm_qty="4"), True),
+        (_wire_row(cncl_yn="Y", rmn_qty="0", cncl_cfrm_qty="3"), True),
+        (_wire_row(cncl_yn="Y", tot_ccld_qty="3", rmn_qty="0"), True),
         (_wire_row(cncl_yn="Y"), False),
         (_wire_row(cncl_yn="Y", cncl_cfrm_qty="2"), False),
         (_wire_row(cncl_yn="Y", cncl_cfrm_qty=""), False),
         (_wire_row(cncl_yn="Y", rmn_qty="x"), False),
         (_wire_row(rmn_qty="0"), False),
+    ],
+    ids=[
+        "confirmed-covers-the-remainder",
+        "confirmed-over-the-remainder",
+        "zero-remainder-and-confirmed",
+        "nothing-was-outstanding",
+        "accepted-only",
+        "confirmed-short",
+        "confirmed-blank",
+        "unreadable-remainder",
+        "not-cancelled",
     ],
 )
 def test_cncl_yn_alone_never_closes_a_row_that_still_has_a_remainder(
@@ -960,6 +972,28 @@ def test_cncl_yn_alone_never_closes_a_row_that_still_has_a_remainder(
 
 
 @pytest.mark.parametrize(
+    "row",
+    [
+        _wire_row(cncl_yn="Y", rmn_qty="0"),
+        _wire_row(cncl_yn="Y", rmn_qty="0", cncl_cfrm_qty="2"),
+        _wire_row(cncl_yn="Y", rmn_qty="0", ord_qty="x"),
+        _wire_row(cncl_yn="Y", rmn_qty="0", tot_ccld_qty="x"),
+    ],
+    ids=["unconfirmed", "confirmed-short", "ordered-unreadable", "filled-unreadable"],
+)
+def test_a_zeroed_remainder_is_not_a_withdrawal_without_the_confirmed_quantity(
+    row: dict[str, str],
+) -> None:
+    """#948 리뷰 MEDIUM 2: ``rmn_qty=0`` with 주문수량 > 총체결수량 may be KIS ACCEPTING the
+
+    cancel rather than the exchange confirming it — unmeasured as of 2026-11-23. Until the
+    broker states a 취소확인수량 that covers the shortfall, the quantity is not proven
+    withdrawn and nothing may be released on it.
+    """
+    assert KisOrderRow.from_wire(row).cancel_withdrew_remainder is False
+
+
+@pytest.mark.parametrize(
     "row,remaining",
     [
         (_wire_row(cncl_yn="Y", rmn_qty="0"), Decimal("0")),
@@ -967,6 +1001,7 @@ def test_cncl_yn_alone_never_closes_a_row_that_still_has_a_remainder(
         (_wire_row(cncl_yn="Y", cncl_cfrm_qty="1"), Decimal("3")),
         (_wire_row(cncl_yn="Y"), Decimal("3")),
     ],
+    ids=["already-zero", "withdrawn", "confirmed-short", "accepted-only"],
 )
 def test_a_withdrawn_remainder_is_reported_as_zero_executable_quantity(
     row: dict[str, str], remaining: Decimal

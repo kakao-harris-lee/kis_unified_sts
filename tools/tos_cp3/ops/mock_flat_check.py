@@ -65,7 +65,9 @@ ORDER_PARAMS: dict[str, str] = {
 
 MAX_PAGES = 5
 
-CANCEL_CONFIRMED_QTY_KEYS = ("cnc_cfrm_qty", "cncl_cfrm_qty")
+# The MEASURED spelling first (2026-11-23, #948: the 모의 VTTC0081R row carries
+# `cncl_cfrm_qty`; `cnc_cfrm_qty` is the published example's and was not seen on the wire).
+CANCEL_CONFIRMED_QTY_KEYS = ("cncl_cfrm_qty", "cnc_cfrm_qty")
 
 TR_CONT_REQUEST_NEXT = "N"
 TR_CONT_MORE_CODES = ("M", "F")
@@ -351,19 +353,45 @@ def cancel_confirmed_qty(row: dict[str, Any]) -> int | None:
     return None
 
 
-def row_is_open(row: dict[str, Any], symbol: str) -> bool:
+def odno_key(value: Any) -> str:
+    """An ODNO as a comparison key — surrounding space and leading zeros dropped."""
+    return str(value or "").strip().lstrip("0")
+
+
+def cancel_parent_odnos(rows: Sequence[dict[str, Any]]) -> frozenset[str]:
+    """Every ODNO that ANOTHER row in the same read names as its 원주문 (``orgn_odno``).
+
+    A row whose quantity left it under the separate-row cancel shape can only be told
+    apart from a row with a quantity nobody can account for by looking at the rest of the
+    read, so this is computed once per query and handed to :func:`row_is_open` (#948).
+    """
+    parents = {odno_key(row.get("orgn_odno")) for row in rows}
+    return frozenset(key for key in parents if key)
+
+
+def row_is_open(
+    row: dict[str, Any],
+    symbol: str,
+    *,
+    cancel_parents: frozenset[str] = frozenset(),
+) -> bool:
     """Is this 주문체결 row still working on the book, for ``symbol``?"""
     code = str(row.get("pdno") or "").strip()
     if code and code != symbol:
         return False
-    return row_has_working_quantity(row)
+    return row_has_working_quantity(row, cancel_parents=cancel_parents)
 
 
-def row_has_working_quantity(row: dict[str, Any]) -> bool:
+def row_has_working_quantity(
+    row: dict[str, Any], *, cancel_parents: frozenset[str] = frozenset()
+) -> bool:
     """Does this 주문체결 row still have quantity that can fill? The ONE reading of that
 
     question for every tool on this account — ``mock_flatten``, ``mock_flat_check`` and the
     P-SC cancel probe — so a cancel cannot be «closed» by one and «live» by another (#948).
+    The TOS release path asks a STRICTER question and answers it separately
+    (``KisOrderRow.cancel_withdrew_remainder``): «can this still fill» may be settled by the
+    cancel flag, «may capacity be freed» needs the broker's 취소확인수량.
     """
     ordered = int_or_none(row.get("ord_qty"))
     filled = int_or_none(row.get("tot_ccld_qty"))
@@ -376,18 +404,60 @@ def row_has_working_quantity(row: dict[str, Any]) -> bool:
         # reading it as closed archives a leaf over an order that can still fill.
         return True
     if remaining == 0:
-        # SAFETY: ``filled + remaining != ordered`` is NOT read as an unreadable row.
-        # A cancel legitimately takes quantity off the row — ordered = filled +
-        # withdrawn + remaining — and under the separate-row shape the withdrawal is
-        # not even on this row, so that sum reports every cancelled order as working
-        # for ever and blocks the tenant restart this gates (#948).
-        return False
+        return not _zero_remainder_is_accounted_for(
+            row,
+            ordered=ordered,
+            filled=filled,
+            cancelled=cancelled,
+            cancel_parents=cancel_parents,
+        )
     if cancelled:
         # SAFETY: cncl_yn=Y is the cancel ACCEPTED, not the remainder withdrawn — a
         # row with quantity left can still fill, so only 취소확인수량 closes it.
         confirmed = cancel_confirmed_qty(row)
         return confirmed is None or confirmed < remaining
     return True
+
+
+def _zero_remainder_is_accounted_for(
+    row: dict[str, Any],
+    *,
+    ordered: int | None,
+    filled: int | None,
+    cancelled: bool,
+    cancel_parents: frozenset[str],
+) -> bool:
+    """Whether a ``rmn_qty=0`` row's quantities add up, or the shortfall has an explanation."""
+    if ordered is None or filled is None:
+        # A row that does not state 주문수량/총체결수량 shows no shortfall to explain, so its
+        # own `rmn_qty=0` stands. The TOS release path is stricter and judges the same row
+        # again (``KisOrderRow.cancel_withdrew_remainder``).
+        return True
+    gap = ordered - filled
+    if gap == 0:
+        return True
+    if gap < 0:
+        # SAFETY: filled MORE than ordered is an unreadable row, not a closed one.
+        return False
+    # SAFETY: a shortfall between 주문수량 and 총체결수량 is only «accounted for» when this
+    # read says where it went — the cancel flag on the row, a rejected quantity that covers
+    # it, or another row of the same read naming this one as its 원주문 (the separate-row
+    # cancel shape, whose withdrawal is not on this row at all). An unexplained shortfall
+    # stays OPEN: it is the shape of an order whose quantity nobody can account for (#948
+    # 리뷰 MEDIUM 1).
+    if cancelled:
+        return True
+    if odno_key(row.get("orgn_odno")):
+        # SAFETY: this row IS the 취소/정정 order — its 주문수량 is the quantity it withdrew
+        # from the order it names, not quantity of its own waiting to fill. Without this the
+        # separate-row shape reports the CHILD row as working for ever, which is the same
+        # rc 3 trap one row over (#948).
+        return True
+    rejected = int_or_none(row.get("rjct_qty"))
+    if rejected is not None and rejected >= gap:
+        return True
+    key = odno_key(row.get("odno"))
+    return bool(key) and key in cancel_parents
 
 
 def open_orders(
@@ -415,7 +485,8 @@ def open_orders(
         build_params=build_params,
         what="open orders",
     )
-    return [row for row in rows if row_is_open(row, symbol)]
+    parents = cancel_parent_odnos(rows)
+    return [row for row in rows if row_is_open(row, symbol, cancel_parents=parents)]
 
 
 def main(argv: Sequence[str] | None = None) -> int:

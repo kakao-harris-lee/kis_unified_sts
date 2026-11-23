@@ -360,6 +360,7 @@ def test_an_earlier_day_the_broker_cannot_answer_for_is_an_explicit_hold(
     [
         "cancel_remainder_working",
         "cancel_remainder_part_confirmed",
+        "zero_remainder_unconfirmed",
         "cancel_after_partial",
         "separate_cancel_row",
         "derived_only_cancel",
@@ -386,6 +387,11 @@ def test_a_cancel_this_runtime_cannot_read_is_one_durable_hold_no_retry_no_relea
                 cancelled="Y",
                 cancel_confirmed=qty - Decimal(1),
             )
+        ],
+        # #948 리뷰 MEDIUM 2: KIS may zero 잔량 when it ACCEPTS the cancel, before the
+        # exchange confirms it — so a zeroed remainder with no 취소확인수량 is a hold.
+        "zero_remainder_unconfirmed": [
+            _row(date=date, ord_qty=qty, filled=zero, remaining=zero, cancelled="Y")
         ],
         "cancel_after_partial": [
             _row(
@@ -456,7 +462,12 @@ def test_an_unfilled_cancel_the_broker_settles_releases_exactly_once(
     zero = Decimal(0)
     row = {
         "remainder_zero": _row(
-            date=date, ord_qty=qty, filled=zero, remaining=zero, cancelled="Y"
+            date=date,
+            ord_qty=qty,
+            filled=zero,
+            remaining=zero,
+            cancelled="Y",
+            cancel_confirmed=qty,
         ),
         "remainder_withdrawn": _row(
             date=date,
@@ -528,7 +539,16 @@ def test_a_recorded_cancel_hold_is_never_re_read_as_a_release(
         server,
         config_dir,
         date,
-        [_row(date=date, ord_qty=qty, filled=zero, remaining=zero, cancelled="Y")],
+        [
+            _row(
+                date=date,
+                ord_qty=qty,
+                filled=zero,
+                remaining=zero,
+                cancelled="Y",
+                cancel_confirmed=qty,
+            )
+        ],
     )
     assert runtime2.fill_observer is not None
     report = runtime2.fill_observer.poll_once()
