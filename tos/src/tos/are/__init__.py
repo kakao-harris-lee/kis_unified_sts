@@ -32,6 +32,7 @@ from tos.are.predicates import (
     protective_creates_nothing,
     risk_decision,
     snapshot_scope_complete,
+    snapshot_usage_within_limit,
     valuation_conservative,
     worst_intermediate_risk,
 )
@@ -96,6 +97,7 @@ __all__ = [
     "numerical_safety",
     "risk_decision",
     "snapshot_scope_complete",
+    "snapshot_usage_within_limit",
     "valuation_conservative",
     "benefit_admissible",
     "concurrent_not_reservation",

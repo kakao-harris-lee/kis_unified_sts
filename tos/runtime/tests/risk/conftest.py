@@ -48,6 +48,9 @@ _ARE_DIM_KEY = (
 
 _AFG_DIM_ID = "afg.ORDER"
 
+_RCL_DIM_KEY = "notional"
+_RCL_DIM_EFFECTIVE_LIMIT = Decimal("1000")
+
 
 class FakeEvidenceAppendPort:
     """An in-memory :class:`~tos_runtime.evidence.ports.EvidenceAppendPort` double."""
@@ -237,11 +240,17 @@ def grant_shaped_are_inputs(
     effective_limit_vector = CapacityVector(
         components=(
             CapacityComponent(dimension_id=_ARE_DIM_KEY, magnitude=Decimal("50")),
+            CapacityComponent(
+                dimension_id=_RCL_DIM_KEY, magnitude=_RCL_DIM_EFFECTIVE_LIMIT
+            ),
         )
     )
     envelope_max = CapacityVector(
         components=(
             CapacityComponent(dimension_id=_ARE_DIM_KEY, magnitude=Decimal("100")),
+            CapacityComponent(
+                dimension_id=_RCL_DIM_KEY, magnitude=_RCL_DIM_EFFECTIVE_LIMIT
+            ),
         )
     )
     return AggregateRiskDecisionInputs(

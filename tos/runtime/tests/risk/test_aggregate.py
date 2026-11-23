@@ -652,3 +652,68 @@ def test_a_fresh_boot_over_the_same_log_reproduces_the_snapshot_usage(
         assert before.magnitude("notional") == Decimal("350")
     finally:
         second.close()
+
+
+def test_decide_denies_when_the_committed_usage_is_over_the_effective_limit(
+    ara_service: AggregateRiskService,
+    log: SqliteCommitLog,
+    instrument_key: InstrumentKey,
+    writer_epoch: int,
+    required_scenario_kinds,
+) -> None:
+    """#984 (1): an RCL scope already consuming 1001 against the bundle's 1000 limit."""
+    _commit_with_vector(
+        log,
+        reservation_id="resv-over-limit",
+        writer_epoch=writer_epoch,
+        instrument_key=instrument_key,
+        magnitude="1001",
+        to_state=CapacityState.ATTEMPT_BOUND,
+        expected_seq=-1,
+    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
+    assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("1001")
+    decision = _grant_shaped_decision(
+        ara_service,
+        instrument_key,
+        required_scenario_kinds,
+        snapshot_generation=2,
+    )
+    assert decision.result is RiskDecisionResult.DENY
+
+
+def test_a_close_netted_as_negative_exposure_keeps_the_usage_within_the_limit(
+    ara_service: AggregateRiskService,
+    log: SqliteCommitLog,
+    instrument_key: InstrumentKey,
+    writer_epoch: int,
+    required_scenario_kinds,
+) -> None:
+    """#984 (2) x (1): entry 600 + CLOSE -600 nets to 0, not 1200 over the 1000 limit."""
+    seq = _commit_with_vector(
+        log,
+        reservation_id="resv-entry",
+        writer_epoch=writer_epoch,
+        instrument_key=instrument_key,
+        magnitude="600",
+        to_state=CapacityState.ATTEMPT_BOUND,
+        expected_seq=-1,
+    )
+    _commit_with_vector(
+        log,
+        reservation_id="resv-close",
+        writer_epoch=writer_epoch,
+        instrument_key=instrument_key,
+        magnitude="-600",
+        to_state=CapacityState.ATTEMPT_BOUND,
+        expected_seq=seq,
+    )
+    snapshot = _account_snapshot(ara_service, instrument_key)
+    assert snapshot.conservative_current_usage.magnitude("notional") == Decimal("0")
+    decision = _grant_shaped_decision(
+        ara_service,
+        instrument_key,
+        required_scenario_kinds,
+        snapshot_generation=2,
+    )
+    assert decision.result is RiskDecisionResult.GRANT

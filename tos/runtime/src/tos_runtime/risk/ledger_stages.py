@@ -400,6 +400,15 @@ class AtomicCommitStage:
                 "no step-5 economic effect envelope to record as this reservation's "
                 "committed vector — committing without one would hide its usage from ARE",
             )
+        # SAFETY: an UNKNOWN-magnitude dimension committed here reaches ARE as unreadable usage
+        # and poisons every later snapshot for this scope; step 5 already refuses one, and this
+        # is the second line so a step 5/9 reorder cannot let it through (#984 ④).
+        if any(component.magnitude is None for component in envelope.components):
+            return _unknown(
+                CommitmentStep.ATOMIC_COMMIT,
+                "the step-5 economic effect envelope carries an UNKNOWN-magnitude dimension "
+                "— committing it would record usage ARE cannot read as a number",
+            )
         committed_vector = envelope
         if position_effect == _CLOSE_EFFECT:
             committed_vector = CapacityVector(
