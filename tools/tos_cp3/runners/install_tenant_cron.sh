@@ -190,6 +190,17 @@ if [ "$REMOVE" = 0 ]; then
 else
   echo "== wrapper $DEST is left in place (remove it by hand if wanted)"
 fi
+# #1154: the block itself sets no TOS_OPERATOR_PROJECTION_DIR — the wrapper reads
+# it from $CP3_DAILY_MAIN/.env.paper, the same file compose mounts from. A crontab
+# line outside the block wins over that, so say which one the export would use.
+if [ "$REMOVE" = 0 ]; then
+  proj=$(grep -E '^[[:space:]]*(export )?TOS_OPERATOR_PROJECTION_DIR=' "$NEW" | tail -1)
+  if [ -n "$proj" ]; then
+    echo "== projection dir: the crontab sets it outside this block (${proj#*=}) — kept as is, and it wins over the wrapper's \$CP3_DAILY_MAIN/.env.paper"
+  else
+    echo "== projection dir: not in the crontab — the wrapper reads it from \$CP3_DAILY_MAIN/.env.paper for the session-end bars/symbols export"
+  fi
+fi
 [ "$(date +%z)" = "+0900" ] || echo "WARN host zone is $(date +%z), not +0900 — cron would not fire at KST times (--apply refuses)"
 
 if [ "$APPLY" = 0 ]; then
