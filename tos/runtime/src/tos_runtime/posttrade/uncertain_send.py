@@ -27,6 +27,7 @@ __all__ = [
     "UncertainSendReconciler",
     "apply_uncertain_read",
     "bound_sends",
+    "late_candidate_attempt_ids",
     "never_accepted_attempt_ids",
     "released_sends",
     "rows_by_send_time",
@@ -193,6 +194,16 @@ def bound_sends(store: SqliteEvidenceStore) -> dict[str, tuple[str, str]]:
         ):
             bound[attempt_id] = (odno, date)
     return bound
+
+
+def late_candidate_attempt_ids(store: SqliteEvidenceStore) -> frozenset[str]:
+    """Every released send a late candidate has ALREADY halted this tenant for."""
+    # SAFETY: 운영자가 재무장한 뒤 같은 날 다시 부팅하면 그 행이 또 보인다 — 거기서 또 래치하면 재무장이 영원히 되감긴다 (#1164 리뷰 L2)
+    return frozenset(
+        attempt_id
+        for payload in _payloads(store, UNCERTAIN_SEND_LATE_CANDIDATE_KIND)
+        if isinstance(attempt_id := payload.get("attempt_id"), str)
+    )
 
 
 def never_accepted_attempt_ids(store: SqliteEvidenceStore) -> frozenset[str]:
@@ -399,10 +410,11 @@ class UncertainSendReconciler:
                 if today is None
                 else released_sends(self.evidence_store, trading_date=today)
             )
+            halted = late_candidate_attempt_ids(self.evidence_store)
         except Exception:  # noqa: BLE001 - an unreadable store rechecks nothing
             return None
         for send in watched:
-            if send.attempt_id in self._halted:
+            if send.attempt_id in self._halted or send.attempt_id in halted:
                 continue
             last = self._last_watch_ms.get(send.attempt_id)
             if last is not None and now_ms - last < self.settle_ms:
@@ -466,11 +478,27 @@ class UncertainSendReconciler:
         except Exception:  # noqa: BLE001 - an unmeasurable clock discards nothing
             return False
 
+    def _replacement_unresolved(self) -> bool:
+        """Did another send go uncertain between this watch's PLAN and its APPLY? (#1164 M1)"""
+        # SAFETY: 그 대체 송신의 행은 아직 ODNO 를 claim 하지 않아 해제된 송신의 «늦은 후보» 로 보인다 — 여기서 래치하면 멀쩡한 tenant 를 거짓으로 멈춘다. 미뤄도 다음 감시 읽기가 다시 판정한다
+        try:
+            return bool(
+                uncertain_sends(
+                    self.evidence_store,
+                    account=self.account,
+                    instrument=self.instrument,
+                )
+            )
+        except Exception:  # noqa: BLE001 - an unreadable store defers, never halts
+            return True
+
     def _judge_released(
         self, send: UncertainSend, late: tuple[KisOrderRow, ...]
     ) -> str | None:
         """A same-day read of an already released send: any row it could own halts (#1129)."""
         if not late or send.attempt_id in self._halted or self.halt is None:
+            return None
+        if self._replacement_unresolved():
             return None
         self._halted.add(send.attempt_id)
         self.halt(

@@ -25,6 +25,7 @@ from tos_runtime.posttrade.uncertain_send import (
     UNPROVABLE_TIME,
     UncertainSendReconciler,
     bound_sends,
+    late_candidate_attempt_ids,
     never_accepted_attempt_ids,
     uncertain_sends,
 )
@@ -35,6 +36,7 @@ from ..evidence.conftest import FixedKeyProvider
 _ACCOUNT = "5020591501"
 _INSTRUMENT = "005930"
 _ATTEMPT = "attempt-afg-permit-11b2"
+_REPLACEMENT = "attempt-afg-permit-11b3"
 _DATE = "20261120"
 _QTY = Decimal(2)
 _SETTLE_MS = 30_000
@@ -825,6 +827,18 @@ def test_a_meter_that_raises_withholds_the_discard(store: SqliteEvidenceStore) -
     assert never_accepted_attempt_ids(store) == frozenset()
 
 
+def _halt_lane(
+    store: SqliteEvidenceStore, halts: list[tuple[str, dict[str, Any]]]
+) -> Callable[[str, dict[str, Any]], None]:
+    """The compose root's lane, minus the inbox latch: the row it writes is DURABLE."""
+
+    def _halt(kind: str, fields: dict[str, Any]) -> None:
+        halts.append((kind, fields))
+        store.append(fields, kind=kind, record_class=kind)
+
+    return _halt
+
+
 def _released(
     store: SqliteEvidenceStore, halts: list[tuple[str, dict[str, Any]]]
 ) -> UncertainSendReconciler:
@@ -832,7 +846,7 @@ def _released(
     reconciler = _reconciler(
         store,
         today=lambda: _DATE,
-        halt=lambda kind, fields: halts.append((kind, fields)),
+        halt=_halt_lane(store, halts),
     )
     send = reconciler.due(_T0)
     assert send is not None
@@ -994,3 +1008,116 @@ def test_a_changed_set_of_held_rows_is_recorded_again(
     assert [row["outcome"] for row in verdicts] == [UNPROVABLE_TIME, UNPROVABLE_TIME]
     assert verdicts[0]["candidate_order_ids"] == ["0000005101"]
     assert verdicts[1]["candidate_order_ids"] == ["0000005101", "0000005102"]
+
+
+def _replacement_went_blind(
+    store: SqliteEvidenceStore, *, attempt_id: str = _REPLACEMENT
+) -> None:
+    """A SECOND send of the same shape that also answered with no order (#1164 M1)."""
+    store.append(
+        {
+            "attempt_id": attempt_id,
+            "send_seal": {
+                "attempt_id": attempt_id,
+                "instrument_key": {"account": _ACCOUNT, "instrument": _INSTRUMENT},
+                "outbound_side": "BUY",
+                "outbound_quantity": str(_QTY),
+            },
+        },
+        kind="SEND_SEALED",
+        record_class="SEND_SEALED",
+    )
+    store.append(
+        {
+            "attempt_id": attempt_id,
+            "kind": "TIMEOUT",
+            "trading_date": _DATE,
+            "send_started_time": _SEND_STARTED,
+        },
+        kind="TRANSPORT_SEND",
+        record_class="TRANSPORT_SEND",
+    )
+    store.append(
+        {
+            "attempt_id": attempt_id,
+            "instrument_key": {"account": _ACCOUNT, "instrument": _INSTRUMENT},
+            "egress_result_kind": "TIMEOUT",
+            "broker_execution_id": None,
+        },
+        kind="EGRESS_RESULT_CONSUMED",
+        record_class="EGRESS_RESULT_CONSUMED",
+    )
+
+
+def _replacement_bound(store: SqliteEvidenceStore, odno: str) -> None:
+    """The replacement's own reconciliation settled, so it is no longer unresolved."""
+    store.append(
+        {
+            "attempt_id": _REPLACEMENT,
+            "outcome": BOUND,
+            "broker_execution_id": odno,
+            "trading_date": _DATE,
+        },
+        kind=UNCERTAIN_SEND_RECONCILED_KIND,
+        record_class=UNCERTAIN_SEND_RECONCILED_KIND,
+    )
+
+
+def test_a_replacement_that_went_blind_mid_read_defers_the_halt(
+    store: SqliteEvidenceStore,
+) -> None:
+    """Review #1164 M1's failing input: A is released; the watch FETCH is planned; DURING that"""
+    halts: list[tuple[str, dict[str, Any]]] = []
+    reconciler = _released(store, halts)
+
+    watch = reconciler.due(_T0 + 3 * _SETTLE_MS)
+    assert watch is not None and watch.released
+    _replacement_went_blind(store)
+
+    outcome = reconciler.apply_read(
+        watch,
+        (_row(odno="0000005102"),),
+        read_started_ms=_T0 + 3 * _SETTLE_MS,
+        claimed=frozenset(),
+    )
+
+    assert outcome is None, "the replacement's own row halted the tenant"
+    assert halts == []
+    assert late_candidate_attempt_ids(store) == frozenset()
+
+    _replacement_bound(store, "0000005102")
+    retry = reconciler.due(_T0 + 4 * _SETTLE_MS)
+    assert retry is not None, "a deferred watch must come back"
+    assert (
+        reconciler.apply_read(
+            retry,
+            (_row(odno="0000005101"),),
+            read_started_ms=_T0 + 4 * _SETTLE_MS,
+            claimed=frozenset({("5102", _DATE, _REPLACEMENT)}),
+        )
+        == UNCERTAIN_SEND_LATE_CANDIDATE_KIND
+    )
+    assert [kind for kind, _ in halts] == [UNCERTAIN_SEND_LATE_CANDIDATE_KIND]
+
+
+def test_a_same_day_restart_after_a_re_arm_does_not_latch_again(
+    store: SqliteEvidenceStore,
+) -> None:
+    """Review #1164 L2: the halt row is durable, so the next boot sees the same late row."""
+    halts: list[tuple[str, dict[str, Any]]] = []
+    reconciler = _released(store, halts)
+    watch = reconciler.due(_T0 + 3 * _SETTLE_MS)
+    assert watch is not None
+    reconciler.apply_read(
+        watch,
+        (_row(odno="0000005101"),),
+        read_started_ms=_T0 + 3 * _SETTLE_MS,
+        claimed=frozenset(),
+    )
+    assert late_candidate_attempt_ids(store) == frozenset({_ATTEMPT})
+
+    rebooted: list[tuple[str, dict[str, Any]]] = []
+    fresh = _reconciler(store, today=lambda: _DATE, halt=_halt_lane(store, rebooted))
+
+    assert fresh.due(_T0 + 9 * _SETTLE_MS) is None, "the re-arm was undone on reboot"
+    assert rebooted == []
