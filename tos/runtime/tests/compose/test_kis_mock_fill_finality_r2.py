@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from tos.engine import EngineCore, NullEvidenceSink
@@ -41,7 +42,7 @@ from .test_kis_mock_fill_finality_recovery import _acked
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 
-def _full(date: str, qty: Decimal, **kw: str) -> dict[str, str]:
+def _full(date: str, qty: Decimal, **kw: Any) -> dict[str, str]:
     return _row(date=date, ord_qty=qty, filled=qty, remaining=Decimal(0), **kw)
 
 
@@ -357,22 +358,39 @@ def test_an_earlier_day_the_broker_cannot_answer_for_is_an_explicit_hold(
 @pytest.mark.parametrize(
     "case",
     [
-        "unfilled_cancel",
+        "cancel_remainder_working",
+        "cancel_remainder_part_confirmed",
+        "zero_remainder_unconfirmed",
         "cancel_after_partial",
         "separate_cancel_row",
         "derived_only_cancel",
     ],
 )
-def test_a_cancel_is_one_durable_hold_no_retry_no_release(
+def test_a_cancel_this_runtime_cannot_read_is_one_durable_hold_no_retry_no_release(
     case, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
-    """``unfilled_cancel`` is the review's input: same ODNO/date/symbol, ``cncl_yn=Y``,"""
+    """Every cancel shape whose outcome the broker's own row does NOT settle (#948): the"""
     runtime, attempt_id, date, qty = _acked(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
     zero = Decimal(0)
     rows = {
-        "unfilled_cancel": [
+        "cancel_remainder_working": [
+            _row(date=date, ord_qty=qty, filled=zero, remaining=qty, cancelled="Y")
+        ],
+        "cancel_remainder_part_confirmed": [
+            _row(
+                date=date,
+                ord_qty=qty,
+                filled=zero,
+                remaining=qty,
+                cancelled="Y",
+                cancel_confirmed=qty - Decimal(1),
+            )
+        ],
+        # #948 리뷰 MEDIUM 2: KIS may zero 잔량 when it ACCEPTS the cancel, before the
+        # exchange confirms it — so a zeroed remainder with no 취소확인수량 is a hold.
+        "zero_remainder_unconfirmed": [
             _row(date=date, ord_qty=qty, filled=zero, remaining=zero, cancelled="Y")
         ],
         "cancel_after_partial": [
@@ -430,6 +448,114 @@ def test_a_cancel_is_one_durable_hold_no_retry_no_release(
     assert runtime2.fill_observer is not None
     assert runtime2.fill_observer.poll_once().polled is False
     assert _rcl_releases(runtime2) == 0
+    _close(runtime2)
+
+
+@pytest.mark.parametrize("case", ["remainder_zero", "remainder_withdrawn"])
+def test_an_unfilled_cancel_the_broker_settles_releases_exactly_once(
+    case, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """#948: a cancel the broker's OWN row settles — nothing executed and no quantity that can"""
+    runtime, attempt_id, date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    zero = Decimal(0)
+    row = {
+        "remainder_zero": _row(
+            date=date,
+            ord_qty=qty,
+            filled=zero,
+            remaining=zero,
+            cancelled="Y",
+            cancel_confirmed=qty,
+        ),
+        "remainder_withdrawn": _row(
+            date=date,
+            ord_qty=qty,
+            filled=zero,
+            remaining=qty,
+            cancelled="Y",
+            cancel_confirmed=qty,
+        ),
+    }[case]
+    orders = _script_broker(server, config_dir, date, [row])
+    observer = runtime.fill_observer
+    assert observer is not None
+
+    report = observer.poll_once()
+    assert [k for _a, k, _d in report.emitted] == [EgressResultKind.CANCEL_ACK]
+    assert report.held == ()
+    assert _rows(runtime, "FILL_OBSERVER_CANCEL_UNSUPPORTED") == []
+    assert [
+        r["egress_result_kind"] for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")
+    ] == ["ACK", "CANCEL_ACK"]
+    (proof,) = _rows(runtime, "POSTTRADE_FINALITY_PROOF")
+    assert proof["idempotency_key"] == f"broker-fqp-nonexec-proof:{attempt_id}"
+    assert _rows(runtime, "CAPACITY_RELEASE_HELD") == []
+    assert _rcl_releases(runtime, attempt_id=attempt_id) == 1
+    assert _rcl_releases(runtime) == 1
+
+    reads = len(server.requests_for(orders))
+    later = observer.poll_once()
+    assert later.polled is False and later.reprojected == ()
+    assert len(server.requests_for(orders)) == reads
+    assert _rcl_releases(runtime) == 1
+    _close(runtime)
+
+    runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
+    assert runtime2.recovery is not None and runtime2.recovery.ready is True
+    assert runtime2.fill_observer is not None
+    assert runtime2.fill_observer.poll_once().reprojected == ()
+    assert _rcl_releases(runtime2) == 1
+    assert len(_rows(runtime2, "POSTTRADE_FINALITY_PROOF")) == 1
+    _close(runtime2)
+
+
+def test_a_recorded_cancel_hold_is_never_re_read_as_a_release(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """#948 replay protection: a leaf that already holds a ``FILL_OBSERVER_CANCEL_UNSUPPORTED``"""
+    runtime, attempt_id, date, qty = _acked(
+        tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
+    )
+    zero = Decimal(0)
+    _script_broker(
+        server,
+        config_dir,
+        date,
+        [_row(date=date, ord_qty=qty, filled=zero, remaining=qty, cancelled="Y")],
+    )
+    observer = runtime.fill_observer
+    assert observer is not None
+    assert len(observer.poll_once().held) == 1
+    assert len(_rows(runtime, "FILL_OBSERVER_CANCEL_UNSUPPORTED")) == 1
+    _close(runtime)
+
+    # The same leaf reboots and the broker now shows the settled shape this change releases
+    # on. The recorded hold still wins: that attempt is terminal and held before any row is
+    # classified, so no capacity moves under a rule the leaf did not boot with.
+    runtime2 = _boot(tmp_path, config_dir, data_dir, custody_root)
+    _script_broker(
+        server,
+        config_dir,
+        date,
+        [
+            _row(
+                date=date,
+                ord_qty=qty,
+                filled=zero,
+                remaining=zero,
+                cancelled="Y",
+                cancel_confirmed=qty,
+            )
+        ],
+    )
+    assert runtime2.fill_observer is not None
+    report = runtime2.fill_observer.poll_once()
+    assert report.emitted == () and report.reprojected == ()
+    assert _rcl_releases(runtime2, attempt_id=attempt_id) == 0
+    assert _rows(runtime2, "POSTTRADE_FINALITY_PROOF") == []
+    assert len(_rows(runtime2, "FILL_OBSERVER_CANCEL_UNSUPPORTED")) == 1
     _close(runtime2)
 
 

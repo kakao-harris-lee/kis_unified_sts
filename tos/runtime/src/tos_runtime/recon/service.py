@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
 
+from tos.engine.vocabulary import EgressResultKind
 from tos.recon import (
     ConservativeBound,
     EvidencePathObservation,
@@ -66,6 +67,51 @@ _QUANTITY_FIELDS: tuple[SafetyRelevantField, SafetyRelevantField] = (
     SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY,
     SafetyRelevantField.REMAINING_EXECUTABLE_QUANTITY,
 )
+
+_ZERO = Decimal("0")
+
+_NON_EXECUTION_RECEIPT_KINDS: frozenset[str] = frozenset(
+    kind.value
+    for kind in (
+        EgressResultKind.CANCEL_ACK,
+        EgressResultKind.EXPIRED,
+        EgressResultKind.REJECT,
+    )
+)
+
+
+def _asserts_zero_execution(
+    evidence: EgressReceiptObservation | None, *, any_filled: bool
+) -> bool:
+    """Whether this receipt states «nothing executed, nothing outstanding» by its KIND alone."""
+    # SAFETY: the kernel FORBIDS a fill magnitude on a non-execution payload
+    # (EgressResultPayload._fill_shape_consistent), so reading those two quantities as
+    # «not stated» leaves both capacity-releasing fields SINGLE_SOURCE and holds every
+    # cancelled order's reservation for ever (#939 r2 HIGH 1 · #948).
+    #
+    # SAFETY: `any_filled` is the attempt's OWN receipt history — a non-execution that
+    # followed a fill does not mean «nothing executed», and reading it as zero would
+    # release the capacity of a quantity the broker still reports (#980 path).
+    return (
+        not any_filled
+        and evidence is not None
+        and evidence.egress_result_kind in _NON_EXECUTION_RECEIPT_KINDS
+        and evidence.filled_quantity is None
+        and evidence.remaining_quantity is None
+    )
+
+
+def _attempts_with_a_filled_receipt(
+    receipts: tuple[EgressReceiptObservation, ...],
+) -> frozenset[str]:
+    """Every attempt whose own receipts record a positive filled quantity."""
+    return frozenset(
+        receipt.attempt_id
+        for receipt in receipts
+        if receipt.attempt_id is not None
+        and receipt.filled_quantity is not None
+        and receipt.filled_quantity > _ZERO
+    )
 
 
 class ReconciliationClass(StrEnum):
@@ -196,14 +242,19 @@ def _quantity_field_verdicts(
     freshness: FreshnessMarker,
     witness_independence_class: str,
     proof_inputs: ReleaseProofInputs,
+    asserts_zero_execution: bool = False,
 ) -> tuple[tuple[FieldConfidence, ...], dict[SafetyRelevantField, bool], bool]:
     """Both quantity fields' confidences, release-proof gates, and the disagreement flag."""
     evidence_values = {
         SafetyRelevantField.CUMULATIVE_FILLED_QUANTITY: (
-            None if evidence is None else evidence.filled_quantity
+            _ZERO
+            if asserts_zero_execution
+            else (None if evidence is None else evidence.filled_quantity)
         ),
         SafetyRelevantField.REMAINING_EXECUTABLE_QUANTITY: (
-            None if evidence is None else evidence.remaining_quantity
+            _ZERO
+            if asserts_zero_execution
+            else (None if evidence is None else evidence.remaining_quantity)
         ),
     }
     witness_values = {
@@ -468,6 +519,7 @@ class ReconciliationService:
         witness_order: WitnessOrder | None,
         freshness: FreshnessMarker,
         witness_independence_class: str,
+        any_filled: bool = False,
     ) -> tuple[ReconciliationClass, tuple[FieldConfidence, ...], bool, bool, bool]:
         """One attempt's classification, field confidences, rearm-ok, capacity-ok, disagreed."""
         classification = _classify_attempt(
@@ -490,7 +542,14 @@ class ReconciliationService:
 
         field_confidences = [existence_confidence]
         proof_ok_by_field: dict[SafetyRelevantField, bool] = {}
-        fqp_token = evidence.finality_proof_recorded if evidence is not None else False
+        asserts_zero = _asserts_zero_execution(evidence, any_filled=any_filled)
+        # SAFETY: a non-execution has no separate final-quantity proof artifact and never
+        # will — the producer only runs AFTER this gate — so its own zero is the proof.
+        # The witness still has to agree at zero: a disagreeing path is CONFLICTED and
+        # `capacity_ok` below stays False (#948).
+        fqp_token = evidence is not None and (
+            evidence.finality_proof_recorded or asserts_zero
+        )
         proof_inputs = ReleaseProofInputs(
             final_quantity_proof_token=fqp_token, freshness=freshness
         )
@@ -501,6 +560,7 @@ class ReconciliationService:
             freshness=freshness,
             witness_independence_class=witness_independence_class,
             proof_inputs=proof_inputs,
+            asserts_zero_execution=asserts_zero,
         )
         field_confidences.extend(quantity_confidences)
         proof_ok_by_field.update(quantity_proof_ok)
@@ -532,6 +592,7 @@ class ReconciliationService:
         witness_by_attempt: dict[str, WitnessOrder],
         freshness: FreshnessMarker,
         witness_independence_class: str,
+        filled_attempts: frozenset[str] = frozenset(),
     ) -> tuple[AttemptClassification, tuple[FieldConfidence, ...], bool, bool, bool]:
         """One known attempt id's full verdict — split out of :meth:`reconcile` to stay"""
         rcl_state = self._rcl_reader.reservation_state(
@@ -544,6 +605,7 @@ class ReconciliationService:
                 rcl_present=rcl_state is not None,
                 evidence=evidence,
                 witness_order=witness_order,
+                any_filled=attempt_id in filled_attempts,
                 freshness=freshness,
                 witness_independence_class=witness_independence_class,
             )
@@ -621,6 +683,7 @@ class ReconciliationService:
         rearm_flags: list[bool] = []
         capacity_flags: list[bool] = []
         disagreed = False
+        filled_attempts = _attempts_with_a_filled_receipt(receipts)
 
         for attempt_id in sorted(attempt_ids):
             record, confidences, rearm_ok, capacity_ok, attempt_disagreed = (
@@ -630,6 +693,7 @@ class ReconciliationService:
                     witness_by_attempt=witness_by_attempt,
                     freshness=freshness,
                     witness_independence_class=witness_independence_class,
+                    filled_attempts=filled_attempts,
                 )
             )
             classifications.append(record)

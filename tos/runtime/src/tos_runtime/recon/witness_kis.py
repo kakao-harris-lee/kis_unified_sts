@@ -46,6 +46,8 @@ _TR_CONT_REQUEST_NEXT = "N"
 
 _CANCELLED = "Y"
 
+_CANCEL_CONFIRMED_QTY_KEYS = ("cncl_cfrm_qty", "cnc_cfrm_qty")
+
 
 def _decimal_or_none(value: Any) -> Decimal | None:
     """Best-effort ``Decimal`` coercion for a JSON-decoded numeric/string field."""
@@ -65,6 +67,19 @@ def _finite_decimal_or_none(value: Any) -> Decimal | None:
     """:func:`_decimal_or_none`, but ``NaN``/``sNaN``/``Infinity`` is also ``None``."""
     parsed = _decimal_or_none(value)
     return parsed if parsed is not None and parsed.is_finite() else None
+
+
+def _cancel_confirmed_qty(row: Mapping[str, Any]) -> Decimal | None:
+    """취소확인수량 — what the broker says this cancel withdrew, under either wire spelling.
+
+    The 모의 ``VTTC0081R`` row carries ``cncl_cfrm_qty`` (measured 2026-11-23, #948);
+    ``cnc_cfrm_qty`` is the published example's spelling. Both are read so one wire
+    rename cannot silently turn «withdrawn» into «not stated».
+    """
+    for key in _CANCEL_CONFIRMED_QTY_KEYS:
+        if key in row:
+            return _decimal_or_none(row.get(key))
+    return None
 
 
 def _header_value(secret: bytes) -> str:
@@ -238,6 +253,33 @@ class KisOrderRow:
     tot_ccld_amt: Decimal | None = None
     ord_tmd: str | None = None
     sll_buy_dvsn_cd: str | None = None
+    cancel_confirmed_qty: Decimal | None = None
+
+    @property
+    def cancel_withdrew_remainder(self) -> bool:
+        """Whether this row's OWN quantities prove the cancel took the whole working remainder."""
+        if not self.cancelled or self.rmn_qty is None or self.rmn_qty < 0:
+            return False
+        outstanding = self.rmn_qty
+        if self.ord_qty is not None and self.tot_ccld_qty is not None:
+            # SAFETY: `rmn_qty=0` alone is NOT the withdrawal — KIS may zero 잔량 when it
+            # ACCEPTS the cancel, before the exchange confirms it (unmeasured as of
+            # 2026-11-23). The quantity that must be proven withdrawn is therefore the
+            # larger of the stated remainder and the 주문수량 − 총체결수량 shortfall
+            # (#948 리뷰 MEDIUM 2).
+            outstanding = max(outstanding, self.ord_qty - self.tot_ccld_qty)
+        elif outstanding == 0:
+            # SAFETY: a zero remainder whose ordered/filled quantities cannot be read proves
+            # nothing — there may be a shortfall this row does not let us compute.
+            return False
+        if outstanding <= 0:
+            return True
+        # SAFETY: cncl_yn=Y is the cancel ACCEPTED, not the remainder withdrawn — a row with
+        # quantity left can still fill, so only 취소확인수량 covering it closes the row.
+        return (
+            self.cancel_confirmed_qty is not None
+            and self.cancel_confirmed_qty >= outstanding
+        )
 
     @classmethod
     def from_wire(cls, row: Mapping[str, Any]) -> KisOrderRow:
@@ -263,6 +305,7 @@ class KisOrderRow:
             avg_prvs=_finite_decimal_or_none(row.get("avg_prvs")),
             tot_ccld_amt=_finite_decimal_or_none(row.get("tot_ccld_amt")),
             sll_buy_dvsn_cd=_text("sll_buy_dvsn_cd"),
+            cancel_confirmed_qty=_cancel_confirmed_qty(row),
         )
 
 
@@ -606,6 +649,11 @@ class KisStockBrokerWitness:
         remaining_qty = row.rmn_qty
 
         if row.cancelled:
+            if row.cancel_withdrew_remainder:
+                # SAFETY: a remainder the broker confirmed it withdrew can never fill again,
+                # so the REMAINING EXECUTABLE quantity is zero; reading rmn_qty here instead
+                # would hold the reservation of every such cancel for ever (#948).
+                remaining_qty = Decimal("0")
             state = WitnessOrderState.CANCELLED
         elif filled_qty is not None and filled_qty > 0:
             state = (

@@ -114,6 +114,7 @@ def _row(
     filled: Decimal,
     remaining: Decimal,
     cancelled: str = "N",
+    cancel_confirmed: Decimal | None = None,
     rjct: str = "0",
     orgn_odno: str = "0000000000",
     avg_prvs: str | None = None,
@@ -132,6 +133,8 @@ def _row(
         "cncl_yn": cancelled,
         "rjct_qty": rjct,
     }
+    if cancel_confirmed is not None:
+        row["cncl_cfrm_qty"] = format(cancel_confirmed, "f")
     if avg_prvs is not None:
         row["avg_prvs"] = avg_prvs
     if tot_ccld_amt is not None:

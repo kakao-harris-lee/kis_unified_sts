@@ -417,6 +417,78 @@ def test_quantities_that_do_not_add_up_are_open(row: dict[str, Any]) -> None:
     assert flat.row_is_open(row, _SYMBOL) is True
 
 
+def _zero_remainder_row(**overrides: str) -> dict[str, Any]:
+    """A row that states ``rmn_qty=0`` while 주문수량 − 총체결수량 is 1 — the #948 M1 input."""
+    row: dict[str, Any] = {
+        "pdno": _SYMBOL,
+        "odno": "0000004470",
+        "ord_qty": "1",
+        "tot_ccld_qty": "0",
+        "rmn_qty": "0",
+        "cncl_yn": "N",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_a_zero_remainder_with_an_unexplained_shortfall_stays_open() -> None:
+    """#948 리뷰 MEDIUM 1: 1 ordered, 0 filled, 0 remaining and nothing saying where the
+
+    other share went. Reading that as closed is reading a quantity nobody can account for
+    as «flat», so it stays open until this read explains the shortfall.
+    """
+    assert flat.row_is_open(_zero_remainder_row(), _SYMBOL) is True
+
+
+@pytest.mark.parametrize(
+    "row,parents",
+    [
+        (_zero_remainder_row(cncl_yn="Y"), frozenset()),
+        (_zero_remainder_row(rjct_qty="1"), frozenset()),
+        (_zero_remainder_row(), frozenset({"4470"})),
+        (_zero_remainder_row(orgn_odno="0000004470"), frozenset()),
+        (_zero_remainder_row(ord_qty="1", tot_ccld_qty="1"), frozenset()),
+    ],
+    ids=[
+        "cancel-flag",
+        "rejected-covers-it",
+        "a-child-row-names-this-one",
+        "this-row-is-the-cancel",
+        "filled",
+    ],
+)
+def test_a_zero_remainder_closes_once_the_shortfall_is_accounted_for(
+    row: dict[str, Any], parents: frozenset[str]
+) -> None:
+    """The three explanations, plus the shape with no shortfall at all. Under the separate-row
+
+    cancel shape the withdrawal is not on this row, so the parent set of the SAME read is
+    what tells that apart from an unaccounted quantity.
+    """
+    assert flat.row_is_open(row, _SYMBOL, cancel_parents=parents) is False
+
+
+def test_the_parent_set_comes_from_the_rows_of_one_read() -> None:
+    """``orgn_odno`` is matched to ``odno`` with leading zeros dropped on both sides."""
+    child = {"odno": "0000004471", "orgn_odno": "0000004470"}
+    assert flat.cancel_parent_odnos([_zero_remainder_row(), child]) == frozenset(
+        {"4470"}
+    )
+    assert flat.cancel_parent_odnos([_zero_remainder_row()]) == frozenset()
+
+
+def test_a_rejected_quantity_short_of_the_shortfall_leaves_it_open() -> None:
+    row = _zero_remainder_row(ord_qty="3", tot_ccld_qty="0", rjct_qty="2")
+    assert flat.row_is_open(row, _SYMBOL) is True
+
+
+def test_the_working_quantity_rule_is_shared_without_the_symbol_filter() -> None:
+    """The P-SC probe reads rows it already fetched per symbol, so it asks this half."""
+    row = {"pdno": "000660", "ord_qty": "1", "tot_ccld_qty": "0", "rmn_qty": "1"}
+    assert flat.row_is_open(row, _SYMBOL) is False
+    assert flat.row_has_working_quantity(row) is True
+
+
 def test_an_accepted_cancel_that_left_a_remainder_is_still_open() -> None:
     """#1135 item 1: ord 1 / filled 0 / rmn 1 / cncl_yn=Y can still fill."""
     row = {

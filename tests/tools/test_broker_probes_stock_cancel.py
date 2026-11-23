@@ -861,6 +861,64 @@ def test_cleanup_runs_and_cancels_when_a_trial_raises(
     assert all(not probes_stock_cancel._row_is_live(r) for r in broker.rows)
 
 
+def _confirmed(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """``classify_cancel_confirmed`` over one answered snapshot carrying ``rows``."""
+    snapshot = {
+        "read_status": "OK",
+        "t_offset_ms": 1.0,
+        "original_row": {"raw": rows[0]},
+    }
+    return probes_stock_cancel.classify_cancel_confirmed([snapshot], "4470")
+
+
+@pytest.mark.parametrize(
+    "row,confirmed",
+    [
+        ({"ord_qty": "1", "tot_ccld_qty": "0", "rmn_qty": "0", "cncl_yn": "Y"}, True),
+        ({"ord_qty": "1", "tot_ccld_qty": "1", "rmn_qty": "0", "cncl_yn": "N"}, True),
+        (
+            {
+                "ord_qty": "2",
+                "tot_ccld_qty": "0",
+                "rmn_qty": "2",
+                "cncl_yn": "Y",
+                "cncl_cfrm_qty": "2",
+            },
+            True,
+        ),
+        ({"ord_qty": "2", "tot_ccld_qty": "0", "rmn_qty": "2", "cncl_yn": "Y"}, False),
+        (
+            {
+                "ord_qty": "2",
+                "tot_ccld_qty": "0",
+                "rmn_qty": "2",
+                "cncl_yn": "Y",
+                "cncl_cfrm_qty": "1",
+            },
+            False,
+        ),
+    ],
+    ids=[
+        "withdrawn-to-zero",
+        "filled",
+        "confirmed-covers-remainder",
+        "accepted-only",
+        "confirmed-short",
+    ],
+)
+def test_cancel_confirmation_reads_the_shared_working_quantity_rule(
+    row: dict[str, Any], confirmed: bool
+) -> None:
+    """#1158 리뷰: ``cncl_yn=Y`` alone never closes a row with a remainder — the probe and
+
+    ``mock_flat_check`` now answer that through one reader, so a row cannot be «confirmed»
+    here and «held» there.
+    """
+    verdict = _confirmed([row])
+    assert verdict["confirmed"] is confirmed
+    assert probes_stock_cancel._row_is_live(row) is not confirmed
+
+
 def test_the_cleanup_never_sells_a_holding_this_run_did_not_buy(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
