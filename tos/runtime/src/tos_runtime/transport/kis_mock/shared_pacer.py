@@ -14,10 +14,16 @@ from tos_runtime.transport.kis_mock.file_lock import (
     exclusive_file_lock,
 )
 
-__all__ = ["SharedAppKeyGate", "SharedPacingRefused"]
+__all__ = [
+    "DEFAULT_SHARED_WINDOW_MARGIN_S",
+    "SharedAppKeyGate",
+    "SharedPacingRefused",
+]
+
+# SAFETY: 허가 시각은 요청이 나가기 전에 찍히고 KIS 는 도착을 센다 — TLS 핸드셰이크 지터(cold 120ms vs warm 20ms)가 이 여유보다 크면 1초에 세 건이 도착한다
+DEFAULT_SHARED_WINDOW_MARGIN_S = 0.25
 
 _WINDOW_S = 1.0
-_WINDOW_MARGIN_S = 0.05
 
 
 class SharedPacingRefused(Exception):
@@ -32,22 +38,28 @@ class SharedAppKeyGate:
         *,
         path: Path,
         max_rps: float,
+        window_margin_s: float = DEFAULT_SHARED_WINDOW_MARGIN_S,
         now_epoch_s: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         """Pin the grant file and the aggregate rate every holder of this app key shares."""
         if max_rps <= 0:
             raise ValueError("SharedAppKeyGate: max_rps must be positive")
+        if window_margin_s < 0:
+            raise ValueError(
+                "SharedAppKeyGate: window_margin_s must be zero or positive"
+            )
         self._path = path
         self._lock_path = path.with_name(path.name + ".lock")
         self._min_interval_s = 1.0 / max_rps
         self._window_grants = max(1, int(max_rps))
+        self._window_margin_s = window_margin_s
         self._now = now_epoch_s or time.time
         self._sleep = sleep or time.sleep
 
     @property
     def path(self) -> Path:
-        """The file holding this app key's last grant instant."""
+        """The file holding this app key's last grant instants."""
         return self._path
 
     @property
@@ -59,6 +71,11 @@ class SharedAppKeyGate:
     def window_grants(self) -> int:
         """How many grants this gate allows inside one counted second."""
         return self._window_grants
+
+    @property
+    def window_margin_s(self) -> float:
+        """The slack this gate leaves on top of the counted second."""
+        return self._window_margin_s
 
     def acquire(self, *, wait_budget_s: float) -> None:
         """Wait for this app key's next cross-process slot, then return so the caller sends."""
@@ -90,7 +107,7 @@ class SharedAppKeyGate:
         if len(grants) >= self._window_grants:
             # SAFETY: 간격만 지키면 1초 창에 max_rps+1 건이 들어간다 (2.0 rps → t · t+0.5 · t+1.0) — 2026-11-23 EGW00201 의 원인이다
             oldest = grants[-self._window_grants]
-            wait_s = max(wait_s, oldest + _WINDOW_S + _WINDOW_MARGIN_S - now)
+            wait_s = max(wait_s, oldest + _WINDOW_S + self._window_margin_s - now)
         return wait_s
 
     def _read_grants(self) -> tuple[float, ...]:

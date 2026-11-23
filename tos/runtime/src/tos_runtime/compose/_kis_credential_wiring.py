@@ -112,7 +112,9 @@ def kis_shared_app_key_gate(
         return None
     assert config.shared_max_rps is not None
     return SharedAppKeyGate(
-        path=Path(config.shared_pacer_path), max_rps=config.shared_max_rps
+        path=Path(config.shared_pacer_path),
+        max_rps=config.shared_max_rps,
+        window_margin_s=config.shared_window_margin_s,
     )
 
 

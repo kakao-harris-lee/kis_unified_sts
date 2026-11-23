@@ -12,8 +12,12 @@ from urllib.parse import urlsplit
 import yaml
 
 from tos_runtime.transport.endpoint import real_host_problem
+from tos_runtime.transport.kis_mock.shared_pacer import (
+    DEFAULT_SHARED_WINDOW_MARGIN_S,
+)
 
 __all__ = [
+    "DEFAULT_SHARED_WINDOW_MARGIN_S",
     "DYNAMIC_FIELD_SOURCES",
     "KIS_ORDER_CASH_WIRE_FIELDS",
     "KisMockTransportConfig",
@@ -74,6 +78,7 @@ class KisMockTransportConfig:
     token_cache_refresh_margin_s: int | None = None
     shared_pacer_path: str | None = None
     shared_max_rps: float | None = None
+    shared_window_margin_s: float = DEFAULT_SHARED_WINDOW_MARGIN_S
 
 
 def _require_present(raw: Any, field: str, path: Path) -> Any:
@@ -350,6 +355,19 @@ def _load_shared_pacer(raw: Any, path: Path) -> tuple[str | None, float | None]:
     )
 
 
+def _load_shared_window_margin(raw: Any, path: Path) -> float:
+    """How much slack the shared gate leaves on top of the counted second (issue #1155)."""
+    field = "shared_window_margin_s"
+    if not isinstance(raw, dict) or field not in raw:
+        return DEFAULT_SHARED_WINDOW_MARGIN_S
+    value = _require_float(raw, field, path)
+    if value < 0:
+        raise KisMockTransportConfigError(
+            f"{path}: {field} must be zero or positive, got {value!r}"
+        )
+    return value
+
+
 def load_kis_mock_transport_config(
     path: Path,
     *,
@@ -405,6 +423,7 @@ def load_kis_mock_transport_config(
     request_timeout_s = _require_positive_float(raw, "request_timeout_s", path)
     token_cache_path, token_cache_refresh_margin_s = _load_token_cache(raw, path)
     shared_pacer_path, shared_max_rps = _load_shared_pacer(raw, path)
+    shared_window_margin_s = _load_shared_window_margin(raw, path)
 
     return KisMockTransportConfig(
         mode=mode,  # type: ignore[arg-type]  # narrowed by the membership check above
@@ -425,4 +444,5 @@ def load_kis_mock_transport_config(
         token_cache_refresh_margin_s=token_cache_refresh_margin_s,
         shared_pacer_path=shared_pacer_path,
         shared_max_rps=shared_max_rps,
+        shared_window_margin_s=shared_window_margin_s,
     )

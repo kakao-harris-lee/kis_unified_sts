@@ -13,6 +13,7 @@ from tos_runtime.transport.kis_mock.pacer import (
     KisPacingRefused,
 )
 from tos_runtime.transport.kis_mock.shared_pacer import (
+    DEFAULT_SHARED_WINDOW_MARGIN_S,
     SharedAppKeyGate,
     SharedPacingRefused,
 )
@@ -36,9 +37,19 @@ class _Clock:
         self.now += seconds
 
 
-def _gate(path: Path, clock: _Clock, *, max_rps: float = 2.0) -> SharedAppKeyGate:
+def _gate(
+    path: Path,
+    clock: _Clock,
+    *,
+    max_rps: float = 2.0,
+    window_margin_s: float = DEFAULT_SHARED_WINDOW_MARGIN_S,
+) -> SharedAppKeyGate:
     return SharedAppKeyGate(
-        path=path, max_rps=max_rps, now_epoch_s=clock, sleep=clock.sleep
+        path=path,
+        max_rps=max_rps,
+        window_margin_s=window_margin_s,
+        now_epoch_s=clock,
+        sleep=clock.sleep,
     )
 
 
@@ -76,6 +87,27 @@ def test_no_second_ever_holds_more_than_max_rps_requests(tmp_path: Path) -> None
     for index, start in enumerate(grants):
         inside = [grant for grant in grants[index:] if grant - start <= 1.0]
         assert len(inside) <= cap, f"{len(inside)} grants in second {start}: {inside}"
+
+
+def test_the_window_margin_is_the_configured_one(tmp_path: Path) -> None:
+    """#1155 MEDIUM-1: the grant is stamped before the request leaves, KIS counts arrivals.
+
+    A 3-process burst measured a 3-grant span of 1.043 s at the old 0.05 s margin, so the
+    margin has to be settable — and big enough to cover cold-vs-warm TLS jitter.
+    """
+    clock, path = _Clock(), tmp_path / "stock-mock.pace"
+    grants: list[float] = []
+    for _ in range(3):
+        _gate(path, clock, window_margin_s=0.25).acquire(wait_budget_s=4.0)
+        grants.append(clock.now)
+
+    assert DEFAULT_SHARED_WINDOW_MARGIN_S == 0.25
+    assert grants[2] - grants[0] == pytest.approx(1.25)
+
+
+def test_a_negative_window_margin_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="zero or positive"):
+        SharedAppKeyGate(path=tmp_path / "p", max_rps=2.0, window_margin_s=-0.01)
 
 
 def _grant_burst(path: Path, clock: _Clock, *, count: int) -> list[float]:
