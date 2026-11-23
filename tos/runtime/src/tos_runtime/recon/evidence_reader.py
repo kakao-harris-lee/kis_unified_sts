@@ -24,6 +24,10 @@ _FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
 _FINALITY_PROOF_IDEMPOTENCY_PREFIXES: tuple[str, ...] = (
     "synthetic-fqp-proof:",
     "broker-fqp-proof:",
+    # SAFETY: a cancelled partial fill's ORDER_FQP is a final-quantity proof too — leaving it
+    # out makes a genuinely proven entry look unproven and holds its release forever (#980).
+    "synthetic-fqp-partial-proof:",
+    "broker-fqp-partial-proof:",
 )
 _DISCARDED_UNSENT_KIND = "RESERVATION_DISCARDED_UNSENT"
 _NEVER_ACCEPTED_REASON = "UNCERTAIN_SEND_NEVER_ACCEPTED"

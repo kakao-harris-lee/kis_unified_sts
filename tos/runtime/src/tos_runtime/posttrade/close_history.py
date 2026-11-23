@@ -13,6 +13,10 @@ from tos.engine.vocabulary import EgressResultKind
 from tos.rcl import CapacityState, CommandType, TransitionCause
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.partial_fill import (
+    ResultQuantity,
+    cancelled_partial_quantity,
+)
 from tos_runtime.posttrade.unsent_release import NEVER_SENT_RELEASE_CAUSES
 from tos_runtime.rcl.log import (
     ReservationTransitionHistory,
@@ -41,7 +45,16 @@ _POSITION_CONSUMED = CapacityState.POSITION_CONSUMED
 _COMMITTED_UNBOUND = CapacityState.COMMITTED_UNBOUND
 _EGRESS_RESULT_KINDS = ("EGRESS_RESULT_CONSUMED", "RESULT_UNMATCHED")
 _FINALITY_PROOF_KIND = "POSTTRADE_FINALITY_PROOF"
+_ECONOMIC_OBLIGATION_KIND = "ECONOMIC_OBLIGATION"
 _FINALITY_PROOF_PREFIXES = ("synthetic-fqp-proof:", "broker-fqp-proof:")
+_PARTIAL_FILL_PROOF_PREFIXES = (
+    "synthetic-fqp-partial-proof:",
+    "broker-fqp-partial-proof:",
+)
+_PARTIAL_FILL_OBLIGATION_PREFIXES = (
+    "synthetic-fqp-partial-obligation:",
+    "broker-fqp-partial-obligation:",
+)
 
 
 class CloseHistoryRefusal(StrEnum):
@@ -102,6 +115,8 @@ class _ReceiptObservation:
     filled_quantity: Decimal | None
     remaining_quantity: Decimal | None
     finality_proof_recorded: bool
+    partial_fill_proof_recorded: bool
+    partial_fill_obligation_quantity: Decimal | None
 
 
 @dataclass(frozen=True)
@@ -158,6 +173,35 @@ def _evidence_payload(payload_json: object) -> dict[str, Any]:
     return payload
 
 
+def _partial_fill_obligation_quantities(
+    obligation_rows: list[Any],
+) -> dict[str, Decimal | None]:
+    """Each attempt's partial-fill obligation quantity; ``None`` when it is not unambiguous."""
+    quantities: dict[str, Decimal | None] = {}
+    for (payload_json,) in obligation_rows:
+        payload = _evidence_payload(payload_json)
+        key = payload.get("idempotency_key")
+        if not isinstance(key, str):
+            continue
+        for prefix in _PARTIAL_FILL_OBLIGATION_PREFIXES:
+            if not key.startswith(prefix):
+                continue
+            attempt_id = key[len(prefix) :]
+            if not attempt_id:
+                continue
+            quantity = _as_decimal(payload.get("quantity"))
+            if quantity is None or not quantity.is_finite():
+                quantities[attempt_id] = None
+                continue
+            # SAFETY: two partial-fill obligations disagreeing on this attempt's quantity is
+            # not a quantity — recording None denies the CLOSE rather than picking one.
+            if attempt_id not in quantities:
+                quantities[attempt_id] = quantity
+            elif quantities[attempt_id] != quantity:
+                quantities[attempt_id] = None
+    return quantities
+
+
 def _read_all_receipts(
     store: SqliteEvidenceStore,
 ) -> tuple[_ReceiptObservation, ...] | None:
@@ -173,10 +217,15 @@ def _read_all_receipts(
             "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
             (_FINALITY_PROOF_KIND,),
         ).fetchall()
+        obligation_rows = store.connection.execute(
+            "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
+            (_ECONOMIC_OBLIGATION_KIND,),
+        ).fetchall()
     except sqlite3.Error:
         return None
     try:
         proven: set[str] = set()
+        partially_proven: set[str] = set()
         for (payload_json,) in proof_rows:
             payload = _evidence_payload(payload_json)
             key = payload.get("idempotency_key")
@@ -185,6 +234,10 @@ def _read_all_receipts(
             for prefix in _FINALITY_PROOF_PREFIXES:
                 if key.startswith(prefix):
                     proven.add(key[len(prefix) :])
+            for prefix in _PARTIAL_FILL_PROOF_PREFIXES:
+                if key.startswith(prefix):
+                    partially_proven.add(key[len(prefix) :])
+        partial_obligations = _partial_fill_obligation_quantities(obligation_rows)
         observations: list[_ReceiptObservation] = []
         for _kind, payload_json in receipt_rows:
             payload = _evidence_payload(payload_json)
@@ -214,6 +267,14 @@ def _read_all_receipts(
                     remaining_quantity=_as_decimal(payload.get("remaining_quantity")),
                     finality_proof_recorded=(
                         attempt_id is not None and attempt_id in proven
+                    ),
+                    partial_fill_proof_recorded=(
+                        attempt_id is not None and attempt_id in partially_proven
+                    ),
+                    partial_fill_obligation_quantity=(
+                        None
+                        if attempt_id is None
+                        else partial_obligations.get(attempt_id)
                     ),
                 )
             )
@@ -391,6 +452,43 @@ def _final_full_fill_quantity(
         except (InvalidOperation, TypeError, ValueError):
             return None
     if not full_fills or terminal.finality_proof_recorded is not True:
+        return None
+    return quantity
+
+
+def _final_cancelled_partial_quantity(
+    rows: tuple[_ReceiptObservation, ...],
+    *,
+    attempt_id: str,
+    account: str,
+    instrument: str,
+) -> Decimal | None:
+    """The position a cancelled/expired partial fill left for ``attempt_id`` to close (#980)."""
+    matching = tuple(row for row in rows if row.attempt_id == attempt_id)
+    if not matching:
+        return None
+    if any(row.account != account or row.instrument != instrument for row in matching):
+        return None
+    terminal = matching[-1]
+    # SAFETY: without the attempt's own partial-fill finality proof the quantity is an
+    # unwitnessed reading of receipts, and a CLOSE sized from it would discharge a position
+    # no proof backs.
+    if terminal.partial_fill_proof_recorded is not True:
+        return None
+    quantity = cancelled_partial_quantity(
+        tuple(
+            ResultQuantity(
+                kind=row.egress_result_kind,
+                filled=row.filled_quantity,
+                remaining=row.remaining_quantity,
+            )
+            for row in matching
+        ),
+        terminal_kind=terminal.egress_result_kind,
+    )
+    # SAFETY: the receipts may have grown since the proof was issued (a late, unmatched fill) —
+    # only the quantity the recorded obligation names may size a CLOSE (#1160 review MEDIUM-1).
+    if quantity is None or quantity != terminal.partial_fill_obligation_quantity:
         return None
     return quantity
 
@@ -800,6 +898,13 @@ def _entry_proof(
         account=account,
         instrument=instrument,
     )
+    if quantity is None:
+        quantity = _final_cancelled_partial_quantity(
+            receipt_rows,
+            attempt_id=attempt_id,
+            account=account,
+            instrument=instrument,
+        )
     return None if quantity is None else (attempt_id, quantity, receipt_rows)
 
 

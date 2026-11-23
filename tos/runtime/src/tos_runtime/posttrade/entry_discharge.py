@@ -9,6 +9,10 @@ from tos.engine.records import EgressResultPayload, InstrumentKey
 from tos.engine.vocabulary import FILL_RESULT_KINDS
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.partial_fill import (
+    ResultQuantity,
+    cancelled_partial_quantity,
+)
 from tos_runtime.rcl.projection import (
     ReservationProjectionReader,
     ScopeReservation,
@@ -28,6 +32,7 @@ __all__ = [
     "entry_discharge_refusal",
     "entry_final_quantity",
     "entry_release_command_id",
+    "held_partial_fill_quantity",
     "other_outstanding",
     "recorded_final_quantity",
 ]
@@ -72,6 +77,51 @@ def broker_position_flat(report: ReconciliationReport, instrument: str) -> bool:
         symbol == instrument and quantity != 0
         for symbol, quantity in report.observed_positions
     )
+
+
+def _result_quantities(
+    evidence_store: SqliteEvidenceStore,
+    *,
+    account: str,
+    instrument: str,
+    attempt_id: str,
+) -> tuple[ResultQuantity, ...] | None:
+    """``attempt_id``'s own recorded result receipts in commit order, or ``None`` if unreadable."""
+    scope = WitnessScope(
+        account=account,
+        instrument_keys=(InstrumentKey(account=account, instrument=instrument),),
+        attempt_ids=(attempt_id,),
+    )
+    try:
+        receipts = SqliteEvidenceReceiptReader(evidence_store).receipts(scope)
+    except WitnessUnavailable:
+        return None
+    return tuple(
+        ResultQuantity(
+            kind=receipt.egress_result_kind,
+            filled=receipt.filled_quantity,
+            remaining=receipt.remaining_quantity,
+        )
+        for receipt in receipts
+        if receipt.attempt_id == attempt_id
+    )
+
+
+def held_partial_fill_quantity(
+    evidence_store: SqliteEvidenceStore,
+    *,
+    account: str,
+    instrument: str,
+    attempt_id: str,
+    terminal_kind: str,
+) -> Decimal | None:
+    """The position ``terminal_kind`` left behind when it cancelled a partial fill (#980)."""
+    results = _result_quantities(
+        evidence_store, account=account, instrument=instrument, attempt_id=attempt_id
+    )
+    if results is None:
+        return None
+    return cancelled_partial_quantity(results, terminal_kind=terminal_kind)
 
 
 def recorded_final_quantity(
