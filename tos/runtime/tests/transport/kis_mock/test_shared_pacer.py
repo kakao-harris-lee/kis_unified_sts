@@ -55,14 +55,36 @@ def test_the_second_process_waits_out_the_first_processs_slot(tmp_path: Path) ->
 def test_three_tenants_never_land_inside_one_interval(tmp_path: Path) -> None:
     """The failing input: three processes asking at the same instant."""
     clock, path = _Clock(), tmp_path / "stock-mock.pace"
-    grants: list[float] = []
-    for _ in range(3):
-        gate = _gate(path, clock)
-        gate.acquire(wait_budget_s=4.0)
-        grants.append(clock.now)
+    grants = _grant_burst(path, clock, count=3)
 
     gaps = [b - a for a, b in zip(grants, grants[1:])]
-    assert gaps == [pytest.approx(0.5), pytest.approx(0.5)]
+    assert gaps[0] == pytest.approx(0.5)
+    assert gaps[1] > 0.5
+
+
+def test_no_second_ever_holds_more_than_max_rps_requests(tmp_path: Path) -> None:
+    """#1155's failing input: a backlog of sends/reads spanning more than one second.
+
+    Spacing alone (1/max_rps) still lets three grants share one second at 2.0 rps —
+    t, t+0.5, t+1.0 — which is what KIS answered with EGW00201 on 2026-11-23.
+    """
+    clock, path = _Clock(), tmp_path / "stock-mock.pace"
+    cap = _gate(path, clock).window_grants
+    grants = _grant_burst(path, clock, count=12)
+
+    assert cap == 2
+    for index, start in enumerate(grants):
+        inside = [grant for grant in grants[index:] if grant - start <= 1.0]
+        assert len(inside) <= cap, f"{len(inside)} grants in second {start}: {inside}"
+
+
+def _grant_burst(path: Path, clock: _Clock, *, count: int) -> list[float]:
+    """``count`` processes all asking at once — one fresh gate each, as separate ones are."""
+    grants: list[float] = []
+    for _ in range(count):
+        _gate(path, clock).acquire(wait_budget_s=4.0)
+        grants.append(clock.now)
+    return grants
 
 
 def test_a_slot_further_away_than_the_budget_refuses(tmp_path: Path) -> None:

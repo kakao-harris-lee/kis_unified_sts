@@ -466,6 +466,52 @@ def test_5xx_maps_to_unknown_never_reject(server: FakeKisServer) -> None:
     assert record["status"] == 503
 
 
+def test_a_5xx_body_is_recorded_without_changing_the_kind(
+    server: FakeKisServer,
+) -> None:
+    """#1155: a 500 whose body is EGW00201 stays UNKNOWN, but says so in the evidence."""
+    attempt = _attempt("5xx-egw")
+    seal = build_seal(attempt_id=attempt.attempt_id)
+    server.set_response(
+        TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
+    )
+    server.set_response(
+        ORDER_PATH,
+        status=500,
+        body={
+            "rt_cd": "1",
+            "msg_cd": "EGW00201",
+            "msg1": "초당 거래건수를 초과하였습니다.",
+        },
+    )
+    transport, evidence, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}
+    )
+    result = _send(transport, attempt)
+    assert result.kind is EgressResultKind.UNKNOWN
+    (record,) = evidence.of_kind("TRANSPORT_SEND")
+    assert record["reason"] == "server_error"
+    assert record["msg_cd"] == "EGW00201"
+    assert record["msg1"] == "초당 거래건수를 초과하였습니다."
+
+
+def test_a_5xx_without_a_body_still_records_server_error(server: FakeKisServer) -> None:
+    attempt = _attempt("5xx-empty")
+    seal = build_seal(attempt_id=attempt.attempt_id)
+    server.set_response(
+        TOKEN_PATH, status=200, body={"access_token": "tok-1", "expires_in": 86400}
+    )
+    server.set_response(ORDER_PATH, status=500, body=None)
+    transport, evidence, _, _ = _build_transport(
+        server, seals={attempt.attempt_id: seal}
+    )
+    result = _send(transport, attempt)
+    assert result.kind is EgressResultKind.UNKNOWN
+    (record,) = evidence.of_kind("TRANSPORT_SEND")
+    assert record["reason"] == "server_error"
+    assert "msg_cd" not in record
+
+
 def test_connection_reset_maps_to_unknown(server: FakeKisServer) -> None:
     attempt = _attempt("reset-1")
     seal = build_seal(attempt_id=attempt.attempt_id)
