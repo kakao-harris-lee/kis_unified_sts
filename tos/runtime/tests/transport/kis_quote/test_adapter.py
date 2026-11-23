@@ -16,6 +16,9 @@ from tos_runtime.marketfeed.ports import (
 from tos_runtime.marketfeed.time_projection import _DELAY_BOUND_FIELDS
 from tos_runtime.time.config import load_time_config
 from tos_runtime.time.service import TrustworthyTimeService
+from tos_runtime.transport.kis_mock.client import KisMockHttpClient
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
+from tos_runtime.transport.kis_mock.pacer import KisPacing
 from tos_runtime.transport.kis_quote.adapter import (
     KIS_QUOTE_PACING_REFUSED_KIND,
     KisQuoteAdapterError,
@@ -105,11 +108,41 @@ def _intake(
     intake = KisQuoteObservationIntake(
         config=config,
         client=client,
-        custody=custody if custody is not None else _custody(),
+        credential_session=quote_credential_session(
+            config,
+            client,
+            custody if custody is not None else _custody(),
+            monotonic,
+            evidence,
+        ),
         monotonic=monotonic,
         evidence_sink=evidence,
     )
     return intake, monotonic, evidence
+
+
+def quote_credential_session(
+    config: KisQuoteTransportConfig,
+    client: KisMockHttpClient,
+    custody: InMemoryCredentialCustody,
+    monotonic: Any,
+    evidence: RecordingEvidenceSink,
+) -> KisCredentialSession:
+    """The app key's one session, as the compose root builds it — there is no other way in."""
+    return KisCredentialSession(
+        client=client,
+        custody=custody,
+        app_key_scope=APP_KEY_SCOPE,
+        app_secret_scope=APP_SECRET_SCOPE,
+        monotonic=monotonic,
+        token_path=config.token_path,
+        token_reissue_min_interval_s=config.token_reissue_min_interval_s,
+        evidence_sink=evidence,
+        pacing=KisPacing(
+            min_interval_ms=config.app_key_min_request_interval_ms,
+            wait_budget_ms=config.app_key_request_wait_budget_ms,
+        ),
+    )
 
 
 _ANCHOR_AS_OF_MS = 1_700_000_000_000
@@ -673,3 +706,27 @@ def test_a_first_poll_from_an_already_advanced_mark_does_not_lose_the_emission(
     (second,) = intake.poll(instrument=INSTRUMENT, after_as_of_ms=1_700_000_000_000)
 
     assert second.content_digest == first.content_digest
+
+
+def test_an_intake_cannot_be_built_from_custody_alone(server: FakeKisServer) -> None:
+    """#1161: the custody-only branch built a session with no SharedAppKeyGate."""
+    config = _config(server)
+    with pytest.raises(TypeError):
+        KisQuoteObservationIntake(  # type: ignore[call-arg]
+            config=config,
+            client=build_quote_client(config),
+            custody=_custody(),
+            monotonic=FakeMonotonicSource(),
+            evidence_sink=RecordingEvidenceSink(),
+        )
+
+
+def test_the_credential_session_is_not_optional(server: FakeKisServer) -> None:
+    config = _config(server)
+    with pytest.raises(TypeError):
+        KisQuoteObservationIntake(  # type: ignore[call-arg]
+            config=config,
+            client=build_quote_client(config),
+            monotonic=FakeMonotonicSource(),
+            evidence_sink=RecordingEvidenceSink(),
+        )

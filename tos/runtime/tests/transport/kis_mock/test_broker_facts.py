@@ -317,3 +317,64 @@ def test_each_malformed_config_is_refused(
 def test_an_absent_config_is_refused(tmp_path: Path) -> None:
     with pytest.raises(BrokerFactsConfigError, match="cannot be read"):
         load_broker_facts_config(tmp_path / "broker_facts.yaml")
+
+
+_RATE_LIMITED = {
+    "rt_cd": "1",
+    "msg_cd": "EGW00201",
+    "msg1": "초당 거래건수를 초과하였습니다.",
+}
+
+
+def test_a_refused_balance_records_the_brokers_own_fault_code() -> None:
+    """#1161: `balance_rt_cd_not_ok` alone cannot tell EGW00201 from any other refusal."""
+    client = _Client(VTTC8434R=[_RATE_LIMITED], FHKST01010100=[_quote("N")])
+    facts, _, sink = _facts(client)
+    facts.refresh()
+    row = sink.rows[0][1]
+    assert row["reason"] == "balance_rt_cd_not_ok"
+    assert row["balance_msg_cd"] == "EGW00201"
+    assert row["balance_msg1"] == "초당 거래건수를 초과하였습니다."
+    assert row["account_ok"] is False
+
+
+def test_a_refusal_the_broker_did_not_explain_records_only_the_reason() -> None:
+    client = _Client(VTTC8434R=[{"rt_cd": "1"}], FHKST01010100=[_quote("N")])
+    facts, _, sink = _facts(client)
+    facts.refresh()
+    row = sink.rows[0][1]
+    assert row["reason"] == "balance_rt_cd_not_ok"
+    assert "balance_msg_cd" not in row
+    assert "balance_msg1" not in row
+
+
+def test_an_accepted_balance_records_no_fault_fields() -> None:
+    client = _Client(VTTC8434R=[_OK_BALANCE], FHKST01010100=[_quote("N")])
+    facts, _, sink = _facts(client)
+    facts.refresh()
+    row = sink.rows[0][1]
+    assert row["reason"] == "ok"
+    assert "balance_msg_cd" not in row
+    assert "balance_msg1" not in row
+
+
+def test_a_long_fault_message_is_truncated_like_a_5xx_body_is() -> None:
+    """#1155 set the 200-char bound for transport faults; a refusal uses the same one."""
+    client = _Client(
+        VTTC8434R=[{"rt_cd": "1", "msg_cd": "E" * 500, "msg1": "x" * 500}],
+        FHKST01010100=[_quote("N")],
+    )
+    facts, _, sink = _facts(client)
+    facts.refresh()
+    row = sink.rows[0][1]
+    assert len(row["balance_msg_cd"]) == 200
+    assert len(row["balance_msg1"]) == 200
+
+
+def test_an_unreadable_account_number_records_no_fault_fields() -> None:
+    client = _Client(VTTC8434R=[], FHKST01010100=[_quote("N")])
+    facts, _, sink = _facts(client, account="not-a-kis-account")
+    facts.refresh()
+    row = sink.rows[0][1]
+    assert row["reason"] == "account_not_kis_8_2"
+    assert "balance_msg_cd" not in row

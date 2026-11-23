@@ -16,18 +16,18 @@ from tos.engine import (
 )
 from tos.ordering import OrderingEvent
 
-from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import (
     KisMockConnectionError,
     KisMockHttpClient,
     KisMockTimeoutError,
     RawResponse,
+    kis_fault_fields,
 )
 from tos_runtime.transport.kis_mock.codec import KisOrderWireCodec
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
-from tos_runtime.transport.kis_mock.pacer import KisPacing, KisPacingRefused
+from tos_runtime.transport.kis_mock.pacer import KisPacingRefused
 from tos_runtime.transport.kis_mock.token import TokenStale
 
 __all__ = [
@@ -40,19 +40,11 @@ __all__ = [
     "TokenStale",
 ]
 
-_FAULT_FIELDS = ("msg_cd", "msg1")
-_FAULT_MAX_CHARS = 200
-
 
 def _server_fault(response: RawResponse) -> dict[str, Any]:
     """KIS's own fault code/message from a 5xx body, when that body parsed (issue #1155)."""
     extra: dict[str, Any] = {"reason": "server_error"}
-    if response.json is None:
-        return extra
-    for field in _FAULT_FIELDS:
-        value = response.json.get(field)
-        if value is not None:
-            extra[field] = str(value)[:_FAULT_MAX_CHARS]
+    extra.update(kis_fault_fields(response.json))
     return extra
 
 
@@ -111,14 +103,12 @@ class KisMockTransport:
         monotonic: MonotonicSource,
         seal_lookup: SealLookup,
         evidence_sink: EvidenceRecorder,
-        custody: CredentialCustody | None = None,
-        app_key_scope: str | None = None,
-        app_secret_scope: str | None = None,
+        credential_session: KisCredentialSession,
         trading_date_now: Callable[[], str | None] | None = None,
         send_time_now: Callable[[], str | None] | None = None,
-        credential_session: KisCredentialSession | None = None,
     ) -> None:
         """Wire this transport's dependencies (all injected — no ambient state)."""
+        # SAFETY: 이 자리에 custody 로 개인 세션을 짓는 가지가 있으면 그 세션은 SharedAppKeyGate 를 갖지 않는다 — 배선 실수가 조용히 앱 키 한도를 비껴간다 (#1161)
         self._config = config
         self._client = client
         self._monotonic = monotonic
@@ -126,26 +116,6 @@ class KisMockTransport:
         self._evidence = evidence_sink
         self._trading_date_now = trading_date_now
         self._send_time_now = send_time_now
-        if credential_session is None:
-            if custody is None or app_key_scope is None or app_secret_scope is None:
-                raise KisMockAdapterError(
-                    "KisMockTransport: supply credential_session, or custody + app_key_scope "
-                    "+ app_secret_scope to build a private one"
-                )
-            credential_session = KisCredentialSession(
-                client=client,
-                custody=custody,
-                app_key_scope=app_key_scope,
-                app_secret_scope=app_secret_scope,
-                monotonic=monotonic,
-                token_path=config.token_path,
-                token_reissue_min_interval_s=config.token_reissue_min_interval_s,
-                evidence_sink=evidence_sink,
-                pacing=KisPacing(
-                    min_interval_ms=config.min_send_interval_ms,
-                    wait_budget_ms=config.app_key_request_wait_budget_ms,
-                ),
-            )
         self._credential_session = credential_session
 
     def send_once(

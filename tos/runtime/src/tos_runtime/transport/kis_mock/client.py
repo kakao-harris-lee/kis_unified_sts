@@ -13,13 +13,30 @@ from urllib.parse import urlsplit
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 
 __all__ = [
+    "KIS_FAULT_FIELDS",
+    "KIS_FAULT_MAX_CHARS",
     "KisMockClientError",
     "KisMockConnectionError",
     "KisMockHttpClient",
     "KisMockTimeoutError",
     "RawResponse",
     "build_client",
+    "kis_fault_fields",
 ]
+
+KIS_FAULT_FIELDS = ("msg_cd", "msg1")
+KIS_FAULT_MAX_CHARS = 200
+
+
+def kis_fault_fields(body: Any, *, prefix: str = "") -> dict[str, str]:
+    """KIS's own fault code/message from a parsed response body (issues #1155, #1161)."""
+    if not isinstance(body, dict):
+        return {}
+    return {
+        f"{prefix}{field}": str(body[field])[:KIS_FAULT_MAX_CHARS]
+        for field in KIS_FAULT_FIELDS
+        if body.get(field) is not None
+    }
 
 
 class KisMockClientError(Exception):

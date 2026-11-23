@@ -235,3 +235,53 @@ class TestTheInProcessPacerSpendsTheSameBudget:
         finally:
             done.set()
             holder.join(5.0)
+
+
+# ── the cross-implementation pin (issue #1161) ────────────────────────────
+#
+# SAFETY: 이 픽스처는 tools/tos_cp3/ops/shared_pace.py 와 공유하는 유일한 계약이다 — 방화벽 때문에 그쪽은 이 코드를 import 할 수 없으므로, 한쪽 형식만 바꾸면 여기와 tests/tools/test_cp3_ops_shared_pace.py 중 하나가 깨져야 한다 (#1166 리뷰 LOW 3)
+
+_GRANTS_FIXTURE = (
+    Path(__file__).resolve().parents[5]
+    / "tests/fixtures/kis_mock_shared_pace_grants.txt"
+)
+_FIXTURE_MAX_RPS = 2.0
+_FIXTURE_MARGIN_S = 0.25
+_FIXTURE_FIRST_GRANT = 1_700_000_000.0
+
+
+def _fixture_text() -> str:
+    return _GRANTS_FIXTURE.read_text(encoding="utf-8")
+
+
+def test_this_gate_writes_the_shared_grant_fixture_byte_for_byte(
+    tmp_path: Path,
+) -> None:
+    """Seeded with the fixture's first line, a grant at its second must reproduce it."""
+    expected = _fixture_text()
+    seed, second = expected.splitlines()
+    path = tmp_path / "stock-mock.pace"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(seed + "\n", encoding="utf-8")
+    clock = _Clock(start=float(second))
+
+    _gate(
+        path, clock, max_rps=_FIXTURE_MAX_RPS, window_margin_s=_FIXTURE_MARGIN_S
+    ).acquire(wait_budget_s=4.0)
+
+    assert clock.slept == []
+    assert path.read_text(encoding="utf-8") == expected
+
+
+def test_this_gate_reads_the_shared_grant_fixture(tmp_path: Path) -> None:
+    """The fixture's two grants make the next slot 0.25 s away at +1.0 s."""
+    path = tmp_path / "stock-mock.pace"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_fixture_text(), encoding="utf-8")
+    clock = _Clock(start=_FIXTURE_FIRST_GRANT + 1.0)
+
+    _gate(
+        path, clock, max_rps=_FIXTURE_MAX_RPS, window_margin_s=_FIXTURE_MARGIN_S
+    ).acquire(wait_budget_s=4.0)
+
+    assert clock.slept == [pytest.approx(0.25)]

@@ -199,10 +199,11 @@ done
 rc=0
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$REPO "$PY" -P \
   -m tools.tos_cp3.ops.mock_flat_check "$SYM" \
-  --expect-account-fingerprint "$EXPECT_FP" --env-file "$ENV_MOCK" || rc=$?
+  --expect-account-fingerprint "$EXPECT_FP" --env-file "$ENV_MOCK" \
+  --transport-yaml "$TRANSPORT_CONFIG" || rc=$?
 [ "$rc" = 0 ] ||
   die 2 "평탄하지 않거나(보유 · 미체결 주문) 읽지 못했다 (mock_flat_check rc=$rc) — 잎을 그대로 두고 재시작하지 않았다.
-보유가 있으면 먼저: PYTHONPATH=$REPO $PY -P -m tools.tos_cp3.ops.mock_flatten $SYM --expect-account-fingerprint <지문> --env-file $ENV_MOCK
+보유가 있으면 먼저: PYTHONPATH=$REPO $PY -P -m tools.tos_cp3.ops.mock_flatten $SYM --expect-account-fingerprint <지문> --env-file $ENV_MOCK --transport-yaml $TRANSPORT_CONFIG
 미체결 주문이 남아 있으면 모의투자 HTS 에서 취소한다 — 런타임에 취소가 없다(#948)"
 
 # ── 4. 잎 보관 (옮긴다 · 지우지 않는다) ───────────────────────────────────

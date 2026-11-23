@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
+from tools.tos_cp3.ops.shared_pace import (
+    TRANSPORT_YAML_ENV,
+    SharedPaceUnavailable,
+    attach_shared_pace,
+)
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tools.broker_probes.common import ProbeCredentials
     from tools.broker_probes.probes_order import MockTradingClient
@@ -81,7 +87,8 @@ def broker_transport_errors() -> tuple[type[BaseException], ...]:
 
     from tools.broker_probes.common import ProbeError
 
-    return (requests.RequestException, ProbeError)
+    # SAFETY: 공유 창을 못 얻은 것도 «답을 못 받았다» 다 — 빠지면 역추적이 그대로 튀어나가고 «평탄» 과 구분되지 않는 종료가 된다 (#1161)
+    return (requests.RequestException, ProbeError, SharedPaceUnavailable)
 
 
 def six_digit_symbol(value: str) -> str:
@@ -129,6 +136,18 @@ def build_parser(prog: str, description: str) -> argparse.ArgumentParser:
         default=DEFAULT_PACE_S,
         help=f"floor between this tool's own calls (default {DEFAULT_PACE_S})",
     )
+    parser.add_argument(
+        "--transport-yaml",
+        default=None,
+        metavar="PATH",
+        help=(
+            "the tenant's kis_mock_transport.yaml. Its shared_pacer_path is the "
+            "file the running tenant sessions pace this app key through, so this "
+            "tool takes its slots from the same queue. Without it (and without "
+            f"${TRANSPORT_YAML_ENV}) an intraday run spends the app key's rate "
+            "limit alongside them."
+        ),
+    )
     return parser
 
 
@@ -173,6 +192,7 @@ def build_client(
     title: str,
     token_cache_dir: str | None = None,
     pace_s: float = DEFAULT_PACE_S,
+    transport_yaml: str | None = None,
 ) -> tuple[MockTradingClient, ProbeCredentials]:
     """Every guard, then a mock-only client. Raises :class:`OpsRefusal` otherwise."""
     from shared.kis.auth import KISAuthManager
@@ -207,7 +227,14 @@ def build_client(
         build_auth_config(creds, probe_token_cache_dir(token_cache_dir)),
         use_singleton=False,
     )
-    return _Client(creds, auth, run, pace_s=pace_s), creds
+    client = _Client(creds, auth, run, pace_s=pace_s)
+    # SAFETY: 이 app key 는 장중 tenant 세션 셋과 같은 것이다 — 공유 창을 거치지 않으면 이 도구의 조회가 그들의 초당 한도를 먹고 EGW00201 을 만든다 (#1161)
+    try:
+        attach_shared_pace(client, transport_yaml)
+    except SharedPaceUnavailable as exc:
+        client.close()
+        raise OpsRefusal(str(exc)) from exc
+    return client, creds
 
 
 def header_value(headers: Mapping[str, str], name: str) -> str:
@@ -390,6 +417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             title="stock MOCK flat check",
             token_cache_dir=args.token_cache_dir,
             pace_s=args.pace_s,
+            transport_yaml=args.transport_yaml,
         )
     except OpsRefusal as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
