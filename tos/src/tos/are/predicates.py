@@ -35,6 +35,7 @@ __all__ = [
     "valuation_conservative",
     "numerical_safety",
     "risk_decision",
+    "snapshot_usage_within_limit",
     "envelope_bound_not_enlarged",
     "benefit_admissible",
     "numerical_determinism",
@@ -334,6 +335,33 @@ def envelope_bound_not_enlarged(
     return True
 
 
+def snapshot_usage_within_limit(
+    snapshot: AggregateRiskStateSnapshot | None,
+    *,
+    effective_limit: CapacityVector | None,
+) -> bool | None:
+    """Whether the snapshot's own committed usage already fits the effective limit (§5.6 / §9)."""
+    if snapshot is None or effective_limit is None:
+        return None
+    usage_vector = snapshot.conservative_current_usage
+    for component in effective_limit.components:
+        dimension = component.dimension_id
+        # SAFETY: this judges the limit's own dimensions; a usage dimension the decision
+        # declares no limit for is an ungoverned effect dimension, which the policies'
+        # authoring check must refuse — do not read this skip as that check existing.
+        if dimension is None or not usage_vector.declares(dimension):
+            continue
+        usage = usage_vector.magnitude(dimension)
+        limit = component.magnitude
+        # SAFETY: an UNKNOWN usage or an UNKNOWN limit is not headroom — reading either as
+        # zero here would GRANT a scope whose consumption nobody can state.
+        if usage is None or limit is None:
+            return None
+        if usage > limit:
+            return False
+    return True
+
+
 def _decide_result(
     *,
     projection: AdverseIncrementResult,
@@ -343,6 +371,7 @@ def _decide_result(
     numerically_safe: RiskDecisionResult | bool | None,
     valuation_ok: bool | None,
     envelope_not_enlarged: bool,
+    snapshot_usage_within: bool | None,
 ) -> RiskDecisionResult:
     """The pure GRANT/DENY/UNKNOWN verdict (§5.6 / ARE-INV-006); restrictive-by-default."""
     if projection.result is RiskDecisionResult.UNKNOWN:
@@ -354,6 +383,14 @@ def _decide_result(
     if not applicable_risk_scopes:
         return RiskDecisionResult.DENY
     if not envelope_not_enlarged:
+        return RiskDecisionResult.DENY
+    # SAFETY: the snapshot's committed usage is the second, RCL-derived witness of what is
+    # already consumed; leaving it out of this verdict is what made it evidence-only (#984 ①).
+    # SAFETY: both arms sit BELOW the two DENYs above — an unreadable usage must not soften an
+    # already-earned DENY into UNKNOWN, which reads as "retry once it is readable".
+    if snapshot_usage_within is None:
+        return RiskDecisionResult.UNKNOWN
+    if snapshot_usage_within is False:
         return RiskDecisionResult.DENY
     if projection.result is RiskDecisionResult.DENY:
         return RiskDecisionResult.DENY
@@ -379,6 +416,9 @@ def risk_decision(
     effect_digest: str | None = None,
 ) -> AggregateRiskDecision:
     """Decide GRANT / DENY / UNKNOWN and issue the forward-only decision (§5.6 / §15 / §16)."""
+    decision_effective_limit = (
+        effective_limit if effective_limit is not None else CapacityVector()
+    )
     result = _decide_result(
         projection=projection,
         snapshot=snapshot,
@@ -387,6 +427,9 @@ def risk_decision(
         numerically_safe=numerically_safe,
         valuation_ok=valuation_ok,
         envelope_not_enlarged=envelope_not_enlarged,
+        snapshot_usage_within=snapshot_usage_within_limit(
+            snapshot, effective_limit=decision_effective_limit
+        ),
     )
     decision = AggregateRiskDecision.issue(
         scheme=scheme,
@@ -402,9 +445,7 @@ def risk_decision(
         applicable_risk_scopes=applicable_risk_scopes,
         grant_identity=grant_identity,
         adverse_increment=projection.increment,
-        effective_limit=(
-            effective_limit if effective_limit is not None else CapacityVector()
-        ),
+        effective_limit=decision_effective_limit,
     )
     assert isinstance(decision, AggregateRiskDecision)
     return decision

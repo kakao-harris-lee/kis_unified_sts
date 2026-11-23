@@ -440,6 +440,33 @@ def test_step9_is_unknown_and_commits_nothing_without_a_step5_envelope(
     assert entry_count == 0
 
 
+def test_step9_is_unknown_on_an_unknown_magnitude_step5_envelope(
+    log: SqliteCommitLog,
+    writer_epoch: int,
+    instrument_key: InstrumentKey,
+    afg_governor: ActionFlowGovernor,
+) -> None:
+    """#984 (4): the old guard read only ``None``/empty, so an UNKNOWN magnitude committed."""
+    permit = build_committed_permit(afg_governor)
+    unknown_envelope = CapacityVector(
+        components=(
+            CapacityComponent(dimension_id="notional", magnitude=Decimal("250")),
+            CapacityComponent(dimension_id="delta", magnitude=None),
+        )
+    )
+    stage = _commit_stage(
+        log,
+        writer_epoch,
+        permit,
+        effect_envelope_reader=lambda: unknown_envelope,
+    )
+    verdict = stage(_request(CommitmentStep.ATOMIC_COMMIT, instrument_key))
+    assert verdict.outcome is StageOutcome.UNKNOWN
+    assert "UNKNOWN-magnitude" in (verdict.reason or "")
+    (entry_count,) = log._conn.execute("SELECT COUNT(*) FROM entries").fetchone()
+    assert entry_count == 0
+
+
 def test_step9_commits_via_exactly_one_commit_entry_call(
     log: SqliteCommitLog,
     writer_epoch: int,
