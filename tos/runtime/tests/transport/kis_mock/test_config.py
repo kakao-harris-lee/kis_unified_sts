@@ -9,6 +9,7 @@ import pytest
 import yaml
 from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
 from tos_runtime.transport.kis_mock.config import (
+    DEFAULT_SHARED_WINDOW_MARGIN_S,
     KisMockTransportConfigError,
     load_kis_mock_transport_config,
 )
@@ -540,6 +541,32 @@ def test_a_shared_pacer_path_and_rate_load(tmp_path: Path) -> None:
     config = _load(_write(tmp_path, raw))
     assert config.shared_pacer_path == "/var/lib/tos/kis-mock-token/stock-mock.pace"
     assert config.shared_max_rps == 2.0
+
+
+def test_an_absent_window_margin_takes_the_default(tmp_path: Path) -> None:
+    """#1155: the live tenants' rendered YAML predates the key — boot must not need an edit."""
+    config = _load(_write(tmp_path, _valid_raw()))
+    assert config.shared_window_margin_s == DEFAULT_SHARED_WINDOW_MARGIN_S
+    assert DEFAULT_SHARED_WINDOW_MARGIN_S == 0.25
+
+
+def test_a_declared_window_margin_loads(tmp_path: Path) -> None:
+    raw = _valid_raw()
+    raw["shared_window_margin_s"] = 0.4
+    assert _load(_write(tmp_path, raw)).shared_window_margin_s == 0.4
+
+
+def test_a_zero_window_margin_loads(tmp_path: Path) -> None:
+    raw = _valid_raw()
+    raw["shared_window_margin_s"] = 0
+    assert _load(_write(tmp_path, raw)).shared_window_margin_s == 0
+
+
+def test_a_negative_window_margin_refuses(tmp_path: Path) -> None:
+    raw = _valid_raw()
+    raw["shared_window_margin_s"] = -0.1
+    with pytest.raises(KisMockTransportConfigError, match="zero or positive"):
+        _load(_write(tmp_path, raw))
 
 
 def test_a_relative_shared_pacer_path_refuses(tmp_path: Path) -> None:

@@ -150,6 +150,8 @@ shared_pacer_path: "$SHARED_PACER"
 # tenant 셋의 평균 합산(3 × 0.5 = 1.5 rps)은 그 아래로 그대로 들어간다. 바꾸는 것은
 # 간격이 아니라 **동시성**이다 — 어떤 두 요청도 0.5s 안에 붙지 않는다.
 shared_max_rps: 2.0
+# SAFETY: 허가 시각은 요청이 나가기 전에 찍히고 KIS 는 도착을 센다 — TLS 지터(cold 120ms vs warm 20ms)가 이 여유보다 크면 1초에 세 건이 도착한다 (#1155)
+shared_window_margin_s: 0.25
 request_timeout_s: 10
 allow_plaintext_for_tests: false
 YAML

@@ -156,4 +156,5 @@ def test_every_tenant_is_pointed_at_one_shared_token_cache(
         assert "token_cache_refresh_margin_s: 600" in text
         assert f'shared_pacer_path: "{pacer}"' in text
         assert "shared_max_rps: 2.0" in text
+        assert "shared_window_margin_s: 0.25" in text
         assert "token_reissue_min_interval_s: 65" in text

@@ -40,6 +40,21 @@ __all__ = [
     "TokenStale",
 ]
 
+_FAULT_FIELDS = ("msg_cd", "msg1")
+_FAULT_MAX_CHARS = 200
+
+
+def _server_fault(response: RawResponse) -> dict[str, Any]:
+    """KIS's own fault code/message from a 5xx body, when that body parsed (issue #1155)."""
+    extra: dict[str, Any] = {"reason": "server_error"}
+    if response.json is None:
+        return extra
+    for field in _FAULT_FIELDS:
+        value = response.json.get(field)
+        if value is not None:
+            extra[field] = str(value)[:_FAULT_MAX_CHARS]
+    return extra
+
 
 @dataclass(frozen=True)
 class SendStamp:
@@ -315,7 +330,8 @@ class KisMockTransport:
     ) -> tuple[EgressResultKind, str | None, dict[str, Any]]:
         """Map one KIS HTTP response to ``(kind, broker_execution_id, evidence_extra)``."""
         if response.status >= 500:
-            return EgressResultKind.UNKNOWN, None, {"reason": "server_error"}
+            # SAFETY: 500 은 본문이 EGW00201(한도)이어도 UNKNOWN 이다 — 접수 여부를 모르므로 재조회가 판정한다; REJECT 로 바꾸면 접수된 주문을 미접수로 적는다
+            return EgressResultKind.UNKNOWN, None, _server_fault(response)
         if response.json is None:
             return EgressResultKind.UNKNOWN, None, {"reason": "malformed_json"}
         if "rt_cd" not in response.json:
