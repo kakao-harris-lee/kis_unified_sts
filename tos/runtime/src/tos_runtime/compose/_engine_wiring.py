@@ -236,6 +236,7 @@ def verify_replay_or_halt(
     ledger = _require_pristine_ledger(
         live_core, instrument_key, evidence_store, emergency_log
     )
+    replay_cores: list[EngineCore] = []
 
     def _replay_core_factory() -> EventCorrelatingCore:
         recorded_stage = RecordedStage(evidence_store)
@@ -253,6 +254,7 @@ def verify_replay_or_halt(
             sink=NullEvidenceSink(),
             scheme=scheme,
         )
+        replay_cores.append(core)
         return EventCorrelatingCore(
             core=core, recorded_stage=recorded_stage, scheme=scheme
         )
@@ -266,6 +268,9 @@ def verify_replay_or_halt(
         window_events=window_events,
         rcl_committed=rcl_committed,
     )
+    if replay_cores:
+        # SAFETY: without this hand-off the restarted live core starts with no ordering coordinate — an out-of-order event is then admitted MONOTONE live and reached REVERSED by the next boot's replay, a permanent EngineReplayDiverged on a persistent leaf (#992)
+        live_core.adopt_ordering_reference(replay_cores[-1].last_reference)
     evidence_store.append(
         {
             "total_compared": verdict.total_compared,

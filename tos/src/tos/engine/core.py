@@ -196,6 +196,22 @@ class EngineCore:
         """The provisional, non-authoritative reservation projection."""
         return self._ledger
 
+    @property
+    def last_reference(self) -> OrderingEvent | None:
+        """The last consumed event's causal-ordering coordinate (design #31 §2.1(ii))."""
+        return self._last_reference
+
+    def adopt_ordering_reference(self, reference: OrderingEvent | None) -> None:
+        """Seat this core's ordering coordinate from a boot replay of the same stream (#992)."""
+        if self._last_reference is not None:
+            # SAFETY: re-seating a core that has already consumed rewinds its ordering coordinate — a later out-of-order event is then MONOTONE live but REVERSED on the next boot's replay, which halts that leaf for good (#992)
+            raise ArtifactIntegrityError(
+                "EngineCore.adopt_ordering_reference refused: this core has already consumed an "
+                f"event (last_reference={self._last_reference!r}) — the boot replay's coordinate "
+                "is seated once, onto a core that has consumed nothing (design #31 §2.1(ii))"
+            )
+        self._last_reference = reference
+
     def run(self, events: Iterable[EngineEvent]) -> tuple[EventResult, ...]:
         """Process events one at a time, each to completion, in the given order."""
         return tuple(self.handle(event) for event in events)
