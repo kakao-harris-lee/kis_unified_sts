@@ -44,6 +44,16 @@ from tools.broker_probes.probes_order import (
 )
 from tools.broker_probes.registry import get
 
+# The ONE reading of «does this row still have quantity that can fill». It lives in
+# mock_flat_check because that is the tool the operator runs to declare the account flat;
+# importing it here keeps this probe from growing a second, looser interpretation of
+# cncl_yn (#1158 리뷰 · #948). That module's own imports are stdlib-only, so this does not
+# pull the ops stack into the probe.
+from tools.tos_cp3.ops.mock_flat_check import (
+    cancel_confirmed_qty,
+    row_has_working_quantity,
+)
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_CONFIG_PATH = (
@@ -696,10 +706,19 @@ def read_holding(client: MockTradingClient, symbol: str, cfg: Config) -> dict[st
 
 
 def _row_is_live(row: dict[str, Any]) -> bool:
-    """A row that still has quantity working on the book."""
+    """A row that still has quantity working on the book — ``mock_flat_check``'s ONE reading."""
+    return row_has_working_quantity(row)
+
+
+def _confirmation_basis(row: dict[str, Any]) -> str:
+    """Which of the two rules closed this row, for the artifact."""
     remaining = _ccld_int(row, "rmn_qty")
-    cancelled = str(row.get("cncl_yn", "")).strip().upper() == "Y"
-    return remaining is not None and remaining > 0 and not cancelled
+    if remaining is not None and remaining > 0:
+        return (
+            f"취소확인수량 cncl_cfrm_qty={cancel_confirmed_qty(row)} covers "
+            f"rmn_qty={remaining}"
+        )
+    return f"no working remainder (rmn_qty={remaining!r})"
 
 
 def read_order_rows(
@@ -820,6 +839,20 @@ def assert_flat_start(
     return record
 
 
+def _cancel_row_summary(row: dict[str, Any]) -> dict[str, Any]:
+    """The fields #948 순서 1 asks for, named, for a row a cancel may have produced."""
+    return {
+        "odno": row.get("odno"),
+        "orgn_odno": row.get("orgn_odno"),
+        "ord_qty": _ccld_int(row, "ord_qty"),
+        "tot_ccld_qty": _ccld_int(row, "tot_ccld_qty"),
+        "rmn_qty": _ccld_int(row, "rmn_qty"),
+        "cncl_yn": row.get("cncl_yn"),
+        "cancel_confirmed_qty": cancel_confirmed_qty(row),
+        "still_working": row_has_working_quantity(row),
+    }
+
+
 def _row_view(row: dict[str, Any]) -> dict[str, Any]:
     """One query row, verbatim, plus the two identifier encodings."""
     return {
@@ -874,6 +907,13 @@ def _snapshot(
         "original_tot_ccld_qty": _ccld_int(
             (original or {}).get("raw", {}), "tot_ccld_qty"
         ),
+        "original_cancel_confirmed_qty": (
+            None if original is None else cancel_confirmed_qty(original["raw"])
+        ),
+        "original_still_working": (
+            None if original is None else row_has_working_quantity(original["raw"])
+        ),
+        "derived_row_summaries": [_cancel_row_summary(d["raw"]) for d in derived],
     }
     if "evidence" in read:
         snapshot["evidence"] = read["evidence"]
@@ -951,14 +991,12 @@ def classify_cancel_confirmed(
         if not row:
             continue
         rows_seen += 1
-        cancelled = str(row.get("cncl_yn", "")).strip().upper() == "Y"
-        remaining = _ccld_int(row, "rmn_qty")
-        if cancelled or remaining == 0:
+        if not row_has_working_quantity(row):
             return {
                 "confirmed": True,
                 "original_odno_key": original_key,
                 "at_t_offset_ms": snapshot["t_offset_ms"],
-                "basis": "cncl_yn=Y" if cancelled else "rmn_qty=0",
+                "basis": _confirmation_basis(row),
                 "row": row,
             }
     if not answered:
@@ -970,7 +1008,11 @@ def classify_cancel_confirmed(
             "it either way, which makes this an unanswered question"
         )
     else:
-        reason = "the original row kept a working remainder (rmn_qty > 0, cncl_yn != Y)"
+        reason = (
+            "the original row kept a working remainder — rmn_qty > 0 that no 취소확인수량 "
+            "(cncl_cfrm_qty) covers. cncl_yn=Y alone does NOT close it: the cancel is "
+            "ACCEPTED, not the remainder withdrawn, and the row can still fill (#1158 리뷰)"
+        )
     return {
         "confirmed": False,
         "original_odno_key": original_key,

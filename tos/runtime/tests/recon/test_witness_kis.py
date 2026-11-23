@@ -15,6 +15,7 @@ from tos_runtime.posttrade.broker_clock_skew import (
 from tos_runtime.recon import witness_kis
 from tos_runtime.recon.ports import WitnessOrderState, WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import (
+    KisOrderRow,
     KisStockBrokerWitness,
     KisWitnessCredentialSession,
     KstDateSource,
@@ -910,3 +911,68 @@ def test_a_sink_that_raises_does_not_break_the_read(server: FakeKisGetServer) ->
     snapshot = witness.observe(WitnessScope(account=ACCOUNT))
 
     assert len(snapshot.positions) == 25
+
+
+def _wire_row(**overrides: str) -> dict[str, str]:
+    """One ``VTTC0081R`` ``output1`` row in the measured field names (2026-11-23, #948)."""
+    row = {
+        "ord_dt": "20261123",
+        "odno": "0000004470",
+        "orgn_odno": "0000000000",
+        "pdno": "005930",
+        "ord_qty": "3",
+        "tot_ccld_qty": "0",
+        "rmn_qty": "3",
+        "rjct_qty": "0",
+        "cncl_yn": "N",
+    }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.parametrize("spelling", ["cncl_cfrm_qty", "cnc_cfrm_qty"])
+def test_the_cancel_confirmed_quantity_is_read_under_either_wire_spelling(
+    spelling: str,
+) -> None:
+    parsed = KisOrderRow.from_wire(_wire_row(cncl_yn="Y", **{spelling: "3"}))
+    assert parsed.cancel_confirmed_qty == Decimal("3")
+    assert parsed.cancel_withdrew_remainder is True
+
+
+@pytest.mark.parametrize(
+    "row,withdrew",
+    [
+        (_wire_row(cncl_yn="Y", rmn_qty="0"), True),
+        (_wire_row(cncl_yn="Y", cncl_cfrm_qty="3"), True),
+        (_wire_row(cncl_yn="Y", cncl_cfrm_qty="4"), True),
+        (_wire_row(cncl_yn="Y"), False),
+        (_wire_row(cncl_yn="Y", cncl_cfrm_qty="2"), False),
+        (_wire_row(cncl_yn="Y", cncl_cfrm_qty=""), False),
+        (_wire_row(cncl_yn="Y", rmn_qty="x"), False),
+        (_wire_row(rmn_qty="0"), False),
+    ],
+)
+def test_cncl_yn_alone_never_closes_a_row_that_still_has_a_remainder(
+    row: dict[str, str], withdrew: bool
+) -> None:
+    """``mock_flat_check.row_has_working_quantity``'s rule, read off the typed row."""
+    assert KisOrderRow.from_wire(row).cancel_withdrew_remainder is withdrew
+
+
+@pytest.mark.parametrize(
+    "row,remaining",
+    [
+        (_wire_row(cncl_yn="Y", rmn_qty="0"), Decimal("0")),
+        (_wire_row(cncl_yn="Y", cncl_cfrm_qty="3"), Decimal("0")),
+        (_wire_row(cncl_yn="Y", cncl_cfrm_qty="1"), Decimal("3")),
+        (_wire_row(cncl_yn="Y"), Decimal("3")),
+    ],
+)
+def test_a_withdrawn_remainder_is_reported_as_zero_executable_quantity(
+    row: dict[str, str], remaining: Decimal
+) -> None:
+    order = KisStockBrokerWitness._order_from_row(  # noqa: SLF001
+        KisOrderRow.from_wire(row)
+    )
+    assert order.state is WitnessOrderState.CANCELLED
+    assert order.remaining == remaining

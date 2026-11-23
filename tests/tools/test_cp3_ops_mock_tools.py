@@ -417,6 +417,47 @@ def test_quantities_that_do_not_add_up_are_open(row: dict[str, Any]) -> None:
     assert flat.row_is_open(row, _SYMBOL) is True
 
 
+@pytest.mark.parametrize(
+    "row",
+    [
+        {
+            "pdno": _SYMBOL,
+            "ord_qty": "1",
+            "tot_ccld_qty": "0",
+            "rmn_qty": "0",
+            "cncl_yn": "Y",
+        },
+        {"pdno": _SYMBOL, "ord_qty": "2", "tot_ccld_qty": "1", "rmn_qty": "0"},
+        {
+            "pdno": _SYMBOL,
+            "ord_qty": "1",
+            "tot_ccld_qty": "0",
+            "rmn_qty": "0",
+            "orgn_odno": "0000004470",
+            "cncl_yn": "N",
+        },
+    ],
+    ids=["cancelled-to-zero", "original-left-at-zero", "derived-cancel-row"],
+)
+def test_a_stated_zero_remainder_closes_the_row_whatever_the_sum_says(
+    row: dict[str, Any],
+) -> None:
+    """#948: a cancel takes quantity OFF the row, so ``ord_qty != filled + rmn_qty`` is the
+
+    NORMAL shape of a cancelled order — and under the separate-row shape the withdrawal is
+    not even on this row. Reading that gap as «unreadable» held every cancelled order's
+    symbol at rc 3 for the rest of the day and blocked the restart this gates.
+    """
+    assert flat.row_is_open(row, _SYMBOL) is False
+
+
+def test_the_working_quantity_rule_is_shared_without_the_symbol_filter() -> None:
+    """The P-SC probe reads rows it already fetched per symbol, so it asks this half."""
+    row = {"pdno": "000660", "ord_qty": "1", "tot_ccld_qty": "0", "rmn_qty": "1"}
+    assert flat.row_is_open(row, _SYMBOL) is False
+    assert flat.row_has_working_quantity(row) is True
+
+
 def test_an_accepted_cancel_that_left_a_remainder_is_still_open() -> None:
     """#1135 item 1: ord 1 / filled 0 / rmn 1 / cncl_yn=Y can still fill."""
     row = {

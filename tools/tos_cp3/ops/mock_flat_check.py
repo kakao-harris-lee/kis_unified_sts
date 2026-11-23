@@ -356,18 +356,33 @@ def row_is_open(row: dict[str, Any], symbol: str) -> bool:
     code = str(row.get("pdno") or "").strip()
     if code and code != symbol:
         return False
+    return row_has_working_quantity(row)
+
+
+def row_has_working_quantity(row: dict[str, Any]) -> bool:
+    """Does this 주문체결 row still have quantity that can fill? The ONE reading of that
+
+    question for every tool on this account — ``mock_flatten``, ``mock_flat_check`` and the
+    P-SC cancel probe — so a cancel cannot be «closed» by one and «live» by another (#948).
+    """
     ordered = int_or_none(row.get("ord_qty"))
     filled = int_or_none(row.get("tot_ccld_qty"))
     remaining = int_or_none(row.get("rmn_qty"))
+    cancelled = str(row.get("cncl_yn") or "").strip().upper() == "Y"
     if remaining is None and ordered is not None and filled is not None:
         remaining = ordered - filled
     if remaining is None or remaining < 0:
-        return True
-    if ordered is not None and filled is not None and filled + remaining != ordered:
+        # SAFETY: a 잔량 this row does not state, or states as negative, is NOT zero —
+        # reading it as closed archives a leaf over an order that can still fill.
         return True
     if remaining == 0:
+        # SAFETY: ``filled + remaining != ordered`` is NOT read as an unreadable row.
+        # A cancel legitimately takes quantity off the row — ordered = filled +
+        # withdrawn + remaining — and under the separate-row shape the withdrawal is
+        # not even on this row, so that sum reports every cancelled order as working
+        # for ever and blocks the tenant restart this gates (#948).
         return False
-    if str(row.get("cncl_yn") or "").strip().upper() == "Y":
+    if cancelled:
         # SAFETY: cncl_yn=Y is the cancel ACCEPTED, not the remainder withdrawn — a
         # row with quantity left can still fill, so only 취소확인수량 closes it.
         confirmed = cancel_confirmed_qty(row)

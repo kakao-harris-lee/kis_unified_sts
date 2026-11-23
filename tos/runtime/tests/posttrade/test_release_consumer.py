@@ -252,6 +252,26 @@ class _IndependentCancelledWitness:
         )
 
 
+class _WorkingCancelledWitness:
+    """An independent witness whose cancelled order still has quantity outstanding."""
+
+    def observe(self, _scope: WitnessScope) -> WitnessSnapshot:
+        return WitnessSnapshot(
+            observed_at_generation=1,
+            orders=(
+                WitnessOrder(
+                    attempt_id=_ATTEMPT_ID,
+                    broker_execution_id="exec-relc-2",
+                    quantity=Decimal("0"),
+                    remaining=Decimal("4"),
+                    state=WitnessOrderState.CANCELLED,
+                ),
+            ),
+            provenance="independent-broker-double",
+            independent_of_evidence_store=True,
+        )
+
+
 def _consumer(
     rig: Rig,
     *,
@@ -604,10 +624,16 @@ def test_cancel_ack_releases_when_reconciliation_permits_it(
     assert outcome.proof_digest is not None
 
 
-def test_cancel_ack_never_releases_under_the_current_reconciliation_model(
+def test_cancel_ack_releases_on_the_undoctored_reconciliation_path(
     rig: Rig,
 ) -> None:
-    """The honest, undoctored path (module docstring): a fresh ``CANCEL_ACK``, a fully"""
+    """The honest, undoctored path (#948, was «never releases»): a fresh ``CANCEL_ACK``, a
+
+    fully independent witness reporting the cancelled order at zero filled and zero
+    outstanding, and no final-quantity-proof artifact — the kernel forbids a magnitude on a
+    non-execution payload, so none can exist before this gate. The receipt's own KIND carries
+    the zero both capacity-releasing fields need, and the release goes through.
+    """
     payload = _payload(EgressResultKind.CANCEL_ACK)
     _record_non_execution_receipt(
         rig.evidence_store, kind="CANCEL_ACK", finality_proof_recorded=False
@@ -618,14 +644,31 @@ def test_cancel_ack_never_releases_under_the_current_reconciliation_model(
         rig,
         witness=_IndependentCancelledWitness(),
     )
-    consumer.consume(payload)
+    outcome = consumer.consume(payload)
 
+    assert outcome.released is True
+    assert _reservation_state(rig.rcl_log) is CapacityState.RELEASED
+    assert _held_rows(rig.evidence_store) == []
+    assert _count_kind(rig.evidence_store, "POSTTRADE_FINALITY_PROOF") == 1
+
+
+def test_a_cancel_whose_witness_still_shows_a_remainder_holds(rig: Rig) -> None:
+    """The same receipt against a witness that still reports outstanding quantity: the two"""
+    payload = _payload(EgressResultKind.CANCEL_ACK)
+    _record_non_execution_receipt(
+        rig.evidence_store, kind="CANCEL_ACK", finality_proof_recorded=False
+    )
+    _open_reservation(rig.rcl_log)
+
+    consumer = _consumer(rig, witness=_WorkingCancelledWitness())
+    outcome = consumer.consume(payload)
+
+    assert outcome.released is False
     assert _reservation_state(rig.rcl_log) is CapacityState.POTENTIALLY_LIVE
     held = _held_rows(rig.evidence_store)
     assert len(held) == 1
     assert held[0]["reason"] == ReleaseHoldReason.NOT_CORROBORATED.value
-    proof_rows = _count_kind(rig.evidence_store, "POSTTRADE_FINALITY_PROOF")
-    assert proof_rows == 0
+    assert _count_kind(rig.evidence_store, "POSTTRADE_FINALITY_PROOF") == 0
 
 
 @pytest.mark.parametrize(

@@ -84,7 +84,7 @@ FILL_OBSERVER_CANCEL_UNSUPPORTED_KIND = "FILL_OBSERVER_CANCEL_UNSUPPORTED"
 FILL_OBSERVER_RELEASE_SNAPSHOT_KIND = "FILL_OBSERVER_RELEASE_SNAPSHOT"
 
 _CANCEL_REASONS = frozenset(
-    {"cancelled_unfilled", "cancelled_after_fill", "derived_order_row"}
+    {"cancel_remainder_working", "cancelled_after_fill", "derived_order_row"}
 )
 
 _PERMANENT_HOLD_REASONS = frozenset(
@@ -827,17 +827,26 @@ class KisMockFillObserver:
     def _cancel_reason(
         self, mine: list[KisOrderRow], derived: list[KisOrderRow]
     ) -> str | None:
-        """Which ``_CANCEL_REASONS`` member the attributed rows show, or ``None``. Only rows"""
+        """Which ``_CANCEL_REASONS`` member the attributed rows show, or ``None``. Only rows
+
+        ``None`` is both "no cancel here" and "a cancel the broker's own row proves took
+        the whole working remainder with nothing executed" — the latter falls through to
+        :func:`_fill_state`, which turns it into the ``CANCEL_ACK`` the release path
+        consumes (#948). Every shape this runtime cannot read that way holds instead.
+        """
         ours = [r for r in mine if r.pdno == self.instrument]
         cancelled = [r for r in ours if r.cancelled]
         if any(r.pdno == self.instrument for r in derived):
+            # SAFETY: a row a cancel DERIVED (orgn_odno -> ours) has never been measured on
+            # this broker, so it is held rather than read as an outcome (#948 순서 1).
             return "derived_order_row"
         if not cancelled:
             return None
-        filled = [r.tot_ccld_qty for r in cancelled]
-        if all(q is not None and q == 0 for q in filled):
-            return "cancelled_unfilled"
-        return "cancelled_after_fill"
+        if any(r.tot_ccld_qty is None or r.tot_ccld_qty != 0 for r in cancelled):
+            return "cancelled_after_fill"
+        if any(not r.cancel_withdrew_remainder for r in cancelled):
+            return "cancel_remainder_working"
+        return None
 
     def _cancel_marker(self, attempt: _Tracked) -> EgressResultPayload:
         """A ``CANCEL_ACK``-shaped marker the emit step routes to the cancel hold — it is never"""
@@ -941,9 +950,17 @@ def _fill_state(
     if row.rjct_qty is not None and row.rjct_qty > 0:
         return EgressResultKind.UNKNOWN, None, None, "rejected_quantity"
     if row.cancelled:
-        if filled == 0:
-            return EgressResultKind.CANCEL_ACK, None, None, "cancelled_unfilled"
-        return EgressResultKind.UNKNOWN, None, None, "cancelled_after_fill"
+        if filled != 0:
+            return EgressResultKind.UNKNOWN, None, None, "cancelled_after_fill"
+        if not row.cancel_withdrew_remainder:
+            # SAFETY: cncl_yn=Y is the cancel ACCEPTED, not the remainder withdrawn — reading
+            # it as a terminal non-execution would release the capacity of an order that can
+            # still fill (#1158 리뷰 · mock_flat_check.row_is_open 과 같은 규칙).
+            return EgressResultKind.UNKNOWN, None, None, "cancel_remainder_working"
+        # SAFETY: this reads the RE-QUERIED order row, never the cancel POST's own ack — the
+        # cancel is its own order with its own ODNO and proves nothing about the original's
+        # final quantity (Q-CXL-1, prohibited basis CANCEL_ACKNOWLEDGEMENT).
+        return EgressResultKind.CANCEL_ACK, None, None, "cancelled_unfilled"
     if filled < 0 or remaining < 0 or filled + remaining != ordered:
         return EgressResultKind.UNKNOWN, None, None, "quantity_inconsistent"
     if filled == 0:
