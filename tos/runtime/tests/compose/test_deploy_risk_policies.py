@@ -221,3 +221,36 @@ def test_real_risk_files_boot_the_compose_root_and_the_attempt_still_denies_at_s
 
     runtime.rcl_log.close()
     runtime.evidence_store.close()
+
+
+_TREE_ROOT = _DEPLOY_DIR.parent
+_SHIPPED_TREES = tuple(
+    sorted(
+        path
+        for path in _TREE_ROOT.iterdir()
+        if (path / "aggregate_risk_policy.yaml").is_file()
+        and (path / "order_construction_policy.yaml").is_file()
+    )
+)
+
+
+@pytest.mark.parametrize("tree", _SHIPPED_TREES, ids=lambda path: path.name)
+def test_every_shipped_tree_governs_its_own_ocp_effect_dimensions(tree: Path) -> None:
+    """#1165's boot check read off the shipped YAML — the trees carry 'TBD' scopes and"""
+    ocp = yaml.safe_load(
+        (tree / "order_construction_policy.yaml").read_text(encoding="utf-8")
+    )
+    are = yaml.safe_load(
+        (tree / "aggregate_risk_policy.yaml").read_text(encoding="utf-8")
+    )
+    effect_ids = {
+        entry["dimension_id"]
+        for entry in ocp["_runtime"]["construction"]["effect_dimensions"]
+    }
+    governed_ids = set(are["_runtime"]["dimension_ids"])
+
+    assert effect_ids, f"{tree.name}: an OCP with no effect dimension sizes nothing"
+    assert effect_ids <= governed_ids, (
+        f"{tree.name}: OCP effect dimension(s) {sorted(effect_ids - governed_ids)} are "
+        f"not among the ARE's own {sorted(governed_ids)}"
+    )

@@ -98,6 +98,22 @@ def _cross_check_side_tokens(
         )
 
 
+def _cross_check_ocp_effect_dimensions(
+    are_policy: LoadedAggregateRiskPolicy, *, ocp_effect_dimension_ids: frozenset[str]
+) -> None:
+    """Sibling of :func:`_cross_check_side_tokens`, same subset-and-refuse shape, for the"""
+    governed = frozenset(are_policy.dimension_ids.values())
+    # SAFETY: #1163 shipped while the compose fixture's OCP effect dimension (INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL) and its ARE limit dimension (ACCOUNT::GROSS_NOTIONAL) were spelled apart — the step-5 derivation passed, the ARE projection built no cell for that id, and the limit judgment skipped the dimension the confirmed usage was piling onto (#1165)
+    ungoverned = sorted(ocp_effect_dimension_ids - governed)
+    if ungoverned:
+        raise RiskPolicyScopeMismatch(
+            f"order construction policy _runtime.construction.effect_dimensions names "
+            f"dimension id(s) {ungoverned!r}, which the aggregate risk policy's own "
+            f"_runtime.dimension_ids {sorted(governed)!r} does not declare — the effect "
+            "would accumulate on a dimension the limit judgment has no cell for"
+        )
+
+
 def _cross_check_ocp_side_tokens(
     ocp_sides: frozenset[str], *, venue_allowed_sides: frozenset[str]
 ) -> None:
@@ -179,6 +195,7 @@ def build_risk_state_service(
     construction_stage_reader: Callable[[], CandidateConstruction | None],
     effect_envelope_reader: Callable[[], EconomicEffectEnvelope | None],
     venue_allowed_sides: frozenset[str],
+    ocp_effect_dimension_ids: frozenset[str],
     action_class_reader: Callable[[], ActionClass] | None = None,
     attempt_arm_direction_reader: Callable[[], str | None] | None = None,
     held_position_proof_reader: (
@@ -195,6 +212,9 @@ def build_risk_state_service(
         config_dir=config_dir, scheme=scheme
     )
     _cross_check_are_scope(are_policy, construction=construction)
+    _cross_check_ocp_effect_dimensions(
+        are_policy, ocp_effect_dimension_ids=ocp_effect_dimension_ids
+    )
     _cross_check_scenario_coverage(
         are_policy, required_scenario_kinds, scenario_set=scenario_set
     )

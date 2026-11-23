@@ -828,6 +828,7 @@ def _build_service_from_wiring_config(
     *,
     venue_allowed_sides: frozenset[str] = frozenset({"BUY", "SELL"}),
     scenario_set: AdverseScenarioSet | None = None,
+    ocp_effect_dimension_ids: frozenset[str] = frozenset({_ARE_DIM_ID}),
 ) -> RiskStateService:
     construction = fx.construction_config()
     return build_risk_state_service(
@@ -848,6 +849,7 @@ def _build_service_from_wiring_config(
         construction_stage_reader=lambda: None,
         effect_envelope_reader=lambda: None,
         venue_allowed_sides=venue_allowed_sides,
+        ocp_effect_dimension_ids=ocp_effect_dimension_ids,
     )
 
 
@@ -880,6 +882,28 @@ class TestBuildRiskStateServiceCrossChecks:
                 directory,
                 rig,
             )
+
+    def test_an_ocp_effect_dimension_the_are_does_not_govern_refuses(
+        self, rig: _Rig
+    ) -> None:
+        """#1165: the OCP effect dimension id spelled apart from the ARE's own"""
+        directory = _write_riskstate_wiring_config(rig.tmp_path)
+        with pytest.raises(RiskPolicyScopeMismatch, match="effect_dimensions"):
+            _build_service_from_wiring_config(
+                directory,
+                rig,
+                ocp_effect_dimension_ids=frozenset({"ACCOUNT::GROSS_NOTIONAL"}),
+            )
+
+    def test_the_ocp_effect_dimension_the_are_governs_builds(self, rig: _Rig) -> None:
+        """#1165's accept side: the shipped spelling — one id, identical in both files."""
+        directory = _write_riskstate_wiring_config(rig.tmp_path)
+        service = _build_service_from_wiring_config(
+            directory,
+            rig,
+            ocp_effect_dimension_ids=frozenset({_ARE_DIM_ID}),
+        )
+        assert isinstance(service, RiskStateService)
 
     def test_scenario_coverage_gap_refuses(self, rig: _Rig) -> None:
         directory = _write_riskstate_wiring_config(rig.tmp_path)

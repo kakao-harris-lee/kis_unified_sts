@@ -296,7 +296,8 @@ def mismatched_release_config_dir(config_dir: Path) -> Path:
     return config_dir
 
 
-_RISK_STATE_DIMENSION_ID = "ACCOUNT::GROSS_NOTIONAL"
+# SAFETY: this id must stay the one `_documents.order_construction_policy_yaml` declares under `effect_dimensions` — spelled apart (it was ACCOUNT::GROSS_NOTIONAL against the OCP's INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL until #1165) the fixture boots a composition whose confirmed usage lands on a dimension the ARE projection has no cell for, and every e2e here passes without the limit ever being judged
+_RISK_STATE_DIMENSION_ID = "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
 _RISK_STATE_ENVELOPE_MAX = "100000"
 
 
@@ -308,15 +309,15 @@ def config_dir_with_risk_state(config_dir: Path) -> Path:
         aggregate_risk_policy_yaml(
             instrument_scope=f'["{_VENUE_POLICY_INSTRUMENT}"]',
             account_scope=f'["{_VENUE_POLICY_ACCOUNT}"]',
-            governed_dimensions='["GROSS_NOTIONAL"]',
-            governed_scopes='["ACCOUNT"]',
+            governed_dimensions='["LONG_SHORT_DELTA_DIRECTIONAL"]',
+            governed_scopes='["INSTRUMENT"]',
             dimension_id=_RISK_STATE_DIMENSION_ID,
-            dimension_scope="ACCOUNT",
-            dimension_dimension="GROSS_NOTIONAL",
+            dimension_scope="INSTRUMENT",
+            dimension_dimension="LONG_SHORT_DELTA_DIRECTIONAL",
             unit="CONTRACTS",
             effective_limit_value=_RISK_STATE_ENVELOPE_MAX,
-            required_scopes='["ACCOUNT"]',
-            applicable_risk_scopes='["ACCOUNT"]',
+            required_scopes='["INSTRUMENT"]',
+            applicable_risk_scopes='["INSTRUMENT"]',
         ),
         encoding="utf-8",
     )

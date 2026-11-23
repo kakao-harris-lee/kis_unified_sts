@@ -153,11 +153,12 @@ exceptions:
     모듈에는 ``(attempt, applicability)`` 를 버리고 위임만 하는 얇은 래퍼(약 12줄)만
     남았다(mesh 분리와 동일 패턴) — import 1줄 추가를 감안해도 순감소.
 - target: tos/runtime/src/tos_runtime/compose/root.py::compose_paper_runtime
-  measured: 346
+  measured: 351
   owner: tos-runtime
   decomposition_order: 2
   expires_on: '2026-12-31'
   note: >-
+    **2026-11-23 #1165 OCP effect 차원 교차검증 재등재 346→351(+5)**: `build_risk_state_service(ocp_effect_dimension_ids=frozenset(...))` 5줄. step 2 의 OCP(`loaded_ocp.construction_rules.effect_dimensions`)와 step 6 의 ARE 한도 차원이 함께 보이는 지점은 root.py 뿐이고, 판정 자체는 `compose/_riskstate_wiring.py::_cross_check_ocp_effect_dimensions` 에 있다. 호출 시퀀스 무변경.
     **2026-11-20 #1127 송신 시작 시각 스탬프 재등재 345→346(+1)**: `_finalize(send_time_now=session_facts_owner.local_time_now)` 1줄. 브로커의 주문시각(`ord_tmd`)과 비교할 우리 송신 시작 시각은 거래일자와 **같은 신뢰 시계**에서 와야 하고(하나가 안 읽히면 둘 다 없다), 그 시계를 쥔 `SessionFactsOwner` 와 전송 결선이 함께 보이는 지점은 root.py 뿐이다. 변환 자체는 `calendar/phase.py::local_time_at`(tz 는 calendar.yaml 설정값), 판정은 `posttrade/uncertain_send.py::rows_by_send_time`. 호출 시퀀스 무변경.
     **2026-11-18 #1096 날짜 없는 ACK 복구 재등재 338→345(+7)**: `attach_fill_observer(...)` 호출이 1줄에서 8줄로 늘었다 — `trading_dates_back=build_trading_dates_back(trading_date_reader, instrument_class=construction.instrument_class, calendar=calendar_config)`. 스캔 창(이 테넌트 캘린더의 최근 거래일 N개)을 지으려면 신뢰 거래일 리더와 캘린더 설정이 둘 다 필요한데, 그 둘이 함께 보이는 지점은 root.py 뿐이다(창 계산 자체는 `calendar/phase.py::recent_trading_dates`, 결선 래퍼는 `_broker_posttrade_wiring.py::build_trading_dates_back`). 호출 시퀀스 무변경.
     **2026-11-13 S4 산문 제거 재등재 484→338(-146)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
