@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.support.probe_auth import StubAuth
+from tools.broker_probes.common import (
+    MOCK_BASE_URL,
+    ProbeCredentials,
+    ProbeRun,
+    SafetyViolation,
+)
+from tools.broker_probes.probes_order import MockTradingClient
 from tools.tos_cp3.ops import mock_flat_check as flat
 from tools.tos_cp3.ops import mock_flatten as flatten
 
@@ -170,7 +179,7 @@ def test_holdings_sums_rows_per_symbol_and_queries_the_mock_tr() -> None:
             "output1": [
                 {"pdno": _SYMBOL, "hldg_qty": "1"},
                 {"pdno": _SYMBOL, "hldg_qty": "2"},
-                {"pdno": "000660", "hldg_qty": ""},
+                {"pdno": "000660", "hldg_qty": "0"},
                 {"pdno": "", "hldg_qty": "9"},
             ],
         }
@@ -357,7 +366,7 @@ def _resting(odno: str = "0000000001", qty: str = "1") -> dict[str, Any]:
     [
         ({"pdno": _SYMBOL, "rmn_qty": "1", "cncl_yn": "N"}, True),
         ({"pdno": _SYMBOL, "rmn_qty": "0", "cncl_yn": "N"}, False),
-        ({"pdno": _SYMBOL, "rmn_qty": "1", "cncl_yn": "Y"}, False),
+        ({"pdno": _SYMBOL, "rmn_qty": "0", "cncl_yn": "Y"}, False),
         ({"pdno": "000660", "rmn_qty": "5", "cncl_yn": "N"}, False),
         ({"pdno": "", "rmn_qty": "1", "cncl_yn": "N"}, True),
     ],
@@ -406,6 +415,58 @@ def test_the_remainder_is_derived_when_the_row_does_not_state_it() -> None:
 )
 def test_quantities_that_do_not_add_up_are_open(row: dict[str, Any]) -> None:
     assert flat.row_is_open(row, _SYMBOL) is True
+
+
+def test_an_accepted_cancel_that_left_a_remainder_is_still_open() -> None:
+    """#1135 item 1: ord 1 / filled 0 / rmn 1 / cncl_yn=Y can still fill."""
+    row = {
+        "pdno": _SYMBOL,
+        "ord_qty": "1",
+        "tot_ccld_qty": "0",
+        "rmn_qty": "1",
+        "cncl_yn": "Y",
+    }
+    assert flat.row_is_open(row, _SYMBOL) is True
+
+
+@pytest.mark.parametrize("key", flat.CANCEL_CONFIRMED_QTY_KEYS)
+def test_a_cancel_confirmed_over_the_whole_remainder_closes_the_row(key: str) -> None:
+    row = {
+        "pdno": _SYMBOL,
+        "ord_qty": "1",
+        "tot_ccld_qty": "0",
+        "rmn_qty": "1",
+        "cncl_yn": "Y",
+        key: "1",
+    }
+    assert flat.row_is_open(row, _SYMBOL) is False
+
+
+@pytest.mark.parametrize(
+    "confirmed",
+    ["1", "", "0", None, "??"],
+    ids=["partial", "blank", "zero", "none", "not-a-number"],
+)
+def test_a_cancel_confirmed_short_of_the_remainder_leaves_it_open(
+    confirmed: Any,
+) -> None:
+    """Only a confirmation that covers the whole remainder closes the row."""
+    row = {
+        "pdno": _SYMBOL,
+        "ord_qty": "2",
+        "tot_ccld_qty": "0",
+        "rmn_qty": "2",
+        "cncl_yn": "Y",
+        "cnc_cfrm_qty": confirmed,
+    }
+    assert flat.row_is_open(row, _SYMBOL) is True
+
+
+def test_the_cancel_confirmed_quantity_is_read_whichever_key_carries_it() -> None:
+    assert flat.cancel_confirmed_qty({"cnc_cfrm_qty": " 2 "}) == 2
+    assert flat.cancel_confirmed_qty({"cncl_cfrm_qty": "3"}) == 3
+    assert flat.cancel_confirmed_qty({"cnc_cfrm_qty": ""}) is None
+    assert flat.cancel_confirmed_qty({}) is None
 
 
 def test_open_orders_queries_the_mock_tr_with_the_runtimes_parameters() -> None:
@@ -506,6 +567,30 @@ def test_holdings_walks_past_the_first_page() -> None:
     assert client.calls[0] == ("GET", flat.BALANCE_PATH, flat.BALANCE_TR_ID)
 
 
+@pytest.mark.parametrize(
+    "hldg_qty",
+    ["", "   ", None, "??", "1.5"],
+    ids=["blank", "spaces", "none", "not-a-number", "not-an-int"],
+)
+def test_an_unreadable_holding_quantity_is_not_zero(hldg_qty: Any) -> None:
+    """#1135 item 2: `or 0` would call a held symbol flat (H1's shape, balance side)."""
+    row = (
+        {"pdno": _SYMBOL}
+        if hldg_qty is None
+        else {"pdno": _SYMBOL, "hldg_qty": hldg_qty}
+    )
+    with pytest.raises(flat.BalanceUnreadable, match="hldg_qty"):
+        flat.holdings(_PagedClient([_page([row])]), _Creds())
+
+
+def test_an_unreadable_holding_does_not_name_the_account() -> None:
+    client = _PagedClient([_page([{"pdno": _SYMBOL, "hldg_qty": ""}])])
+    with pytest.raises(flat.BalanceUnreadable) as caught:
+        flat.holdings(client, _Creds())
+    assert _SYMBOL in str(caught.value)
+    assert _Creds.cano not in str(caught.value)
+
+
 def test_a_balance_walk_that_cannot_finish_is_unreadable() -> None:
     client = _PagedClient([_more([], fk=f"FK{i}", nk=f"NK{i}") for i in range(9)])
     with pytest.raises(flat.BalanceUnreadable, match="balance"):
@@ -529,6 +614,34 @@ def test_flat_check_calls_a_resting_order_not_flat(
     _wire_flat_check(monkeypatch, client, {})
     assert flat.main([_SYMBOL]) == flat.EXIT_HELD
     assert "open orders" in capsys.readouterr().out
+    assert client.closed == 1
+
+
+def test_flat_check_is_not_flat_while_a_cancel_is_only_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The leaf must not boot onto an order the broker may still fill (#1135)."""
+    cancelling = {
+        "pdno": _SYMBOL,
+        "odno": "0000000003",
+        "ord_qty": "1",
+        "tot_ccld_qty": "0",
+        "rmn_qty": "1",
+        "cncl_yn": "Y",
+    }
+    client = _PagedClient([_page([cancelling])])
+    _wire_flat_check(monkeypatch, client, {})
+    assert flat.main([_SYMBOL]) == flat.EXIT_HELD
+
+
+def test_flat_check_calls_an_unreadable_holding_quantity_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _PagedClient([_page([{"pdno": _SYMBOL, "hldg_qty": ""}])])
+    monkeypatch.setenv(flat.EXPECT_FP_ENV, _FP)
+    _no_env_file(monkeypatch, flat)
+    monkeypatch.setattr(flat, "build_client", lambda **kw: (client, _Creds()))
+    assert flat.main([_SYMBOL]) == flat.EXIT_UNREADABLE
     assert client.closed == 1
 
 
@@ -608,3 +721,135 @@ def test_a_probe_error_is_caught_the_same_way() -> None:
     from tools.broker_probes.common import ProbeError
 
     assert issubclass(ProbeError, tuple(flat.broker_transport_errors()))
+
+
+class _FakeResponse:
+    """``requests.Response`` stand-in — status, body, and the RESPONSE headers."""
+
+    def __init__(
+        self,
+        body: dict[str, Any],
+        *,
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status_code = status
+        self.headers = headers or {}
+        self._body = body
+        self.text = json.dumps(body, ensure_ascii=False)
+
+    def json(self) -> dict[str, Any]:
+        return self._body
+
+
+class _RecordingSession:
+    """Records every request and answers from a script. Opens no socket."""
+
+    def __init__(self, responses: list[_FakeResponse] | None = None) -> None:
+        self._responses = list(responses or [])
+        self.calls: list[dict[str, Any]] = []
+        self.closed = False
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        timeout: float = 15.0,
+    ) -> _FakeResponse:
+        self.calls.append(
+            {
+                "method": method,
+                "url": url,
+                "headers": dict(headers),
+                "params": dict(params or {}),
+                "json": json,
+            }
+        )
+        if self._responses:
+            return self._responses.pop(0)
+        return _FakeResponse({"rt_cd": "0", "output1": []}, headers={"tr_cont": "D"})
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _RecordingPacer:
+    """Counts the pacer slots the client spends, without sleeping."""
+
+    def __init__(self) -> None:
+        self.waits = 0
+
+    def wait(self) -> float:
+        self.waits += 1
+        return 100.0 + self.waits
+
+
+def _transport_client(session: _RecordingSession) -> MockTradingClient:
+    """A real :class:`MockTradingClient` whose socket and pacer are stand-ins."""
+    creds = ProbeCredentials(
+        app_key="FAKEKEY",
+        app_secret="FAKESECRET",
+        account_no=_Creds.account_no,
+        is_real=False,
+        asset="stock",
+    )
+    run = ProbeRun(
+        probe_id="cp3-ops-flat-check", title="t", mode="live", environment="mock"
+    )
+    client = MockTradingClient(creds, StubAuth(), run, pace_s=0.0)
+    client.session.close()
+    client.session = session
+    client.pacer = _RecordingPacer()
+    return client
+
+
+def test_the_paged_get_asks_the_mock_host_with_a_get() -> None:
+    """#1135 item 3: the transport the walk calls, under direct test."""
+    session = _RecordingSession(
+        [_FakeResponse({"rt_cd": "0", "output1": []}, headers={"tr_cont": "D"})]
+    )
+    client = _transport_client(session)
+    status, parsed, _ms, _text, headers = client.trading_get_with_headers(
+        flat.ORDER_PATH, flat.ORDER_TR_ID, params={"PDNO": _SYMBOL}
+    )
+    assert (status, parsed["rt_cd"], headers["tr_cont"]) == (200, "0", "D")
+    sent = session.calls[0]
+    assert sent["method"] == "GET"
+    assert sent["url"] == f"{MOCK_BASE_URL}{flat.ORDER_PATH}"
+    assert sent["json"] is None
+    assert sent["params"] == {"PDNO": _SYMBOL}
+    assert sent["headers"]["tr_id"] == flat.ORDER_TR_ID
+
+
+def test_the_paged_get_sends_tr_cont_only_on_a_continuation() -> None:
+    session = _RecordingSession()
+    client = _transport_client(session)
+    client.trading_get_with_headers(flat.ORDER_PATH, flat.ORDER_TR_ID, tr_cont="")
+    client.trading_get_with_headers(
+        flat.ORDER_PATH, flat.ORDER_TR_ID, tr_cont=flat.TR_CONT_REQUEST_NEXT
+    )
+    assert "tr_cont" not in session.calls[0]["headers"]
+    assert session.calls[1]["headers"]["tr_cont"] == "N"
+
+
+def test_the_paged_get_refuses_a_real_trading_tr() -> None:
+    """The TR gate is what keeps this GET on the 모의투자 account."""
+    session = _RecordingSession()
+    client = _transport_client(session)
+    with pytest.raises(SafetyViolation, match="not a mock TR"):
+        client.trading_get_with_headers("/uapi/x", "TTTC0081R")
+    assert session.calls == []
+    assert client.pacer.waits == 0
+
+
+def test_the_paged_get_spends_one_pacer_slot_per_call() -> None:
+    session = _RecordingSession()
+    client = _transport_client(session)
+    client.trading_get_with_headers(flat.BALANCE_PATH, flat.BALANCE_TR_ID)
+    client.trading_get_with_headers(flat.BALANCE_PATH, flat.BALANCE_TR_ID)
+    assert client.pacer.waits == len(session.calls) == 2
+    assert client.last_send_instant() == 102.0
