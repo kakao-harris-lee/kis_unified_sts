@@ -17,7 +17,7 @@ TRANSPORT_YAML_ENV = "CP3_KIS_MOCK_TRANSPORT_YAML"
 
 DEFAULT_WINDOW_MARGIN_S = 0.25
 
-# SAFETY: 한 번의 허가 계산은 1.25s 를 넘지 않는다 — 이 상한은 다른 프로세스가 잠금을 쥐고 있는 시간을 위한 것이고, 모자라면 조용히 건너뛰는 대신 거절한다 (#1161)
+# SAFETY: 이 상한은 «다른 프로세스가 잠금을 쥐고 있는 시간» 만을 위한 것이다 — 슬롯 대기는 YAML 의 app_key_request_wait_budget_ms 로 따로 묶이고, 모자라면 조용히 건너뛰는 대신 거절한다 (#1161)
 LOCK_WAIT_S = 30.0
 
 WINDOW_S = 1.0
@@ -37,6 +37,7 @@ class SharedPaceTerms:
     path: Path
     max_rps: float
     window_margin_s: float
+    slot_wait_budget_s: float
 
 
 def resolve_transport_yaml(flag: str | None) -> Path | None:
@@ -45,8 +46,42 @@ def resolve_transport_yaml(flag: str | None) -> Path | None:
     return Path(raw).expanduser() if raw else None
 
 
+def _shared_pace_file(raw: dict[str, Any], transport_yaml: Path) -> Path:
+    """``shared_pacer_path``, expanded the way the runtime's loader expands it."""
+    path_value = raw.get("shared_pacer_path")
+    if not isinstance(path_value, str) or not path_value:
+        raise SharedPaceUnavailable(
+            f"{transport_yaml}: shared_pacer_path is missing — this tenant does not "
+            "declare a shared pace file, so this tool cannot share the app key's rate"
+        )
+    # SAFETY: 런타임 로더(`_require_shared_absolute_path`)가 is_absolute 전에 expanduser 를 한다 — 여기서 빼면 `~/...` 를 쓴 tenant 의 도구 호출만 거절당하고, 운영자는 페이싱 없이 돌리는 쪽을 고른다 (#1166 리뷰 LOW 1)
+    try:
+        resolved = Path(path_value).expanduser()
+    except RuntimeError as exc:
+        raise SharedPaceUnavailable(
+            f"{transport_yaml}: shared_pacer_path {path_value!r} starts with '~' and this "
+            "process has no home directory to expand it against — name the absolute path"
+        ) from exc
+    if not resolved.is_absolute():
+        raise SharedPaceUnavailable(
+            f"{transport_yaml}: shared_pacer_path {path_value!r} is relative — the "
+            "tenant processes and this tool must name the same file"
+        )
+    return resolved
+
+
+def _positive_number(raw: dict[str, Any], field: str, transport_yaml: Path) -> float:
+    """One declared positive number, or a refusal."""
+    value = raw.get(field)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise SharedPaceUnavailable(f"{transport_yaml}: {field} must be a number")
+    if value <= 0:
+        raise SharedPaceUnavailable(f"{transport_yaml}: {field} must be positive")
+    return float(value)
+
+
 def load_shared_pace_terms(transport_yaml: Path) -> SharedPaceTerms:
-    """Read ``shared_pacer_path`` / ``shared_max_rps`` / ``shared_window_margin_s``."""
+    """Read the grant file, the aggregate rate, the window margin and the slot budget."""
     import yaml
 
     try:
@@ -57,26 +92,9 @@ def load_shared_pace_terms(transport_yaml: Path) -> SharedPaceTerms:
         ) from exc
     if not isinstance(raw, dict):
         raise SharedPaceUnavailable(f"{transport_yaml}: not a YAML mapping")
-    path_value = raw.get("shared_pacer_path")
-    rate_value = raw.get("shared_max_rps")
-    if not isinstance(path_value, str) or not path_value:
-        raise SharedPaceUnavailable(
-            f"{transport_yaml}: shared_pacer_path is missing — this tenant does not "
-            "declare a shared pace file, so this tool cannot share the app key's rate"
-        )
-    if not Path(path_value).is_absolute():
-        raise SharedPaceUnavailable(
-            f"{transport_yaml}: shared_pacer_path {path_value!r} is relative — the "
-            "tenant processes and this tool must name the same file"
-        )
-    if not isinstance(rate_value, (int, float)) or isinstance(rate_value, bool):
-        raise SharedPaceUnavailable(
-            f"{transport_yaml}: shared_max_rps must be a number"
-        )
-    if rate_value <= 0:
-        raise SharedPaceUnavailable(
-            f"{transport_yaml}: shared_max_rps must be positive"
-        )
+    resolved = _shared_pace_file(raw, transport_yaml)
+    max_rps = _positive_number(raw, "shared_max_rps", transport_yaml)
+    budget_ms = _positive_number(raw, "app_key_request_wait_budget_ms", transport_yaml)
     margin_value = raw.get("shared_window_margin_s", DEFAULT_WINDOW_MARGIN_S)
     if not isinstance(margin_value, (int, float)) or isinstance(margin_value, bool):
         raise SharedPaceUnavailable(
@@ -87,9 +105,10 @@ def load_shared_pace_terms(transport_yaml: Path) -> SharedPaceTerms:
             f"{transport_yaml}: shared_window_margin_s must be zero or positive"
         )
     return SharedPaceTerms(
-        path=Path(path_value),
-        max_rps=float(rate_value),
+        path=resolved,
+        max_rps=max_rps,
         window_margin_s=float(margin_value),
+        slot_wait_budget_s=budget_ms / 1000.0,
     )
 
 
@@ -108,6 +127,7 @@ class SharedAppKeyPace:
         self._min_interval_s = 1.0 / terms.max_rps
         self._window_grants = max(1, int(terms.max_rps))
         self._window_margin_s = terms.window_margin_s
+        self._slot_wait_budget_s = terms.slot_wait_budget_s
         self._now = now_epoch_s or time.time
         self._sleep = sleep or time.sleep
 
@@ -116,7 +136,12 @@ class SharedAppKeyPace:
         """The file holding this app key's last grant instants."""
         return self._path
 
-    def acquire(self, *, wait_budget_s: float = LOCK_WAIT_S) -> None:
+    @property
+    def slot_wait_budget_s(self) -> float:
+        """The app key's own wait budget — how long a caller may sleep for its slot."""
+        return self._slot_wait_budget_s
+
+    def acquire(self, *, lock_wait_s: float = LOCK_WAIT_S) -> None:
         """Wait for this app key's next cross-process slot, then return so the caller sends."""
         # SAFETY: 잠금은 `<pace>.lock` 의 flock(LOCK_EX) 여야 한다 — tos_runtime file_lock.py 가 쥐는 바로 그 파일이고, 다른 자리를 쥐면 두 구현이 서로를 기다리지 않는다
         _ensure_private_dir(self._lock_path.parent)
@@ -124,9 +149,10 @@ class SharedAppKeyPace:
             self._lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, PRIVATE_FILE_MODE
         )
         try:
-            self._flock_within_budget(fd, wait_budget_s)
+            self._flock_within_budget(fd, lock_wait_s)
             try:
-                self._grant_within_budget(wait_budget_s)
+                # SAFETY: 잠금을 쥔 채 자는 시간은 app_key_request_wait_budget_ms 로 묶는다 — 넘기면 다른 tenant 프로세스가 그만큼 잠금 앞에 세워지고, 런타임처럼 «보내지 않는다» 로 끝내는 편이 낫다 (#1166 리뷰 LOW 2)
+                self._grant_within_budget(self._slot_wait_budget_s)
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
@@ -189,11 +215,11 @@ class SharedPacedCallPacer:
     """The probe client's own interval floor, with the app key's shared window behind it."""
 
     def __init__(
-        self, inner: Any, pace: SharedAppKeyPace, *, wait_budget_s: float = LOCK_WAIT_S
+        self, inner: Any, pace: SharedAppKeyPace, *, lock_wait_s: float = LOCK_WAIT_S
     ) -> None:
         self._inner = inner
         self._pace = pace
-        self._wait_budget_s = wait_budget_s
+        self._lock_wait_s = lock_wait_s
 
     @property
     def interval_s(self) -> float:
@@ -203,7 +229,7 @@ class SharedPacedCallPacer:
     def wait(self) -> float:
         """This tool's floor first, then the app key's shared slot; return the release instant."""
         self._inner.wait()
-        self._pace.acquire(wait_budget_s=self._wait_budget_s)
+        self._pace.acquire(lock_wait_s=self._lock_wait_s)
         return time.monotonic()
 
     def defer(self, seconds: float) -> None:
