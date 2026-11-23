@@ -18,6 +18,8 @@ from tos_runtime.transport.kis_mock.adapter import (
 )
 from tos_runtime.transport.kis_mock.client import KisMockHttpClient
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
+from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
+from tos_runtime.transport.kis_mock.pacer import KisPacing
 
 from ._fake_kis_server import FakeKisServer
 from ._fakes import (
@@ -145,15 +147,37 @@ def _build_transport(
     transport = KisMockTransport(
         config=cfg,
         client=client,
-        custody=cust,
-        app_key_scope=APP_KEY_SCOPE,
-        app_secret_scope=APP_SECRET_SCOPE,
+        credential_session=_session(cfg, client, cust, mono, ev),
         monotonic=mono,
         seal_lookup=make_seal_lookup(seal_map),
         evidence_sink=ev,
         trading_date_now=trading_date_now,
     )
     return transport, ev, cust, mono
+
+
+def _session(
+    cfg: KisMockTransportConfig,
+    client: KisMockHttpClient,
+    custody: InMemoryCredentialCustody,
+    monotonic: FakeMonotonicSource,
+    evidence: RecordingEvidenceSink,
+) -> KisCredentialSession:
+    """The app key's one session, as the compose root builds it — there is no other way in."""
+    return KisCredentialSession(
+        client=client,
+        custody=custody,
+        app_key_scope=APP_KEY_SCOPE,
+        app_secret_scope=APP_SECRET_SCOPE,
+        monotonic=monotonic,
+        token_path=cfg.token_path,
+        token_reissue_min_interval_s=cfg.token_reissue_min_interval_s,
+        evidence_sink=evidence,
+        pacing=KisPacing(
+            min_interval_ms=cfg.min_send_interval_ms,
+            wait_budget_ms=cfg.app_key_request_wait_budget_ms,
+        ),
+    )
 
 
 def _attempt(attempt_id: str = "attempt-1"):
@@ -1091,3 +1115,77 @@ def test_the_planted_violation_scan_actually_catches_something() -> None:
     assert "sleep() call" in joined
     assert "retry-named identifier" in joined
     assert "while loop" in joined
+
+
+def _transport_package_files() -> list[Path]:
+    import tos_runtime.transport.kis_mock as mock_pkg
+    import tos_runtime.transport.kis_quote as quote_pkg
+
+    files: list[Path] = []
+    for pkg in (mock_pkg, quote_pkg):
+        assert pkg.__file__ is not None
+        files.extend(sorted(Path(pkg.__file__).parent.glob("*.py")))
+    return files
+
+
+def test_no_transport_adapter_builds_a_credential_session_of_its_own() -> None:
+    """#1161: a privately built session carries no SharedAppKeyGate, so it spends the app
+
+    key's cross-process rate without ever queueing for it. Only the compose root, which
+    owns the one gate, may construct one.
+    """
+    offenders: list[str] = []
+    for path in _transport_package_files():
+        if path.name == "credential_session.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "KisCredentialSession"
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert offenders == [], (
+        "only the compose root may build a KisCredentialSession — one built in an "
+        f"adapter has no SharedAppKeyGate: {offenders}"
+    )
+
+
+def test_a_transport_cannot_be_built_from_custody_alone(server: FakeKisServer) -> None:
+    """The concrete failing input: the pre-#1161 custody-only call shape."""
+    cfg = _config(server)
+    client = KisMockHttpClient(
+        rest_base=cfg.endpoint_rest_base,
+        request_timeout_s=cfg.request_timeout_s,
+        allow_plaintext_for_tests=cfg.allow_plaintext_for_tests,
+    )
+    with pytest.raises(TypeError):
+        KisMockTransport(  # type: ignore[call-arg]
+            config=cfg,
+            client=client,
+            custody=InMemoryCredentialCustody(
+                {APP_KEY_SCOPE: b"app-key-value", APP_SECRET_SCOPE: b"app-secret-value"}
+            ),
+            app_key_scope=APP_KEY_SCOPE,
+            app_secret_scope=APP_SECRET_SCOPE,
+            monotonic=FakeMonotonicSource(),
+            seal_lookup=make_seal_lookup({}),
+            evidence_sink=RecordingEvidenceSink(),
+        )
+
+
+def test_the_credential_session_is_not_optional(server: FakeKisServer) -> None:
+    cfg = _config(server)
+    client = KisMockHttpClient(
+        rest_base=cfg.endpoint_rest_base,
+        request_timeout_s=cfg.request_timeout_s,
+        allow_plaintext_for_tests=cfg.allow_plaintext_for_tests,
+    )
+    with pytest.raises(TypeError):
+        KisMockTransport(  # type: ignore[call-arg]
+            config=cfg,
+            client=client,
+            monotonic=FakeMonotonicSource(),
+            seal_lookup=make_seal_lookup({}),
+            evidence_sink=RecordingEvidenceSink(),
+        )

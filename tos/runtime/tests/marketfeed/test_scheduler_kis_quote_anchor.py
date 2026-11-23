@@ -29,6 +29,7 @@ from ..transport.kis_quote._fakes import (
     RecordingEvidenceSink,
     runtime_identity,
 )
+from ..transport.kis_quote.test_adapter import quote_credential_session
 from ._fixtures import INSTRUMENT, SCHEME, loaded_policy
 from .test_scheduler import _CapturingDriver, _OpenSessionOwner
 
@@ -118,14 +119,21 @@ class _Chain:
         self.time_service.start()
         quote_config = _quote_config(server)
         client = build_quote_client(quote_config)
+        evidence_sink = RecordingEvidenceSink()
         self.intake = KisQuoteObservationIntake(
             config=quote_config,
             client=client,
-            custody=InMemoryCredentialCustody(
-                {"kis_mock.app_key": b"key", "kis_mock.app_secret": b"secret"}
+            credential_session=quote_credential_session(
+                quote_config,
+                client,
+                InMemoryCredentialCustody(
+                    {"kis_mock.app_key": b"key", "kis_mock.app_secret": b"secret"}
+                ),
+                self.monotonic,
+                evidence_sink,
             ),
             monotonic=self.monotonic,
-            evidence_sink=RecordingEvidenceSink(),
+            evidence_sink=evidence_sink,
         )
         self.store = SqliteSnapshotStore(tmp_path / "marketfeed.sqlite3")
         self.driver = _CapturingDriver()

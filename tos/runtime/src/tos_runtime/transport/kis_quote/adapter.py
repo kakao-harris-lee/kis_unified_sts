@@ -9,15 +9,13 @@ from typing import Any
 
 from tos.dsl import ScalarValue
 
-from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.marketfeed.ports import MonotonicAnchoredObservation, ObservationIntake
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.client import KisMockHttpClient, RawResponse
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
-from tos_runtime.transport.kis_mock.pacer import KisPacing, KisPacingRefused
+from tos_runtime.transport.kis_mock.pacer import KisPacingRefused
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
-    TokenIssuingClient,
     TokenStale,
 )
 from tos_runtime.transport.kis_quote.config import KisQuoteTransportConfig
@@ -33,9 +31,6 @@ __all__ = [
     "TokenStale",
     "build_quote_client",
 ]
-
-_KIS_MOCK_APP_KEY_SCOPE = "kis_mock.app_key"
-_KIS_MOCK_APP_SECRET_SCOPE = "kis_mock.app_secret"
 
 _SCALAR_FIELD_TYPES: tuple[type, ...] = (bool, int, float, str)
 
@@ -71,34 +66,14 @@ class KisQuoteObservationIntake:
         client: KisMockHttpClient,
         monotonic: MonotonicSource,
         evidence_sink: EvidenceRecorder,
-        custody: CredentialCustody | None = None,
-        credential_session: KisCredentialSession | None = None,
+        credential_session: KisCredentialSession,
     ) -> None:
         """Wire this intake's dependencies (all injected — no ambient state)."""
+        # SAFETY: 이 자리에 custody 로 개인 세션을 짓는 가지가 있으면 그 세션은 SharedAppKeyGate 를 갖지 않는다 — 배선 실수가 조용히 앱 키 한도를 비껴간다 (#1161)
         self._config = config
         self._client = client
         self._monotonic = monotonic
         self._evidence = evidence_sink
-        if credential_session is None:
-            if custody is None:
-                raise KisQuoteAdapterError(
-                    "KisQuoteObservationIntake: supply credential_session, or custody to build "
-                    "a private one"
-                )
-            credential_session = KisCredentialSession(
-                client=_TokenIssuingClientAdapter(client),
-                custody=custody,
-                app_key_scope=_KIS_MOCK_APP_KEY_SCOPE,
-                app_secret_scope=_KIS_MOCK_APP_SECRET_SCOPE,
-                monotonic=monotonic,
-                token_path=config.token_path,
-                token_reissue_min_interval_s=config.token_reissue_min_interval_s,
-                evidence_sink=evidence_sink,
-                pacing=KisPacing(
-                    min_interval_ms=config.app_key_min_request_interval_ms,
-                    wait_budget_ms=config.app_key_request_wait_budget_ms,
-                ),
-            )
         self._credential_session = credential_session
         self._last_content_digest: str | None = None
         self._pending_digest: str | None = None
@@ -227,17 +202,4 @@ class KisQuoteObservationIntake:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-class _TokenIssuingClientAdapter:
-    """Adapts :class:`~tos_runtime.transport.kis_mock.client.KisMockHttpClient` onto"""
-
-    def __init__(self, client: KisMockHttpClient) -> None:
-        self._client = client
-
-    def issue_token(
-        self, app_key: bytes, app_secret: bytes, *, path: str
-    ) -> dict[str, object]:
-        return self._client.issue_token(app_key, app_secret, path=path)
-
-
 _conforms_to_observation_intake: type[ObservationIntake] = KisQuoteObservationIntake
-_conforms_to_token_issuing_client: type[TokenIssuingClient] = _TokenIssuingClientAdapter

@@ -54,6 +54,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             title="stock MOCK flatten",
             token_cache_dir=args.token_cache_dir,
             pace_s=args.pace_s,
+            transport_yaml=args.transport_yaml,
         )
     except OpsRefusal as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)

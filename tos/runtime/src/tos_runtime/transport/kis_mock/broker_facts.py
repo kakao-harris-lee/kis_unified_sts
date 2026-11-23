@@ -12,7 +12,7 @@ import yaml
 from tos_runtime._named_tbd import reject_named_tbd
 from tos_runtime.time.sources import MonotonicSource
 from tos_runtime.transport.kis_mock.account import KisAccountError, split_kis_account
-from tos_runtime.transport.kis_mock.client import RawResponse
+from tos_runtime.transport.kis_mock.client import RawResponse, kis_fault_fields
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSession
 from tos_runtime.transport.kis_mock.token import (
     EvidenceRecorder,
@@ -195,9 +195,10 @@ class KisMockBrokerFacts:
         """Two GETs now; replaces the held observation and writes one evidence row."""
         as_of_ms = self._monotonic.now_ms()
         account_ok, tradable, reason = False, None, "ok"
+        fault: dict[str, str] = {}
         try:
             token = self._session.ensure_token_string()
-            account_ok, reason = self._read_account(token)
+            account_ok, reason, fault = self._read_account(token)
             tradable, quote_reason = self._read_tradability(token)
             if reason == "ok":
                 reason = quote_reason
@@ -218,6 +219,7 @@ class KisMockBrokerFacts:
                 "balance_tr_id": self._config.balance_tr_id,
                 "quote_tr_id": self._config.quote_tr_id,
                 "as_of_ms": as_of_ms,
+                **fault,
             },
         )
         return observation
@@ -234,11 +236,11 @@ class KisMockBrokerFacts:
             )
         return response.json
 
-    def _read_account(self, token: str) -> tuple[bool, str]:
+    def _read_account(self, token: str) -> tuple[bool, str, dict[str, str]]:
         try:
             account = split_kis_account(self._account)
         except KisAccountError:
-            return False, "account_not_kis_8_2"
+            return False, "account_not_kis_8_2", {}
         body = self._get(
             token,
             self._config.balance_tr_id,
@@ -250,10 +252,15 @@ class KisMockBrokerFacts:
             },
         )
         if not isinstance(body, dict):
-            return False, "balance_malformed"
+            return False, "balance_malformed", {}
         if body.get("rt_cd") != "0":
-            return False, "balance_rt_cd_not_ok"
-        return True, "ok"
+            # SAFETY: 코드 없이는 EGW00201(호출 한도)과 다른 거절을 증거로 가를 수 없다 — 11-23 09:16:08 005930 의 SEND_REFUSED_BEFORE_TRANSPORT 가 그 경우다 (#1161)
+            return (
+                False,
+                "balance_rt_cd_not_ok",
+                kis_fault_fields(body, prefix="balance_"),
+            )
+        return True, "ok", {}
 
     def _read_tradability(self, token: str) -> tuple[bool | None, str]:
         body = self._get(
