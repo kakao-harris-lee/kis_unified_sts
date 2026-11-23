@@ -63,6 +63,11 @@ ENGINE_RESERVATION_ABSENT_KIND = "FILL_OBSERVER_ENGINE_RESERVATION_ABSENT"
 CANCEL_UNSUPPORTED_KIND = "FILL_OBSERVER_CANCEL_UNSUPPORTED"
 EGRESS_RESULT_CONSUMED_KIND = "EGRESS_RESULT_CONSUMED"
 VENUE_POLICY_BOUND_KIND = "VENUE_POLICY_BOUND"
+UNCERTAIN_SEND_RECONCILED_KIND = "UNCERTAIN_SEND_RECONCILED"
+RESERVATION_DISCARDED_UNSENT_KIND = "RESERVATION_DISCARDED_UNSENT"
+
+RECONCILED_BOUND = "bound"
+RECONCILED_NEVER_ACCEPTED = "never_accepted"
 
 FULL_FILL = "FULL_FILL"
 PARTIAL_FILL = "PARTIAL_FILL"
@@ -292,6 +297,8 @@ def read_leaf(path: Path, *, leaf_order: int = 0) -> LeafReport:
                 CANCEL_UNSUPPORTED_KIND,
                 EGRESS_RESULT_CONSUMED_KIND,
                 VENUE_POLICY_BOUND_KIND,
+                UNCERTAIN_SEND_RECONCILED_KIND,
+                RESERVATION_DISCARDED_UNSENT_KIND,
             ),
         )
     except Exception as exc:  # noqa: BLE001 — sqlite3.Error 등. 사유를 보여 준다
@@ -328,6 +335,8 @@ def _fold_leaf(
     cancel_held: dict[str, str] = {}
     broker_id: dict[str, str] = {}
     acked_date: dict[str, str] = {}
+    reconciled: dict[str, str] = {}
+    discarded_unsent: dict[str, str] = {}
 
     for seq, kind, record in rows:
         if kind == SEND_SEALED_KIND:
@@ -374,6 +383,18 @@ def _fold_leaf(
                 }
             _remember(broker_id, record, "broker_execution_id")
             _remember(acked_date, record, "trading_date")
+        elif kind == UNCERTAIN_SEND_RECONCILED_KIND:
+            attempt = record.get("attempt_id")
+            outcome = record.get("outcome")
+            if isinstance(attempt, str) and isinstance(outcome, str):
+                reconciled[attempt] = outcome
+            _remember(broker_id, record, "broker_execution_id")
+            _remember(acked_date, record, "trading_date")
+        elif kind == RESERVATION_DISCARDED_UNSENT_KIND:
+            attempt = record.get("attempt_id")
+            reason = record.get("reason")
+            if isinstance(attempt, str) and isinstance(reason, str):
+                discarded_unsent[attempt] = reason
         elif kind == CANCEL_UNSUPPORTED_KIND:
             attempt = record.get("attempt_id")
             if isinstance(attempt, str):
@@ -429,12 +450,15 @@ def _fold_leaf(
     report.symbol = _sole(order.instrument for order in orders.values())
     report.account = _sole(order.account for order in orders.values())
     for attempt, order in sorted(orders.items(), key=lambda kv: kv[1].seq):
+        never_sent = _resolved_as_never_sent(
+            reconciled.get(attempt), discarded_unsent.get(attempt)
+        )
         status = STATUS_FILLED
         if attempt not in fills:
             terminal = last_result_kind.get(attempt)
             status = (
                 STATUS_NO_FILL
-                if terminal in NON_FILL_TERMINAL_KINDS
+                if never_sent or terminal in NON_FILL_TERMINAL_KINDS
                 else STATUS_UNRESOLVED
             )
         partial_quantity = partial.get(attempt)
@@ -464,9 +488,24 @@ def _fold_leaf(
                 ),
                 "engine_reservation_absent": absent.get(attempt),
                 "cancel_unsupported_reason": cancel_held.get(attempt),
+                "uncertain_send_outcome": reconciled.get(attempt),
+                "discarded_unsent_reason": discarded_unsent.get(attempt),
                 "leaf": str(report.path),
             }
         )
+
+
+def _resolved_as_never_sent(outcome: str | None, discard_reason: str | None) -> bool:
+    """런타임이 «브로커가 받지 않았다» 로 닫은 attempt — 미해결이 아니라 비체결 종료다."""
+    # SAFETY: ambiguous·unprovable_time 을 여기 넣으면 브로커에 살아 있을 수 있는 주문이 집계 밖에서 조용히 사라진다
+    return outcome == RECONCILED_NEVER_ACCEPTED or discard_reason is not None
+
+
+def _never_sent(attempt: dict[str, Any]) -> bool:
+    """:func:`_resolved_as_never_sent`, 접은 attempt 문서에서 다시 읽는 쪽."""
+    return _resolved_as_never_sent(
+        attempt["uncertain_send_outcome"], attempt["discarded_unsent_reason"]
+    )
 
 
 def _remember(store: dict[str, str], record: dict[str, Any], field_name: str) -> None:
@@ -537,6 +576,7 @@ def _needs_an_operators_eye(attempt: dict[str, Any]) -> bool:
     return (
         attempt["status"] == STATUS_UNRESOLVED
         or attempt["partial_filled_quantity"] is not None
+        or _never_sent(attempt)
     )
 
 
@@ -790,6 +830,12 @@ def _render_leftovers(document: dict[str, Any]) -> list[str]:
 
 def _attempt_cause(attempt: dict[str, Any]) -> str:
     """이 attempt 가 집계 밖에 있는 사유 — 런타임이 적은 것 중 가장 구체적인 것."""
+    if attempt["uncertain_send_outcome"] == RECONCILED_NEVER_ACCEPTED:
+        return (
+            f"미접수(마지막 결과 {attempt['last_egress_result_kind']} → 재조회로 확인)"
+        )
+    if attempt["discarded_unsent_reason"] is not None:
+        return f"미전송 종료({attempt['discarded_unsent_reason']})"
     if attempt["cancel_unsupported_reason"] is not None:
         return f"취소 보류({attempt['cancel_unsupported_reason']})"
     if attempt["ack_untrackable_reason"] is not None:
@@ -808,6 +854,8 @@ def _attempt_observation(attempt: dict[str, Any]) -> str:
         observed = absent.get("kind") or "결과"
         tail = "" if quantity is None else f" {quantity}주"
         return f"브로커 체결 관측 · 엔진 미보유({observed}{tail})"
+    if _never_sent(attempt):
+        return "전송되지 않음(체결 없음)"
     return "체결 관측 없음(채워졌는지 모른다)"
 
 

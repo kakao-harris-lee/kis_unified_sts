@@ -480,6 +480,194 @@ def test_a_rejected_order_is_not_unresolved(tmp_path: Path) -> None:
     assert symbol["days"] == []
 
 
+def _uncertain(attempt: str, side: str) -> tuple[str, dict[str, Any]]:
+    """HTTP 500 으로 주문번호 없이 돌아온 전송의 ``EGRESS_RESULT_CONSUMED``."""
+    return (
+        "EGRESS_RESULT_CONSUMED",
+        {
+            "attempt_id": attempt,
+            "egress_result_kind": "UNKNOWN",
+            "knowledge": "UNKNOWN",
+            "trading_date": "20261123",
+            "sealed_side": side,
+        },
+    )
+
+
+def _reconciled(
+    attempt: str,
+    outcome: str,
+    *,
+    odno: str | None = None,
+    candidates: tuple[str, ...] = (),
+) -> tuple[str, dict[str, Any]]:
+    """하나의 ``UNCERTAIN_SEND_RECONCILED`` — 런타임이 적는 모양 그대로."""
+    return (
+        "UNCERTAIN_SEND_RECONCILED",
+        {
+            "attempt_id": attempt,
+            "outcome": outcome,
+            "broker_execution_id": odno,
+            "trading_date": "20261123",
+            "sealed_side": "BUY",
+            "sealed_quantity": "1",
+            "candidate_order_ids": list(candidates),
+            "candidate_order_times": [],
+            "discarded_order_ids": [],
+            "discarded_order_times": [],
+            "settle_ms": 30000,
+            "send_started_time": "102007",
+            "ord_tmd_tolerance_s": 5,
+            "foreign_min_age_s": 120,
+        },
+    )
+
+
+def _discarded_unsent(attempt: str, reason: str) -> tuple[str, dict[str, Any]]:
+    return (
+        "RESERVATION_DISCARDED_UNSENT",
+        {"attempt_id": attempt, "proposal_id": "prop-1", "reason": reason},
+    )
+
+
+def test_a_send_the_broker_never_accepted_is_not_unresolved(tmp_path: Path) -> None:
+    """2026-11-23 세 잎 그대로 — KIS 500 → 재조회가 «미접수» 로 닫은 전송은 «미해결» 이 아니다."""
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-500", "BUY", 175_800)),
+        _uncertain("attempt-500", "BUY"),
+        _reconciled("attempt-500", "never_accepted"),
+        _discarded_unsent("attempt-500", "UNCERTAIN_SEND_NEVER_ACCEPTED"),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, code = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    assert code == 0
+    (symbol,) = document["symbols"]
+    assert symbol["days"] == []
+    (attempt,) = symbol["unresolved_attempts"]
+    assert attempt["status"] == perf.STATUS_NO_FILL
+    assert attempt["uncertain_send_outcome"] == perf.RECONCILED_NEVER_ACCEPTED
+    assert attempt["discarded_unsent_reason"] == "UNCERTAIN_SEND_NEVER_ACCEPTED"
+    assert "비체결 종료 BUY 1주" in text
+    assert "미접수(마지막 결과 UNKNOWN → 재조회로 확인)" in text
+    assert "전송되지 않음(체결 없음)" in text
+    assert "미해결" not in text
+    assert "체결 관측 없음" not in text
+
+
+def test_a_discard_without_a_verdict_is_still_terminal(tmp_path: Path) -> None:
+    """재조회 행 없이 ``RESERVATION_DISCARDED_UNSENT`` 만 있어도 보내지 못한 주문이다."""
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-refused", "SELL", 245_500)),
+        _uncertain("attempt-refused", "SELL"),
+        _discarded_unsent("attempt-refused", "SEND_REFUSED_BEFORE_TRANSPORT"),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, _ = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    (symbol,) = document["symbols"]
+    (attempt,) = symbol["unresolved_attempts"]
+    assert attempt["status"] == perf.STATUS_NO_FILL
+    assert attempt["uncertain_send_outcome"] is None
+    assert "미전송 종료(SEND_REFUSED_BEFORE_TRANSPORT)" in text
+    assert "미해결" not in text
+
+
+def test_a_bound_uncertain_send_resolves_to_the_matched_order_id(
+    tmp_path: Path,
+) -> None:
+    """``bound`` 는 주문이 브로커에 **있다**는 판정이다 — 미해결로 두되 그 주문번호를 적는다."""
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-bound", "BUY", 175_800)),
+        _uncertain("attempt-bound", "BUY"),
+        _reconciled("attempt-bound", "bound", odno="0000008082"),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, _ = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    (symbol,) = document["symbols"]
+    (attempt,) = symbol["unresolved_attempts"]
+    assert attempt["status"] == perf.STATUS_UNRESOLVED
+    assert attempt["uncertain_send_outcome"] == perf.RECONCILED_BOUND
+    assert attempt["broker_execution_id"] == "0000008082"
+    assert attempt["trading_date"] == "20261123"
+    assert "미해결 BUY 1주" in text
+    assert "odno=0000008082" in text
+
+
+@pytest.mark.parametrize("outcome", ["ambiguous", "unprovable_time"])
+def test_an_undecided_reconciliation_stays_unresolved(
+    tmp_path: Path, outcome: str
+) -> None:
+    """주문을 짚지 못한 판정은 아무것도 닫지 않는다 — 브로커에 살아 있을 수 있다."""
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-open", "BUY", 175_800)),
+        _uncertain("attempt-open", "BUY"),
+        _reconciled("attempt-open", outcome, candidates=("0000008082", "0000008083")),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, _ = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    (symbol,) = document["symbols"]
+    (attempt,) = symbol["unresolved_attempts"]
+    assert attempt["status"] == perf.STATUS_UNRESOLVED
+    assert attempt["broker_execution_id"] is None
+    assert "미해결 BUY 1주" in text
+    assert "사유 마지막 결과 UNKNOWN" in text
+    assert "체결 관측 없음(채워졌는지 모른다)" in text
+
+
+def test_a_later_verdict_supersedes_the_earlier_one(tmp_path: Path) -> None:
+    """런타임은 attempt 마다 **마지막** 판정을 본다 — 보류 뒤에 온 미접수가 이긴다."""
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-late", "BUY", 175_800)),
+        _uncertain("attempt-late", "BUY"),
+        _reconciled("attempt-late", "unprovable_time"),
+        _reconciled("attempt-late", "never_accepted"),
+        _discarded_unsent("attempt-late", "UNCERTAIN_SEND_NEVER_ACCEPTED"),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    text, _ = perf.run(leaf_paths=(str(leaf),))
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    (symbol,) = document["symbols"]
+    (attempt,) = symbol["unresolved_attempts"]
+    assert attempt["uncertain_send_outcome"] == perf.RECONCILED_NEVER_ACCEPTED
+    assert attempt["status"] == perf.STATUS_NO_FILL
+    assert "미해결" not in text
+
+
+def test_a_filled_attempt_that_was_also_discarded_still_counts(tmp_path: Path) -> None:
+    """체결이 관측된 주문은 판정 행이 뒤에 붙어도 집계에 남는다 — 돈이 움직인 쪽이 이긴다."""
+    rows = [
+        _policy(),
+        ("SEND_SEALED", _seal("attempt-filled", "BUY", 175_800)),
+        ("FILL_OBSERVED", _fill("attempt-filled", "0000008082", "20261123")),
+        _discarded_unsent("attempt-filled", "UNCERTAIN_SEND_NEVER_ACCEPTED"),
+    ]
+    leaf = _write_leaf(tmp_path / "leaf" / SYMBOL, rows)
+
+    document = json.loads(perf.run(leaf_paths=(str(leaf),), as_json=True)[0])
+
+    (symbol,) = document["symbols"]
+    assert symbol["days"][0]["buy_fills"] == 1
+    assert symbol["unresolved_attempts"] == []
+
+
 def test_an_unclosed_buy_is_left_as_open_quantity(tmp_path: Path) -> None:
     """TOS 가 닫지 않은 매수는 보유 수량으로 남고, 그 사실이 표에 나온다."""
     rows = [
