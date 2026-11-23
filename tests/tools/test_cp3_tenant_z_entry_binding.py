@@ -22,8 +22,14 @@ TREES: tuple[tuple[str, str, str, int], ...] = (
     ("cp3-setup-d-short", "setup_d_short.strategy", "z_entry_min_x1000", +1),
     ("cp3-setup-d-stock-005930", "setup_d_long.strategy", "z_entry_max_x1000", -1),
     ("cp3-setup-d-stock-000660", "setup_d_long.strategy", "z_entry_max_x1000", -1),
-    ("cp3-setup-d-stock-005380", "setup_d_long.strategy", "z_entry_max_x1000", -1),
 )
+
+#: Shipped trees whose strategy is NOT Setup D, so they declare no VWAP-extension
+#: threshold and bind no ``z_entry_*``. ``cp3-setup-d-stock-005380`` is 실험 B
+#: (RSI / Williams %R 되돌림) — ``docs/plans/2026-11-19-tos-usage-plan.md`` §4.1, operator
+#: decision 2026-11-19 §8-②. They are listed here rather than omitted so that the coverage
+#: test below still sees every shipped tree.
+NON_SETUP_D_TREES: tuple[str, ...] = ("cp3-setup-d-stock-005380",)
 
 EXPECTED_EXTREME_ATR_MULT = 1.8
 EXPECTED_ABS_BINDING = 1800
@@ -129,8 +135,30 @@ def test_fields_yaml_compares_each_side_with_the_matching_operator(tree: str) ->
     assert by_name["z_long_side"].op_name == "le"
 
 
+@pytest.mark.parametrize("tree", NON_SETUP_D_TREES)
+def test_a_non_setup_d_tree_declares_neither_the_threshold_nor_a_z_binding(
+    tree: str,
+) -> None:
+    """The other half of the pin: a tree off Setup D must not keep half of it."""
+    document = load_fields_file(CONFIG_ROOT / tree / "fields.yaml")
+    names = {spec.name for spec in document.fields}
+    assert not (
+        names & {"z", "z_short_side", "z_long_side"}
+    ), f"{tree}: declares a Setup D z field but is listed as not running Setup D"
+
+    bindings = yaml.safe_load(
+        (CONFIG_ROOT / tree / "strategy_bindings.yaml").read_text(encoding="utf-8")
+    )
+    for stem, entry in (bindings.get("strategies") or {}).items():
+        stray = sorted(
+            key for key in (entry.get("bindings") or {}) if key.startswith("z_entry")
+        )
+        assert stray == [], f"{tree}: stem {stem!r} still binds {stray}"
+
+
 def test_every_shipped_tenant_tree_is_covered_by_this_module() -> None:
     """A tree added later must not be silently skipped by this module's TREES."""
+    covered = set(_tree_ids()) | set(NON_SETUP_D_TREES)
     discovered_bindings = {
         path.parent.relative_to(CONFIG_ROOT).as_posix()
         for path in CONFIG_ROOT.rglob("strategy_bindings.yaml")
@@ -140,10 +168,11 @@ def test_every_shipped_tenant_tree_is_covered_by_this_module() -> None:
         for path in CONFIG_ROOT.rglob("fields.yaml")
     }
 
-    assert discovered_bindings == set(_tree_ids()), (
-        "a tenant tree with strategy_bindings.yaml is not in TREES (or vice "
-        f"versa): found {sorted(discovered_bindings)}"
+    assert discovered_bindings == covered, (
+        "a tenant tree with strategy_bindings.yaml is in neither TREES nor "
+        f"NON_SETUP_D_TREES: found {sorted(discovered_bindings)}"
     )
-    assert discovered_fields == set(
-        _tree_ids()
-    ), f"a tenant tree with fields.yaml is not in TREES: {sorted(discovered_fields)}"
+    assert discovered_fields == covered, (
+        "a tenant tree with fields.yaml is in neither TREES nor NON_SETUP_D_TREES: "
+        f"{sorted(discovered_fields)}"
+    )

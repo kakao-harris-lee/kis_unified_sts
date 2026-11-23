@@ -10,6 +10,19 @@ CP-3 **주식 tenant** 설정 트리 — 종목 **000660(SK하이닉스)**.
 MOCK 주문 scope, band 원천, 체결·완결·해제, 상시 승인, R4 M2 프로브, 하지 않는 것까지 전부
 거기 적혀 있고 이 트리도 같다. 여기에는 **다른 것만** 적는다.
 
+## 역할: 실험 A — Setup D LONG, R4 프로브 끔
+
+`docs/plans/2026-11-19-tos-usage-plan.md` §4.1 의 역할 분담(운영자 결정 2026-11-19 §8-②
+「채택 — R4 는 005930 에만 남긴다」): 005930 은 주문 경로가 매일 살아 있는지 재는 **카나리아**
+(R4 프로브 유지), 이 트리는 **실험 A**(Setup D LONG: R1 진입 · R2 VWAP 복귀 · R3 EOD),
+005380 은 실험 B(RSI / Williams %R 되돌림)다.
+
+끄는 방법은 바인딩 한 줄이다 — `strategy_bindings.yaml::m2_probe_entry_enabled: false`.
+규칙 `R4-M2-PROBE-ENTRY-LONG` 은 전략 파일에 **그대로 남고** 발화만 하지 않는다(그 규칙의
+둘째 비교가 `entry_window EQ config.m2_probe_entry_enabled` 이므로 진입창이 열린 바에서
+`true == false` 로 거짓). 규칙을 지우지 않는 이유: 전략 파일이 005930 과 바이트 동일로
+남아야 두 tenant 의 차이가 **바인딩 한 줄**로만 읽힌다.
+
 ## 005930 트리와 다른 것
 
 | 파일 | 다른 값 | 이유 |
@@ -17,18 +30,20 @@ MOCK 주문 scope, band 원천, 체결·완결·해제, 상시 승인, R4 M2 프
 | `RENDER.yaml` | `tree_id` · `instrument.pattern: "000660"` | 트리는 단일 종목이다(아래) |
 | `venue_constraint_policy.yaml` | `policy_id` · `scope.instruments` 슬롯 · `approved_by` · `effective_from` · 헤더의 종목·근거 | 내용이 다르니 id 도 다르다(LONG 헤더의 규칙). 호가단위 사다리는 **가격대별**이라 종목과 무관하게 같다 |
 | `critical_input_policy.yaml` | `policy_id` · `issuer_principal_id` | 같은 규칙 |
+| `strategy_bindings.yaml` | `m2_probe_entry_enabled: false` | 실험 A — 위 절 |
 | `fields.yaml` · `fill_observer.yaml` | 주석의 종목·생산자 설정 경로 | 런타임이 읽는 값은 005930 과 같다 |
 
 나머지 파일은 005930 트리와 **바이트 동일**이다 — `strategies/setup_d_long.strategy.yaml`
-(R1~R3 + R4 M2 프로브) · `strategy_bindings.yaml` · `engine.yaml` · `authority.yaml` ·
-`calendar.yaml` · `broker_scopes.yaml` · `broker_facts.yaml` · `egress_coordinates.yaml` ·
-`release.yaml` 전부 포함. 이 분류는
+(R1~R3 + R4 M2 프로브) · `engine.yaml` · `authority.yaml` · `calendar.yaml` ·
+`broker_scopes.yaml` · `broker_facts.yaml` · `egress_coordinates.yaml` · `release.yaml`
+전부 포함. 이 분류는
 `tos/runtime/tests/compose/test_tenant_tree_stock_siblings.py` 가 파일·키 경로 단위로 고정한다.
 
-전략·바인딩·`engine.yaml` 이 바이트 동일하므로 **decision digest 가 005930 과 같다** —
-`config/tos_runtime/decision_generations.yaml` 의 이 tenant 항목이 같은 digest 를 쓰고,
-`generation` 은 **1**(이 잎이 태어날 계약)이다. 005930 의 2 는 그 잎이 3규칙에서 태어나
-4규칙으로 바뀐 이력이고, 이 잎은 처음부터 4규칙이다.
+**decision digest 는 005930 과 다르다** — 바인딩 한 줄이 결정 계약의 일부이기 때문이다
+(`config/tos_runtime/decision_generations.yaml` 가 그 이유를 적는다). 이 tenant 는
+`generation` **2**: 1 은 11-20 에 프로브를 켠 채 태어난 계약이고, 2 가 지금의 계약이다.
+⚠ generation 이 오른 잎은 **재-genesis** 해야 배포된다(`docs/runbooks/tos-paper-boot.md`
+§7.2-f) — 계좌 평탄을 GET 으로 확인한 뒤 잎을 `archive/` 로 옮긴다.
 
 ## 호가단위 사다리는 종목별이 아니다
 
