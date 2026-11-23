@@ -45,6 +45,7 @@ class FillObserverConfig:
     uncertain_send_settle_ms: int | None = None
     uncertain_send_ord_tmd_tolerance_s: int | None = None
     uncertain_send_foreign_min_age_s: int | None = None
+    uncertain_send_broker_skew_tolerance_s: int | None = None
     uncertain_send_side_codes: dict[str, str] = field(default_factory=dict)
     loop_witness_request_timeout_s: float | None = None
     loop_witness_deadline_ms: int | None = None
@@ -113,6 +114,9 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
         )
     _loop_witness_deadlines(raw, path)
     uncertain_send_reconcile, side_codes = _uncertain_send(raw, path)
+    settle_ms, tolerance_s, foreign_min_age_s, skew_tolerance_s = (
+        _uncertain_send_bounds(raw, path)
+    )
     missing = [key for key in _WITNESS_KEYS if key not in raw]
     if missing:
         raise FillObserverConfigError(f"{path}: missing {missing}")
@@ -168,16 +172,23 @@ def load_fill_observer_config(path: Path) -> FillObserverConfig:
             raw, "loop_witness_deadline_max_ms", path
         ),
         uncertain_send_reconcile=uncertain_send_reconcile,
-        uncertain_send_settle_ms=_optional_positive_int(
-            raw, "uncertain_send_settle_ms", path
-        ),
-        uncertain_send_ord_tmd_tolerance_s=_optional_positive_int(
-            raw, "uncertain_send_ord_tmd_tolerance_s", path
-        ),
-        uncertain_send_foreign_min_age_s=_optional_positive_int(
-            raw, "uncertain_send_foreign_min_age_s", path
-        ),
+        uncertain_send_settle_ms=settle_ms,
+        uncertain_send_ord_tmd_tolerance_s=tolerance_s,
+        uncertain_send_foreign_min_age_s=foreign_min_age_s,
+        uncertain_send_broker_skew_tolerance_s=skew_tolerance_s,
         uncertain_send_side_codes=side_codes,
+    )
+
+
+def _uncertain_send_bounds(
+    raw: dict[str, Any], path: Path
+) -> tuple[int | None, int | None, int | None, int | None]:
+    """The gate's four numeric bounds, in the order :func:`load_fill_observer_config` needs."""
+    return (
+        _optional_positive_int(raw, "uncertain_send_settle_ms", path),
+        _optional_positive_int(raw, "uncertain_send_ord_tmd_tolerance_s", path),
+        _optional_positive_int(raw, "uncertain_send_foreign_min_age_s", path),
+        _optional_positive_int(raw, "uncertain_send_broker_skew_tolerance_s", path),
     )
 
 
@@ -227,8 +238,37 @@ def _uncertain_send(raw: dict[str, Any], path: Path) -> tuple[bool, dict[str, st
             "own send created under a drifted host clock is discarded and the reservation "
             "released, issue #1127 review r1)"
         )
+    if enabled and "uncertain_send_broker_skew_tolerance_s" not in raw:
+        raise FillObserverConfigError(
+            f"{path}: uncertain_send_reconcile needs "
+            "uncertain_send_broker_skew_tolerance_s (how far the host clock may sit from "
+            "the broker's own Date header before a row's age proves nothing — without it a "
+            "host running minutes ahead discards our own order as somebody else's and the "
+            "reservation is released, issue #1138)"
+        )
     _refuse_overlapping_time_thresholds(raw, path)
+    _refuse_skew_tolerance_above_foreign_age(raw, path)
     return enabled, _side_codes(raw, path, required=enabled)
+
+
+def _refuse_skew_tolerance_above_foreign_age(raw: dict[str, Any], path: Path) -> None:
+    """A tolerated skew must be smaller than the age that calls a row foreign (#1138)."""
+    tolerance = raw.get("uncertain_send_broker_skew_tolerance_s")
+    foreign_min_age = raw.get("uncertain_send_foreign_min_age_s")
+    if (
+        isinstance(tolerance, bool)
+        or isinstance(foreign_min_age, bool)
+        or not isinstance(tolerance, int)
+        or not isinstance(foreign_min_age, int)
+    ):
+        return
+    if tolerance >= foreign_min_age:
+        raise FillObserverConfigError(
+            f"{path}: uncertain_send_broker_skew_tolerance_s ({tolerance}) must be less "
+            f"than uncertain_send_foreign_min_age_s ({foreign_min_age}) — a tolerated skew "
+            "that large can by itself push our own row past the foreign band, so the "
+            "measurement would admit the very discard it exists to refuse"
+        )
 
 
 def _refuse_overlapping_time_thresholds(raw: dict[str, Any], path: Path) -> None:

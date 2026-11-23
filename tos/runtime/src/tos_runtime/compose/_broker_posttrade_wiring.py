@@ -28,6 +28,8 @@ from tos_runtime.compose._posttrade_source import broker_posttrade_enabled
 from tos_runtime.compose._transport_wiring import instance_rest_bases
 from tos_runtime.compose._types import ComposedRuntime
 from tos_runtime.engine.finality_projection import project_recovered_finality
+from tos_runtime.evidence.emergency import record_halt
+from tos_runtime.posttrade.broker_clock_skew import BrokerClockSkew
 from tos_runtime.posttrade.broker_finality import BrokerFinalityProducer
 from tos_runtime.posttrade.broker_flat_release import BrokerFlatRelease
 from tos_runtime.posttrade.fill_fetch import (
@@ -49,12 +51,15 @@ from tos_runtime.posttrade.release_consumer import (
     FinalityReleaseConsumer,
     release_command_id,
 )
-from tos_runtime.posttrade.uncertain_send import UncertainSendReconciler
+from tos_runtime.posttrade.uncertain_send import (
+    LATE_CANDIDATE_HALT_REASON,
+    UncertainSendReconciler,
+)
 from tos_runtime.recon.ports import WitnessScope, WitnessSnapshot, WitnessUnavailable
 from tos_runtime.recon.witness_kis import KisOrderRow, KisStockBrokerWitness
 from tos_runtime.recon.witness_kis_client import build_witness_client
 from tos_runtime.recon.witness_kis_config import kis_witness_config_from_mapping
-from tos_runtime.time.sources import MonotonicSource
+from tos_runtime.time.sources import LocalSystemClockReader, MonotonicSource
 from tos_runtime.transport.kis_mock.client import build_client
 from tos_runtime.transport.kis_mock.config import KisMockTransportConfig
 from tos_runtime.transport.kis_mock.credential_session import KisCredentialSessions
@@ -332,6 +337,7 @@ class BrokerPosttrade:
     held_position_bridge: HeldPositionBridge | None = None
     trading_date_now: Callable[[], str | None] = lambda: None
     app_key_min_send_interval_ms: int | None = None
+    broker_clock_skew: BrokerClockSkew | None = None
 
 
 def _refuse_snapshot_age_below_two_intervals(
@@ -384,6 +390,7 @@ def build_broker_posttrade(
     transport_config: KisMockTransportConfig | None,
     credential_sessions_cell: KisCredentialSessionsCell,
     trading_date_now: Callable[[], str | None],
+    host_unix_ms: Callable[[], int | None] | None = None,
 ) -> BrokerPosttrade:
     """Build the witness (deferred) and load the observer config for a stock MOCK boot."""
     if not broker_posttrade_enabled(broker_scopes.active_scope, transport_config):
@@ -429,6 +436,7 @@ def build_broker_posttrade(
         loop_deadline_per_date_ms=transport_config.min_send_interval_ms,
     )
     token_client = build_client(transport_config)
+    skew = _broker_clock_skew(observer_config, host_unix_ms)
 
     def _build(sessions: KisCredentialSessions) -> None:
         credential_session = kis_mock_credential_session(
@@ -440,11 +448,13 @@ def build_broker_posttrade(
             pacing=kis_transport_pacing(transport_config),
         )
         date_source = _TrustedTradingDate(trading_date_now)
+        sink = None if skew is None else skew.observe
         witness.inner = KisStockBrokerWitness(
             config=witness_config,
             client=build_witness_client(witness_config),
             credential_session=credential_session,
             date_source=date_source,
+            date_header_sink=sink,
         )
         if loop_witness_config is not None:
             witness.loop_inner = KisStockBrokerWitness(
@@ -452,6 +462,7 @@ def build_broker_posttrade(
                 client=build_witness_client(loop_witness_config),
                 credential_session=credential_session,
                 date_source=date_source,
+                date_header_sink=sink,
             )
 
     credential_sessions_cell.on_ready(_build)
@@ -461,6 +472,26 @@ def build_broker_posttrade(
         observer_config=observer_config,
         trading_date_now=trading_date_now,
         app_key_min_send_interval_ms=transport_config.min_send_interval_ms,
+        broker_clock_skew=skew,
+    )
+
+
+def _local_host_unix_ms() -> int | None:
+    """The host wall clock in unix ms — the one side of the skew we can read ourselves."""
+    return LocalSystemClockReader().read().wall_clock_unix_ms
+
+
+def _broker_clock_skew(
+    observer_config: FillObserverConfig,
+    host_unix_ms: Callable[[], int | None] | None,
+) -> BrokerClockSkew | None:
+    """The host↔broker skew meter ``fill_observer.yaml`` declares, or ``None`` (issue #1138)."""
+    tolerance_s = observer_config.uncertain_send_broker_skew_tolerance_s
+    if not observer_config.uncertain_send_reconcile or tolerance_s is None:
+        return None
+    return BrokerClockSkew(
+        tolerance_s=tolerance_s,
+        host_unix_ms=host_unix_ms or _local_host_unix_ms,
     )
 
 
@@ -569,6 +600,7 @@ def _uncertain_send_reconciler(
     def _record(kind: str, fields: dict[str, Any]) -> None:
         store.append(fields, kind=kind, record_class=kind)
 
+    skew = posttrade.broker_clock_skew
     return UncertainSendReconciler(
         evidence_store=store,
         account=instrument_key.account,
@@ -578,7 +610,32 @@ def _uncertain_send_reconciler(
         foreign_min_age_s=config.uncertain_send_foreign_min_age_s,
         side_codes=config.uncertain_send_side_codes,
         record=_record,
+        today=posttrade.trading_date_now,
+        halt=_late_candidate_halt(runtime),
+        broker_clock_corroborated=None if skew is None else skew.corroborated,
     )
+
+
+def _late_candidate_halt(
+    runtime: ComposedRuntime,
+) -> Callable[[str, dict[str, Any]], None]:
+    """Latch this tenant's new-risk halt when a released send's order shows up late (#1129)."""
+    inbox = runtime.inbox
+    emergency_log = runtime.emergency_log
+    store = runtime.evidence_store
+
+    def _halt(kind: str, fields: dict[str, Any]) -> None:
+        # SAFETY: 이미 풀어준 예약의 주문이 뒤늦게 보이면 그 자리에 lot 이 둘이다 — 운영자 재무장 전까지 새 위험을 잠근다
+        receipt = record_halt(
+            store, emergency_log, payload=fields, kind=kind, record_class=kind
+        )
+        inbox.record_new_risk_halt(
+            reason=LATE_CANDIDATE_HALT_REASON,
+            event_id=f"attempt:{fields.get('attempt_id')}",
+            evidence_seq=receipt.seq,
+        )
+
+    return _halt
 
 
 def _broker_flat_release(

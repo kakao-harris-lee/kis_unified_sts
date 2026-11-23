@@ -277,6 +277,7 @@ class KisStockBrokerWitness:
         credential_session: KisWitnessCredentialSession,
         date_source: KstDateSource,
         asset: str = "stock",
+        date_header_sink: Callable[[str | None], None] | None = None,
     ) -> None:
         """Wire this witness's dependencies (all injected — no ambient state beyond the"""
         refuse_futures_asset(asset)
@@ -284,6 +285,7 @@ class KisStockBrokerWitness:
         self._client = client
         self._credential_session = credential_session
         self._date_source = date_source
+        self._date_header_sink = date_header_sink
 
     def observe(
         self,
@@ -389,16 +391,28 @@ class KisStockBrokerWitness:
     ) -> RawGetResponse:
         with self._credential_session.request_credentials() as credentials:
             try:
-                return self._client.get(
+                response = self._client.get(
                     path,
                     headers=self._headers(credentials, tr_id=tr_id, tr_cont=tr_cont),
                     params=params,
                 )
+                self._observe_date_header(response)
+                return response
             except KisWitnessClientError as exc:
                 raise WitnessUnavailable(
                     f"KisStockBrokerWitness: transport failure on {path} — "
                     f"{type(exc).__name__}"
                 ) from exc
+
+    def _observe_date_header(self, response: RawGetResponse) -> None:
+        """Hand this response's ``Date`` to the skew meter, if one is wired (issue #1138)."""
+        # SAFETY: 측정 실패가 읽기를 깨면 안 된다 — 이 훅은 판정 입력일 뿐 증인의 답이 아니다
+        if self._date_header_sink is None:
+            return
+        try:
+            self._date_header_sink(response.headers.get("date"))
+        except Exception:  # noqa: BLE001 - a failed measurement is not a failed read
+            return
 
     def _walk_continuation(
         self,

@@ -27,6 +27,8 @@ uncertain_send_reconcile: true
 uncertain_send_settle_ms: 30000
 uncertain_send_ord_tmd_tolerance_s: 5
 uncertain_send_foreign_min_age_s: 120
+# SAFETY: 호스트 시계가 브로커 Date 헤더에서 이만큼 넘게 벗어나면 행의 «나이» 가 아무것도 증명하지 못한다 — 우리 주문을 남의 것으로 버리고 풀어 두 번 보낸다 (#1138)
+uncertain_send_broker_skew_tolerance_s: 30
 uncertain_send_side_codes:
   BUY: "02"
   SELL: "01"

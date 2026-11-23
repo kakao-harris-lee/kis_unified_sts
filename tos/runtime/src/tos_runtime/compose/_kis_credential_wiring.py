@@ -101,6 +101,7 @@ def kis_shared_token_cache(
         lock_wait_s=(
             config.request_timeout_s + config.app_key_request_wait_budget_ms / 1000.0
         ),
+        endpoint_base=config.endpoint_rest_base,
     )
 
 

@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from decimal import Decimal, InvalidOperation
 
 import pytest
+from tos_runtime.posttrade.broker_clock_skew import (
+    BrokerClockSkew,
+    parse_http_date_ms,
+)
 from tos_runtime.recon import witness_kis
 from tos_runtime.recon.ports import WitnessOrderState, WitnessScope, WitnessUnavailable
 from tos_runtime.recon.witness_kis import (
@@ -58,6 +63,7 @@ def _witness(
     max_pages: int = 10,
     credential_session: KisWitnessCredentialSession | None = None,
     date_source: KstDateSource | None = None,
+    date_header_sink: Callable[[str | None], None] | None = None,
 ) -> KisStockBrokerWitness:
     config = _config(server, max_pages=max_pages)
     client = KisWitnessHttpClient(
@@ -70,6 +76,7 @@ def _witness(
         client=client,
         credential_session=credential_session or FakeCredentialSession(),
         date_source=date_source or FakeKstDateSource(),
+        date_header_sink=date_header_sink,
     )
 
 
@@ -868,3 +875,38 @@ def test_a_pacer_refused_slot_is_witness_unavailable_with_no_request(
             WitnessScope(account=ACCOUNT), inquiry_date="20261023"
         )
     assert server.all_requests == []
+
+
+def test_every_read_hands_its_date_header_to_the_skew_meter(
+    server: FakeKisGetServer,
+) -> None:
+    """Issue #1138: the host↔broker offset is measured on the very reads the judgment uses."""
+    seen: list[str | None] = []
+    _queue_two_page_balance(server)
+    server.queue_response(ORDER_PATH, status=200, body=_empty_order_response())
+    witness = _witness(server, date_header_sink=seen.append)
+
+    witness.observe(WitnessScope(account=ACCOUNT))
+
+    assert len(seen) == 3, seen
+    assert all(parse_http_date_ms(value) is not None for value in seen), seen
+    meter = BrokerClockSkew(
+        tolerance_s=30, host_unix_ms=lambda: int(time.time() * 1000)
+    )
+    meter.observe(seen[-1])
+    assert meter.corroborated() is True
+
+
+def test_a_sink_that_raises_does_not_break_the_read(server: FakeKisGetServer) -> None:
+    """The meter is a judgment input, not the witness's answer."""
+
+    def _boom(value: str | None) -> None:
+        raise RuntimeError(f"meter exploded on {value!r}")
+
+    _queue_two_page_balance(server)
+    server.queue_response(ORDER_PATH, status=200, body=_empty_order_response())
+    witness = _witness(server, date_header_sink=_boom)
+
+    snapshot = witness.observe(WitnessScope(account=ACCOUNT))
+
+    assert len(snapshot.positions) == 25
