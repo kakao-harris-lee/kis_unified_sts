@@ -377,6 +377,11 @@ def compose_paper_runtime(
             ),
             effect_envelope_reader=lambda: construction_stages.economic_stage.envelope,
             venue_allowed_sides=venue_service.shape_constraints.allowed_sides,
+            ocp_effect_dimension_ids=frozenset(
+                spec.dimension_id
+                for spec in loaded_ocp.construction_rules.effect_dimensions
+                if spec.dimension_id is not None
+            ),
             action_class_reader=lambda: attempt_action_class(
                 construction_stages.construction_stage, construction.action_class
             ),

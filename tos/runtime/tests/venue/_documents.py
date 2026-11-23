@@ -343,8 +343,10 @@ def ocp_yaml(
                     # by, rcl/predicates.py:104-105 / riskstate/service.py:145-151) --
                     # NOT the unprefixed _model_view.governed_dimensions spelling (proposal
                     # 2026-09-16-tos-ocp-effect-dimensions-proposal.md §2.1). A wrong spelling
-                    # here passes step 5 while the capacity lookup finds nothing -- the exact
-                    # phantom the withdrawn fixture-injected "notional"/"units" values were.
+                    # here passed step 5 while the capacity lookup found nothing -- the exact
+                    # phantom the withdrawn fixture-injected "notional"/"units" values were;
+                    # since #1165 the compose root refuses to boot on it
+                    # (_riskstate_wiring._cross_check_ocp_effect_dimensions).
                     - dimension_id: "INSTRUMENT::LONG_SHORT_DELTA_DIRECTIONAL"
                       basis: "QUANTITY"
                       unit: "CONTRACTS"
