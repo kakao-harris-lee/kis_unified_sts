@@ -51,6 +51,7 @@ from tos_runtime.recon.ports import (
 )
 from tos_runtime.recon.service import ReconciliationClass, ReconciliationService
 from tos_runtime.risk.ledger_stages import verdict_for_scope
+from tos_runtime.riskstate.close_bound import DurableEntryCloseBoundReader
 
 from .conftest import MONOTONIC_BASE_MS as _MONOTONIC_BASE_MS
 from .conftest import Rig
@@ -1136,12 +1137,13 @@ def _record_receipt(
     filled: Decimal,
     remaining: Decimal,
     broker_execution_id: str,
+    result_kind: str = "FULL_FILL",
 ) -> None:
     evidence_store.append(
         {
             "attempt_id": attempt_id,
             "instrument_key": {"account": _ACCOUNT, "instrument": _INSTRUMENT},
-            "egress_result_kind": "FULL_FILL",
+            "egress_result_kind": result_kind,
             "filled_quantity": format(filled, "f"),
             "remaining_quantity": format(remaining, "f"),
             "broker_execution_id": broker_execution_id,
@@ -1473,11 +1475,351 @@ def test_a_complete_empty_holdings_observation_releases_the_entry(
     assert _held_rows_after_entry_pending_link(rig.evidence_store) == []
 
 
-def test_a_cancel_after_a_partial_fill_does_not_release_the_held_quantity(
+_MAIN_PERMIT_RESERVATION_ID = permit_reservation_id(_ACCOUNT, _INSTRUMENT, _MAIN_PERMIT)
+
+
+def _arrange_cancelled_partial_fill(
+    rig: Rig,
+    *,
+    partial_filled: Decimal = Decimal("4"),
+    partial_remaining: Decimal = Decimal("2"),
+    cancel_filled: Decimal = Decimal("4"),
+    cancel_remaining: Decimal = Decimal("2"),
+) -> EgressResultPayload:
+    """#980's input: an entry that filled part of its order, then had the rest cancelled."""
+    _commit_named_reservation(
+        rig.rcl_log,
+        reservation_id=_MAIN_PERMIT_RESERVATION_ID,
+        to_state=CapacityState.POTENTIALLY_LIVE,
+        command_id="cmd-relc-partial-entry",
+    )
+    _record_receipt(
+        rig.evidence_store,
+        attempt_id=_ATTEMPT_ID,
+        filled=partial_filled,
+        remaining=partial_remaining,
+        broker_execution_id="exec-relc-partial",
+        result_kind="PARTIAL_FILL",
+    )
+    _record_receipt(
+        rig.evidence_store,
+        attempt_id=_ATTEMPT_ID,
+        filled=cancel_filled,
+        remaining=cancel_remaining,
+        broker_execution_id="exec-relc-partial",
+        result_kind="CANCEL_ACK",
+    )
+    return _payload(EgressResultKind.CANCEL_ACK)
+
+
+def _obligation_quantities(evidence_store: SqliteEvidenceStore) -> list[Decimal]:
+    import json
+
+    rows = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = ? ORDER BY seq ASC",
+        ("ECONOMIC_OBLIGATION",),
+    ).fetchall()
+    return [
+        Decimal(str(json.loads(payload_json)["payload"]["quantity"]))
+        for (payload_json,) in rows
+    ]
+
+
+def test_a_cancel_after_a_partial_fill_consumes_the_filled_quantity(
     rig: Rig,
 ) -> None:
-    """review-973 M3: the entry partially filled 4 of 6, then the remainder was cancelled."""
-    _open_reservation(rig.rcl_log)
+    """#980: the entry filled 4 of 6 and the rest was cancelled — the 4 are a POSITION."""
+    payload = _arrange_cancelled_partial_fill(rig)
+
+    outcome = _non_execution_consumer(rig).consume(payload)
+
+    assert outcome.released is True
+    assert (
+        _states(rig.rcl_log)[_MAIN_PERMIT_RESERVATION_ID]
+        is CapacityState.POSITION_CONSUMED
+    )
+    assert _held_rows(rig.evidence_store) == []
+    assert _obligation_quantities(rig.evidence_store) == [Decimal("4")]
+    assert [row["destination"] for row in _intent_rows(rig.evidence_store)] == [
+        CapacityState.POSITION_CONSUMED.value
+    ]
+
+    rows = SqliteReservationProjectionReader(rig.rcl_log).scope_reservations(_KEY)
+    assert verdict_for_scope("CLOSE", rows).outcome is StageOutcome.ADMIT
+    assert verdict_for_scope("OPEN", rows).outcome is StageOutcome.DENY
+
+
+def test_the_cancelled_remainder_never_counts_toward_the_close_bound(
+    rig: Rig,
+) -> None:
+    """#980: the durable bound a CLOSE is sized and fenced by is the 4 that filled, not the 6."""
+    payload = _arrange_cancelled_partial_fill(rig)
+
+    assert _non_execution_consumer(rig).consume(payload).released is True
+
+    bound = DurableEntryCloseBoundReader(
+        rcl_log=rig.rcl_log,
+        evidence_store=rig.evidence_store,
+        projection=SqliteReservationProjectionReader(rig.rcl_log),
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    ).read()
+
+    assert bound.proven is True
+    assert bound.entry_reservation_id == _MAIN_PERMIT_RESERVATION_ID
+    assert bound.entry_attempt_id == _ATTEMPT_ID
+    assert bound.entry_quantity == Decimal("4")
+    assert bound.prior_closed == Decimal("0")
+    assert bound.remaining == Decimal("4")
+
+
+def _close_bound(rig: Rig):
+    return DurableEntryCloseBoundReader(
+        rcl_log=rig.rcl_log,
+        evidence_store=rig.evidence_store,
+        projection=SqliteReservationProjectionReader(rig.rcl_log),
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    ).read()
+
+
+def test_a_late_fill_after_the_cancel_does_not_grow_the_close_bound(
+    rig: Rig,
+) -> None:
+    """#1160 review MEDIUM-1: receipts that outgrow the issued proof deny the CLOSE."""
+    payload = _arrange_cancelled_partial_fill(rig)
+    assert _non_execution_consumer(rig).consume(payload).released is True
+    assert _close_bound(rig).entry_quantity == Decimal("4")
+
+    _record_receipt(
+        rig.evidence_store,
+        attempt_id=_ATTEMPT_ID,
+        filled=Decimal("5"),
+        remaining=Decimal("1"),
+        broker_execution_id="exec-relc-partial-late",
+        result_kind="PARTIAL_FILL",
+    )
+    rig.evidence_store.append(
+        {
+            "attempt_id": _ATTEMPT_ID,
+            "instrument_key": {"account": _ACCOUNT, "instrument": _INSTRUMENT},
+            "egress_result_kind": "CANCEL_ACK",
+            "broker_execution_id": "exec-relc-partial-late",
+        },
+        kind="RESULT_UNMATCHED",
+        record_class="RESULT_UNMATCHED",
+    )
+
+    bound = _close_bound(rig)
+    assert bound.proven is False
+    assert bound.entry_quantity is None
+    assert bound.remaining is None
+
+
+def test_the_close_bound_rests_on_the_recorded_obligation_quantity(
+    rig: Rig,
+) -> None:
+    """#1160 review MEDIUM-1: receipts alone never size a CLOSE — the obligation must agree."""
+    _commit_named_reservation(
+        rig.rcl_log,
+        reservation_id=_MAIN_PERMIT_RESERVATION_ID,
+        to_state=CapacityState.POSITION_CONSUMED,
+        command_id="cmd-relc-partial-consumed",
+    )
+    _record_receipt(
+        rig.evidence_store,
+        attempt_id=_ATTEMPT_ID,
+        filled=Decimal("4"),
+        remaining=Decimal("2"),
+        broker_execution_id="exec-relc-partial",
+        result_kind="PARTIAL_FILL",
+    )
+    _record_receipt(
+        rig.evidence_store,
+        attempt_id=_ATTEMPT_ID,
+        filled=Decimal("4"),
+        remaining=Decimal("2"),
+        broker_execution_id="exec-relc-partial",
+        result_kind="CANCEL_ACK",
+    )
+    rig.evidence_store.append(
+        {"idempotency_key": f"synthetic-fqp-partial-proof:{_ATTEMPT_ID}"},
+        kind="POSTTRADE_FINALITY_PROOF",
+        record_class="POSTTRADE_FINALITY_PROOF",
+    )
+    rig.evidence_store.append(
+        {
+            "idempotency_key": f"synthetic-fqp-partial-obligation:{_ATTEMPT_ID}",
+            "quantity": "5",
+        },
+        kind="ECONOMIC_OBLIGATION",
+        record_class="ECONOMIC_OBLIGATION",
+    )
+
+    assert _close_bound(rig).proven is False
+
+    rig.evidence_store.append(
+        {
+            "idempotency_key": f"synthetic-fqp-partial-obligation:{_ATTEMPT_ID}",
+            "quantity": "4",
+        },
+        kind="ECONOMIC_OBLIGATION",
+        record_class="ECONOMIC_OBLIGATION",
+    )
+
+    # SAFETY: two obligations disagreeing is still not a quantity — it must stay refused.
+    assert _close_bound(rig).proven is False
+
+
+class _PartialEntryCycleWitness:
+    """Reports the partially filled entry and the CLOSE that discharges it, with a flat book."""
+
+    def observe(self, _scope: WitnessScope) -> WitnessSnapshot:
+        return WitnessSnapshot(
+            observed_at_generation=1,
+            orders=(
+                WitnessOrder(
+                    attempt_id=_ATTEMPT_ID,
+                    broker_execution_id="exec-relc-partial",
+                    quantity=Decimal("4"),
+                    remaining=Decimal("2"),
+                    state=WitnessOrderState.CANCELLED,
+                ),
+                WitnessOrder(
+                    attempt_id=_CLOSE_ATTEMPT,
+                    broker_execution_id="exec-relc-close",
+                    quantity=Decimal("4"),
+                    remaining=Decimal("0"),
+                    state=WitnessOrderState.FILLED,
+                ),
+            ),
+            positions=(),
+            positions_complete=True,
+            provenance="independent-broker-double",
+            independent_of_evidence_store=True,
+        )
+
+
+def test_a_close_of_the_cancelled_partial_fill_discharges_the_entry(
+    rig: Rig,
+) -> None:
+    """#1160 review LOW-2: the 4 that filled can be closed and the entry then reaches RELEASED."""
+    entry_payload = _arrange_cancelled_partial_fill(rig)
+    assert _non_execution_consumer(rig).consume(entry_payload).released is True
+
+    _record_join(
+        rig.evidence_store, attempt_id=_CLOSE_ATTEMPT, permit_identity=_CLOSE_PERMIT
+    )
+    _commit_named_reservation(
+        rig.rcl_log,
+        reservation_id=_close_reservation_id(),
+        to_state=CapacityState.POTENTIALLY_LIVE,
+        command_id="cmd-relc-close",
+    )
+    _record_receipt(
+        rig.evidence_store,
+        attempt_id=_CLOSE_ATTEMPT,
+        filled=Decimal("4"),
+        remaining=Decimal("0"),
+        broker_execution_id="exec-relc-close",
+    )
+    close_payload = _close_payload(filled=Decimal("4"), remaining=Decimal("0"))
+    produced = _producer().produce(close_payload)
+    assert produced is not None
+    _append_obligation(rig.evidence_store, produced)
+    rig.inbox.record_finality_witness(_CLOSE_ATTEMPT, True)
+
+    outcome = _cycle_consumer(rig, witness=_PartialEntryCycleWitness()).consume(
+        close_payload
+    )
+
+    assert outcome.released is True
+    states = _states(rig.rcl_log)
+    assert states[_close_reservation_id()] is CapacityState.RELEASED
+    assert states[_MAIN_PERMIT_RESERVATION_ID] is CapacityState.RELEASED
+
+
+def test_consuming_the_same_cancel_twice_never_releases_the_position(
+    rig: Rig,
+) -> None:
+    """#980: a re-projected CANCEL_ACK re-runs the branch — the position is consumed once."""
+    payload = _arrange_cancelled_partial_fill(rig)
+    consumer = _non_execution_consumer(rig)
+
+    assert consumer.consume(payload).released is True
+    assert consumer.consume(payload).released is False
+
+    assert (
+        _states(rig.rcl_log)[_MAIN_PERMIT_RESERVATION_ID]
+        is CapacityState.POSITION_CONSUMED
+    )
+    (held,) = _held_rows(rig.evidence_store)
+    assert held["reason"] == ReleaseHoldReason.RCL_TRANSITION_REFUSED.value
+
+
+def test_a_cancelled_partial_fill_holds_when_the_receipts_disagree(
+    rig: Rig,
+) -> None:
+    """review-973 M3 is unchanged where the quantity is unproven: contradictory receipts hold."""
+    payload = _arrange_cancelled_partial_fill(
+        rig, cancel_filled=Decimal("5"), cancel_remaining=Decimal("2")
+    )
+
+    outcome = _non_execution_consumer(rig).consume(payload)
+
+    assert outcome.released is False
+    assert (
+        _states(rig.rcl_log)[_MAIN_PERMIT_RESERVATION_ID]
+        is CapacityState.POTENTIALLY_LIVE
+    )
+    (held,) = _held_rows(rig.evidence_store)
+    assert held["reason"] == ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD.value
+    assert _obligation_quantities(rig.evidence_store) == []
+
+    rows = SqliteReservationProjectionReader(rig.rcl_log).scope_reservations(_KEY)
+    assert verdict_for_scope("OPEN", rows).outcome is StageOutcome.DENY
+    assert verdict_for_scope("CLOSE", rows).outcome is StageOutcome.DENY
+
+
+def test_a_cancelled_partial_fill_of_a_close_still_holds(
+    rig: Rig,
+) -> None:
+    """#980 stops at the entry: a partially filled CLOSE would be a second position."""
+    _record_join(
+        rig.evidence_store, attempt_id=_ENTRY_ATTEMPT, permit_identity=_ENTRY_PERMIT
+    )
+    _commit_named_reservation(
+        rig.rcl_log,
+        reservation_id=_entry_reservation_id(),
+        to_state=CapacityState.POSITION_CONSUMED,
+        command_id="cmd-relc-entry",
+    )
+    payload = _arrange_cancelled_partial_fill(rig)
+
+    outcome = _non_execution_consumer(rig).consume(payload)
+
+    assert outcome.released is False
+    states = _states(rig.rcl_log)
+    assert states[_MAIN_PERMIT_RESERVATION_ID] is CapacityState.POTENTIALLY_LIVE
+    assert states[_entry_reservation_id()] is CapacityState.POSITION_CONSUMED
+    (held,) = _held_rows(rig.evidence_store)
+    assert held["reason"] == ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD.value
+
+    rows = SqliteReservationProjectionReader(rig.rcl_log).scope_reservations(_KEY)
+    assert verdict_for_scope("OPEN", rows).outcome is StageOutcome.DENY
+    assert verdict_for_scope("CLOSE", rows).outcome is StageOutcome.DENY
+
+
+def test_a_full_fill_receipt_with_a_remainder_still_holds(
+    rig: Rig,
+) -> None:
+    """A FULL_FILL that declares a remainder is malformed — it proves no position quantity."""
+    _commit_named_reservation(
+        rig.rcl_log,
+        reservation_id=_MAIN_PERMIT_RESERVATION_ID,
+        to_state=CapacityState.POTENTIALLY_LIVE,
+        command_id="cmd-relc-partial-entry",
+    )
     _record_receipt(
         rig.evidence_store,
         attempt_id=_ATTEMPT_ID,
@@ -1485,18 +1827,18 @@ def test_a_cancel_after_a_partial_fill_does_not_release_the_held_quantity(
         remaining=Decimal("2"),
         broker_execution_id="exec-relc-partial",
     )
-    payload = _payload(EgressResultKind.CANCEL_ACK)
 
-    outcome = _non_execution_consumer(rig).consume(payload)
+    outcome = _non_execution_consumer(rig).consume(
+        _payload(EgressResultKind.CANCEL_ACK)
+    )
 
     assert outcome.released is False
-    assert _reservation_state(rig.rcl_log) is not CapacityState.RELEASED
+    assert (
+        _states(rig.rcl_log)[_MAIN_PERMIT_RESERVATION_ID]
+        is CapacityState.POTENTIALLY_LIVE
+    )
     (held,) = _held_rows(rig.evidence_store)
     assert held["reason"] == ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD.value
-
-    rows = SqliteReservationProjectionReader(rig.rcl_log).scope_reservations(_KEY)
-    assert verdict_for_scope("OPEN", rows).outcome is StageOutcome.DENY
-    assert verdict_for_scope("CLOSE", rows).outcome is StageOutcome.DENY
 
 
 def test_a_cancel_with_nothing_filled_still_releases(

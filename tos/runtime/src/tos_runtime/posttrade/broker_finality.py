@@ -12,12 +12,15 @@ from tos.engine.vocabulary import EgressResultKind
 
 from tos_runtime.posttrade.config import FinalityConfig
 from tos_runtime.posttrade.finality import FinalityResult, build_order_fqp_result
+from tos_runtime.posttrade.partial_fill import NON_EXECUTION_KINDS
 
 __all__ = [
     "BROKER_FULL_FILL_OBLIGATION_ID_PREFIX",
     "BROKER_FULL_FILL_PROOF_ID_PREFIX",
     "BROKER_NON_EXECUTION_OBLIGATION_ID_PREFIX",
     "BROKER_NON_EXECUTION_PROOF_ID_PREFIX",
+    "BROKER_PARTIAL_FILL_OBLIGATION_ID_PREFIX",
+    "BROKER_PARTIAL_FILL_PROOF_ID_PREFIX",
     "BrokerFinalityProducer",
 ]
 
@@ -25,10 +28,10 @@ BROKER_FULL_FILL_OBLIGATION_ID_PREFIX = "broker-fqp-obligation"
 BROKER_FULL_FILL_PROOF_ID_PREFIX = "broker-fqp-proof"
 BROKER_NON_EXECUTION_OBLIGATION_ID_PREFIX = "broker-fqp-nonexec-obligation"
 BROKER_NON_EXECUTION_PROOF_ID_PREFIX = "broker-fqp-nonexec-proof"
+BROKER_PARTIAL_FILL_OBLIGATION_ID_PREFIX = "broker-fqp-partial-obligation"
+BROKER_PARTIAL_FILL_PROOF_ID_PREFIX = "broker-fqp-partial-proof"
 
-_NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
-    {EgressResultKind.CANCEL_ACK, EgressResultKind.EXPIRED, EgressResultKind.REJECT}
-)
+_NON_EXECUTION_KINDS: frozenset[EgressResultKind] = NON_EXECUTION_KINDS
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,10 @@ class BrokerFinalityProducer:
         BROKER_NON_EXECUTION_OBLIGATION_ID_PREFIX
     )
     non_execution_proof_prefix: ClassVar[str] = BROKER_NON_EXECUTION_PROOF_ID_PREFIX
+    partial_fill_obligation_prefix: ClassVar[str] = (
+        BROKER_PARTIAL_FILL_OBLIGATION_ID_PREFIX
+    )
+    partial_fill_proof_prefix: ClassVar[str] = BROKER_PARTIAL_FILL_PROOF_ID_PREFIX
     obligation_type: ClassVar[str] = "BROKER_ORDER_FQP"
 
     def produce(self, payload: EgressResultPayload) -> FinalityResult | None:
@@ -57,7 +64,12 @@ class BrokerFinalityProducer:
             return None
         if not payload.broker_execution_id or payload.trading_date is None:
             return None
-        return self._build(payload, quantity=filled, full_fill=True)
+        return self._build(
+            payload,
+            quantity=filled,
+            obligation_id_prefix=self.full_fill_obligation_prefix,
+            proof_id_prefix=self.full_fill_proof_prefix,
+        )
 
     def produce_non_execution(
         self, payload: EgressResultPayload
@@ -65,25 +77,42 @@ class BrokerFinalityProducer:
         """The zero-executed proof for ``CANCEL_ACK``/``EXPIRED``/``REJECT`` — built only; the"""
         if payload.kind not in _NON_EXECUTION_KINDS:
             return None
-        return self._build(payload, quantity=Decimal("0"), full_fill=False)
+        return self._build(
+            payload,
+            quantity=Decimal("0"),
+            obligation_id_prefix=self.non_execution_obligation_prefix,
+            proof_id_prefix=self.non_execution_proof_prefix,
+        )
+
+    def produce_partial_fill(
+        self, payload: EgressResultPayload, *, quantity: Decimal
+    ) -> FinalityResult | None:
+        """The proof for the fill a ``CANCEL_ACK``/``EXPIRED``/``REJECT`` made final (#980)."""
+        if payload.kind not in _NON_EXECUTION_KINDS:
+            return None
+        if not quantity.is_finite() or quantity <= 0:
+            return None
+        return self._build(
+            payload,
+            quantity=quantity,
+            obligation_id_prefix=self.partial_fill_obligation_prefix,
+            proof_id_prefix=self.partial_fill_proof_prefix,
+        )
 
     def _build(
-        self, payload: EgressResultPayload, *, quantity: Decimal, full_fill: bool
+        self,
+        payload: EgressResultPayload,
+        *,
+        quantity: Decimal,
+        obligation_id_prefix: str,
+        proof_id_prefix: str,
     ) -> FinalityResult | None:
         return build_order_fqp_result(
             payload,
             config=self.config,
             scheme=self.scheme,
             quantity=quantity,
-            obligation_id_prefix=(
-                self.full_fill_obligation_prefix
-                if full_fill
-                else self.non_execution_obligation_prefix
-            ),
-            proof_id_prefix=(
-                self.full_fill_proof_prefix
-                if full_fill
-                else self.non_execution_proof_prefix
-            ),
+            obligation_id_prefix=obligation_id_prefix,
+            proof_id_prefix=proof_id_prefix,
             obligation_type=self.obligation_type,
         )

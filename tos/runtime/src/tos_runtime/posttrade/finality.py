@@ -24,12 +24,15 @@ from tos.posttrade import (
 )
 
 from tos_runtime.posttrade.config import FinalityConfig
+from tos_runtime.posttrade.partial_fill import NON_EXECUTION_KINDS
 
 __all__ = [
     "FULL_FILL_OBLIGATION_ID_PREFIX",
     "FULL_FILL_PROOF_ID_PREFIX",
     "NON_EXECUTION_OBLIGATION_ID_PREFIX",
     "NON_EXECUTION_PROOF_ID_PREFIX",
+    "PARTIAL_FILL_OBLIGATION_ID_PREFIX",
+    "PARTIAL_FILL_PROOF_ID_PREFIX",
     "FinalityProducerPort",
     "FinalityResult",
     "ReleaseFinalityProducer",
@@ -42,6 +45,8 @@ FULL_FILL_OBLIGATION_ID_PREFIX = "synthetic-fqp-obligation"
 FULL_FILL_PROOF_ID_PREFIX = "synthetic-fqp-proof"
 NON_EXECUTION_OBLIGATION_ID_PREFIX = "synthetic-fqp-nonexec-obligation"
 NON_EXECUTION_PROOF_ID_PREFIX = "synthetic-fqp-nonexec-proof"
+PARTIAL_FILL_OBLIGATION_ID_PREFIX = "synthetic-fqp-partial-obligation"
+PARTIAL_FILL_PROOF_ID_PREFIX = "synthetic-fqp-partial-proof"
 
 _REQUIRED_LEGS: frozenset[ObligationLegDirection] = frozenset(
     {ObligationLegDirection.RECEIPT}
@@ -55,13 +60,7 @@ _ORDER_FQP_DOES_NOT_PROVE: tuple[str, ...] = tuple(
 
 _ELIGIBLE_KINDS: frozenset[EgressResultKind] = frozenset({EgressResultKind.FULL_FILL})
 
-_NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
-    {
-        EgressResultKind.CANCEL_ACK,
-        EgressResultKind.EXPIRED,
-        EgressResultKind.REJECT,
-    }
-)
+_NON_EXECUTION_KINDS: frozenset[EgressResultKind] = NON_EXECUTION_KINDS
 
 
 @dataclass(frozen=True)
@@ -93,11 +92,19 @@ class ReleaseFinalityProducer(FinalityProducerPort, Protocol):
     full_fill_proof_prefix: ClassVar[str]
     non_execution_obligation_prefix: ClassVar[str]
     non_execution_proof_prefix: ClassVar[str]
+    partial_fill_obligation_prefix: ClassVar[str]
+    partial_fill_proof_prefix: ClassVar[str]
 
     def produce_non_execution(
         self, payload: EgressResultPayload
     ) -> FinalityResult | None:
         """See :meth:`SyntheticFinalityProducer.produce_non_execution`."""
+        ...
+
+    def produce_partial_fill(
+        self, payload: EgressResultPayload, *, quantity: Decimal
+    ) -> FinalityResult | None:
+        """See :meth:`SyntheticFinalityProducer.produce_partial_fill`."""
         ...
 
 
@@ -112,6 +119,8 @@ class SyntheticFinalityProducer:
     full_fill_proof_prefix: ClassVar[str] = FULL_FILL_PROOF_ID_PREFIX
     non_execution_obligation_prefix: ClassVar[str] = NON_EXECUTION_OBLIGATION_ID_PREFIX
     non_execution_proof_prefix: ClassVar[str] = NON_EXECUTION_PROOF_ID_PREFIX
+    partial_fill_obligation_prefix: ClassVar[str] = PARTIAL_FILL_OBLIGATION_ID_PREFIX
+    partial_fill_proof_prefix: ClassVar[str] = PARTIAL_FILL_PROOF_ID_PREFIX
     obligation_type: ClassVar[str] = "SYNTHETIC_ORDER_FQP"
 
     def produce(self, payload: EgressResultPayload) -> FinalityResult | None:
@@ -147,6 +156,24 @@ class SyntheticFinalityProducer:
             quantity=Decimal("0"),
             obligation_id_prefix=self.non_execution_obligation_prefix,
             proof_id_prefix=self.non_execution_proof_prefix,
+            obligation_type=self.obligation_type,
+        )
+
+    def produce_partial_fill(
+        self, payload: EgressResultPayload, *, quantity: Decimal
+    ) -> FinalityResult | None:
+        """Build the obligation + proof for the fill a ``CANCEL_ACK``/``EXPIRED``/``REJECT``"""
+        if payload.kind not in _NON_EXECUTION_KINDS:
+            return None
+        if not quantity.is_finite() or quantity <= 0:
+            return None
+        return build_order_fqp_result(
+            payload,
+            config=self.config,
+            scheme=self.scheme,
+            quantity=quantity,
+            obligation_id_prefix=self.partial_fill_obligation_prefix,
+            proof_id_prefix=self.partial_fill_proof_prefix,
             obligation_type=self.obligation_type,
         )
 

@@ -32,6 +32,7 @@ from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.entry_discharge import (
     any_quantity_filled,
     entry_release_command_id,
+    held_partial_fill_quantity,
     other_outstanding,
 )
 from tos_runtime.posttrade.entry_recovery import (
@@ -41,6 +42,7 @@ from tos_runtime.posttrade.entry_recovery import (
     resume_entry_discharge,
 )
 from tos_runtime.posttrade.finality import ReleaseFinalityProducer
+from tos_runtime.posttrade.partial_fill import NON_EXECUTION_KINDS
 from tos_runtime.posttrade.rcl_history_cache import ReservationHistoryCache
 from tos_runtime.posttrade.release_currentness import latest_release_is_conflict_free
 from tos_runtime.posttrade.release_hold import (
@@ -104,13 +106,7 @@ _OVERDUE_ELIGIBLE_STATES: frozenset[CapacityState] = frozenset(
     {CapacityState.RELEASE_PENDING_PROOF, CapacityState.QUARANTINED_UNKNOWN}
 )
 
-_NON_EXECUTION_KINDS: frozenset[EgressResultKind] = frozenset(
-    {
-        EgressResultKind.CANCEL_ACK,
-        EgressResultKind.EXPIRED,
-        EgressResultKind.REJECT,
-    }
-)
+_NON_EXECUTION_KINDS: frozenset[EgressResultKind] = NON_EXECUTION_KINDS
 
 
 def release_command_id(attempt_id: str) -> str:
@@ -332,8 +328,8 @@ class FinalityReleaseConsumer:
             instrument=self.instrument,
             attempt_id=payload.attempt_id,
         ):
-            return self._hold(
-                payload, reservation_id, ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD
+            return self._consume_cancelled_partial_fill(
+                payload, reservation_id=reservation_id
             )
         report, corroborated = self._reconcile(payload)
         if report is None:
@@ -383,6 +379,90 @@ class FinalityReleaseConsumer:
             obligation=obligation,
             report_reason=report.reason,
             to_state=CapacityState.RELEASED,
+        )
+
+    def _consume_cancelled_partial_fill(
+        self, payload: EgressResultPayload, *, reservation_id: str
+    ) -> ReleaseOutcome:
+        """Take a partially filled, then cancelled/expired attempt to ``POSITION_CONSUMED``"""
+        quantity = held_partial_fill_quantity(
+            self.evidence_store,
+            account=self.account,
+            instrument=self.instrument,
+            attempt_id=payload.attempt_id,
+            terminal_kind=payload.kind.value,
+        )
+        if quantity is None:
+            # SAFETY: something filled but the receipts do not prove how much — holding keeps
+            # the unknown quantity out of the ledger, where a CLOSE could discharge it.
+            return self._hold(
+                payload, reservation_id, ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD
+            )
+        others = other_outstanding(
+            self.projection,
+            account=self.account,
+            instrument=self.instrument,
+            reservation_id=reservation_id,
+        )
+        if others:
+            # SAFETY: this is a partially filled CLOSE, not an entry — consuming it as a second
+            # position would leave the scope holding two, and let the entry be closed twice.
+            return self._hold(
+                payload,
+                reservation_id,
+                ReleaseHoldReason.FILLED_QUANTITY_STILL_HELD,
+                detail=", ".join(f"{r.reservation_id}={r.state.value}" for r in others),
+            )
+        report, corroborated = self._reconcile(payload)
+        if report is None:
+            return self._hold(
+                payload, reservation_id, ReleaseHoldReason.RECONCILIATION_UNAVAILABLE
+            )
+        if not corroborated:
+            return self._hold(
+                payload,
+                reservation_id,
+                uncorroborated_hold_reason(report),
+                detail=report.reason,
+            )
+        produced = self.finality_producer.produce_partial_fill(
+            payload, quantity=quantity
+        )
+        if produced is None:
+            return self._hold(
+                payload,
+                reservation_id,
+                ReleaseHoldReason.NON_EXECUTION_PROOF_UNPRODUCIBLE,
+            )
+        self.evidence_store.append(
+            produced.record.model_dump(mode="json"),
+            kind=_ECONOMIC_OBLIGATION_KIND,
+            record_class=_ECONOMIC_OBLIGATION_KIND,
+        )
+        self.evidence_store.append(
+            produced.proof.model_dump(mode="json"),
+            kind=_POSTTRADE_FINALITY_PROOF_KIND,
+            record_class=_POSTTRADE_FINALITY_PROOF_KIND,
+        )
+        proof = self._reload_proof(
+            payload.attempt_id,
+            id_prefix=self.finality_producer.partial_fill_proof_prefix,
+        )
+        obligation = self._reload_obligation(
+            payload.attempt_id,
+            id_prefix=self.finality_producer.partial_fill_obligation_prefix,
+        )
+        if proof is None or obligation is None:
+            return self._hold(
+                payload, reservation_id, ReleaseHoldReason.PROOF_NOT_RELOADED
+            )
+        return self._apply_gate4_and_release(
+            payload,
+            reservation_id=reservation_id,
+            proof=proof,
+            obligation=obligation,
+            report_reason=report.reason,
+            to_state=CapacityState.POSITION_CONSUMED,
         )
 
     def _discharge_entry(
