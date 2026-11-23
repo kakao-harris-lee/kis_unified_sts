@@ -1706,11 +1706,12 @@ def _long_session_dir(env: Env) -> Path:
     return env.state / "cp3-sessions" / f"long-{_SESSION_DAY}"
 
 
-def _env_paper(env: Env, value: str) -> None:
+def _env_paper(env: Env, value: str, *, eol: str = "\n") -> None:
     """$MAIN/.env.paper — what docker compose reads for the dashboard's mount."""
     (env.main / ".env.paper").write_text(
-        f"COMPOSE_PROJECT_NAME=kis_paper\nTOS_OPERATOR_PROJECTION_DIR={value}\n",
+        f"COMPOSE_PROJECT_NAME=kis_paper{eol}TOS_OPERATOR_PROJECTION_DIR={value}{eol}",
         encoding="utf-8",
+        newline="",
     )
 
 
@@ -1767,6 +1768,42 @@ def test_1154_a_relative_value_in_env_paper_is_refused_like_any_other(
     r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
     assert r.returncode == 0, r.stdout
     assert "is not absolute" in r.stdout
+    assert not env.export_argv.exists()
+
+
+@pytest.mark.parametrize(
+    ("written", "eol"),
+    [
+        ("{p}", "\r\n"),
+        ("{p} # the dashboard mount", "\n"),
+        ('"{p}" # the dashboard mount', "\n"),
+        ("'{p}'", "\n"),
+        ("  {p}  ", "\n"),
+    ],
+    ids=["crlf", "inline-comment", "quoted-and-commented", "single-quoted", "padded"],
+)
+def test_1154_env_file_spelling_does_not_reach_the_exporter(
+    env: Env, written: str, eol: str
+) -> None:
+    """An absolute path keeps a leading `/` through a CR or a comment, so the"""
+    _data_parents(env)
+    _env_paper(env, written.format(p=env.projection), eol=eol)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert env.export_argv.read_text(encoding="utf-8").splitlines()[1:3] == [
+        "--out-dir",
+        str(env.projection),
+    ]
+
+
+def test_1154_a_value_that_is_not_a_path_is_refused_not_created(env: Env) -> None:
+    """Whitespace left after normalisation means a mis-typed line, not a path."""
+    _data_parents(env)
+    _env_paper(env, f"{env.projection} and more")
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "holds whitespace, a quote or '#'" in r.stdout
+    assert "BARS EXPORT SKIPPED" in r.stdout
     assert not env.export_argv.exists()
 
 

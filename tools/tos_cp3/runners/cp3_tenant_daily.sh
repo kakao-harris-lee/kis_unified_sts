@@ -957,9 +957,22 @@ BARS_CEILING_S=${CP3_BARS_CEILING_S:-120}
 # `timeout 0s` disables the ceiling, so 0 and non-numbers fall back to 120.
 case $BARS_CEILING_S in ''|*[!0-9]*|0) BARS_CEILING_S=120 ;; esac
 if [ -z "${TOS_OPERATOR_PROJECTION_DIR:-}" ]; then
-  TOS_OPERATOR_PROJECTION_DIR=$(grep -E '^(export )?TOS_OPERATOR_PROJECTION_DIR=' "$MAIN/.env.paper" 2>/dev/null | tail -1 | sed -E 's/^(export )?[A-Z_]+=//; s/^"//; s/"$//')
-  [ -n "$TOS_OPERATOR_PROJECTION_DIR" ] &&
-    log "=== projection dir read from $MAIN/.env.paper: $TOS_OPERATOR_PROJECTION_DIR"
+  # SAFETY: normalise before the absolute-path guard below — a CRLF line ending, an
+  # inline comment, surrounding quotes or trailing blanks all keep a leading `/`, so
+  # the guard would pass them and the exporter's mkdir(parents=True) would silently
+  # build `…/paper-projection<CR>`, a directory the dashboard does not mount.
+  TOS_OPERATOR_PROJECTION_DIR=$(grep -E '^[[:space:]]*(export )?TOS_OPERATOR_PROJECTION_DIR=' "$MAIN/.env.paper" 2>/dev/null | tail -1 | tr -d '\r' |
+    sed -E 's/^[[:space:]]*(export )?[A-Z_]+=//; s/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/')
+  case $TOS_OPERATOR_PROJECTION_DIR in
+  '') ;;
+  # SAFETY: whatever survives normalisation and still holds whitespace, a quote or
+  # `#` is a mis-typed env line, not a path — refuse it rather than mkdir it.
+  *[[:space:]\"\'\#]*)
+    log "=== projection dir in $MAIN/.env.paper is not usable: «$TOS_OPERATOR_PROJECTION_DIR» holds whitespace, a quote or '#'"
+    TOS_OPERATOR_PROJECTION_DIR=
+    ;;
+  *) log "=== projection dir read from $MAIN/.env.paper: $TOS_OPERATOR_PROJECTION_DIR" ;;
+  esac
 fi
 if [ -z "${TOS_OPERATOR_PROJECTION_DIR:-}" ]; then
   log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset and $MAIN/.env.paper does not set it, so there is no directory the dashboard reads; set either to enable the /tos bar panel (this does NOT affect the session)"
