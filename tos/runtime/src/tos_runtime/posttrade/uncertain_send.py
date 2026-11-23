@@ -17,24 +17,32 @@ __all__ = [
     "AMBIGUOUS",
     "BOUND",
     "CONFIRMING_EMPTY_READS",
+    "LATE_CANDIDATE_HALT_REASON",
     "NEVER_ACCEPTED",
+    "UNCERTAIN_SEND_LATE_CANDIDATE_KIND",
     "UNCERTAIN_SEND_RECONCILED_KIND",
+    "UNKNOWN_SIDE_CODE",
     "UNPROVABLE_TIME",
     "UncertainSend",
     "UncertainSendReconciler",
     "apply_uncertain_read",
     "bound_sends",
+    "late_candidate_attempt_ids",
     "never_accepted_attempt_ids",
+    "released_sends",
     "rows_by_send_time",
     "uncertain_sends",
 ]
 
 UNCERTAIN_SEND_RECONCILED_KIND = "UNCERTAIN_SEND_RECONCILED"
+UNCERTAIN_SEND_LATE_CANDIDATE_KIND = "UNCERTAIN_SEND_LATE_CANDIDATE"
+LATE_CANDIDATE_HALT_REASON = "NEW_RISK_HALTED_BY_LATE_UNCERTAIN_SEND_CANDIDATE"
 
 BOUND = "bound"
 NEVER_ACCEPTED = "never_accepted"
 AMBIGUOUS = "ambiguous"
 UNPROVABLE_TIME = "unprovable_time"
+UNKNOWN_SIDE_CODE = "unknown_side_code"
 
 CONFIRMING_EMPTY_READS = 2
 
@@ -64,6 +72,7 @@ class UncertainSend:
     side: str | None
     quantity: Decimal | None
     send_started_time: str | None
+    released: bool = False
 
 
 def _hhmmss(value: object) -> str | None:
@@ -187,6 +196,16 @@ def bound_sends(store: SqliteEvidenceStore) -> dict[str, tuple[str, str]]:
     return bound
 
 
+def late_candidate_attempt_ids(store: SqliteEvidenceStore) -> frozenset[str]:
+    """Every released send a late candidate has ALREADY halted this tenant for."""
+    # SAFETY: 운영자가 재무장한 뒤 같은 날 다시 부팅하면 그 행이 또 보인다 — 거기서 또 래치하면 재무장이 영원히 되감긴다 (#1164 리뷰 L2)
+    return frozenset(
+        attempt_id
+        for payload in _payloads(store, UNCERTAIN_SEND_LATE_CANDIDATE_KIND)
+        if isinstance(attempt_id := payload.get("attempt_id"), str)
+    )
+
+
 def never_accepted_attempt_ids(store: SqliteEvidenceStore) -> frozenset[str]:
     """Every attempt a completed reconciliation proved the broker never accepted."""
     return frozenset(
@@ -222,6 +241,34 @@ def uncertain_sends(
                 side=seal[0],
                 quantity=seal[1],
                 send_started_time=stamp[1],
+            )
+        )
+    return tuple(sends)
+
+
+def released_sends(
+    store: SqliteEvidenceStore, *, trading_date: str
+) -> tuple[UncertainSend, ...]:
+    """``trading_date``'s never_accepted verdicts, rebuilt from their own durable rows."""
+    # SAFETY: 해제 뒤에도 그 날의 주문내역을 계속 본다 — 30 s 창 두 번으로 «미접수» 를 적고 풀어준 뒤 늦게 반영된 주문이 보이면 그 예약은 이미 두 번 나갔다 (#1129)
+    sends: list[UncertainSend] = []
+    for attempt_id, payload in _verdicts(store).items():
+        if payload.get("outcome") != NEVER_ACCEPTED:
+            continue
+        date = payload.get("trading_date")
+        quantity = _decimal(payload.get("sealed_quantity"))
+        if date != trading_date or quantity is None:
+            continue
+        side = payload.get("sealed_side")
+        started = payload.get(_SEND_STARTED_FIELD)
+        sends.append(
+            UncertainSend(
+                attempt_id=attempt_id,
+                trading_date=trading_date,
+                side=side if isinstance(side, str) else None,
+                quantity=quantity,
+                send_started_time=started if isinstance(started, str) else None,
+                released=True,
             )
         )
     return tuple(sends)
@@ -266,6 +313,7 @@ def rows_by_send_time(
     *,
     tolerance_s: int,
     foreign_min_age_s: int,
+    discard_foreign: bool = True,
 ) -> tuple[tuple[KisOrderRow, ...], tuple[KisOrderRow, ...], tuple[KisOrderRow, ...]]:
     """``(eligible, unprovable, foreign)`` of ``rows`` against our send start (issue #1127)."""
     started = send.send_started_time
@@ -281,7 +329,7 @@ def rows_by_send_time(
             unprovable.append(row)
         elif row.ord_tmd >= ours_from:
             eligible.append(row)
-        elif row.ord_tmd < foreign_before:
+        elif row.ord_tmd < foreign_before and discard_foreign:
             foreign.append(row)
         else:
             # SAFETY: 증명 불가 행은 bind 도 never_accepted 도 막는다 — 우리 것일 수 있는 주문을 풀면 다음 OPEN 이 중복 송신한다 (#1127)
@@ -321,9 +369,17 @@ class UncertainSendReconciler:
     foreign_min_age_s: int
     side_codes: SideCodes
     record: Recorder
+    today: Callable[[], str | None] | None = None
+    halt: Recorder | None = None
+    broker_clock_corroborated: Callable[[], bool] | None = None
     _first_seen_ms: dict[str, int] = field(default_factory=dict, init=False)
     _empty_reads: dict[str, list[int]] = field(default_factory=dict, init=False)
-    _noted: set[tuple[str, str]] = field(default_factory=set, init=False)
+    _noted: set[tuple[str, str, tuple[str, ...]]] = field(
+        default_factory=set, init=False
+    )
+    _last_watch_ms: dict[str, int] = field(default_factory=dict, init=False)
+    _halted: set[str] = field(default_factory=set, init=False)
+    _foreign_discard_admitted: bool = field(default=True, init=False)
 
     def due(self, now_ms: int) -> UncertainSend | None:
         """The one uncertain send this FETCH may read for, or ``None``. Never raises."""
@@ -338,10 +394,34 @@ class UncertainSendReconciler:
             self._first_seen_ms.pop(attempt_id, None)
             self._empty_reads.pop(attempt_id, None)
         if not sends:
-            return None
+            return self._due_watch(now_ms)
         send = sends[0]
         self._first_seen_ms.setdefault(send.attempt_id, now_ms)
         return send
+
+    def _due_watch(self, now_ms: int) -> UncertainSend | None:
+        """The one released send whose same-day recheck is due, or ``None`` (issue #1129)."""
+        if self.today is None or self.halt is None:
+            return None
+        try:
+            today = self.today()
+            watched = (
+                ()
+                if today is None
+                else released_sends(self.evidence_store, trading_date=today)
+            )
+            halted = late_candidate_attempt_ids(self.evidence_store)
+        except Exception:  # noqa: BLE001 - an unreadable store rechecks nothing
+            return None
+        for send in watched:
+            if send.attempt_id in self._halted or send.attempt_id in halted:
+                continue
+            last = self._last_watch_ms.get(send.attempt_id)
+            if last is not None and now_ms - last < self.settle_ms:
+                continue
+            self._last_watch_ms[send.attempt_id] = now_ms
+            return send
+        return None
 
     def apply_read(
         self,
@@ -352,6 +432,10 @@ class UncertainSendReconciler:
         claimed: ClaimedOrderDays,
     ) -> str | None:
         """Judge one date's rows; the recorded outcome, or ``None`` when the hold stands."""
+        if send.side is not None and self.side_codes.get(send.side) is None:
+            # SAFETY: 설정에 그 side 의 브로커 코드가 없으면 방향 필터가 조용히 꺼진다 — 반대 방향 주문에 bind 하거나, 우리 주문을 못 보고 never_accepted 로 풀어 두 번 보낸다 (#1129 LOW 8)
+            self._note(send, UNKNOWN_SIDE_CODE, ())
+            return None
         matched = candidate_rows(
             send,
             rows,
@@ -359,12 +443,16 @@ class UncertainSendReconciler:
             claimed=claimed,
             side_codes=self.side_codes,
         )
+        self._foreign_discard_admitted = self._discard_foreign()
         eligible, unprovable, foreign = rows_by_send_time(
             send,
             matched,
             tolerance_s=self.ord_tmd_tolerance_s,
             foreign_min_age_s=self.foreign_min_age_s,
+            discard_foreign=self._foreign_discard_admitted,
         )
+        if send.released:
+            return self._judge_released(send, eligible + unprovable)
         if unprovable:
             self._empty_reads.pop(send.attempt_id, None)
             self._note(send, UNPROVABLE_TIME, unprovable, foreign=foreign)
@@ -379,6 +467,56 @@ class UncertainSendReconciler:
         if not self._empty_settled(send, read_started_ms):
             return None
         return self._write(send, NEVER_ACCEPTED, odno=None, foreign=foreign)
+
+    def _discard_foreign(self) -> bool:
+        """May a row older than ``foreign_min_age_s`` be called somebody else's? (issue #1138)"""
+        # SAFETY: 호스트 시계가 브로커보다 그만큼 앞서면 우리 주문이 «남의 것» 으로 버려지고 never_accepted → 해제 → 두 번째 주문이 된다 — 스큐를 재서 증명하지 못하면 버리지 않는다
+        if self.broker_clock_corroborated is None:
+            return True
+        try:
+            return self.broker_clock_corroborated() is True
+        except Exception:  # noqa: BLE001 - an unmeasurable clock discards nothing
+            return False
+
+    def _replacement_unresolved(self) -> bool:
+        """Did another send go uncertain between this watch's PLAN and its APPLY? (#1164 M1)"""
+        # SAFETY: 그 대체 송신의 행은 아직 ODNO 를 claim 하지 않아 해제된 송신의 «늦은 후보» 로 보인다 — 여기서 래치하면 멀쩡한 tenant 를 거짓으로 멈춘다. 미뤄도 다음 감시 읽기가 다시 판정한다
+        try:
+            return bool(
+                uncertain_sends(
+                    self.evidence_store,
+                    account=self.account,
+                    instrument=self.instrument,
+                )
+            )
+        except Exception:  # noqa: BLE001 - an unreadable store defers, never halts
+            return True
+
+    def _judge_released(
+        self, send: UncertainSend, late: tuple[KisOrderRow, ...]
+    ) -> str | None:
+        """A same-day read of an already released send: any row it could own halts (#1129)."""
+        if not late or send.attempt_id in self._halted or self.halt is None:
+            return None
+        if self._replacement_unresolved():
+            return None
+        self._halted.add(send.attempt_id)
+        self.halt(
+            UNCERTAIN_SEND_LATE_CANDIDATE_KIND,
+            {
+                "attempt_id": send.attempt_id,
+                "trading_date": send.trading_date,
+                "sealed_side": send.side,
+                "sealed_quantity": (
+                    None if send.quantity is None else format(send.quantity, "f")
+                ),
+                "send_started_time": send.send_started_time,
+                "settle_ms": self.settle_ms,
+                "candidate_order_ids": [row.odno for row in late],
+                "candidate_order_times": [row.ord_tmd for row in late],
+            },
+        )
+        return UNCERTAIN_SEND_LATE_CANDIDATE_KIND
 
     def _empty_settled(self, send: UncertainSend, read_started_ms: int) -> bool:
         """``CONFIRMING_EMPTY_READS`` empty reads, ``settle_ms`` apart, after the first sighting."""
@@ -399,8 +537,10 @@ class UncertainSendReconciler:
         *,
         foreign: tuple[KisOrderRow, ...] = (),
     ) -> None:
-        """One row per (attempt, outcome) per process for a verdict that changes nothing."""
-        signature = (send.attempt_id, outcome)
+        """One row per (attempt, outcome, rows seen) per process for a verdict that changes"""
+        # SAFETY: (attempt, outcome) 만으로 묶으면 결과가 UNPROVABLE_TIME 에 머무는 동안 버려진 행이 바뀌어도 기록되지 않아 감사에서 사라진다 (#1138 LOW)
+        rows = tuple(sorted(f"{row.odno}" for row in matched + foreign))
+        signature = (send.attempt_id, outcome, rows)
         if signature in self._noted:
             return
         self._noted.add(signature)
@@ -445,5 +585,6 @@ class UncertainSendReconciler:
                 "candidate_order_times": [row.ord_tmd for row in matched],
                 "discarded_order_ids": [row.odno for row in foreign],
                 "discarded_order_times": [row.ord_tmd for row in foreign],
+                "foreign_discard_admitted": self._foreign_discard_admitted,
             },
         )

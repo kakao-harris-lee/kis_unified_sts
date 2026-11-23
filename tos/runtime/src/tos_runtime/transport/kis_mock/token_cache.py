@@ -26,6 +26,7 @@ __all__ = [
 
 _CACHE_VERSION = 1
 _FUTURE_TOLERANCE_S = 60
+_ENDPOINT_DIGEST_CHARS = 16
 
 
 class SharedTokenCacheRefused(Exception):
@@ -64,6 +65,7 @@ class SharedTokenCache:
         path: Path,
         refresh_margin_s: int,
         lock_wait_s: float,
+        endpoint_base: str,
         now_epoch_s: Callable[[], int] | None = None,
     ) -> None:
         """Pin the cache file, the early-refresh margin and the lock wait budget."""
@@ -71,7 +73,15 @@ class SharedTokenCache:
         self._lock_path = path.with_name(path.name + ".lock")
         self._refresh_margin_s = refresh_margin_s
         self._lock_wait_s = lock_wait_s
+        self._endpoint_digest = hashlib.sha256(
+            endpoint_base.encode("utf-8")
+        ).hexdigest()[:_ENDPOINT_DIGEST_CHARS]
         self._now_epoch_s = now_epoch_s or _system_epoch_s
+
+    def entry_key(self, fingerprint: str) -> str:
+        """``fingerprint``'s entry name in THIS cache file (issue #1129 LOW 5)."""
+        # SAFETY: 같은 앱 키라도 엔드포인트가 다르면 토큰도 다르다 — 캐시 파일을 공유하는 두 테넌트가 base 를 달리 가리키면 모의 토큰이 다른 엔드포인트로 나가 401 을 받고, 그 401 이 주문 POST 면 «불확실 송신» 이 된다
+        return f"{fingerprint}.{self._endpoint_digest}"
 
     @property
     def path(self) -> Path:
@@ -104,7 +114,7 @@ class SharedTokenCache:
         entries = document.get("entries")
         if not isinstance(entries, dict):
             return None, "malformed"
-        entry = entries.get(fingerprint)
+        entry = entries.get(self.entry_key(fingerprint))
         if entry is None:
             return None, "absent"
         token = _parse_entry(entry)
@@ -121,7 +131,7 @@ class SharedTokenCache:
         entries: dict[str, Any] = (
             dict(entries_raw) if isinstance(entries_raw, dict) else {}
         )
-        entries[fingerprint] = {
+        entries[self.entry_key(fingerprint)] = {
             "access_token": access_token,
             "issued_at_epoch_s": self.now_epoch_s(),
             "expires_in_s": expires_in_s,

@@ -88,11 +88,18 @@ def _custody() -> InMemoryCredentialCustody:
     )
 
 
-def _cache(path: Path, clock: _Clock, *, lock_wait_s: float = 5.0) -> SharedTokenCache:
+def _cache(
+    path: Path,
+    clock: _Clock,
+    *,
+    lock_wait_s: float = 5.0,
+    endpoint_base: str = _BASE,
+) -> SharedTokenCache:
     return SharedTokenCache(
         path=path,
         refresh_margin_s=_MARGIN_S,
         lock_wait_s=lock_wait_s,
+        endpoint_base=endpoint_base,
         now_epoch_s=clock,
     )
 
@@ -103,6 +110,7 @@ def _tenant(
     *,
     sink: RecordingEvidenceSink | None = None,
     reissue_cooldown_s: int = 65,
+    endpoint_base: str = _BASE,
 ) -> tuple[KisCredentialSession, RecordingEvidenceSink]:
     """One tenant PROCESS: its own registry, its own lifecycle, the shared cache file."""
     evidence = sink or RecordingEvidenceSink()
@@ -116,7 +124,7 @@ def _tenant(
         client=client,
         app_key_scope=_KEY_SCOPE,
         app_secret_scope=_SECRET_SCOPE,
-        token_endpoint_base=_BASE,
+        token_endpoint_base=endpoint_base,
         token_path=_TOKEN_PATH,
         token_reissue_min_interval_s=reissue_cooldown_s,
         pacing=_PACING,
@@ -124,10 +132,13 @@ def _tenant(
     return session, evidence
 
 
-def _entry(path: Path) -> dict[str, Any]:
+def _entry(path: Path, *, endpoint_base: str = _BASE) -> dict[str, Any]:
     document = json.loads(path.read_text(encoding="utf-8"))
     assert document["version"] == 1
-    entry = document["entries"][app_key_fingerprint(_APP_KEY)]
+    key = _cache(path, _Clock(), endpoint_base=endpoint_base).entry_key(
+        app_key_fingerprint(_APP_KEY)
+    )
+    entry = document["entries"][key]
     assert isinstance(entry, dict)
     return entry
 
@@ -404,3 +415,68 @@ def test_the_cache_survives_a_concurrent_writer(tmp_path: Path) -> None:
     assert sum(client.issued for client in clients) == 1
     assert len(set(tokens)) == 1 and len(tokens) == len(sessions)
     assert _entry(path)["access_token"] == tokens[0]
+
+
+def test_the_same_app_key_against_another_endpoint_is_another_entry(
+    tmp_path: Path,
+) -> None:
+    """Issue #1129 LOW 5: one cache file, one app key, two REST bases — a mock-issued token"""
+    clock, path = _Clock(), tmp_path / "stock-mock.json"
+    mock_client = _CountingTokenClient(name="mock")
+    mock, _ = _tenant(_cache(path, clock), mock_client)
+    assert mock.ensure_token_string() == "mock-token-1"
+
+    other_base = "https://openapi.koreainvestment.com:9443"
+    other_client = _CountingTokenClient(name="other")
+    other, _ = _tenant(
+        _cache(path, clock, endpoint_base=other_base),
+        other_client,
+        endpoint_base=other_base,
+    )
+
+    assert other.ensure_token_string() == "other-token-1"
+    assert other_client.issued == 1, "the mock endpoint's token was reused elsewhere"
+    assert _entry(path)["access_token"] == "mock-token-1"
+    assert _entry(path, endpoint_base=other_base)["access_token"] == "other-token-1"
+
+
+def test_a_cached_token_inside_the_last_seconds_is_not_handed_out(
+    tmp_path: Path,
+) -> None:
+    """Issue #1129 LOW 1: the reissue is refused and the cached token has seconds left —"""
+    clock, path = _Clock(), tmp_path / "stock-mock.json"
+    cache = _cache(path, clock)
+    cache.write(
+        app_key_fingerprint(_APP_KEY), access_token="about-to-die", expires_in_s=5
+    )
+    refusing = _RefusingTokenClient()
+    session, evidence = _tenant(_cache(path, clock), refusing)
+
+    with pytest.raises(TokenResponseError):
+        session.ensure_token_string()
+
+    assert refusing.calls == 1
+    assert [
+        row
+        for row in evidence.of_kind("TRANSPORT_TOKEN_CACHE")
+        if row["outcome"] == "fallback"
+    ] == []
+
+
+def test_a_cached_token_with_room_to_spare_is_still_the_fallback(
+    tmp_path: Path,
+) -> None:
+    """The margin is a few seconds, not the whole refresh margin — the fallback still works."""
+    clock, path = _Clock(), tmp_path / "stock-mock.json"
+    _cache(path, clock).write(
+        app_key_fingerprint(_APP_KEY), access_token="still-good", expires_in_s=60
+    )
+    session, evidence = _tenant(_cache(path, clock), _RefusingTokenClient())
+
+    assert session.ensure_token_string() == "still-good"
+    (fallback,) = [
+        row
+        for row in evidence.of_kind("TRANSPORT_TOKEN_CACHE")
+        if row["outcome"] == "fallback"
+    ]
+    assert fallback["remaining_s"] == 60

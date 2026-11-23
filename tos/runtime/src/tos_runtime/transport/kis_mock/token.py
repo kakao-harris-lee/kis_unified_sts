@@ -27,6 +27,9 @@ __all__ = [
 _RESPONSE_FAULT_FIELDS = ("error_code", "error_description", "msg_cd", "msg1", "rt_cd")
 _RESPONSE_FAULT_MAX_CHARS = 200
 
+# SAFETY: 재발급이 거부돼 캐시 토큰으로 버틸 때 남은 수명 전부를 쥐면 마지막 요청이 만료 뒤에 KIS 에 닿아 401 을 받는다 — 주문 POST 면 그 자리에서 «불확실 송신» 이 된다 (#1129 LOW 1)
+_FALLBACK_EXPIRY_MARGIN_S = 5
+
 TOKEN_RESPONSE_ERROR_KIND = "TRANSPORT_TOKEN_RESPONSE_ERROR"
 TOKEN_CACHE_KIND = "TRANSPORT_TOKEN_CACHE"
 
@@ -181,7 +184,7 @@ class KisTokenLifecycle:
         try:
             access_token, expires_in_s = self._issue_with_cooldown()
         except Exception:  # noqa: BLE001 - a cached token outranks a failed refresh
-            if entry is None or remaining_s <= 0:
+            if entry is None or remaining_s <= _FALLBACK_EXPIRY_MARGIN_S:
                 raise
             self._adopt(cache, entry, remaining_s, outcome="fallback", reason=reason)
             return entry.access_token
@@ -204,7 +207,9 @@ class KisTokenLifecycle:
     ) -> None:
         """Take the cached token as this process's own. A hit is held only up to the refresh"""
         lifetime_s = (
-            remaining_s - cache.refresh_margin_s if outcome == "hit" else remaining_s
+            remaining_s - cache.refresh_margin_s
+            if outcome == "hit"
+            else remaining_s - _FALLBACK_EXPIRY_MARGIN_S
         )
         self._hold(entry.access_token, lifetime_s)
         self._evidence(

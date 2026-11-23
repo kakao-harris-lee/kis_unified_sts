@@ -20,7 +20,9 @@ from tos_runtime.compose.root import compose_paper_runtime
 from tos_runtime.posttrade.uncertain_send import (
     AMBIGUOUS,
     BOUND,
+    LATE_CANDIDATE_HALT_REASON,
     NEVER_ACCEPTED,
+    UNCERTAIN_SEND_LATE_CANDIDATE_KIND,
     UNCERTAIN_SEND_RECONCILED_KIND,
 )
 from tos_runtime.posttrade.unsent_release import (
@@ -786,5 +788,44 @@ def test_e_recovery_an_order_post_that_answered_http_500_was_never_filled(
         _assert_recovers_to_trading(tenant, first_seq=2)
         discards = _rows(tenant.runtime, _DISCARD_KIND)
         assert [row["reason"] for row in discards] == [NEVER_ACCEPTED_CAUSE], discards
+    finally:
+        _close(tenant.runtime)
+
+
+def test_the_late_candidate_lane_is_wired_and_latches_new_risk(
+    config_dir_with_risk_state: Path,
+    data_dir: Path,
+    custody_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: FakeKisServer,
+) -> None:
+    """Issue #1129: the released-send watch reaches a real latch — a booted tenant's own"""
+    tenant = _boot_tenant(
+        config_dir_with_risk_state, data_dir, custody_root, server, monkeypatch
+    )
+    try:
+        reconciler = tenant.observer.uncertain_send
+        assert reconciler is not None, "the gate is on in the shipped tenant config"
+        assert reconciler.today is not None, "no trading date means no same-day watch"
+        assert (
+            reconciler.broker_clock_corroborated is not None
+        ), "issue #1138: the foreign discard must rest on a measured skew"
+        assert tenant.runtime.inbox.new_risk_halt() is None
+        assert reconciler.halt is not None
+
+        reconciler.halt(
+            UNCERTAIN_SEND_LATE_CANDIDATE_KIND,
+            {"attempt_id": "attempt-late-candidate", "trading_date": tenant.date},
+        )
+
+        latched = tenant.runtime.inbox.new_risk_halt()
+        assert latched is not None, "a late candidate left new risk open"
+        assert latched["reason"] == LATE_CANDIDATE_HALT_REASON
+        assert latched["event_id"] == "attempt:attempt-late-candidate"
+        rows = _rows(tenant.runtime, UNCERTAIN_SEND_LATE_CANDIDATE_KIND)
+        assert [row["attempt_id"] for row in rows] == ["attempt-late-candidate"]
+        assert (
+            latched["evidence_seq"] is not None
+        ), "the latch names no evidence to clear"
     finally:
         _close(tenant.runtime)
