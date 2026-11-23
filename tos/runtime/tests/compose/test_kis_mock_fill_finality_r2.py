@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from tos.engine import EngineCore, NullEvidenceSink
@@ -41,7 +42,7 @@ from .test_kis_mock_fill_finality_recovery import _acked
 pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
 
 
-def _full(date: str, qty: Decimal, **kw: str) -> dict[str, str]:
+def _full(date: str, qty: Decimal, **kw: Any) -> dict[str, str]:
     return _row(date=date, ord_qty=qty, filled=qty, remaining=Decimal(0), **kw)
 
 
