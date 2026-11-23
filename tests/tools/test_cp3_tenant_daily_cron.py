@@ -457,6 +457,32 @@ def test_apply_refuses_a_non_kst_host(env: Env) -> None:
     assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES
 
 
+def test_1154_the_dry_run_names_a_projection_dir_set_outside_the_block(
+    env: Env,
+) -> None:
+    """The hand-added 2026-11-22 line: named, kept, and not duplicated inside."""
+    hand = "TOS_OPERATOR_PROJECTION_DIR=/home/deploy/.local/state/tos/paper-projection"
+    env.crontab.write_text(f"{hand}\n{_OTHER_LINES}", encoding="utf-8")
+    r = env.install()
+    assert r.returncode == 0, r.stderr
+    assert (
+        "projection dir: the crontab sets it outside this block "
+        "(/home/deploy/.local/state/tos/paper-projection)" in r.stdout
+    )
+    assert env.install("--apply").returncode == 0
+    tab = env.crontab.read_text(encoding="utf-8")
+    assert tab.count(hand) == 1 and tab.startswith(hand)
+
+
+def test_1154_the_dry_run_says_where_the_projection_dir_comes_from_otherwise(
+    env: Env,
+) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    r = env.install()
+    assert r.returncode == 0, r.stderr
+    assert "projection dir: not in the crontab" in r.stdout
+
+
 def test_holiday_is_a_silent_skip(env: Env) -> None:
     _data_parents(env)
     r = env.daily("LONG", CP3_DAILY_TODAY=_HOLIDAY)
@@ -1680,14 +1706,68 @@ def _long_session_dir(env: Env) -> Path:
     return env.state / "cp3-sessions" / f"long-{_SESSION_DAY}"
 
 
+def _env_paper(env: Env, value: str) -> None:
+    """$MAIN/.env.paper — what docker compose reads for the dashboard's mount."""
+    (env.main / ".env.paper").write_text(
+        f"COMPOSE_PROJECT_NAME=kis_paper\nTOS_OPERATOR_PROJECTION_DIR={value}\n",
+        encoding="utf-8",
+    )
+
+
 def test_the_export_hook_skips_loudly_when_no_projection_dir_is_set(env: Env) -> None:
     """Unset variable is a SKIP with a reason, never a guessed destination."""
     _data_parents(env)
     r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
     assert r.returncode == 0, r.stdout
     assert "BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset" in r.stdout
+    assert f"{env.main}/.env.paper does not set it" in r.stdout
     assert not env.export_argv.exists()
     assert "일일 세션 종료" in r.stdout
+
+
+def test_1154_the_export_hook_reads_the_projection_dir_from_env_paper(
+    env: Env,
+) -> None:
+    """#1154: the tenant cron carries no such variable, so every session SKIPPED."""
+    _data_parents(env)
+    _env_paper(env, str(env.projection))
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert f"projection dir read from {env.main}/.env.paper" in r.stdout
+    assert env.export_argv.read_text(encoding="utf-8").splitlines() == [
+        str(_long_session_dir(env)),
+        "--out-dir",
+        str(env.projection),
+        "--state-dir",
+        str(env.state),
+    ]
+
+
+def test_1154_an_explicit_projection_dir_wins_over_env_paper(env: Env) -> None:
+    """A crontab line still decides; the file is only consulted when it is absent."""
+    _data_parents(env)
+    _env_paper(env, str(env.tmp / "from-env-paper"))
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+    )
+    assert r.returncode == 0, r.stdout
+    assert "projection dir read from" not in r.stdout
+    argv = env.export_argv.read_text(encoding="utf-8")
+    assert str(env.projection) in argv and "from-env-paper" not in argv
+
+
+def test_1154_a_relative_value_in_env_paper_is_refused_like_any_other(
+    env: Env,
+) -> None:
+    """The derived value goes through the same absolute-path guard."""
+    _data_parents(env)
+    _env_paper(env, "./data/tos_runtime")
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "is not absolute" in r.stdout
+    assert not env.export_argv.exists()
 
 
 def test_the_export_hook_skips_a_relative_projection_dir(env: Env) -> None:

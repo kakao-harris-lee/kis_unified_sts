@@ -945,16 +945,24 @@ log "runner rc=$rc session=$SESSION"
 # root. What the hook never touches is any session directory's contents beyond
 # its own log, and any tenant durable set.
 #
-# ⚠ Unset variable = SKIP, logged. That variable is not part of the tenant
-# cron's environment today (it lives in .env.paper, for the resident paper
-# session), so until an operator exports it for this wrapper the hook says so
-# and does nothing. A guessed destination would write a document the container
-# does not mount, which from the page is indistinguishable from no document.
+# ⚠ Unset variable = derive it from $MAIN/.env.paper, which is the file docker
+# compose reads for that same mount (scripts/deploy_paper.sh enforces
+# `--env-file .env.paper`), so the cron and the container cannot name different
+# directories. Read key by key, never sourced — the rule `notify` follows for
+# $MAIN/.env. #1154: the tenant cron carried no such variable, so every session
+# logged SKIPPED. Nothing to derive is still a SKIP, logged: a guessed
+# destination would write a document the container does not mount, which from
+# the page is indistinguishable from no document.
 BARS_CEILING_S=${CP3_BARS_CEILING_S:-120}
 # `timeout 0s` disables the ceiling, so 0 and non-numbers fall back to 120.
 case $BARS_CEILING_S in ''|*[!0-9]*|0) BARS_CEILING_S=120 ;; esac
 if [ -z "${TOS_OPERATOR_PROJECTION_DIR:-}" ]; then
-  log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset, so there is no directory the dashboard reads; set it for this wrapper to enable the /tos bar panel (this does NOT affect the session)"
+  TOS_OPERATOR_PROJECTION_DIR=$(grep -E '^(export )?TOS_OPERATOR_PROJECTION_DIR=' "$MAIN/.env.paper" 2>/dev/null | tail -1 | sed -E 's/^(export )?[A-Z_]+=//; s/^"//; s/"$//')
+  [ -n "$TOS_OPERATOR_PROJECTION_DIR" ] &&
+    log "=== projection dir read from $MAIN/.env.paper: $TOS_OPERATOR_PROJECTION_DIR"
+fi
+if [ -z "${TOS_OPERATOR_PROJECTION_DIR:-}" ]; then
+  log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset and $MAIN/.env.paper does not set it, so there is no directory the dashboard reads; set either to enable the /tos bar panel (this does NOT affect the session)"
 elif [ "${TOS_OPERATOR_PROJECTION_DIR#/}" = "$TOS_OPERATOR_PROJECTION_DIR" ]; then
   log "=== BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR=$TOS_OPERATOR_PROJECTION_DIR is not absolute; a relative path resolves against cron's cwd, not the dashboard mount (this does NOT affect the session)"
 elif [ ! -f "$WT/tools/tos_cp3/export_bars.py" ]; then
