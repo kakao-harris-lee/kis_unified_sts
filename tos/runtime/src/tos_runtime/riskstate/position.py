@@ -22,7 +22,10 @@ from tos.position import (
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.posttrade.uncertain_send import (
+    UNCERTAIN_RESULT_KINDS,
+    UNCERTAIN_SEND_LATE_CANDIDATE_KIND,
     UNCERTAIN_SEND_RECONCILED_KIND,
+    late_candidate_attempt_ids,
     never_accepted_attempt_ids,
 )
 from tos_runtime.recon.ports import WitnessUnavailable
@@ -152,6 +155,12 @@ def _read_sealed_sends(
     return tuple(sealed)
 
 
+def _still_uncertain(consumed: ConsumedResult | None) -> bool:
+    """Whether the attempt's LATEST applied result still looks like the one the verdict judged."""
+    # SAFETY: the verdict is only ever written for an attempt whose last receipt named no order (`_uncertain_attempt_ids`); a later ACK or fill receipt means the broker did take it, and retiring it on the stale verdict would hide that exposure
+    return consumed is None or consumed.result_kind in UNCERTAIN_RESULT_KINDS
+
+
 def _in_scope(payload: Mapping[str, object], *, account: str, instrument: str) -> bool:
     """Whether an ``EngineEvidenceRecord``-shaped payload's ``instrument_key`` matches this"""
     instrument_key = payload.get("instrument_key")
@@ -245,15 +254,25 @@ class EvidencePositionReader:
             sources.append("evidence:RESULT_UNMATCHED")
         return consumed_by_attempt, unmatched_attempts, sources
 
-    def _read_never_accepted(self) -> frozenset[str]:
-        """The attempts a reconciliation proved never accepted, from the one definition of it."""
+    def _read_never_accepted(
+        self, consumed_by_attempt: Mapping[str, ConsumedResult]
+    ) -> frozenset[str]:
+        """The attempts a reconciliation proved never accepted AND nothing has since reopened."""
         try:
-            return never_accepted_attempt_ids(self._store)
+            verdicts = never_accepted_attempt_ids(self._store)
+            # SAFETY: a late candidate is a broker row the released send could own — _judge_released only halts, it writes no new verdict, so without subtracting it here the operator's rearm resumes with a live or filled order counted as zero exposure
+            late = late_candidate_attempt_ids(self._store)
         except sqlite3.Error as exc:
             raise WitnessUnavailable(
                 "EvidencePositionReader: evidence store query failed for kind="
-                f"'{UNCERTAIN_SEND_RECONCILED_KIND}': {exc}"
+                f"'{UNCERTAIN_SEND_RECONCILED_KIND}'/"
+                f"'{UNCERTAIN_SEND_LATE_CANDIDATE_KIND}': {exc}"
             ) from exc
+        return frozenset(
+            attempt_id
+            for attempt_id in verdicts - late
+            if _still_uncertain(consumed_by_attempt.get(attempt_id))
+        )
 
     def observe(self) -> PositionObservation:
         """Fold the durable evidence into one :class:`PositionObservation` (module docstring's"""
@@ -263,7 +282,7 @@ class EvidencePositionReader:
         consumed_by_attempt, unmatched_attempts, result_sources = (
             self._read_terminal_results()
         )
-        never_accepted = self._read_never_accepted()
+        never_accepted = self._read_never_accepted(consumed_by_attempt)
         (
             confirmed_net,
             unknown_buy,

@@ -19,6 +19,7 @@ __all__ = [
     "CONFIRMING_EMPTY_READS",
     "LATE_CANDIDATE_HALT_REASON",
     "NEVER_ACCEPTED",
+    "UNCERTAIN_RESULT_KINDS",
     "UNCERTAIN_SEND_LATE_CANDIDATE_KIND",
     "UNCERTAIN_SEND_RECONCILED_KIND",
     "UNKNOWN_SIDE_CODE",
@@ -46,7 +47,7 @@ UNKNOWN_SIDE_CODE = "unknown_side_code"
 
 CONFIRMING_EMPTY_READS = 2
 
-_UNCERTAIN_RESULT_KINDS = frozenset({"TIMEOUT", "UNKNOWN"})
+UNCERTAIN_RESULT_KINDS = frozenset({"TIMEOUT", "UNKNOWN"})
 
 _CONSUMED_KIND = "EGRESS_RESULT_CONSUMED"
 _SEND_SEALED_KIND = "SEND_SEALED"
@@ -167,7 +168,7 @@ def _uncertain_attempt_ids(
         attempt_id
         for attempt_id in order
         if attempt_id not in numbered
-        and last_kind[attempt_id] in _UNCERTAIN_RESULT_KINDS
+        and last_kind[attempt_id] in UNCERTAIN_RESULT_KINDS
     ]
 
 

@@ -8,7 +8,10 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from tos_runtime.evidence.store import SqliteEvidenceStore
-from tos_runtime.posttrade.uncertain_send import UNCERTAIN_SEND_RECONCILED_KIND
+from tos_runtime.posttrade.uncertain_send import (
+    UNCERTAIN_SEND_LATE_CANDIDATE_KIND,
+    UNCERTAIN_SEND_RECONCILED_KIND,
+)
 from tos_runtime.riskstate.position import (
     EvidencePositionReader,
     PositionObservation,
@@ -1109,6 +1112,109 @@ def test_a_later_verdict_overrides_an_earlier_never_accepted_one(
     _seed_reconciled(evidence_store, outcome="bound")
     obs = _reader(evidence_store).observe()
     assert obs.in_flight_buy == Decimal(1)
+
+
+def _seed_late_candidate(
+    store: SqliteEvidenceStore, *, attempt_id: str = "a1", side: str = "BUY"
+) -> None:
+    """One ``UNCERTAIN_SEND_LATE_CANDIDATE`` row — a released send's same-day recheck saw a row."""
+    store.append(
+        {
+            "attempt_id": attempt_id,
+            "trading_date": "20261123",
+            "sealed_side": side,
+            "sealed_quantity": "1",
+            "send_started_time": "102007",
+            "settle_ms": 30000,
+            "candidate_order_ids": ["0000099999"],
+            "candidate_order_times": ["102009"],
+        },
+        kind=UNCERTAIN_SEND_LATE_CANDIDATE_KIND,
+        record_class=UNCERTAIN_SEND_LATE_CANDIDATE_KIND,
+    )
+
+
+def test_a_late_candidate_puts_a_never_accepted_send_back_in_flight(
+    evidence_store: SqliteEvidenceStore,
+) -> None:
+    """#1129: the recheck found a row the released send could own — exposure is back."""
+    _seed_unknown_send(evidence_store)
+    _seed_reconciled(evidence_store, outcome="never_accepted")
+    _seed_late_candidate(evidence_store)
+    obs = _reader(evidence_store).observe()
+    assert obs.in_flight_buy == Decimal(1)
+    assert in_flight_overlap_effect(obs) == Decimal(1)
+
+
+def test_a_late_candidate_outlives_the_operator_rearm(
+    evidence_store: SqliteEvidenceStore,
+) -> None:
+    """The halt is cleared by hand, but the row stays — so the exposure stays counted."""
+    _seed_unknown_send(evidence_store)
+    _seed_reconciled(evidence_store, outcome="never_accepted")
+    _seed_late_candidate(evidence_store)
+    _seed_reconciled(evidence_store, outcome="never_accepted")
+    obs = _reader(evidence_store).observe()
+    assert obs.in_flight_buy == Decimal(1)
+
+
+def test_a_late_candidate_for_another_attempt_does_not_reopen_this_one(
+    evidence_store: SqliteEvidenceStore,
+) -> None:
+    _seed_unknown_send(evidence_store)
+    _seed_reconciled(evidence_store, outcome="never_accepted")
+    _seed_late_candidate(evidence_store, attempt_id="a2")
+    obs = _reader(evidence_store).observe()
+    assert obs.in_flight_buy == Decimal(0)
+
+
+def test_a_later_numbered_ack_outranks_a_stale_verdict(
+    evidence_store: SqliteEvidenceStore,
+) -> None:
+    """The verdict judged an attempt whose last receipt named no order; a numbered one since did."""
+    _seed_unknown_send(evidence_store)
+    _seed_reconciled(evidence_store, outcome="never_accepted")
+    _seed_result(
+        evidence_store,
+        "EGRESS_RESULT_CONSUMED",
+        "ACK",
+        None,
+        execution_id="0000099999",
+    )
+    obs = _reader(evidence_store).observe()
+    assert obs.in_flight_buy == Decimal(1)
+    assert in_flight_overlap_effect(obs) == Decimal(1)
+
+
+def test_a_later_fill_under_a_stale_verdict_is_confirmed_not_erased(
+    evidence_store: SqliteEvidenceStore,
+) -> None:
+    """A fill after the verdict is real exposure — it lands in confirmed_net, never in nothing."""
+    _seed_unknown_send(evidence_store)
+    _seed_reconciled(evidence_store, outcome="never_accepted")
+    _seed_result(
+        evidence_store,
+        "EGRESS_RESULT_CONSUMED",
+        "FULL_FILL",
+        "1",
+        remaining="0",
+        execution_id="0000099999",
+    )
+    obs = _reader(evidence_store).observe()
+    assert obs.confirmed_net == Decimal(1)
+    assert obs.in_flight_buy == Decimal(0)
+    assert worst_credible_directional_usage(obs) == Decimal(1)
+
+
+@pytest.mark.parametrize("later_kind", ["UNKNOWN", "TIMEOUT"])
+def test_a_later_still_uncertain_receipt_keeps_the_verdict(
+    evidence_store: SqliteEvidenceStore, later_kind: str
+) -> None:
+    _seed_unknown_send(evidence_store)
+    _seed_reconciled(evidence_store, outcome="never_accepted")
+    _seed_result(evidence_store, "EGRESS_RESULT_CONSUMED", later_kind, None)
+    obs = _reader(evidence_store).observe()
+    assert obs.in_flight_buy == Decimal(0)
 
 
 def test_an_unmatched_row_reopens_a_never_accepted_send(
