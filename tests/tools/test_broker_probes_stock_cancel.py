@@ -21,6 +21,7 @@ from tools.broker_probes.common import (
     ProbeRun,
     SafetyViolation,
     assert_mock_trading_tr,
+    redact,
 )
 from tools.broker_probes.probes_order import (
     _STOCK_CANCEL_TR_MOCK,
@@ -50,6 +51,7 @@ from tools.broker_probes.probes_stock_cancel import (
     probe_psc,
 )
 from tools.tos_cp3.ops import market_open, shared_pace
+from tools.tos_cp3.ops.mock_flat_check import cancel_parent_odnos
 
 _ACCOUNT = "1234567890"
 _PRODUCER_CONFIG = "config/tos_probes/cp3-live-producer.yaml"
@@ -919,6 +921,71 @@ def test_cancel_confirmation_reads_the_shared_working_quantity_rule(
     assert probes_stock_cancel._row_is_live(row) is not confirmed
 
 
+# P-SC-20261124T005122Z 시행 A, snapshot t+2290 ms and every poll after it (#1169).
+_MEASURED_ORIGINAL: dict[str, Any] = {
+    "ord_dt": "20261124",
+    "odno": "0000011558",
+    "orgn_odno": "0000000000",
+    "sll_buy_dvsn_cd": "02",
+    "sll_buy_dvsn_cd_name": "매수",
+    "pdno": "035420",
+    "ord_qty": "1",
+    "ord_tmd": "095130",
+    "tot_ccld_qty": "0",
+    "cncl_yn": "N",
+    "cncl_cfrm_qty": "1",
+    "rmn_qty": "0",
+    "rjct_qty": "0",
+}
+
+_MEASURED_CANCEL: dict[str, Any] = {
+    "ord_dt": "20261124",
+    "odno": "0000011561",
+    "orgn_odno": "0000011558",
+    "sll_buy_dvsn_cd": "02",
+    "sll_buy_dvsn_cd_name": "매수취소",
+    "pdno": "035420",
+    "ord_qty": "1",
+    "ord_tmd": "095134",
+    "tot_ccld_qty": "0",
+    "cncl_yn": "Y",
+    "cncl_cfrm_qty": "0",
+    "rmn_qty": "0",
+    "rjct_qty": "0",
+}
+
+
+def test_the_measured_rows_are_both_read_as_no_longer_working() -> None:
+    """#1169: the probe's own readers over the exact rows the 2026-11-24 run captured."""
+    parents = cancel_parent_odnos([_MEASURED_CANCEL, _MEASURED_ORIGINAL])
+    assert parents == frozenset({"11558"})
+    assert not probes_stock_cancel._row_is_live(
+        _MEASURED_ORIGINAL, cancel_parents=parents
+    )
+    assert not probes_stock_cancel._row_is_live(
+        _MEASURED_CANCEL, cancel_parents=parents
+    )
+
+    verdict = probes_stock_cancel.classify_cancel_confirmed(
+        [
+            {
+                "read_status": "OK",
+                "t_offset_ms": 2290.4,
+                "original_row": {"raw": _MEASURED_ORIGINAL},
+                "cancel_parent_odnos": sorted(parents),
+            }
+        ],
+        "11558",
+    )
+    assert verdict["confirmed"] is True
+    assert verdict["at_t_offset_ms"] == 2290.4
+
+
+def test_the_measured_original_without_its_cancel_row_is_not_confirmed() -> None:
+    """The parent set is what tells the measured shape from an unaccounted quantity."""
+    assert probes_stock_cancel._row_is_live(_MEASURED_ORIGINAL) is True
+
+
 def test_the_cleanup_never_sells_a_holding_this_run_did_not_buy(
     mock_env: None, install: Any, tmp_path: Path
 ) -> None:
@@ -1655,7 +1722,7 @@ def test_every_broker_call_takes_a_shared_slot(
     assert record["shared"] is True
     assert record["pace_file"] == str(pace_file)
     assert (
-        record["token"]["reissued_in_slot"] is False
+        record["credential_life"]["reissued_in_slot"] is False
     ), "a fresh token needs no re-issue"
     assert pace_file.read_text(encoding="utf-8").strip(), "grants were recorded"
 
@@ -1900,9 +1967,12 @@ def test_a_token_too_short_for_the_run_is_reissued_inside_a_slot(
     assert auth.issues == 1, "the re-issue happened, and only once"
     # Two slots before the first call: the look, then the forced issue.
     assert acquired_at == [0, 0, *range(len(broker.calls))]
-    token = run.measurements["shared_app_key_pace"]["token"]
-    assert token["reissued_in_slot"] is True
-    assert token["remaining_life_s"] > token["required_life_s"]
+    # SAFETY: 이 키 이름에 "token" 이 들어가면 common.redact 가 블록째 지운다 — 2026-11-24
+    # 측정이 그렇게 ***REDACTED*** 로 남았다 (#1169).
+    life = run.measurements["shared_app_key_pace"]["credential_life"]
+    assert life["reissued_in_slot"] is True
+    assert life["remaining_life_s"] > life["required_life_s"]
+    assert redact(run.measurements)["shared_app_key_pace"]["credential_life"] == life
 
 
 def test_a_token_that_cannot_outlive_the_run_refuses(

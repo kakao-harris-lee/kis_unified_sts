@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Protocol
 
 from tos_runtime.recon.ports import WitnessScope, WitnessSnapshot, WitnessUnavailable
-from tos_runtime.recon.witness_kis import KisOrderRow
+from tos_runtime.recon.witness_kis import KisOrderRow, odno_key
 from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
@@ -187,15 +187,6 @@ class OrderRowsReader(Protocol):
         inquiry_date: str | None = None,
         deadline_expired: Callable[[], bool] | None = None,
     ) -> tuple[str, tuple[KisOrderRow, ...]]: ...
-
-
-def odno_key(raw: str | None) -> str | None:
-    """Canonical comparison key for a KIS ODNO: whitespace and leading zeros dropped (a single"""
-    text = (raw or "").strip()
-    if not text or not (text.isascii() and text.isdigit()):
-        return None
-    key = text.lstrip("0")
-    return key or None
 
 
 def may_release(plan: FetchPlan, rows: tuple[KisOrderRow, ...]) -> bool:

@@ -187,6 +187,73 @@ def test_orders_the_leaf_never_placed_do_not_withhold_its_release(fresh) -> None
     ] == list(FOREIGN_ODNOS)
 
 
+def _cancel_of(
+    parent: str | None,
+    *,
+    odno: str = "0000021563",
+    remaining: Decimal | None = Decimal("0"),
+    filled: Decimal | None = Decimal("0"),
+) -> WitnessOrder:
+    """The 모의 cancel row measured on 2026-11-24: its own ODNO, our order as 원주문 (#1169)."""
+    return WitnessOrder(
+        attempt_id=None,
+        broker_execution_id=odno,
+        quantity=filled,
+        remaining=remaining,
+        state=WitnessOrderState.CANCELLED,
+        order_date=DATE,
+        order_time="125016",
+        origin_execution_id=parent,
+    )
+
+
+def test_the_cancel_row_of_our_own_order_does_not_withhold_its_release(fresh) -> None:
+    """#1169: KIS writes a cancel as a row of its own, four seconds AFTER the order it
+
+    cancels. Counted as an unexplained orphan it fails `_placed_before_our_first_order`
+    and withholds the very release the cancel earned — the reservation of every cancelled
+    order would be held for ever, which is #1167's "safe but useless" one layer down.
+    """
+    report = _reconcile(fresh, orders=(_cancel_of(OUR_ODNO),))
+
+    assert report.permits_capacity_release is True
+    assert report.permits_rearm is True
+    assert ReconciliationClass.ORPHAN_BROKER_ORDER in _classes(
+        report
+    ), "the row is still reported — it is explained, not hidden"
+
+
+@pytest.mark.parametrize(
+    "order,why",
+    [
+        (_cancel_of(None), "names no 원주문 at all"),
+        (_cancel_of("0000008456"), "cancels an order that is not ours"),
+        (_cancel_of(OUR_ODNO, remaining=Decimal("1")), "still has quantity on it"),
+        (_cancel_of(OUR_ODNO, remaining=None), "states no remainder"),
+        (_cancel_of(OUR_ODNO, filled=Decimal("1")), "something executed on it"),
+        (_cancel_of(OUR_ODNO, filled=None), "states no executed quantity"),
+    ],
+    ids=[
+        "no-origin",
+        "someone-elses-order",
+        "remainder-left",
+        "remainder-unreadable",
+        "filled-quantity",
+        "filled-unreadable",
+    ],
+)
+def test_a_cancel_row_that_does_not_settle_one_of_ours_still_withholds(
+    fresh, order: WitnessOrder, why: str
+) -> None:
+    """#1172 리뷰 MEDIUM: the witness demands 체결 0 of a cancel row before it will let that
+
+    row corroborate anything (``confirmed_cancel_parents``); the orphan gate must demand the
+    same 0, or a cancel row that DID execute would quietly stop withholding a release here.
+    """
+    report = _reconcile(fresh, orders=(order,))
+    assert report.permits_capacity_release is False, why
+
+
 def test_an_orphan_carrying_our_own_execution_id_still_withholds(fresh) -> None:
     """The duplicate-order shape: two broker orders answer to one attempt of ours."""
     report = _reconcile(fresh, orders=(_order(OUR_ODNO, order_time=OUR_TIME),))
