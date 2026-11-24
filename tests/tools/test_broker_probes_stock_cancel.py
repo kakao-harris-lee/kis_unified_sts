@@ -1654,6 +1654,9 @@ def test_every_broker_call_takes_a_shared_slot(
     record = run.measurements["shared_app_key_pace"]
     assert record["shared"] is True
     assert record["pace_file"] == str(pace_file)
+    assert (
+        record["token"]["reissued_in_slot"] is False
+    ), "a fresh token needs no re-issue"
     assert pace_file.read_text(encoding="utf-8").strip(), "grants were recorded"
 
 
@@ -1781,7 +1784,140 @@ def test_a_lost_slot_stops_the_run_and_sends_nothing_more(
     aborted = run.measurements["aborted_after_first_order"]
     assert aborted["exception"].startswith("SharedPaceUnavailable")
     assert aborted["accepted_orders"] == 1
-    assert "SharedPaceUnavailable" in run.measurements["cleanup"]["cancels_exception"]
+    cancels = run.measurements["cleanup"]["cancels"]
+    assert len(cancels) == 2, "every configured cleanup attempt was still tried"
+    assert all(
+        c.get("skipped") == probes_stock_cancel._CLEAN_SLOT_UNAVAILABLE for c in cancels
+    ), cancels
     assert (
         f"PSC_STOP={probes_stock_cancel._STOP_PROBE_ERROR}" in capsys.readouterr().out
     )
+
+
+class _SlotLostOnce:
+    """A pacer whose n-th ``wait()`` refuses the shared slot, and only that one."""
+
+    def __init__(self, inner: Any, *, fail_at: int) -> None:
+        self._inner = inner
+        self.fail_at = fail_at
+        self.waits = 0
+
+    @property
+    def interval_s(self) -> float:
+        return float(self._inner.interval_s)
+
+    def wait(self) -> float:
+        self.waits += 1
+        if self.waits == self.fail_at:
+            raise shared_pace.SharedPaceUnavailable(
+                "this app key's next shared slot is past the wait budget"
+            )
+        return float(self._inner.wait())
+
+    def defer(self, seconds: float) -> None:
+        self._inner.defer(seconds)
+
+
+def test_a_slot_lost_in_cleanup_only_skips_that_attempt(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """One refused slot must not abandon this run's own resting order."""
+    broker = install(_Broker(cancel_shape="flag"))
+    run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
+    client = _client(run)
+    cfg = load_config(_config_file(tmp_path))
+    broker.rows.append(
+        broker._row(odno="0000008687", qty=2, filled=0, price="70200", side="BUY")
+    )
+    placed = Placed(
+        odno="0000008687",
+        sent_at_monotonic=time.monotonic(),
+        body={},
+        krx_fwdg_ord_orgno=_ORG_NO,
+    )
+    budget = OrderBudget(10, reserved_for_flatten=2)
+    # wait 1 is attempt 0's order read; wait 2 would be its cancel POST.
+    client.pacer = _SlotLostOnce(client.pacer, fail_at=2)
+
+    record = probes_stock_cancel._cleanup(
+        client, run, budget, cfg, symbol=_SYMBOL, placed=[placed]
+    )
+
+    assert (
+        record["cancels"][0]["skipped"] == probes_stock_cancel._CLEAN_SLOT_UNAVAILABLE
+    )
+    assert "cancels_exception" not in record, "the loop did not end on that attempt"
+    assert len(broker.cancel_posts()) == 1, "the NEXT attempt sent the cancel"
+    assert record["status"] == _CLEAN_FLAT
+    assert budget.describe()["used"] == 1, "the refused POST was refunded, not charged"
+
+
+def test_a_refunded_charge_goes_back_to_the_pool_it_came_from() -> None:
+    """A POST that never left is not an order call. A lost one still is."""
+    budget = OrderBudget(3, reserved_for_flatten=1)
+    budget.spend("submit")
+    budget.spend("flatten", from_reserve=True)
+    assert budget.refund("flatten") is True
+    assert budget.reserve_remaining == 1
+    assert budget.refund("submit") is True
+    assert budget.remaining == 2
+    assert budget.refund("never-charged") is False
+
+
+def test_the_max_run_duration_is_the_session_window_plus_the_tails(
+    tmp_path: Path,
+) -> None:
+    """The bound the token gate reads: config only, no clock, no estimate."""
+    cfg = load_config(_config_file(tmp_path))
+    tail = cfg.enabled_trials * 0.01 + 2 * 0.001
+    assert cfg.max_run_duration_s == pytest.approx(6 * 3600 + 20 * 60 + tail)
+
+
+def test_a_token_too_short_for_the_run_is_reissued_inside_a_slot(
+    mock_env: None, install: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An aging cached token is replaced BEFORE the first call, holding a slot."""
+    broker = install(_Broker(cancel_shape="flag"))
+    auth = install_stub_auth(monkeypatch)
+    auth._expires_at = time.time() + 1000.0  # a token that would die mid-run
+    acquired_at: list[int] = []
+    real_acquire = shared_pace.SharedAppKeyPace.acquire
+
+    def _spy(self: Any, **kwargs: Any) -> None:
+        acquired_at.append(len(broker.calls))
+        real_acquire(self, **kwargs)
+
+    monkeypatch.setattr(shared_pace.SharedAppKeyPace, "acquire", _spy)
+    run = probe_psc(
+        _args(
+            _config_file(tmp_path),
+            tmp_path,
+            trial="a",
+            transport_yaml=str(_transport_yaml(tmp_path)),
+        )
+    )
+
+    assert auth.issues == 1, "the re-issue happened, and only once"
+    # Two slots before the first call: the look, then the forced issue.
+    assert acquired_at == [0, 0, *range(len(broker.calls))]
+    token = run.measurements["shared_app_key_pace"]["token"]
+    assert token["reissued_in_slot"] is True
+    assert token["remaining_life_s"] > token["required_life_s"]
+
+
+def test_a_token_that_cannot_outlive_the_run_refuses(
+    mock_env: None, install: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Even a FRESH token too short for the run is a refusal — nothing is sent."""
+    broker = install(_Broker())
+    auth = install_stub_auth(monkeypatch, life_s=60.0)
+    with pytest.raises(ProbeError, match="of life left"):
+        probe_psc(
+            _args(
+                _config_file(tmp_path),
+                tmp_path,
+                transport_yaml=str(_transport_yaml(tmp_path)),
+            )
+        )
+    assert broker.calls == [], "the refusal came before the first socket"
+    assert auth.issues == 2, "one issue, one forced re-issue, then the refusal"

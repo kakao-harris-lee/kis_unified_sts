@@ -114,6 +114,7 @@ _CLEAN_STILL_LIVE = "ORDER_STILL_LIVE"
 _CLEAN_STILL_HELD = "SHARES_STILL_HELD"
 _CLEAN_UNKNOWN = "UNDETERMINED"
 _CLEAN_BUDGET_SPENT = "REFUSED_ORDER_BUDGET_SPENT"
+_CLEAN_SLOT_UNAVAILABLE = "SHARED_SLOT_UNAVAILABLE"
 
 _REAL_MARKET_ENV = ("KIS_STOCK_MARKET", "KIS_FUTURES_MARKET")
 _REAL_TRADING_ENV = "KIS_REAL_TRADING"
@@ -197,6 +198,26 @@ class Config:
     @property
     def enabled_trials(self) -> int:
         return 1 + (1 if self.trial_b.enabled else 0)
+
+    @property
+    def max_run_duration_s(self) -> float:
+        """An upper bound on one live run's wall time, from these limits alone.
+
+        The session gate admits a live run only inside ``[start, end]``, so the
+        window bounds everything up to the close; what can still be running
+        after it is the observation window a trial may be inside plus the
+        cleanup's own retries. Deliberately loose — it is read to refuse a
+        token that could expire mid-run, never to end a run.
+        """
+        window = (
+            datetime.combine(date.min, self.session.end)
+            - datetime.combine(date.min, self.session.start)
+        ).total_seconds()
+        tail = (
+            self.enabled_trials * self.observation.cancel_window_s
+            + self.limits.cleanup.cancel_attempts * self.limits.cleanup.retry_s
+        )
+        return window + tail
 
     @property
     def flatten_reserve(self) -> int:
@@ -629,6 +650,15 @@ class OrderBudget:
                 "if the plan really needs more, and say why"
             )
         self.spent.append(what)
+
+    def refund(self, what: str) -> bool:
+        """Give back a charge whose POST provably never left the process."""
+        # SAFETY: 슬롯을 못 받아 «보내지 않은» 호출만 돌려준다 — 전송 중 유실(접수 여부 UNKNOWN)을 여기로 보내면 예산이 중복 주문을 허용하게 된다
+        for pool in (self.reserve_spent, self.spent):
+            if what in pool:
+                pool.remove(what)
+                return True
+        return False
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -1145,6 +1175,9 @@ def _submit(
     record: dict[str, Any] = {"label": label, "side": side, "body": dict(body)}
     try:
         placed, status, parsed, text, ms = client.submit_stock_verbose(body, side=side)
+    except SharedPaceUnavailable:
+        budget.refund(label)
+        raise
     except transport_transient_types() as exc:
         record |= {
             "outcome": _STOP_ORDER_STATE_UNKNOWN,
@@ -1221,6 +1254,10 @@ def _cancel(
             krx_fwdg_ord_orgno=placed.krx_fwdg_ord_orgno,
             remaining_qty=remaining_qty,
         )
+    except SharedPaceUnavailable:
+        # SAFETY: 슬롯을 못 받아 취소 POST 가 나가지 않았다 — 되돌리지 않으면 보내지도 않은 호출이 다음 정리 시도의 예산을 먹고, 우리 주문이 호가창에 남는다
+        budget.refund(label)
+        raise
     except transport_transient_types() as exc:
         record |= {
             "outcome": _STOP_ORDER_STATE_UNKNOWN,
@@ -1370,51 +1407,61 @@ def _cleanup(
     by_key = {p.key: p for p in placed}
     try:
         for attempt in range(cfg.limits.cleanup.cancel_attempts):
-            read = read_order_rows(client, symbol, cfg, walk=False)
-            if read.get("status") not in _READ_ANSWERED:
-                record["cancels"].append(
-                    {"attempt": attempt, "skipped": read.get("status")}
-                )
-                time.sleep(cfg.limits.cleanup.retry_s)
-                continue
-            live = []
-            for row in read.get("live_rows") or []:
-                try:
-                    if odno_key(row.get("odno")) in keys:
-                        live.append(row)
-                except ProbeError:
-                    continue
-            if not live:
-                break
-            for row in live:
-                key = odno_key(row.get("odno"))
-                remaining = _ccld_int(row, "rmn_qty") or 0
-                if not budget.can_spend():
+            try:
+                read = read_order_rows(client, symbol, cfg, walk=False)
+                if read.get("status") not in _READ_ANSWERED:
                     record["cancels"].append(
-                        {
-                            "attempt": attempt,
-                            "odno_key": key,
-                            "outcome": _CLEAN_BUDGET_SPENT,
-                        }
+                        {"attempt": attempt, "skipped": read.get("status")}
                     )
+                    time.sleep(cfg.limits.cleanup.retry_s)
                     continue
-                outcome, _cancel_record, _ack = _cancel(
-                    client,
-                    run,
-                    budget,
-                    by_key[key],
-                    remaining_qty=remaining,
-                    label=f"cleanup-cancel-{key}-attempt{attempt}",
-                )
-                record["cancels"].append(
-                    {"attempt": attempt, "odno_key": key, "outcome": outcome}
-                )
-                if outcome == _STOP_CANCEL_NOT_SENDABLE:
-                    record["cancel_not_sendable"] = (
-                        "this run's own order cannot be cancelled through this "
-                        "harness at all — see trial_*.krx_fwdg_ord_orgno_absent. "
-                        "Cancel it by hand"
+                live = []
+                for row in read.get("live_rows") or []:
+                    try:
+                        if odno_key(row.get("odno")) in keys:
+                            live.append(row)
+                    except ProbeError:
+                        continue
+                if not live:
+                    break
+                for row in live:
+                    key = odno_key(row.get("odno"))
+                    remaining = _ccld_int(row, "rmn_qty") or 0
+                    if not budget.can_spend():
+                        record["cancels"].append(
+                            {
+                                "attempt": attempt,
+                                "odno_key": key,
+                                "outcome": _CLEAN_BUDGET_SPENT,
+                            }
+                        )
+                        continue
+                    outcome, _cancel_record, _ack = _cancel(
+                        client,
+                        run,
+                        budget,
+                        by_key[key],
+                        remaining_qty=remaining,
+                        label=f"cleanup-cancel-{key}-attempt{attempt}",
                     )
+                    record["cancels"].append(
+                        {"attempt": attempt, "odno_key": key, "outcome": outcome}
+                    )
+                    if outcome == _STOP_CANCEL_NOT_SENDABLE:
+                        record["cancel_not_sendable"] = (
+                            "this run's own order cannot be cancelled through this "
+                            "harness at all — see trial_*.krx_fwdg_ord_orgno_absent. "
+                            "Cancel it by hand"
+                        )
+            except SharedPaceUnavailable as exc:
+                # SAFETY: 한 번의 슬롯 상실이 남은 시도 전부를 끝내면 이 운행이 낸 주문이 호가창에 그대로 남는다 — 그 시도만 건너뛰고 다음 시도에서 다시 취소한다 (#1170 리뷰 MEDIUM 1)
+                record["cancels"].append(
+                    {
+                        "attempt": attempt,
+                        "skipped": _CLEAN_SLOT_UNAVAILABLE,
+                        "detail": str(exc),
+                    }
+                )
             time.sleep(cfg.limits.cleanup.retry_s)
     except Exception as exc:  # noqa: BLE001 - phase 1 must not skip phases 2-4
         record["cancels_exception"] = f"{type(exc).__name__}: {exc}"
@@ -1730,8 +1777,48 @@ def _dry_run(run: ProbeRun, args: argparse.Namespace, cfg: Config) -> None:
     _print_lines(_STOP_DRY_RUN, _SHAPE_UNDETERMINED, "unknown")
 
 
+def _token_within_slot(client: MockTradingClient, cfg: Config) -> dict[str, Any]:
+    """Hold a shared slot, and leave the run holding a token that outlives it.
+
+    ``MockTradingClient._request`` builds its headers BEFORE taking a slot, so a
+    token the auth manager refreshes mid-run leaves through its own socket,
+    outside this app key's window. Both halves of the fix are here: the issue
+    happens inside a slot held on purpose, and a token too short-lived to last
+    the run is refused rather than carried into one.
+    """
+    buffer_s = float(client.auth.config.token_expiry_buffer_seconds)
+    needed_s = cfg.max_run_duration_s + buffer_s
+    # SAFETY: 발급 POST 는 이 클라이언트의 pacer 를 타지 않는다 (shared/kis/auth.py 가 직접 requests.post 한다) — 슬롯을 쥔 채 헤더를 당겨야 그 POST 도 공유 창 안에서 일어난다
+    client.pacer.wait()
+    client.auth.get_auth_headers()
+    remaining_s = client.auth.token_expires_at - time.time()
+    reissued = False
+    if remaining_s < needed_s:
+        # SAFETY: 운행 중 만료는 페이싱되지 않은 갱신 POST 가 된다 — 지금 슬롯 안에서 새로 받아 두고, 그래도 모자라면 아래에서 거절한다 (#1170 리뷰 MEDIUM 2)
+        client.auth.invalidate()
+        client.pacer.wait()
+        client.auth.get_auth_headers()
+        remaining_s = client.auth.token_expires_at - time.time()
+        reissued = True
+    if remaining_s < needed_s:
+        raise ProbeError(
+            f"the 모의 token has {remaining_s:.0f}s of life left and this run may "
+            f"take up to {cfg.max_run_duration_s:.0f}s plus the auth manager's "
+            f"{buffer_s:.0f}s refresh buffer. A token that expires mid-run is "
+            "refreshed through shared/kis/auth.py's own socket, outside this app "
+            "key's shared window — refusing instead; nothing was sent"
+        )
+    return {
+        "remaining_life_s": round(remaining_s, 1),
+        "required_life_s": round(needed_s, 1),
+        "max_run_duration_s": round(cfg.max_run_duration_s, 1),
+        "expiry_buffer_s": buffer_s,
+        "reissued_in_slot": reissued,
+    }
+
+
 def _attach_shared_pace(
-    client: MockTradingClient, run: ProbeRun, transport_yaml: str | None
+    client: MockTradingClient, run: ProbeRun, cfg: Config, transport_yaml: str | None
 ) -> None:
     """Put the mock app key's cross-process window in front of every call this run makes.
 
@@ -1741,9 +1828,7 @@ def _attach_shared_pace(
     """
     try:
         pace_file = attach_shared_pace(client, transport_yaml)
-        # SAFETY: 토큰 발급 POST 는 이 클라이언트의 pacer 를 타지 않는다 (shared/kis/auth.py 가 직접 requests.post 한다) — 첫 거래 호출 전에 슬롯을 하나 쥐고 헤더를 당겨 두면 그 POST 도 공유 창 안에서 일어나고, 이후 _headers() 는 캐시된 토큰만 읽는다
-        client.pacer.wait()
-        client.auth.get_auth_headers()
+        token = _token_within_slot(client, cfg)
     except SharedPaceUnavailable as exc:
         client.close()
         raise ProbeError(
@@ -1752,12 +1837,17 @@ def _attach_shared_pace(
             "a run that cannot take its slots from their queue is refused — "
             "nothing was sent"
         ) from exc
+    except BaseException:
+        # SAFETY: 여기서 실패하면 아직 probe_psc 의 finally 안이 아니다 — 닫지 않으면 열린 세션이 그대로 남는다 (#1170 리뷰 LOW)
+        client.close()
+        raise
     run.measure(
         "shared_app_key_pace",
         {
             "shared": pace_file is not None,
             "pace_file": str(pace_file) if pace_file is not None else None,
             "source": f"--transport-yaml / ${TRANSPORT_YAML_ENV}",
+            "token": token,
             "note": (
                 "every call this run made took a slot from that file, the one "
                 "the KIS mock tenant sessions pace the same app key through"
@@ -1805,7 +1895,7 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
         _dry_run(run, args, cfg)
         return run
 
-    _attach_shared_pace(client, run, getattr(args, "transport_yaml", None))
+    _attach_shared_pace(client, run, cfg, getattr(args, "transport_yaml", None))
     run.measure(
         "account", {"fingerprint": account_fingerprint(client.creds.account_no)}
     )
