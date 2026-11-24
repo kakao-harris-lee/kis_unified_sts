@@ -56,6 +56,14 @@ from tools.tos_cp3.ops.mock_flat_check import (
     row_has_working_quantity,
 )
 
+# The same cross-process window the CP-3 ops tools take their slots from (#1161);
+# stdlib-only at import time, like the module above.
+from tools.tos_cp3.ops.shared_pace import (
+    TRANSPORT_YAML_ENV,
+    SharedPaceUnavailable,
+    attach_shared_pace,
+)
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_CONFIG_PATH = (
@@ -1722,6 +1730,45 @@ def _dry_run(run: ProbeRun, args: argparse.Namespace, cfg: Config) -> None:
     _print_lines(_STOP_DRY_RUN, _SHAPE_UNDETERMINED, "unknown")
 
 
+def _attach_shared_pace(
+    client: MockTradingClient, run: ProbeRun, transport_yaml: str | None
+) -> None:
+    """Put the mock app key's cross-process window in front of every call this run makes.
+
+    The 모의 app key this probe sends on is the one the CP-3 stock tenant
+    sessions trade through. Without this the probe's calls are spent on top of
+    theirs and the pair goes over 초당 2건 — the 2026-11-23 EGW00201 (#1161).
+    """
+    try:
+        pace_file = attach_shared_pace(client, transport_yaml)
+        # SAFETY: 토큰 발급 POST 는 이 클라이언트의 pacer 를 타지 않는다 (shared/kis/auth.py 가 직접 requests.post 한다) — 첫 거래 호출 전에 슬롯을 하나 쥐고 헤더를 당겨 두면 그 POST 도 공유 창 안에서 일어나고, 이후 _headers() 는 캐시된 토큰만 읽는다
+        client.pacer.wait()
+        client.auth.get_auth_headers()
+    except SharedPaceUnavailable as exc:
+        client.close()
+        raise ProbeError(
+            f"the mock app key's shared window could not be joined: {exc}. P-SC "
+            "sends 모의 orders on the app key the running tenant sessions use, so "
+            "a run that cannot take its slots from their queue is refused — "
+            "nothing was sent"
+        ) from exc
+    run.measure(
+        "shared_app_key_pace",
+        {
+            "shared": pace_file is not None,
+            "pace_file": str(pace_file) if pace_file is not None else None,
+            "source": f"--transport-yaml / ${TRANSPORT_YAML_ENV}",
+            "note": (
+                "every call this run made took a slot from that file, the one "
+                "the KIS mock tenant sessions pace the same app key through"
+                if pace_file is not None
+                else "this run paced only ITSELF: its calls were spent on top of "
+                "whatever the tenant sessions were sending on the same app key"
+            ),
+        },
+    )
+
+
 def probe_psc(args: argparse.Namespace) -> ProbeRun:
     """P-SC — 주식 MOCK 취소 행 모양 + 늦은 체결 관측 (#948 순서 1)."""
     spec = get("P-SC")
@@ -1758,6 +1805,7 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
         _dry_run(run, args, cfg)
         return run
 
+    _attach_shared_pace(client, run, getattr(args, "transport_yaml", None))
     run.measure(
         "account", {"fingerprint": account_fingerprint(client.creds.account_no)}
     )
@@ -1765,8 +1813,10 @@ def probe_psc(args: argparse.Namespace) -> ProbeRun:
     stop = _STOP_NONE
     shapes: list[str] = []
     cleanup: dict[str, Any] = {}
+    # SAFETY: 공유 슬롯을 잃은 것(SharedPaceUnavailable)은 «아무것도 보내지 않았다» 다 — 여기 없으면 주문이 접수된 뒤 그 예외가 그대로 튀어나가 분류되지 않은 중단이 되고, 운영자는 어떤 호출이 나갔는지 모른 채 계좌를 떠안는다
     abortable: tuple[type[BaseException], ...] = (
         ProbeError,
+        SharedPaceUnavailable,
         *transport_transient_types(),
     )
     try:
@@ -1866,5 +1916,18 @@ def add_stock_cancel_args(parser: argparse.ArgumentParser) -> None:
             "Which trials to run. 'a' is the resting-order cancel, 'b' the "
             "partial-fill attempt. Trial B also needs trials.b.enabled in the "
             "config; this flag can only narrow, never widen."
+        ),
+    )
+    parser.add_argument(
+        "--transport-yaml",
+        default=None,
+        metavar="PATH",
+        help=(
+            "the tenant's kis_mock_transport.yaml. Its shared_pacer_path is the "
+            "file the running CP-3 stock tenant sessions pace this app key "
+            "through, so this probe takes its slots from the same queue. Without "
+            f"it (and without ${TRANSPORT_YAML_ENV}) an intraday run spends the "
+            "app key's rate limit alongside them. Terms that cannot be read are a "
+            "refusal, not a warning."
         ),
     )
