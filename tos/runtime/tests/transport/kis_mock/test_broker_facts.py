@@ -338,6 +338,33 @@ def test_a_refused_balance_records_the_brokers_own_fault_code() -> None:
     assert row["account_ok"] is False
 
 
+def test_egw00215_is_recorded_and_retried_exactly_like_egw00201() -> None:
+    """#1169: EGW00215 is the mock ACCOUNT ledger's per-second limit, a bucket of its own —
+
+    it refused the P-SC probe's flat-start read at 2026-11-24 09:49 KST while the app-key
+    bucket (EGW00201) was fine. On a tenant read it gets EGW00201's treatment: fail closed,
+    carry KIS's own code into the row, and let the NEXT refresh ask again.
+    """
+    ledger_limited = {
+        "rt_cd": "1",
+        "msg_cd": "EGW00215",
+        "msg1": "원장에서 허용 가능한 초당 거래건수를 초과하였습니다.",
+    }
+    client = _Client(
+        VTTC8434R=[ledger_limited, _OK_BALANCE],
+        FHKST01010100=[_quote("N"), _quote("N")],
+    )
+    facts, _, sink = _facts(client)
+
+    refused = facts.refresh()
+    assert refused.account_ok is False
+    row = sink.rows[0][1]
+    assert row["reason"] == "balance_rt_cd_not_ok"
+    assert row["balance_msg_cd"] == "EGW00215"
+
+    assert facts.refresh().account_ok is True, "the next cycle simply asks again"
+
+
 def test_a_refusal_the_broker_did_not_explain_records_only_the_reason() -> None:
     client = _Client(VTTC8434R=[{"rt_cd": "1"}], FHKST01010100=[_quote("N")])
     facts, _, sink = _facts(client)

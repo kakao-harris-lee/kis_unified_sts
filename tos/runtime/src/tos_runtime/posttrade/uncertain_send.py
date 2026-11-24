@@ -298,6 +298,13 @@ def candidate_rows(
             continue
         if row.pdno != instrument or row.ord_qty != send.quantity:
             continue
+        if row.cancelled and odno_key(row.orgn_odno) is not None:
+            # SAFETY: 취소 행은 원주문과 같은 종목·수량에 더해 같은 side 코드로 온다 — 측정
+            # 2026-11-24 의 매수취소 행도 sll_buy_dvsn_cd="02" 였고 이름(`매수취소`)만 달랐다.
+            # 그래서 방향 필터가 걸러 주지 못한다. 후보로 남기면 우리 송신을 그 취소 행의
+            # ODNO 에 bind 하거나, 이미 해제된 송신의 «늦은 후보» 로 읽어 멀쩡한 tenant 를
+            # 거짓으로 멈춘다 (#1129 · #1164 감시 경로, #1169).
+            continue
         row_code = (row.sll_buy_dvsn_cd or "").strip()
         if row_code and wanted_code is not None and row_code != wanted_code:
             continue

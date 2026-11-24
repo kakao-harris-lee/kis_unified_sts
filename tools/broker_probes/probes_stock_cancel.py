@@ -1828,7 +1828,7 @@ def _attach_shared_pace(
     """
     try:
         pace_file = attach_shared_pace(client, transport_yaml)
-        token = _token_within_slot(client, cfg)
+        credential_life = _token_within_slot(client, cfg)
     except SharedPaceUnavailable as exc:
         client.close()
         raise ProbeError(
@@ -1847,7 +1847,9 @@ def _attach_shared_pace(
             "shared": pace_file is not None,
             "pace_file": str(pace_file) if pace_file is not None else None,
             "source": f"--transport-yaml / ${TRANSPORT_YAML_ENV}",
-            "token": token,
+            # SAFETY: 키 이름에 "token" 이 들어가면 common.redact 가 이 블록을 통째로
+            # ***REDACTED*** 로 바꾼다 — 2026-11-24 측정이 그렇게 날아갔다 (#1169).
+            "credential_life": credential_life,
             "note": (
                 "every call this run made took a slot from that file, the one "
                 "the KIS mock tenant sessions pace the same app key through"

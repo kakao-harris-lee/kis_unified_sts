@@ -24,6 +24,11 @@ from tos_runtime.recon.witness_kis_client import KisWitnessHttpClient
 from tos_runtime.recon.witness_kis_config import FuturesAssetRefused, KisWitnessConfig
 
 from ._fake_kis_get_server import FakeKisGetServer
+from ._measured_cancel import (
+    MEASURED_DATE,
+    MEASURED_ORIGINAL_ODNO,
+    measured_rows,
+)
 from ._witness_kis_fakes import (
     FakeCredentialSession,
     FakeKstDateSource,
@@ -1011,3 +1016,142 @@ def test_a_withdrawn_remainder_is_reported_as_zero_executable_quantity(
     )
     assert order.state is WitnessOrderState.CANCELLED
     assert order.remaining == remaining
+
+
+def _measured() -> tuple[KisOrderRow, KisOrderRow]:
+    """``(cancel row, original row)`` as parsed from the 2026-11-24 measurement."""
+    cancel_wire, original_wire = measured_rows()
+    return KisOrderRow.from_wire(cancel_wire), KisOrderRow.from_wire(original_wire)
+
+
+def test_the_measured_cancel_puts_cncl_yn_y_on_the_cancel_row_not_the_original() -> (
+    None
+):
+    """#1169: the premise #1167's release rule got wrong. The original NEVER says cncl_yn=Y."""
+    cancel, original = _measured()
+
+    assert original.cancelled is False
+    assert (original.tot_ccld_qty, original.rmn_qty) == (Decimal("0"), Decimal("0"))
+    assert original.cancel_confirmed_qty == Decimal("1")
+    assert (
+        original.cancel_withdrew_remainder is False
+    ), "#1167's rule can never fire here"
+
+    assert cancel.cancelled is True
+    assert cancel.orgn_odno == MEASURED_ORIGINAL_ODNO
+    assert cancel.sll_buy_dvsn_cd == original.sll_buy_dvsn_cd == "02"
+
+
+def test_the_measured_shape_needs_the_confirmed_quantity_and_the_cancel_row() -> None:
+    """Both halves, or nothing — either alone is a cancel KIS may only have ACCEPTED."""
+    cancel, original = _measured()
+    parents = witness_kis.confirmed_cancel_parents((cancel, original))
+
+    assert original.unfilled_cancel_settled(parents) is True
+    assert (
+        original.unfilled_cancel_settled(frozenset()) is False
+    ), "no corroborating row"
+
+
+@pytest.mark.parametrize(
+    "override,why",
+    [
+        ({"cncl_cfrm_qty": "0"}, "nothing confirmed"),
+        ({"cncl_cfrm_qty": ""}, "confirmed quantity unreadable"),
+        ({"rmn_qty": "1"}, "quantity still stated as working"),
+        ({"tot_ccld_qty": "1", "ord_qty": "2"}, "something executed"),
+        ({"ord_qty": "x"}, "ordered quantity unreadable"),
+    ],
+)
+def test_a_measured_shape_one_field_off_is_not_a_settled_cancel(
+    override: dict[str, str], why: str
+) -> None:
+    cancel_wire, original_wire = measured_rows()
+    parents = witness_kis.confirmed_cancel_parents(
+        (KisOrderRow.from_wire(cancel_wire),)
+    )
+    row = KisOrderRow.from_wire({**original_wire, **override})
+    assert row.unfilled_cancel_settled(parents) is False, why
+
+
+def test_a_cancel_row_for_another_order_does_not_settle_this_one() -> None:
+    """The join is ODNO + 주문일 — a cancel naming a different 원주문 corroborates nothing."""
+    cancel_wire, original_wire = measured_rows()
+    elsewhere = KisOrderRow.from_wire({**cancel_wire, "orgn_odno": "0000011559"})
+    other_day = KisOrderRow.from_wire({**cancel_wire, "ord_dt": "20261123"})
+    original = KisOrderRow.from_wire(original_wire)
+
+    assert (
+        original.unfilled_cancel_settled(
+            witness_kis.confirmed_cancel_parents((elsewhere, other_day))
+        )
+        is False
+    )
+
+
+def test_the_measured_original_is_reported_with_no_executable_quantity_left() -> None:
+    """Read as merely ACKED it is an order that can never fill again, reported as live."""
+    cancel, original = _measured()
+    parents = witness_kis.confirmed_cancel_parents((cancel, original))
+
+    order = KisStockBrokerWitness._order_from_row(  # noqa: SLF001
+        original, cancel_parents=parents
+    )
+    assert order.state is WitnessOrderState.CANCELLED
+    assert order.remaining == Decimal("0") and order.quantity == Decimal("0")
+    # `orgn_odno=0000000000` is KIS's "no 원주문", not order zero.
+    assert order.origin_execution_id is None
+
+    cancel_order = KisStockBrokerWitness._order_from_row(  # noqa: SLF001
+        cancel, cancel_parents=parents
+    )
+    assert cancel_order.origin_execution_id == MEASURED_ORIGINAL_ODNO
+    assert cancel_order.state is WitnessOrderState.CANCELLED
+
+
+def test_the_measured_rows_come_back_as_one_cancelled_order_and_its_cancel(
+    server: FakeKisGetServer,
+) -> None:
+    """End to end through ``observe()``: the walk, the parse and the corroboration together."""
+    cancel_wire, original_wire = measured_rows()
+    _queue_two_page_balance(server)
+    server.queue_response(
+        ORDER_PATH,
+        status=200,
+        body={"rt_cd": "0", "output1": [cancel_wire, original_wire]},
+    )
+    witness = _witness(server, date_source=FakeKstDateSource(MEASURED_DATE))
+
+    snapshot = witness.observe(WitnessScope(account=ACCOUNT))
+
+    by_id = {order.broker_execution_id: order for order in snapshot.orders}
+    assert set(by_id) == {MEASURED_ORIGINAL_ODNO, "0000011561"}
+    assert by_id[MEASURED_ORIGINAL_ODNO].state is WitnessOrderState.CANCELLED
+    assert by_id[MEASURED_ORIGINAL_ODNO].remaining == Decimal("0")
+    assert by_id["0000011561"].origin_execution_id == MEASURED_ORIGINAL_ODNO
+
+
+def test_egw00215_reads_like_egw00201_on_a_tenant_read(
+    server: FakeKisGetServer,
+) -> None:
+    """#1169: EGW00215 is the mock ACCOUNT ledger's per-second limit, a bucket of its own —
+
+    it refused the P-SC probe's flat-start read at 2026-11-24 09:49 KST while the app-key
+    bucket (EGW00201, paced by #1170) was fine. On a tenant read it must be what EGW00201
+    is: KIS's own code carried into the refusal, retried next cycle, never a verdict.
+    """
+    server.queue_response(
+        BALANCE_PATH,
+        status=500,
+        body={
+            "msg_cd": "EGW00215",
+            "msg1": "원장에서 허용 가능한 초당 거래건수를 초과하였습니다.",
+        },
+    )
+    witness = _witness(server)
+
+    with pytest.raises(WitnessUnavailable) as excinfo:
+        witness.observe(WitnessScope(account=ACCOUNT))
+
+    message = str(excinfo.value)
+    assert "EGW00215" in message and "원장에서" in message

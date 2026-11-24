@@ -412,6 +412,23 @@ def _is_finished(order: WitnessOrder) -> bool:
     )
 
 
+def _settles_one_of_ours(order: WitnessOrder, ours: tuple[WitnessOrder, ...]) -> bool:
+    """Whether ``order`` is the broker's own settled cancel row for one of OUR orders (#1169)."""
+    # SAFETY: 모의 KIS 는 취소를 자기 ODNO 를 가진 «별도 행» 으로 적고 원주문을 orgn_odno 로
+    # 가리킨다 (측정 2026-11-24). 그 행을 설명되지 않은 고아로 세면 취소가 벌어 온 바로 그
+    # 해제를 스스로 막아, 취소된 주문의 예약이 영원히 풀리지 않는다.
+    if order.state is not WitnessOrderState.CANCELLED or not _is_finished(order):
+        return False
+    origin = _execution_id(order.origin_execution_id)
+    if origin is None:
+        return False
+    return origin in {
+        own_id
+        for own in ours
+        if (own_id := _execution_id(own.broker_execution_id)) is not None
+    }
+
+
 def _orphans_may_be_ours(
     *,
     orphan_orders: tuple[WitnessOrder, ...],
@@ -442,6 +459,7 @@ def _orphans_may_be_ours(
         or not _placed_before_our_first_order(order, our_orders)
         or not _is_finished(order)
         for order in orphan_orders
+        if not _settles_one_of_ours(order, our_orders)
     )
 
 

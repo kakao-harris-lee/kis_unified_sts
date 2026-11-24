@@ -362,7 +362,8 @@ def test_an_earlier_day_the_broker_cannot_answer_for_is_an_explicit_hold(
         "cancel_remainder_part_confirmed",
         "zero_remainder_unconfirmed",
         "cancel_after_partial",
-        "separate_cancel_row",
+        "separate_cancel_row_unconfirmed",
+        "separate_cancel_row_after_partial",
         "derived_only_cancel",
     ],
 )
@@ -409,13 +410,33 @@ def test_a_cancel_this_runtime_cannot_read_is_one_durable_hold_no_retry_no_relea
                 cancelled="Y",
             ),
         ],
-        "separate_cancel_row": [
+        # A separate cancel row with NO 취소확인수량 on the original is the shape KIS may
+        # only have ACCEPTED — the measured one states `cncl_cfrm_qty` there (#1169).
+        "separate_cancel_row_unconfirmed": [
             _row(date=date, ord_qty=qty, filled=zero, remaining=qty),
             _row(
                 odno="0000004471",
                 orgn_odno=_ODNO,
                 date=date,
                 ord_qty=qty,
+                filled=zero,
+                remaining=zero,
+                cancelled="Y",
+            ),
+        ],
+        "separate_cancel_row_after_partial": [
+            _row(
+                date=date,
+                ord_qty=qty,
+                filled=Decimal(1),
+                remaining=zero,
+                cancel_confirmed=qty - Decimal(1),
+            ),
+            _row(
+                odno="0000004471",
+                orgn_odno=_ODNO,
+                date=date,
+                ord_qty=qty - Decimal(1),
                 filled=zero,
                 remaining=zero,
                 cancelled="Y",
@@ -451,7 +472,9 @@ def test_a_cancel_this_runtime_cannot_read_is_one_durable_hold_no_retry_no_relea
     _close(runtime2)
 
 
-@pytest.mark.parametrize("case", ["remainder_zero", "remainder_withdrawn"])
+@pytest.mark.parametrize(
+    "case", ["remainder_zero", "remainder_withdrawn", "measured_separate_row"]
+)
 def test_an_unfilled_cancel_the_broker_settles_releases_exactly_once(
     case, config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
 ) -> None:
@@ -460,31 +483,63 @@ def test_an_unfilled_cancel_the_broker_settles_releases_exactly_once(
         tmp_path, config_dir, data_dir, custody_root, server, monkeypatch
     )
     zero = Decimal(0)
-    row = {
-        "remainder_zero": _row(
-            date=date,
-            ord_qty=qty,
-            filled=zero,
-            remaining=zero,
-            cancelled="Y",
-            cancel_confirmed=qty,
-        ),
-        "remainder_withdrawn": _row(
-            date=date,
-            ord_qty=qty,
-            filled=zero,
-            remaining=qty,
-            cancelled="Y",
-            cancel_confirmed=qty,
-        ),
+    rows = {
+        "remainder_zero": [
+            _row(
+                date=date,
+                ord_qty=qty,
+                filled=zero,
+                remaining=zero,
+                cancelled="Y",
+                cancel_confirmed=qty,
+            )
+        ],
+        "remainder_withdrawn": [
+            _row(
+                date=date,
+                ord_qty=qty,
+                filled=zero,
+                remaining=qty,
+                cancelled="Y",
+                cancel_confirmed=qty,
+            )
+        ],
+        # What the 모의 account actually does (measured 2026-11-24, #1169): the ORIGINAL row
+        # keeps `cncl_yn=N` and states the cancel only as 취소확인수량; `cncl_yn=Y` arrives on
+        # a row of its own naming the original as 원주문, four seconds later.
+        "measured_separate_row": [
+            _row(
+                date=date,
+                ord_qty=qty,
+                filled=zero,
+                remaining=zero,
+                cancel_confirmed=qty,
+                ord_tmd="095130",
+            ),
+            _row(
+                odno="0000004471",
+                orgn_odno=_ODNO,
+                date=date,
+                ord_qty=qty,
+                filled=zero,
+                remaining=zero,
+                cancelled="Y",
+                cancel_confirmed=zero,
+                ord_tmd="095134",
+            ),
+        ],
     }[case]
-    orders = _script_broker(server, config_dir, date, [row])
+    orders = _script_broker(server, config_dir, date, rows)
     observer = runtime.fill_observer
     assert observer is not None
 
     report = observer.poll_once()
     assert [k for _a, k, _d in report.emitted] == [EgressResultKind.CANCEL_ACK]
     assert report.held == ()
+    # The cancel row names our order as its 원주문, so it is neither an order nobody
+    # claims nor a fill — it is the broker's statement ABOUT our order (#1169).
+    assert report.unattributed == ()
+    assert _rows(runtime, "FILL_OBSERVER_UNATTRIBUTED_ORDER") == []
     assert _rows(runtime, "FILL_OBSERVER_CANCEL_UNSUPPORTED") == []
     assert [
         r["egress_result_kind"] for r in _rows(runtime, "EGRESS_RESULT_CONSUMED")

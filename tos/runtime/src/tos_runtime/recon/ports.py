@@ -56,6 +56,8 @@ class WitnessOrder:
     state: WitnessOrderState
     order_date: str | None = None
     order_time: str | None = None
+    # The 원주문 this row acts on (``orgn_odno``), when the broker names one (#1169).
+    origin_execution_id: str | None = None
 
 
 @dataclass(frozen=True)

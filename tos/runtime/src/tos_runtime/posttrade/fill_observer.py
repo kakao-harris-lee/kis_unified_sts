@@ -49,7 +49,11 @@ from tos_runtime.posttrade.uncertain_send import (
     bound_sends,
 )
 from tos_runtime.recon.ports import WitnessScope, WitnessUnavailable
-from tos_runtime.recon.witness_kis import KisOrderRow
+from tos_runtime.recon.witness_kis import (
+    CancelParents,
+    KisOrderRow,
+    confirmed_cancel_parents,
+)
 from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
@@ -443,6 +447,7 @@ class KisMockFillObserver:
                 "tot_ccld_qty": _text(r.tot_ccld_qty),
                 "rmn_qty": _text(r.rmn_qty),
                 "rjct_qty": _text(r.rjct_qty),
+                "cncl_cfrm_qty": _text(r.cancel_confirmed_qty),
                 "cancelled": r.cancelled,
             }
             for r in rows
@@ -797,7 +802,10 @@ class KisMockFillObserver:
         ]
         if not mine and not derived:
             return None, "not_visible"
-        cancel_reason = self._cancel_reason(mine, derived)
+        cancel_parents = confirmed_cancel_parents(
+            r for r in derived if r.pdno == self.instrument
+        )
+        cancel_reason = self._cancel_reason(mine, derived, cancel_parents)
         if cancel_reason is not None:
             return self._cancel_marker(attempt), cancel_reason
         if len(mine) != 1:
@@ -809,7 +817,9 @@ class KisMockFillObserver:
             or mine[0].ord_qty != attempt.sealed_quantity
         ):
             return self._unknown(attempt, "ordered_quantity_mismatch")
-        kind, filled, remaining, reason = _fill_state(mine[0])
+        kind, filled, remaining, reason = _fill_state(
+            mine[0], cancel_parents=cancel_parents
+        )
         if kind is None:
             return None, reason
         if kind is EgressResultKind.UNKNOWN:
@@ -825,21 +835,25 @@ class KisMockFillObserver:
         return self._payload(attempt, kind, filled, remaining), reason
 
     def _cancel_reason(
-        self, mine: list[KisOrderRow], derived: list[KisOrderRow]
+        self,
+        mine: list[KisOrderRow],
+        derived: list[KisOrderRow],
+        cancel_parents: CancelParents,
     ) -> str | None:
-        """Which ``_CANCEL_REASONS`` member the attributed rows show, or ``None``. Only rows
-
-        ``None`` is both "no cancel here" and "a cancel the broker's own row proves took
-        the whole working remainder with nothing executed" — the latter falls through to
-        :func:`_fill_state`, which turns it into the ``CANCEL_ACK`` the release path
-        consumes (#948). Every shape this runtime cannot read that way holds instead.
-        """
+        """Which ``_CANCEL_REASONS`` member the attributed rows show, or ``None`` — a cancel"""
         ours = [r for r in mine if r.pdno == self.instrument]
         cancelled = [r for r in ours if r.cancelled]
         if any(r.pdno == self.instrument for r in derived):
-            # SAFETY: a row a cancel DERIVED (orgn_odno -> ours) has never been measured on
-            # this broker, so it is held rather than read as an outcome (#948 순서 1).
-            return "derived_order_row"
+            # SAFETY: the one derived shape this runtime reads is the measured one — ONE
+            # original row, itself cncl_yn=N, whose 취소확인수량 covers everything it did not
+            # execute, named as 원주문 by a cancel row of the same read (#1169). Any other
+            # derived row (a 정정, a partial fill, an original row that also says cncl_yn=Y)
+            # is a shape nobody has measured, and is held rather than read as an outcome.
+            if len(ours) != 1 or cancelled:
+                return "derived_order_row"
+            if not ours[0].unfilled_cancel_settled(cancel_parents):
+                return "derived_order_row"
+            return None
         if not cancelled:
             return None
         if any(r.tot_ccld_qty is None or r.tot_ccld_qty != 0 for r in cancelled):
@@ -941,7 +955,7 @@ def _reprojectable(attempt: _Tracked) -> bool:
 
 
 def _fill_state(
-    row: KisOrderRow,
+    row: KisOrderRow, *, cancel_parents: CancelParents = frozenset()
 ) -> tuple[EgressResultKind | None, Decimal | None, Decimal | None, str]:
     """``(kind, filled, remaining, reason)`` for one attributed row (module docstring's"""
     ordered, filled, remaining = row.ord_qty, row.tot_ccld_qty, row.rmn_qty
@@ -963,6 +977,11 @@ def _fill_state(
         # cancel is its own order with its own ODNO and proves nothing about the original's
         # final quantity (Q-CXL-1, prohibited basis CANCEL_ACKNOWLEDGEMENT).
         return EgressResultKind.CANCEL_ACK, None, None, "cancelled_unfilled"
+    if row.unfilled_cancel_settled(cancel_parents):
+        # SAFETY: same RE-QUERIED-row basis as above, one row over — on the 모의 account the
+        # cancel is its own row and the original keeps cncl_yn=N, so without this the
+        # measured shape falls through to `quantity_inconsistent` and never releases (#1169).
+        return EgressResultKind.CANCEL_ACK, None, None, "cancelled_unfilled_derived_row"
     if filled < 0 or remaining < 0 or filled + remaining != ordered:
         return EgressResultKind.UNKNOWN, None, None, "quantity_inconsistent"
     if filled == 0:

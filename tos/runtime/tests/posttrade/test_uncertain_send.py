@@ -32,6 +32,7 @@ from tos_runtime.posttrade.uncertain_send import (
 from tos_runtime.recon.witness_kis import KisOrderRow
 
 from ..evidence.conftest import FixedKeyProvider
+from ..recon._measured_cancel import measured_rows
 
 _ACCOUNT = "5020591501"
 _INSTRUMENT = "005930"
@@ -909,6 +910,66 @@ def test_the_replacement_order_is_not_a_late_candidate(
 
     assert outcome is None
     assert halts == []
+
+
+def _measured_cancel_row() -> KisOrderRow:
+    """The 2026-11-24 cancel row, re-keyed onto THIS suite's scope, date and quantity."""
+    cancel_wire, _original = measured_rows(
+        ord_dt=_DATE, pdno=_INSTRUMENT, ord_qty=format(_QTY, "f"), ord_tmd=_LATER
+    )
+    row = KisOrderRow.from_wire(cancel_wire)
+    assert (
+        row.sll_buy_dvsn_cd == _BUY
+    ), "the side code does NOT distinguish a cancel row"
+    return row
+
+
+def test_a_cancel_row_is_never_a_candidate_for_an_uncertain_send(
+    store: SqliteEvidenceStore,
+) -> None:
+    """#1169: the measured 매수취소 row carries the same 종목·수량·side CODE as the order it
+
+    cancels — only ``sll_buy_dvsn_cd_name`` differs, which nothing reads. Left as a
+    candidate it binds the send to the CANCEL's ODNO, and the fill observer then polls an
+    order that was never ours.
+    """
+    reconciler = _reconciler(store)
+    send = reconciler.due(_T0)
+    assert send is not None
+
+    outcomes = [
+        reconciler.apply_read(
+            send,
+            (_measured_cancel_row(),),
+            read_started_ms=_T0 + index * _SETTLE_MS,
+            claimed=frozenset(),
+        )
+        for index in (1, 2)
+    ]
+
+    assert outcomes == [None, NEVER_ACCEPTED], "the read is EMPTY, not ambiguous"
+    assert bound_sends(store) == {}
+    assert never_accepted_attempt_ids(store) == frozenset({_ATTEMPT})
+
+
+def test_a_cancel_row_does_not_halt_a_released_send_as_a_late_candidate(
+    store: SqliteEvidenceStore,
+) -> None:
+    """The #1164 watch reads the same candidate list — a cancel row there is a false halt."""
+    halts: list[tuple[str, dict[str, Any]]] = []
+    reconciler = _released(store, halts)
+
+    watch = reconciler.due(_T0 + 3 * _SETTLE_MS)
+    assert watch is not None and watch.released
+    outcome = reconciler.apply_read(
+        watch,
+        (_measured_cancel_row(),),
+        read_started_ms=_T0 + 3 * _SETTLE_MS,
+        claimed=frozenset(),
+    )
+
+    assert outcome is None
+    assert halts == [], "a cancel row is not an order that showed up late"
 
 
 def test_a_recheck_waits_out_the_settle_window(store: SqliteEvidenceStore) -> None:

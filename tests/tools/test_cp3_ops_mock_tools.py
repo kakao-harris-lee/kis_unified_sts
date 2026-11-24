@@ -468,6 +468,70 @@ def test_a_zero_remainder_closes_once_the_shortfall_is_accounted_for(
     assert flat.row_is_open(row, _SYMBOL, cancel_parents=parents) is False
 
 
+# P-SC-20261124T005122Z 시행 A, snapshot t+2290 ms and the 12 polls after it (#1169):
+# NAVER, 1 share, bought at 095130 and cancelled at 095134 on the 모의 account. The ORIGINAL
+# row never says `cncl_yn=Y` — it states the cancel as `cncl_cfrm_qty` only — and the cancel
+# is a row of its own. Both rows are verbatim off the wire except for the fields neither
+# tool reads.
+_MEASURED_ORIGINAL: dict[str, Any] = {
+    "ord_dt": "20261124",
+    "odno": "0000011558",
+    "orgn_odno": "0000000000",
+    "sll_buy_dvsn_cd": "02",
+    "sll_buy_dvsn_cd_name": "매수",
+    "pdno": "035420",
+    "ord_qty": "1",
+    "ord_unpr": "118100",
+    "ord_tmd": "095130",
+    "tot_ccld_qty": "0",
+    "cncl_yn": "N",
+    "cncl_cfrm_qty": "1",
+    "rmn_qty": "0",
+    "rjct_qty": "0",
+}
+
+_MEASURED_CANCEL: dict[str, Any] = {
+    "ord_dt": "20261124",
+    "odno": "0000011561",
+    "orgn_odno": "0000011558",
+    "sll_buy_dvsn_cd": "02",
+    "sll_buy_dvsn_cd_name": "매수취소",
+    "pdno": "035420",
+    "ord_qty": "1",
+    "ord_unpr": "0",
+    "ord_tmd": "095134",
+    "tot_ccld_qty": "0",
+    "cncl_yn": "Y",
+    "cncl_cfrm_qty": "0",
+    "rmn_qty": "0",
+    "rjct_qty": "0",
+}
+
+
+def test_the_measured_cancel_leaves_neither_row_working() -> None:
+    """#1169, the whole read: 035420 is flat after the cancel, by BOTH rows at once.
+
+    The original is accounted for only by the cancel row of the same read (its own
+    ``cncl_yn`` is N), and the cancel row is accounted for by being the 취소 order itself.
+    Either one read as working leaves ``mock_flat_check`` reporting a flat symbol as held.
+    """
+    rows = [_MEASURED_CANCEL, _MEASURED_ORIGINAL]
+    parents = flat.cancel_parent_odnos(rows)
+    assert parents == frozenset({"11558"})
+
+    assert [
+        flat.row_is_open(row, "035420", cancel_parents=parents) for row in rows
+    ] == [
+        False,
+        False,
+    ]
+
+
+def test_the_measured_original_alone_is_a_quantity_nobody_accounts_for() -> None:
+    """Without the cancel row in the same read the shortfall is unexplained — still OPEN."""
+    assert flat.row_is_open(_MEASURED_ORIGINAL, "035420") is True
+
+
 def test_the_parent_set_comes_from_the_rows_of_one_read() -> None:
     """``orgn_odno`` is matched to ``odno`` with leading zeros dropped on both sides."""
     child = {"odno": "0000004471", "orgn_odno": "0000004470"}

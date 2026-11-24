@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
@@ -27,6 +27,7 @@ from tos_runtime.recon.witness_kis_config import KisWitnessConfig, refuse_future
 from tos_runtime.transport.kis_mock.account import KisAccountError, split_kis_account
 
 __all__ = [
+    "CancelParents",
     "KisOrderRow",
     "KisStockBrokerWitness",
     "KisWitnessCredentialSession",
@@ -34,7 +35,11 @@ __all__ = [
     "KstDateSource",
     "SystemKstDateSource",
     "TrustedKstDateSource",
+    "confirmed_cancel_parents",
+    "odno_key",
 ]
+
+CancelParents = frozenset[tuple[str, str | None]]
 
 _TR_CONT_MORE_CODES = ("M", "F")
 
@@ -67,6 +72,15 @@ def _finite_decimal_or_none(value: Any) -> Decimal | None:
     """:func:`_decimal_or_none`, but ``NaN``/``sNaN``/``Infinity`` is also ``None``."""
     parsed = _decimal_or_none(value)
     return parsed if parsed is not None and parsed.is_finite() else None
+
+
+def odno_key(raw: str | None) -> str | None:
+    """Canonical comparison key for a KIS ODNO: whitespace and leading zeros dropped (a single"""
+    text = (raw or "").strip()
+    if not text or not (text.isascii() and text.isdigit()):
+        return None
+    key = text.lstrip("0")
+    return key or None
 
 
 def _cancel_confirmed_qty(row: Mapping[str, Any]) -> Decimal | None:
@@ -258,7 +272,27 @@ class KisOrderRow:
     @property
     def cancel_withdrew_remainder(self) -> bool:
         """Whether this row's OWN quantities prove the cancel took the whole working remainder."""
-        if not self.cancelled or self.rmn_qty is None or self.rmn_qty < 0:
+        return self.cancelled and self.cancel_confirmed_covers_outstanding
+
+    def unfilled_cancel_settled(self, cancel_parents: CancelParents) -> bool:
+        """Whether a SEPARATE cancel row settles this unfilled order — the measured 모의 shape."""
+        # SAFETY: BOTH halves are required — a 취소확인수량 on THIS row that covers everything
+        # it did not execute, AND a cancel row of the same read naming it as 원주문. Either
+        # half alone is a cancel KIS merely ACCEPTED, and releasing on it frees the capacity
+        # of an order that can still fill (measured 2026-11-24 on the 모의 account, #1169:
+        # the original row stays cncl_yn=N for ever and states the cancel only as
+        # cncl_cfrm_qty, while the cancel itself is a row with its own ODNO).
+        if self.cancelled or self.tot_ccld_qty != 0 or self.rmn_qty != 0:
+            return False
+        if not self.cancel_confirmed_covers_outstanding:
+            return False
+        key = odno_key(self.odno)
+        return key is not None and (key, self.ord_dt) in cancel_parents
+
+    @property
+    def cancel_confirmed_covers_outstanding(self) -> bool:
+        """Whether 취소확인수량 on this row covers every quantity of it that did not execute."""
+        if self.rmn_qty is None or self.rmn_qty < 0:
             return False
         outstanding = self.rmn_qty
         if self.ord_qty is not None and self.tot_ccld_qty is not None:
@@ -307,6 +341,17 @@ class KisOrderRow:
             sll_buy_dvsn_cd=_text("sll_buy_dvsn_cd"),
             cancel_confirmed_qty=_cancel_confirmed_qty(row),
         )
+
+
+def confirmed_cancel_parents(rows: Iterable[KisOrderRow]) -> CancelParents:
+    """Every ``(원주문 key, 주문일)`` that a SEPARATE cancel row of the same read confirms."""
+    return frozenset(
+        (parent, row.ord_dt)
+        for row in rows
+        if row.cancelled
+        and row.tot_ccld_qty == 0
+        and (parent := odno_key(row.orgn_odno)) is not None
+    )
 
 
 class KisStockBrokerWitness:
@@ -367,9 +412,12 @@ class KisStockBrokerWitness:
                 f"KisStockBrokerWitness.observe: could not complete — {type(exc).__name__}"
             ) from exc
 
+        cancel_parents = confirmed_cancel_parents(rows)
         return WitnessSnapshot(
             observed_at_generation=scope.as_of_generation,
-            orders=tuple(self._order_from_row(row) for row in rows),
+            orders=tuple(
+                self._order_from_row(row, cancel_parents=cancel_parents) for row in rows
+            ),
             positions=positions,
             positions_complete=positions_complete,
             cash=cash,
@@ -644,7 +692,9 @@ class KisStockBrokerWitness:
         return tuple(orders)
 
     @staticmethod
-    def _order_from_row(row: KisOrderRow) -> WitnessOrder:
+    def _order_from_row(
+        row: KisOrderRow, *, cancel_parents: CancelParents = frozenset()
+    ) -> WitnessOrder:
         filled_qty = row.tot_ccld_qty
         remaining_qty = row.rmn_qty
 
@@ -654,6 +704,11 @@ class KisStockBrokerWitness:
                 # so the REMAINING EXECUTABLE quantity is zero; reading rmn_qty here instead
                 # would hold the reservation of every such cancel for ever (#948).
                 remaining_qty = Decimal("0")
+            state = WitnessOrderState.CANCELLED
+        elif row.unfilled_cancel_settled(cancel_parents):
+            # SAFETY: the measured 모의 cancel leaves cncl_yn=N on the ORIGINAL row (#1169) —
+            # read as merely ACKED it reports an order that can never fill again as live, and
+            # the reservation behind it is held for ever.
             state = WitnessOrderState.CANCELLED
         elif filled_qty is not None and filled_qty > 0:
             state = (
@@ -674,4 +729,7 @@ class KisStockBrokerWitness:
             state=state,
             order_date=row.ord_dt,
             order_time=row.ord_tmd,
+            origin_execution_id=(
+                row.orgn_odno if odno_key(row.orgn_odno) is not None else None
+            ),
         )
