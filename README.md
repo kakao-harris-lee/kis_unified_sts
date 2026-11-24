@@ -216,6 +216,7 @@ docs/                architecture, plans, runbooks, broker profiles
 | [tos-evidence-cold-backup.md](docs/runbooks/tos-evidence-cold-backup.md) | TOS 증거 콜드 백업 — 설정 기반 `cold-backup` 하위 명령(자동 세대 · xz · 되읽기 검증 · JSON 보고서 · 용량 바닥) · KST cron 한 줄 · 거부 대응표. **아무것도 지우지 않고 보존 손잡이도 없다**(파기는 트랙 B) |
 | [tos-paper-projection-connection.md](docs/runbooks/tos-paper-projection-connection.md) | CP-1 operator projection 출력 연결 — host wrapper/driver 좌표, 전용 0700 디렉터리, 읽기 전용 **디렉터리** mount(파일 단독 bind 금지), scratch 격리, 복구 절차 |
 | [kis-capability-probes.md](docs/runbooks/kis-capability-probes.md) | KIS broker capability probes (P0-2 / T2) — measurement only, approval is human |
+| [cloudflare-tunnel.md](docs/runbooks/cloudflare-tunnel.md) | `/tos` 외부 공개 — Cloudflare Tunnel(compose 프로파일 `tunnel`, 아웃바운드 전용, 새 호스트 포트 없음) + Access 적용·검증·롤백 |
 
 ### 코드·설정이 근거로 인용하는 기록
 

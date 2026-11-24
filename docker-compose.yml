@@ -143,6 +143,58 @@ services:
         max-file: "3"
 
   # =============================================================================
+  # Cloudflare Tunnel (profile: tunnel) — optional outbound-only public entry.
+  #
+  # Not part of the default stack: `docker compose up -d` ignores a profiled
+  # service, so a checkout with no CLOUDFLARE_TUNNEL_TOKEN brings the stack up
+  # exactly as before. Start and stop it on its own:
+  #
+  #   docker compose --profile tunnel up -d cloudflared   # publish
+  #   docker compose --profile tunnel stop cloudflared    # unpublish (rollback)
+  #
+  # Publishes NO host port, so docs/ports.md stays a one-row table: cloudflared
+  # dials OUT to Cloudflare and reaches Caddy over trading-network. The public
+  # hostname → origin mapping (the operator's hostname → http://caddy:5080) and
+  # the Cloudflare Access policy in front of it are configured in the Cloudflare
+  # dashboard, not here — docs/runbooks/cloudflare-tunnel.md.
+  #
+  # SAFETY: this container can reach every service on trading-network, so a
+  # second public hostname or a WARP private-network route on the same tunnel
+  # would put dashboard:8001 on the internet — including its unauthenticated
+  # /health, /docs and /openapi.json — with no Access policy in front. One
+  # public hostname, pointing at caddy:5080, and nothing else.
+  # =============================================================================
+  cloudflared:
+    # Pinned, never `latest`: an image that moves under a resident operator
+    # stack breaks a working tunnel on an unrelated `up -d`. Bump deliberately.
+    image: cloudflare/cloudflared:2026.11.1
+    profiles: ["tunnel"]
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-cloudflared
+    restart: unless-stopped
+    # Remotely-managed tunnel: ingress rules travel with the token from
+    # Cloudflare, so there is no local config.yml to keep in step.
+    # --no-autoupdate keeps the pinned version pinned.
+    command: tunnel --no-autoupdate run
+    environment:
+      # SAFETY: the tunnel token IS the credential that lets anything claim this
+      # tunnel — it only ever comes from the uncommitted env file. A literal
+      # value here would be a committed secret. `:-` (not `:?`) on purpose: an
+      # unset token must not break `docker compose config` or the default stack,
+      # only this service, which no one starts without the profile.
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+    depends_on:
+      # Short form: caddy declares no healthcheck, so service_started is all
+      # that can be expressed. cloudflared retries a refused origin anyway.
+      - caddy
+    networks:
+      - trading-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
   # Redis (상태 캐시, 세션)
   # =============================================================================
   # NOTE: REDIS_PASSWORD uses ${VAR-default} (no colon) on purpose — an explicitly
