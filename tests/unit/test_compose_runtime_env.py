@@ -151,22 +151,49 @@ def test_cloudflare_tunnel_is_profile_gated_and_publishes_no_host_port():
     assert "ports" not in service
     assert "expose" not in service
 
-    assert service["networks"] == ["trading-network"]
     assert service["depends_on"] == ["caddy"]
     assert service["restart"] == "unless-stopped"
     assert service["command"] == "tunnel --no-autoupdate run"
+
+
+def test_cloudflare_tunnel_is_isolated_from_the_runtime_network():
+    # The connector terminates internet traffic, so it must not sit next to
+    # dashboard:8001, whose /health, /docs and /openapi.json take no API key. It
+    # joins tunnel-network only; caddy bridges the two, so `caddy:5080` still
+    # resolves and a misrouted public hostname lands on the Caddyfile's routing
+    # instead of a bare service port.
+    compose = _read_compose()
+
+    assert compose["services"]["cloudflared"]["networks"] == ["tunnel-network"]
+    assert compose["services"]["caddy"]["networks"] == [
+        "trading-network",
+        "tunnel-network",
+    ]
+    assert "tunnel-network" in compose["networks"]
+
+    on_tunnel_network = {
+        name
+        for name, service in compose["services"].items()
+        if "tunnel-network" in (service.get("networks") or [])
+    }
+    assert on_tunnel_network == {"caddy", "cloudflared"}
 
 
 def test_cloudflare_tunnel_image_is_pinned_and_token_comes_from_the_env_file():
     compose = _read_compose()
     service = compose["services"]["cloudflared"]
 
-    repository, _, tag = service["image"].partition(":")
+    reference, _, digest = service["image"].partition("@")
+    repository, _, tag = reference.partition(":")
     assert repository == "cloudflare/cloudflared"
     # A moving tag would change the binary under a resident operator stack on an
     # unrelated `up -d`.
     assert tag not in {"", "latest"}
     assert tag[0].isdigit()
+    # Digest-pinned as well, so even a re-pushed tag cannot move it. 64 hex
+    # characters: the manifest LIST digest, which keeps per-arch selection.
+    assert digest.startswith("sha256:")
+    assert len(digest) == len("sha256:") + 64
 
     # The token is a credential: it is interpolated from the (uncommitted) env
     # file and never written into the committed file. `:-` rather than `:?` so
