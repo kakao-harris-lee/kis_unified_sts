@@ -419,6 +419,9 @@ def _settles_one_of_ours(order: WitnessOrder, ours: tuple[WitnessOrder, ...]) ->
     # 해제를 스스로 막아, 취소된 주문의 예약이 영원히 풀리지 않는다.
     if order.state is not WitnessOrderState.CANCELLED or not _is_finished(order):
         return False
+    # SAFETY: 체결 수량이 적힌 취소 행(또는 수량을 말하지 않는 행)은 «아무것도 체결하지 않고 거둬 갔다» 가 아니다 — 증인이 코퍼로보레이션에 요구하는 0 과 같은 0 을 여기서도 요구한다 (#1172 리뷰 MEDIUM)
+    if order.quantity != _ZERO:
+        return False
     origin = _execution_id(order.origin_execution_id)
     if origin is None:
         return False

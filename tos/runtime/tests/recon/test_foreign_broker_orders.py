@@ -192,12 +192,13 @@ def _cancel_of(
     *,
     odno: str = "0000021563",
     remaining: Decimal | None = Decimal("0"),
+    filled: Decimal | None = Decimal("0"),
 ) -> WitnessOrder:
     """The 모의 cancel row measured on 2026-11-24: its own ODNO, our order as 원주문 (#1169)."""
     return WitnessOrder(
         attempt_id=None,
         broker_execution_id=odno,
-        quantity=Decimal("0"),
+        quantity=filled,
         remaining=remaining,
         state=WitnessOrderState.CANCELLED,
         order_date=DATE,
@@ -229,12 +230,26 @@ def test_the_cancel_row_of_our_own_order_does_not_withhold_its_release(fresh) ->
         (_cancel_of("0000008456"), "cancels an order that is not ours"),
         (_cancel_of(OUR_ODNO, remaining=Decimal("1")), "still has quantity on it"),
         (_cancel_of(OUR_ODNO, remaining=None), "states no remainder"),
+        (_cancel_of(OUR_ODNO, filled=Decimal("1")), "something executed on it"),
+        (_cancel_of(OUR_ODNO, filled=None), "states no executed quantity"),
     ],
-    ids=["no-origin", "someone-elses-order", "remainder-left", "remainder-unreadable"],
+    ids=[
+        "no-origin",
+        "someone-elses-order",
+        "remainder-left",
+        "remainder-unreadable",
+        "filled-quantity",
+        "filled-unreadable",
+    ],
 )
 def test_a_cancel_row_that_does_not_settle_one_of_ours_still_withholds(
     fresh, order: WitnessOrder, why: str
 ) -> None:
+    """#1172 리뷰 MEDIUM: the witness demands 체결 0 of a cancel row before it will let that
+
+    row corroborate anything (``confirmed_cancel_parents``); the orphan gate must demand the
+    same 0, or a cancel row that DID execute would quietly stop withholding a release here.
+    """
     report = _reconcile(fresh, orders=(order,))
     assert report.permits_capacity_release is False, why
 

@@ -39,7 +39,7 @@ __all__ = [
     "odno_key",
 ]
 
-CancelParents = frozenset[tuple[str, str | None]]
+CancelParents = frozenset[tuple[str, str | None, str | None]]
 
 _TR_CONT_MORE_CODES = ("M", "F")
 
@@ -287,7 +287,7 @@ class KisOrderRow:
         if not self.cancel_confirmed_covers_outstanding:
             return False
         key = odno_key(self.odno)
-        return key is not None and (key, self.ord_dt) in cancel_parents
+        return key is not None and (key, self.ord_dt, self.pdno) in cancel_parents
 
     @property
     def cancel_confirmed_covers_outstanding(self) -> bool:
@@ -344,9 +344,10 @@ class KisOrderRow:
 
 
 def confirmed_cancel_parents(rows: Iterable[KisOrderRow]) -> CancelParents:
-    """Every ``(원주문 key, 주문일)`` that a SEPARATE cancel row of the same read confirms."""
+    """Every ``(원주문 key, 주문일, 종목)`` a SEPARATE cancel row of the same read confirms."""
+    # SAFETY: 종목까지 키에 넣는다 — observe() 는 종목별 walk 를 이어 붙이므로, 한 종목의 취소 행이 다른 종목의 같은 ODNO 를 가진 행을 거둬 간 것으로 읽히면 안 된다 (#1172 리뷰 LOW)
     return frozenset(
-        (parent, row.ord_dt)
+        (parent, row.ord_dt, row.pdno)
         for row in rows
         if row.cancelled
         and row.tot_ccld_qty == 0

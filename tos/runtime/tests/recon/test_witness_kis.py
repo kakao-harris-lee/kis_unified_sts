@@ -1075,18 +1075,31 @@ def test_a_measured_shape_one_field_off_is_not_a_settled_cancel(
 
 
 def test_a_cancel_row_for_another_order_does_not_settle_this_one() -> None:
-    """The join is ODNO + 주문일 — a cancel naming a different 원주문 corroborates nothing."""
+    """The join is ODNO + 주문일 + 종목 — a cancel naming anything else corroborates nothing.
+
+    ``observe()`` concatenates one walk per symbol, so a cancel row of ANOTHER symbol is in
+    the same row list; without 종목 in the key it would settle this row by ODNO alone
+    (#1172 리뷰 LOW). ``tot_ccld_qty`` on the cancel row must be 0 for the same reason the
+    orphan gate demands it — a cancel that executed withdrew nothing.
+    """
     cancel_wire, original_wire = measured_rows()
     elsewhere = KisOrderRow.from_wire({**cancel_wire, "orgn_odno": "0000011559"})
     other_day = KisOrderRow.from_wire({**cancel_wire, "ord_dt": "20261123"})
+    other_symbol = KisOrderRow.from_wire({**cancel_wire, "pdno": "005930"})
+    executed = KisOrderRow.from_wire({**cancel_wire, "tot_ccld_qty": "1"})
     original = KisOrderRow.from_wire(original_wire)
 
     assert (
         original.unfilled_cancel_settled(
-            witness_kis.confirmed_cancel_parents((elsewhere, other_day))
+            witness_kis.confirmed_cancel_parents(
+                (elsewhere, other_day, other_symbol, executed)
+            )
         )
         is False
     )
+    assert witness_kis.confirmed_cancel_parents((other_symbol,)) == frozenset(
+        {("11558", MEASURED_DATE, "005930")}
+    ), "the row is read, it just does not name THIS instrument's order"
 
 
 def test_the_measured_original_is_reported_with_no_executable_quantity_left() -> None:
