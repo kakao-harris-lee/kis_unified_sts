@@ -410,6 +410,15 @@ class KISAuthManager:
         except OSError as e:
             logger.warning(f"[KISAuth] Failed to save token cache: {e}")
 
+    @property
+    def token_expires_at(self) -> float:
+        """현재 토큰의 만료 시각 (epoch 초). 토큰이 없으면 ``0``.
+
+        호출자가 «이 토큰이 내 작업보다 오래 사는가» 를 물을 수 있게 하는
+        읽기 전용 창구. 토큰을 발급하지도, 갱신하지도 않는다.
+        """
+        return self._expires_at
+
     def invalidate(self):
         """토큰 무효화 (재발급 강제)"""
         with self._lock:
