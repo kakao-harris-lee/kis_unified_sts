@@ -21,6 +21,10 @@ from tos.position import (
 )
 
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.posttrade.uncertain_send import (
+    UNCERTAIN_SEND_RECONCILED_KIND,
+    never_accepted_attempt_ids,
+)
 from tos_runtime.recon.ports import WitnessUnavailable
 
 __all__ = [
@@ -241,6 +245,16 @@ class EvidencePositionReader:
             sources.append("evidence:RESULT_UNMATCHED")
         return consumed_by_attempt, unmatched_attempts, sources
 
+    def _read_never_accepted(self) -> frozenset[str]:
+        """The attempts a reconciliation proved never accepted, from the one definition of it."""
+        try:
+            return never_accepted_attempt_ids(self._store)
+        except sqlite3.Error as exc:
+            raise WitnessUnavailable(
+                "EvidencePositionReader: evidence store query failed for kind="
+                f"'{UNCERTAIN_SEND_RECONCILED_KIND}': {exc}"
+            ) from exc
+
     def observe(self) -> PositionObservation:
         """Fold the durable evidence into one :class:`PositionObservation` (module docstring's"""
         sealed = _read_sealed_sends(
@@ -249,6 +263,7 @@ class EvidencePositionReader:
         consumed_by_attempt, unmatched_attempts, result_sources = (
             self._read_terminal_results()
         )
+        never_accepted = self._read_never_accepted()
         (
             confirmed_net,
             unknown_buy,
@@ -263,11 +278,14 @@ class EvidencePositionReader:
             buy_side_token=self._buy_side_token,
             sell_side_token=self._sell_side_token,
             terminal_result_kinds=_TERMINAL_RESULT_TOKENS,
+            never_accepted_attempts=never_accepted,
         )
         sources: list[str] = []
         if sealed:
             sources.append(f"evidence:{_SEND_SEALED_KIND}")
         sources.extend(result_sources)
+        if never_accepted:
+            sources.append(f"evidence:{UNCERTAIN_SEND_RECONCILED_KIND}")
 
         return PositionObservation(
             scope_key=f"{self._account}::{self._instrument}",

@@ -53,12 +53,15 @@ def _outstanding_after(
     *,
     terminal_result_kinds: AbstractSet[str],
     reopened: bool,
+    never_accepted: bool,
 ) -> Decimal:
     """The still-outstanding quantity of an attempt whose latest applied result is"""
-    if (
-        not reopened
-        and consumed.result_kind is not None
-        and consumed.result_kind in terminal_result_kinds
+    if not reopened and (
+        never_accepted
+        or (
+            consumed.result_kind is not None
+            and consumed.result_kind in terminal_result_kinds
+        )
     ):
         return Decimal(0)
     filled = consumed.filled_quantity or Decimal(0)
@@ -74,6 +77,7 @@ def classify_sealed_sends(
     buy_side_token: str,
     sell_side_token: str,
     terminal_result_kinds: AbstractSet[str],
+    never_accepted_attempts: AbstractSet[str] = frozenset(),
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int]:
     """The module docstring's classification table, applied to every sealed send. Returns"""
     confirmed_net = Decimal(0)
@@ -88,6 +92,9 @@ def classify_sealed_sends(
             send.side, buy_side_token=buy_side_token, sell_side_token=sell_side_token
         )
         quantity = send.quantity if send.quantity is not None else Decimal(0)
+        reopened = send.attempt_id in unmatched_attempts
+        # SAFETY: only a durable «the broker never accepted it» verdict retires a sealed send whose result stayed non-terminal — without it an UNKNOWN send stays in flight on every later boot and denies every entry forever (2026-11-23 005930); a RESULT_UNMATCHED row reopens the attempt, so a reopened send keeps its quantity in flight even then
+        never_accepted = not reopened and send.attempt_id in never_accepted_attempts
         consumed = consumed_by_attempt.get(send.attempt_id)
         if consumed is not None:
             filled = consumed.filled_quantity or Decimal(0)
@@ -95,7 +102,8 @@ def classify_sealed_sends(
                 consumed,
                 quantity,
                 terminal_result_kinds=terminal_result_kinds,
-                reopened=send.attempt_id in unmatched_attempts,
+                reopened=reopened,
+                never_accepted=never_accepted,
             )
             if sign is None:
                 unknown_buy += filled
@@ -108,6 +116,8 @@ def classify_sealed_sends(
                 in_flight_buy += outstanding
             else:
                 in_flight_sell += outstanding
+            continue
+        if never_accepted:
             continue
         if sign is None:
             in_flight_buy += quantity

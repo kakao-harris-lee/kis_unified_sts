@@ -455,3 +455,101 @@ def test_unmatched_result_after_terminal_consumed_reopens_the_unfilled_remainder
     assert _toward(obs, sign) == Decimal(outstanding)
     assert _against(obs, sign) == Decimal(0)
     assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+
+
+def _classify_never_accepted(
+    consumed: ConsumedResult | None,
+    *,
+    never_accepted: frozenset[str],
+    unmatched: frozenset[str] = frozenset(),
+) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int]:
+    """One sealed BUY 1, classified with ``never_accepted`` as the proven-unsent set."""
+    return classify_sealed_sends(
+        (SealedSend(attempt_id="a1", side=_BUY, quantity=Decimal(1)),),
+        consumed_by_attempt={} if consumed is None else {"a1": consumed},
+        unmatched_attempts=unmatched,
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+        never_accepted_attempts=never_accepted,
+    )
+
+
+def test_never_accepted_retires_an_unknown_sealed_send() -> None:
+    """2026-11-23 005930: an UNKNOWN consumed plus a never_accepted verdict is not in flight."""
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(result_kind="UNKNOWN"), never_accepted=frozenset({"a1"})
+        )
+    )
+    assert obs.in_flight_buy == Decimal(0)
+    assert obs.in_flight_sell == Decimal(0)
+    assert obs.confirmed_net == Decimal(0)
+    assert obs.attempts_seen == 1
+
+
+def test_unknown_without_a_verdict_stays_in_flight() -> None:
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(result_kind="UNKNOWN"), never_accepted=frozenset()
+        )
+    )
+    assert obs.in_flight_buy == Decimal(1)
+
+
+def test_a_verdict_for_another_attempt_does_not_retire_this_one() -> None:
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(result_kind="UNKNOWN"), never_accepted=frozenset({"a2"})
+        )
+    )
+    assert obs.in_flight_buy == Decimal(1)
+
+
+def test_never_accepted_retires_a_sealed_send_with_no_consumed_result() -> None:
+    obs = _as_obs(_classify_never_accepted(None, never_accepted=frozenset({"a1"})))
+    assert obs.in_flight_buy == Decimal(0)
+    assert obs.attempts_seen == 1
+
+
+def test_an_unmatched_row_reopens_a_never_accepted_attempt() -> None:
+    """A RESULT_UNMATCHED row outranks the verdict — the quantity goes back in flight."""
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(result_kind="UNKNOWN"),
+            never_accepted=frozenset({"a1"}),
+            unmatched=frozenset({"a1"}),
+        )
+    )
+    assert obs.in_flight_buy == Decimal(1)
+
+
+def test_a_never_accepted_attempt_still_counts_any_recorded_fill() -> None:
+    """The verdict retires only the OUTSTANDING quantity; a recorded fill stays confirmed."""
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(
+                result_kind="PARTIAL_FILL",
+                filled_quantity=Decimal(1),
+                remaining_quantity=Decimal(0),
+            ),
+            never_accepted=frozenset({"a1"}),
+        )
+    )
+    assert obs.confirmed_net == Decimal(1)
+    assert obs.in_flight_buy == Decimal(0)
+
+
+def test_omitting_the_never_accepted_set_keeps_everything_in_flight() -> None:
+    """The default is conservative — a caller that forgets it over-counts, never under."""
+    obs = _as_obs(
+        classify_sealed_sends(
+            (SealedSend(attempt_id="a1", side=_BUY, quantity=Decimal(1)),),
+            consumed_by_attempt={"a1": ConsumedResult(result_kind="UNKNOWN")},
+            unmatched_attempts=frozenset(),
+            buy_side_token=_BUY,
+            sell_side_token=_SELL,
+            terminal_result_kinds=_TERMINAL,
+        )
+    )
+    assert obs.in_flight_buy == Decimal(1)
