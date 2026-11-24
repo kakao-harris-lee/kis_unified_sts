@@ -97,10 +97,14 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["NEWS_SCORER_CONSUMER_GROUP"] == "news_scorer-v1"
 
 
-def test_strategy_builder_ui_receives_dashboard_public_api_key():
-    compose = yaml.safe_load(
+def _read_compose() -> dict:
+    return yaml.safe_load(
         (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     )
+
+
+def test_strategy_builder_ui_receives_dashboard_public_api_key():
+    compose = _read_compose()
     service = compose["services"]["strategy-builder-ui"]
 
     assert (
@@ -111,3 +115,95 @@ def test_strategy_builder_ui_receives_dashboard_public_api_key():
         "NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY:-${DASHBOARD_API_KEY:-}}"
         in service["environment"]
     )
+
+
+def test_default_stack_is_exactly_the_unprofiled_services():
+    # `docker compose up -d` starts every service with no `profiles:` key. This
+    # pins that set, so a service added behind a profile (cloudflared, tests)
+    # cannot drift into the default stack — and one added with no profile at all
+    # has to say so here.
+    compose = _read_compose()
+    unprofiled = {
+        name
+        for name, service in compose["services"].items()
+        if not service.get("profiles")
+    }
+    assert unprofiled == {
+        "dashboard",
+        "strategy-builder-ui",
+        "caddy",
+        "redis",
+        "prometheus",
+    }
+
+
+def test_cloudflare_tunnel_is_profile_gated_and_publishes_no_host_port():
+    compose = _read_compose()
+    service = compose["services"]["cloudflared"]
+
+    # Profile-gated: the tunnel is opt-in, so a checkout without a token brings
+    # the stack up unchanged.
+    assert service["profiles"] == ["tunnel"]
+
+    # The whole point of a tunnel is that nothing is published: cloudflared
+    # dials out. A `ports:` key here would open an inbound host port and break
+    # the single-entrypoint rule in docs/ports.md.
+    assert "ports" not in service
+    assert "expose" not in service
+
+    assert service["depends_on"] == ["caddy"]
+    assert service["restart"] == "unless-stopped"
+    assert service["command"] == "tunnel --no-autoupdate run"
+
+
+def test_cloudflare_tunnel_is_isolated_from_the_runtime_network():
+    # The connector terminates internet traffic, so it must not sit next to
+    # dashboard:8001, whose /health, /docs and /openapi.json take no API key. It
+    # joins tunnel-network only; caddy bridges the two, so `caddy:5080` still
+    # resolves and a misrouted public hostname lands on the Caddyfile's routing
+    # instead of a bare service port.
+    compose = _read_compose()
+
+    assert compose["services"]["cloudflared"]["networks"] == ["tunnel-network"]
+    assert compose["services"]["caddy"]["networks"] == [
+        "trading-network",
+        "tunnel-network",
+    ]
+    assert "tunnel-network" in compose["networks"]
+
+    on_tunnel_network = {
+        name
+        for name, service in compose["services"].items()
+        if "tunnel-network" in (service.get("networks") or [])
+    }
+    assert on_tunnel_network == {"caddy", "cloudflared"}
+
+
+def test_cloudflare_tunnel_image_is_pinned_and_token_comes_from_the_env_file():
+    compose = _read_compose()
+    service = compose["services"]["cloudflared"]
+
+    reference, _, digest = service["image"].partition("@")
+    repository, _, tag = reference.partition(":")
+    assert repository == "cloudflare/cloudflared"
+    # A moving tag would change the binary under a resident operator stack on an
+    # unrelated `up -d`.
+    assert tag not in {"", "latest"}
+    assert tag[0].isdigit()
+    # Digest-pinned as well, so even a re-pushed tag cannot move it. 64 hex
+    # characters: the manifest LIST digest, which keeps per-arch selection.
+    assert digest.startswith("sha256:")
+    assert len(digest) == len("sha256:") + 64
+
+    # The token is a credential: it is interpolated from the (uncommitted) env
+    # file and never written into the committed file. `:-` rather than `:?` so
+    # an unset token cannot break `docker compose config` or the default stack.
+    assert service["environment"] == {"TUNNEL_TOKEN": "${CLOUDFLARE_TUNNEL_TOKEN:-}"}
+
+
+def test_env_example_ships_an_empty_cloudflare_tunnel_token():
+    env_example = _read_env_template(".env.example")
+
+    # Placeholder only. A non-empty value here would be a committed credential.
+    assert env_example["CLOUDFLARE_TUNNEL_TOKEN"] == ""
+    assert env_example["TOS_PUBLIC_HOSTNAME"]

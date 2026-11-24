@@ -37,6 +37,7 @@
 | Doc | 쓰임 |
 |-----|------|
 | 운영 런북 전체 | → [README.md § Runbooks](../README.md#runbooks) — 런북 색인은 README 하나가 정본이다 |
+| [runbooks/cloudflare-tunnel.md](runbooks/cloudflare-tunnel.md) | `/tos` 를 Cloudflare Tunnel + Access 로 외부 공개 — compose 프로파일 `tunnel`, 새 호스트 포트 없음. |
 | [CI_PARALLEL_NOTES.md](CI_PARALLEL_NOTES.md) | `pytest-xdist` 두 패스 분할(병렬 + `serial` 직렬)과 hermetic 규칙. |
 
 ## 📁 하위 디렉터리

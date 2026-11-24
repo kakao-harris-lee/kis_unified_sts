@@ -136,6 +136,75 @@ services:
         condition: service_healthy
     networks:
       - trading-network
+      # Caddy is the ONLY service that joins tunnel-network: it is what makes
+      # `caddy:5080` resolvable for cloudflared without putting cloudflared next
+      # to dashboard:8001. Adding this to another service undoes that isolation.
+      # Caddy's network set changed when this landed, so the FIRST `up -d` after
+      # that — with or without the profile — recreates this container (a few
+      # seconds of UI blip). Recreate it, never `down` the stack for it.
+      - tunnel-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
+  # Cloudflare Tunnel (profile: tunnel) — optional outbound-only public entry.
+  #
+  # Not part of the default stack: `docker compose up -d` ignores a profiled
+  # service, so a checkout with no CLOUDFLARE_TUNNEL_TOKEN brings the stack up
+  # exactly as before. Start and stop it on its own:
+  #
+  #   docker compose --profile tunnel up -d cloudflared   # publish
+  #   docker compose --profile tunnel stop cloudflared    # unpublish (rollback)
+  #
+  # Publishes NO host port, so docs/ports.md stays a one-row table: cloudflared
+  # dials OUT to Cloudflare and reaches Caddy over tunnel-network. The public
+  # hostname → origin mapping (the operator's hostname → http://caddy:5080) and
+  # the Cloudflare Access policy in front of it are configured in the Cloudflare
+  # dashboard, not here — docs/runbooks/cloudflare-tunnel.md.
+  #
+  # SAFETY: a container on trading-network can reach dashboard:8001 directly,
+  # whose /health, /docs and /openapi.json need no API key — so a second public
+  # hostname or a WARP private-network route on this tunnel would put them on
+  # the internet with no Access policy in front. cloudflared is therefore on
+  # tunnel-network ONLY, which holds exactly one other member, caddy. Misrouting
+  # it then reaches the Caddyfile's routing (and Access), not a bare service
+  # port. Do not add trading-network here, and keep one public hostname.
+  # =============================================================================
+  cloudflared:
+    # Pinned by tag AND by the manifest-list digest (`docker buildx imagetools
+    # inspect cloudflare/cloudflared:<tag>` prints it; the list digest keeps
+    # per-arch selection working). Never `latest`: an image that moves under a
+    # resident operator stack breaks a working tunnel on an unrelated `up -d`.
+    image: cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d
+    profiles: ["tunnel"]
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-cloudflared
+    # Right for a long-lived connector: it must come back after a host reboot or
+    # a Cloudflare-side drop. The cost is that an empty/invalid token restart-
+    # loops instead of failing once — the runbook says to `stop` it and fix the
+    # token rather than wait.
+    restart: unless-stopped
+    # Remotely-managed tunnel: ingress rules travel with the token from
+    # Cloudflare, so there is no local config.yml to keep in step.
+    # --no-autoupdate keeps the pinned version pinned.
+    command: tunnel --no-autoupdate run
+    environment:
+      # SAFETY: the tunnel token IS the credential that lets anything claim this
+      # tunnel — it only ever comes from the uncommitted env file. A literal
+      # value here would be a committed secret. `:-` (not `:?`) on purpose: an
+      # unset token must not break `docker compose config` or the default stack,
+      # only this service, which no one starts without the profile.
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+    depends_on:
+      # Short form: caddy declares no healthcheck, so service_started is all
+      # that can be expressed. cloudflared retries a refused origin anyway.
+      - caddy
+    networks:
+      # Isolation boundary — see the SAFETY note above. `caddy:5080` still
+      # resolves because caddy joins this network too.
+      - tunnel-network
     logging:
       driver: "json-file"
       options:
@@ -263,6 +332,13 @@ services:
 # =============================================================================
 networks:
   trading-network:
+    driver: bridge
+
+  # Two members only: caddy and (under profile `tunnel`) cloudflared. It exists
+  # so the tunnel connector cannot reach dashboard:8001 or redis directly —
+  # see the SAFETY note on the cloudflared service. Created on the first
+  # `--profile tunnel up -d`; harmless and empty when the tunnel is not running.
+  tunnel-network:
     driver: bridge
 
 # =============================================================================
