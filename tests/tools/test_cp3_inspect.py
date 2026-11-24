@@ -19,12 +19,15 @@ SESSIONS_SUBDIR = "cp3-sessions"
 
 
 def _session_tree(
-    tmp_path: Path, *, strategy_files: Sequence[str] = ("d.strategy.yaml",)
+    tmp_path: Path,
+    *,
+    strategy_files: Sequence[str] = ("d.strategy.yaml",),
+    render_dirname: str = "render",
 ) -> Path:
     """A state root holding one recorded session and its tenant durable set."""
     state = tmp_path / "state"
     session = state / SESSIONS_SUBDIR / SESSION
-    render = session / "render"
+    render = session / render_dirname
     (render / "strategies").mkdir(parents=True)
     (session / "journal.jsonl").write_text("{}\n", encoding="utf-8")
     (render / ins.RENDERED_MANIFEST_NAME).write_text(
@@ -135,6 +138,46 @@ def test_a_session_without_a_render_tree_refuses(tmp_path: Path) -> None:
         path.unlink() if path.is_file() else path.rmdir()
     render.rmdir()
     with pytest.raises(ins.InspectRefusal, match="kept no rendered tenant tree"):
+        _resolve(state)
+
+
+def test_a_futures_session_renders_into_config_and_resolves_the_same(
+    tmp_path: Path,
+) -> None:
+    """``cp3_tenant_daily.sh`` renders futures into ``config/`` — same four paths."""
+    state = _session_tree(tmp_path, render_dirname="config")
+    session = state / SESSIONS_SUBDIR / SESSION
+    assert not (session / "render").exists()
+    paths = _resolve(state)
+    assert paths.strategy_path == (
+        session / "config" / "strategies" / "d.strategy.yaml"
+    )
+    assert paths.bindings_path == session / "config" / ins.STRATEGY_BINDINGS_FILE_NAME
+    assert (paths.instrument, paths.tree_id) == (INSTRUMENT, TREE_ID)
+
+
+def test_a_directory_without_the_manifest_is_not_a_rendered_tree(
+    tmp_path: Path,
+) -> None:
+    """``config/`` beside a real ``render/`` is ignored — the manifest identifies it."""
+    state = _session_tree(tmp_path)
+    session = state / SESSIONS_SUBDIR / SESSION
+    (session / "config").mkdir()
+    (session / "config" / "engine.yaml").write_text("{}\n", encoding="utf-8")
+    assert _resolve(state).bindings_path == (
+        session / "render" / ins.STRATEGY_BINDINGS_FILE_NAME
+    )
+
+
+def test_two_rendered_trees_in_one_session_refuse(tmp_path: Path) -> None:
+    """Which policy a session ran is a fact of ONE render, so two is a refusal."""
+    state = _session_tree(tmp_path)
+    session = state / SESSIONS_SUBDIR / SESSION
+    (session / "config").mkdir()
+    (session / "config" / ins.RENDERED_MANIFEST_NAME).write_text(
+        json.dumps({"instrument": "000660", "tree_id": "other"}), encoding="utf-8"
+    )
+    with pytest.raises(ins.InspectRefusal, match="rendered tenant trees"):
         _resolve(state)
 
 

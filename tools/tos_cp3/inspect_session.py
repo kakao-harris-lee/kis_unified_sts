@@ -36,7 +36,9 @@ CHILD_PYTHONPATH_PARTS: tuple[str, ...] = ("tos/src", "tos/runtime/src", "tos/ru
 
 TENANT_DATA_PARENT_SUFFIX = "-data"
 
-RENDER_DIRNAME = "render"
+# SAFETY: both names, because cp3_tenant_daily.sh renders stock into `render/`
+# and futures into `config/` — one name alone refuses every futures session.
+RENDER_DIRNAMES: tuple[str, ...] = ("render", "config")
 STRATEGIES_DIRNAME = "strategies"
 STRATEGY_BINDINGS_FILE_NAME = "strategy_bindings.yaml"
 RENDERED_MANIFEST_NAME = "RENDERED.json"
@@ -96,6 +98,31 @@ def _read_manifest(render_dir: Path) -> tuple[str, str]:
     return instrument, tree_id
 
 
+def _render_dir(session_dir: Path) -> Path:
+    """The session's rendered tenant tree, identified by its render manifest."""
+    present = [
+        session_dir / name for name in RENDER_DIRNAMES if (session_dir / name).is_dir()
+    ]
+    # SAFETY: the manifest the render writes identifies the tree, not the name —
+    # a directory that merely exists is not the policy the session ran.
+    rendered = [path for path in present if (path / RENDERED_MANIFEST_NAME).is_file()]
+    if len(rendered) > 1:
+        raise InspectRefusal(
+            f"{session_dir}: holds {len(rendered)} rendered tenant trees "
+            f"{[path.name for path in rendered]} — which policy the session ran is "
+            "a fact of one render, so two of them is a refusal"
+        )
+    if rendered:
+        return rendered[0]
+    if len(present) == 1:
+        # One candidate and no manifest: _read_manifest names the missing file.
+        return present[0]
+    raise InspectRefusal(
+        f"{session_dir}: the session kept no rendered tenant tree under any of "
+        f"{list(RENDER_DIRNAMES)}, so the policy it actually ran cannot be read"
+    )
+
+
 def _sole_strategy_file(render_dir: Path) -> Path:
     """The one strategy file the rendered tree holds."""
     strategies_dir = render_dir / STRATEGIES_DIRNAME
@@ -139,12 +166,7 @@ def resolve_session(
     journal_path = session_dir / JOURNAL_NAME
     if not journal_path.is_file():
         raise InspectRefusal(f"{journal_path}: the session has no producer journal")
-    render_dir = session_dir / RENDER_DIRNAME
-    if not render_dir.is_dir():
-        raise InspectRefusal(
-            f"{render_dir}: the session kept no rendered tenant tree, so the "
-            "policy it actually ran cannot be read"
-        )
+    render_dir = _render_dir(session_dir)
     instrument, tree_id = _read_manifest(render_dir)
     bindings_path = render_dir / STRATEGY_BINDINGS_FILE_NAME
     if not bindings_path.is_file():
