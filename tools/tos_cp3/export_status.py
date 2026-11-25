@@ -105,6 +105,21 @@ def _boot_ok(bootproof: Any) -> bool | None:
     return BOOTPROOF_OK in bootproof
 
 
+def _clock(stamp: Any) -> str | None:
+    """로그 스탬프의 ``HH:MM:SS``, 없으면 ``None``.
+
+    ``status_board._hhmmss`` 를 그대로 쓰지 않는다 — 그쪽은 없는 값을 «—» 로 적는
+    표 렌더러다. 그 글자가 문서에 실리면 페이지가 그것을 **시각 문자열**로 받는다.
+    없음은 ``null`` 이어야 하고(계획 §7: 「없음을 '이상 없음'으로 그리지 않는다」),
+    대시를 그릴지는 화면이 정할 일이다. 세션이 뜨지 못한 날 — 운영자가 가장 봐야
+    하는 날 — 이 정확히 이 경우다.
+    """
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    rendered = status_board._hhmmss(stamp)
+    return None if rendered == status_board._hhmmss(None) else rendered
+
+
 def _tenant_row(session: Any) -> dict[str, Any]:
     """한 tenant 세션 — 화면이 그리는 것만. digest · 커밋 · 계수 블록은 뺀다."""
     store = session.get("store") or {}
@@ -118,8 +133,8 @@ def _tenant_row(session: Any) -> dict[str, Any]:
         "status": session.get("status"),
         "run_alive": session.get("run_alive"),
         "producer_alive": session.get("producer_alive"),
-        "boot_at": status_board._hhmmss(session.get("boot_at")),
-        "end_at": status_board._hhmmss(session.get("end_at")),
+        "boot_at": _clock(session.get("boot_at")),
+        "end_at": _clock(session.get("end_at")),
         "run_rc": session.get("run_rc"),
         "producer_rc": session.get("producer_rc"),
         "ticks": store.get("ticks") if isinstance(store, dict) else None,

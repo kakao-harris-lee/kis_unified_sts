@@ -107,6 +107,34 @@ def test_the_document_says_what_ran_and_how_it_ended(board: dict[str, Any]) -> N
     assert long_row["direction"] == recorded["direction"]
     assert long_row["instrument"] == recorded["instrument"]
     assert long_row["ticks"] == (recorded["store"] or {}).get("ticks")
+    assert long_row["boot_at"] == "08:46:18"
+
+
+def test_a_session_that_never_booted_reports_null_not_the_clis_dash() -> None:
+    """뜨지 못한 세션의 시각은 ``null`` 이다 — «—» 는 화면이 그릴 글자다.
+
+    ``status_board._hhmmss`` 는 표 렌더러라 없는 값을 «—» 로 적는다. 그 글자가
+    문서에 실리면 페이지가 그것을 시각 **문자열**로 받고, `boot_at == null` 을
+    보는 분기는 영영 서지 않는다. 세션이 뜨지 못한 날 — 운영자가 가장 봐야 하는
+    날 — 이 정확히 이 경우다(계획 §7: 「없음을 '이상 없음'으로 그리지 않는다」).
+    """
+    row = ex._tenant_row(
+        {
+            "name": "stock-r1-20261125",
+            "status": "NOT-BOOTED",
+            "boot_at": None,
+            "end_at": None,
+            "store": None,
+            "issues": None,
+        }
+    )
+    assert row["boot_at"] is None
+    assert row["end_at"] is None
+    assert row["ticks"] is None
+    assert row["issues"] == []
+    assert row["status"] == "NOT-BOOTED"
+    # …and a stamp that IS there still becomes the clock the board renders.
+    assert ex._clock("2026-11-25 08:46:08") == "08:46:08"
 
 
 def test_the_issue_list_is_the_boards_own_with_its_levels(
