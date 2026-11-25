@@ -112,6 +112,61 @@
       "why": "«Account No.», with the dot",
       "input": "Account No. 50205915 refused",
       "expected": "Account No. <계좌> refused"
+    },
+    {
+      "why": "a traversal wearing the route prefix is a host path, not a route",
+      "input": "/api/../home/deploy/x",
+      "expected": "<경로>"
+    },
+    {
+      "why": "the route prefix glued into a host path",
+      "input": "x/api/home/deploy/.local/state/x",
+      "expected": "x/api<경로>"
+    },
+    {
+      "why": "a double traversal behind the route prefix",
+      "input": "root/api/../../home/deploy/.kis_token_x",
+      "expected": "root/api<경로>"
+    },
+    {
+      "why": "a URL whose path traverses out to a host path",
+      "input": "open http://localhost/../home/deploy/x",
+      "expected": "open http://localhost<경로>"
+    },
+    {
+      "why": "a URL whose path IS a host path",
+      "input": "open https://h/home/deploy/.local/state/x",
+      "expected": "open https://h<경로>"
+    },
+    {
+      "why": "userinfo is a credential and never survives, even on a kept URL",
+      "input": "open https://user:pw@h/x",
+      "expected": "open https://h/x"
+    },
+    {
+      "why": "userinfo stripped AND the host path masked",
+      "input": "open https://user:pw@h/home/deploy/x",
+      "expected": "open https://h<경로>"
+    },
+    {
+      "why": "a dot-directory segment vetoes the route exemption",
+      "input": "see /api/tos/x/.local/state/tos/a",
+      "expected": "see <경로>"
+    },
+    {
+      "why": "the known-root check does not care about case",
+      "input": "see /API/TOS/../HOME/deploy/x",
+      "expected": "see <경로>"
+    },
+    {
+      "why": "/srv is a filesystem root like the others",
+      "input": "dump /srv/tos/state/x",
+      "expected": "dump <경로>"
+    },
+    {
+      "why": "/data is a filesystem root like the others",
+      "input": "leaf /data/tos/state/x",
+      "expected": "leaf <경로>"
     }
   ],
   "kept": [
@@ -166,6 +221,18 @@
     {
       "why": "a two-letter ratio is not a path",
       "input": "a/b 는 경로가 아니다"
+    },
+    {
+      "why": "an ordinary web URL keeps its path and query",
+      "input": "see https://example.com/a/b?c=1 for details"
+    },
+    {
+      "why": "a route path with a dot in its FILENAME is still a route",
+      "input": "see /api/tos/status.json now"
+    },
+    {
+      "why": "the bars route carries a session id and stays whole",
+      "input": "see /api/tos/sessions/long-20261125/bars"
     }
   ]
 }

@@ -343,3 +343,62 @@ def test_the_scale_comes_from_config_not_from_a_literal(
         contract=contract,
     )
     assert out["trades"][0]["entry_price_points"] == expected
+
+
+def test_a_still_open_position_is_marked_not_closed_while_the_session_runs() -> None:
+    """장중 내보내기가 5분마다 가짜 청산을 기록하면 안 된다."""
+    bars = [
+        bar("09:14", 73_564, kind="ACTION", rule_id="R1-ENTRY-LONG"),
+        bar("09:20", 73_800),
+    ]
+    out = hp.build_hypothetical_pnl(
+        bars, direction=hp.LONG, contract=MINI, session_ended=False
+    )
+    assert out["session_ended"] is False
+    assert out["trades"] == []
+    assert out["totals"]["trades"] == 0
+    assert out["totals"]["wins"] == 0
+    # 합계는 «없음» 이지 0 원이 아니다 — 끝난 거래가 하나도 없다.
+    assert out["totals"]["hypothetical_pnl_krw"] is None
+    open_position = out["open_position"]
+    assert open_position["entry_time_kst"] == "09:14"
+    assert open_position["as_of_time_kst"] == "09:20"
+    assert open_position["points"] == "2.36"
+    assert open_position["unrealized_pnl_krw"] == "118000"
+    assert open_position["basis"] == hp.OPEN_MARK_BASIS
+    # 실현과 같은 키 이름을 쓰지 않는다 — 더해질 수 없게.
+    assert "hypothetical_pnl_krw" not in open_position
+    assert "forced_close" not in open_position
+
+
+def test_the_same_bars_close_at_the_last_bar_once_the_session_has_ended() -> None:
+    """끝난 세션의 동작은 그대로다 — 11-25 숫자가 움직이면 안 된다."""
+    bars = [
+        bar("09:14", 73_564, kind="ACTION", rule_id="R1-ENTRY-LONG"),
+        bar("09:20", 73_800),
+    ]
+    out = hp.build_hypothetical_pnl(
+        bars, direction=hp.LONG, contract=MINI, session_ended=True
+    )
+    assert out["open_position"] is None
+    assert len(out["trades"]) == 1
+    assert out["trades"][0]["forced_close"] is True
+    assert out["totals"]["hypothetical_pnl_krw"] == "118000"
+
+
+def test_a_session_that_closed_its_position_is_unaffected_by_the_flag() -> None:
+    """닫힌 거래는 세션이 돌든 끝났든 같은 수다."""
+    bars = [
+        bar("09:14", 73_564, kind="ACTION", rule_id="R1-ENTRY-LONG"),
+        bar("09:50", 73_858, kind="FLAT", rule_id="R2-EXIT-VWAP-REVERTED"),
+        bar("09:55", 74_000),
+    ]
+    running = hp.build_hypothetical_pnl(
+        bars, direction=hp.LONG, contract=MINI, session_ended=False
+    )
+    ended = hp.build_hypothetical_pnl(
+        bars, direction=hp.LONG, contract=MINI, session_ended=True
+    )
+    assert running["trades"] == ended["trades"]
+    assert running["totals"] == ended["totals"]
+    assert running["open_position"] is None

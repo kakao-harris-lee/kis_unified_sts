@@ -10,9 +10,11 @@ import {
   type BoardVerdict,
   type PaperLiveness,
   type StatusState,
+  type TosStatusIssue,
   type TosStatusStreak,
 } from '@/lib/dashboard/tosStatus';
 import { isTodaysDocument, sessionPhase } from '@/lib/dashboard/tosSymbols';
+import { issueExplanation, type IssueExplanation } from '@/lib/dashboard/tosGlossary';
 import { AlertTriangle } from 'lucide-react';
 import { AsOf, Badge, ageLabel, type Tone } from './marks';
 import Term from './Term';
@@ -75,6 +77,80 @@ const VERDICT_TONES: Record<BoardVerdict, Tone> = {
   stale: 'warn',
   unknown: 'warn',
 };
+
+interface IssueGroup {
+  key: string;
+  level: string | null | undefined;
+  /** The sentence and action, when this page knows the code. */
+  explanation: IssueExplanation | null;
+  /** Every tenant that raised it, in the board's order, without repeats. */
+  where: string[];
+  rows: TosStatusIssue[];
+}
+
+/**
+ * The issue list as one row per KIND, not per tenant.
+ *
+ * Five tenants overrunning their feed window is one fact and five rows, and
+ * the eleven-row list it produces is why the disclosure was unreadable. Rows
+ * are grouped by level and by the code this page can name; a row whose code is
+ * unknown groups on its own text, so two different unknown problems never
+ * merge into one line.
+ */
+export function groupIssues(issues: TosStatusIssue[]): IssueGroup[] {
+  const groups = new Map<string, IssueGroup>();
+  const levelOrder = new Map<string, number>();
+  issues.forEach((issue, index) => {
+    const level = issue.level ?? '';
+    if (!levelOrder.has(level)) levelOrder.set(level, index);
+  });
+  const order = new Map<string, number>();
+  for (const [index, issue] of issues.entries()) {
+    const explanation = issueExplanation(issue.text);
+    // The READING is part of the identity, not just the code. Two rows of the
+    // same code can mean opposite things — one standing-approval row is
+    // routine and the next is a stop — and a key of `level|code` would merge
+    // them under whichever arrived first.
+    const key = [
+      issue.level ?? '',
+      explanation?.code ?? issue.text ?? '',
+      explanation?.action ?? '',
+      explanation?.sentence ?? '',
+    ].join('|');
+    const group = groups.get(key);
+    if (group) {
+      group.rows.push(issue);
+      if (issue.where && !group.where.includes(issue.where)) group.where.push(issue.where);
+      continue;
+    }
+    order.set(key, index);
+    groups.set(key, {
+      key,
+      level: issue.level,
+      explanation,
+      where: issue.where ? [issue.where] : [],
+      rows: [issue],
+    });
+  }
+  // Inside a level: what needs doing first, what needs nothing last. The
+  // level order itself is the one `orderedIssues` already established.
+  return [...groups.values()].sort((left, right) => {
+    const byLevel =
+      (levelOrder.get(left.level ?? '') ?? 0) - (levelOrder.get(right.level ?? '') ?? 0);
+    if (byLevel !== 0) return byLevel;
+    const byAction = actionRank(left.explanation) - actionRank(right.explanation);
+    if (byAction !== 0) return byAction;
+    return (order.get(left.key) ?? 0) - (order.get(right.key) ?? 0);
+  });
+}
+
+/** «확인 필요» first, «조치 불필요» last; an unread row sorts with the former. */
+function actionRank(explanation: IssueExplanation | null): number {
+  if (!explanation) return 0;
+  if (explanation.action === '확인 필요') return 0;
+  if (explanation.action === '반복되면 확인') return 1;
+  return 2;
+}
 
 /** «12분 전 기록», or that the reader could not tell when it was written. */
 function lastWrittenPhrase(ageSeconds: number | null | undefined): string {
@@ -143,6 +219,7 @@ export default function StatusStrip({
   // died at 10:00 still reads «0 blocks» at 15:00, and only its age says so.
   const verdict = boardVerdict(board, new Date(), status.state === 'ready' ? (boardAge ?? null) : undefined);
   const issues = orderedIssues(board);
+  const groups = groupIssues(issues);
   const blockedLevel = board?.levels?.blocked ?? '막힘';
   const checkLevel = board?.levels?.check ?? '확인';
   const facts: Fact[] = [];
@@ -317,22 +394,48 @@ export default function StatusStrip({
             <details className="text-sm">
               <summary className="cursor-pointer text-xs text-slate-600 dark:text-slate-300">
                 이슈 {issues.length}건 — {blockedLevel} 먼저
+                {groups.length < issues.length ? ` · ${groups.length}가지` : ''}
               </summary>
-              <ul className="mt-2 space-y-1">
-                {issues.map((issue, index) => (
-                  <li
-                    key={`${issue.where ?? ''}-${index}`}
-                    className="flex flex-wrap items-baseline gap-x-2"
-                  >
-                    <Badge tone={issue.level === blockedLevel ? 'warn' : 'neutral'}>
-                      <Term name={issue.level === blockedLevel ? 'level_blocked' : 'level_check'}>
-                        {issue.level ?? '알 수 없음'}
-                      </Term>
-                    </Badge>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">
-                      {issue.where ?? '어디인지 알 수 없음'}
-                    </span>
-                    <span className="min-w-0 break-words">{issue.text ?? '내용 없음'}</span>
+              <ul className="mt-2 space-y-2">
+                {groups.map((group) => (
+                  <li key={group.key} className="min-w-0">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <Badge tone={group.level === blockedLevel ? 'warn' : 'neutral'}>
+                        <Term name={group.level === blockedLevel ? 'level_blocked' : 'level_check'}>
+                          {group.level ?? '알 수 없음'}
+                        </Term>
+                      </Badge>
+                      {/* The plain sentence leads when this page knows the
+                          code. An unknown code keeps the board's own line as
+                          the headline rather than wearing a guessed caption. */}
+                      <span className="min-w-0 break-words">
+                        {group.explanation?.sentence ?? group.rows[0]?.text ?? '내용 없음'}
+                      </span>
+                      {group.explanation && (
+                        <Badge tone={group.explanation.action === '조치 불필요' ? 'neutral' : 'warn'}>
+                          {group.explanation.action}
+                        </Badge>
+                      )}
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                        {group.rows.length}건 · {group.where.join(', ')}
+                      </span>
+                    </div>
+                    {/* The exporter's own text, kept verbatim underneath: it is
+                        the record, and the numbers in it (how many rows, how
+                        long the worst pass) are what an operator checks. */}
+                    {group.explanation && (
+                      <ul className="ml-2 mt-0.5 space-y-0.5">
+                        {group.rows.map((row, index) => (
+                          <li
+                            key={`${row.where ?? ''}-${index}`}
+                            className="text-xs text-slate-500 dark:text-slate-400"
+                          >
+                            {row.where ? `${row.where} · ` : ''}
+                            {row.text ?? '내용 없음'}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </li>
                 ))}
               </ul>

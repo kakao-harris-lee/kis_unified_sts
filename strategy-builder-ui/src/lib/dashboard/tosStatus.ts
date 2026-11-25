@@ -214,6 +214,8 @@ export function kstClock(now: Date = new Date()): { hour: number; weekday: numbe
  */
 export function insideExportWindow(now: Date = new Date()): boolean {
   const { hour, weekday } = kstClock(now);
+  // Mirrors the host's export cron, which JSON cannot carry a comment about:
+  // `*/5 9-15 * * 1-5 … # tos-export-status-intraday`.
   const window = config.statusExportWindowKst;
   if (!window.weekdays.includes(weekday)) return false;
   return hour >= window.fromHour && hour < window.untilHour;
@@ -268,8 +270,13 @@ export function boardVerdict(
 ): BoardVerdict {
   if (!document?.date) return 'unknown';
   if (document.date !== kstToday(now)) return 'stale';
-  if (ageSeconds !== undefined && insideExportWindow(now)) {
-    if (ageSeconds == null || ageSeconds > config.statusStaleAfterSeconds) return 'stopped';
+  // An age the reader could not measure is `unknown` at EVERY hour, not just
+  // inside the window: «we do not know when this was written» is never the
+  // same answer as «이상 없음», and the overnight carve-out below is about an
+  // age that IS known and expected to be old.
+  if (ageSeconds === null) return 'unknown';
+  if (ageSeconds !== undefined && insideExportWindow(now) && ageSeconds > config.statusStaleAfterSeconds) {
+    return 'stopped';
   }
   const blocked = document.blocked;
   const checks = document.checks;

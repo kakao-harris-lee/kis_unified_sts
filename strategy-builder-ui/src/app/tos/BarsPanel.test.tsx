@@ -184,9 +184,61 @@ describe('판단 근거 패널', () => {
     expect(screen.getByText('바인딩: 알 수 없음')).toBeInTheDocument();
   });
 
-  it('says the record is written once, at session end', () => {
+  it('states when the document was actually written, not when exports happen', () => {
+    // The old line claimed «written once, after the session ended» for every
+    // document. Since the intraday export (plan §P3) that is a claim the page
+    // cannot make: it says the file's own age instead.
     mount();
-    expect(screen.getByText(/장중에는 직전 세션을 보고 있을 수 있습니다/)).toBeInTheDocument();
+    expect(screen.getByText(/마지막으로 내보낸 시각 12초 전 내보냄/)).toBeInTheDocument();
+    expect(screen.getByText(/끝난 세션이라 더 바뀌지 않습니다/)).toBeInTheDocument();
+  });
+
+  it('claims «더 바뀌지 않습니다» only when the DOCUMENT says it is final', () => {
+    // A document written before the flag existed, or one whose session this
+    // page cannot place, says only when it was written.
+    const document = futuresBarsDocument();
+    delete document.final;
+    mount({ document });
+    expect(screen.getByText(/마지막으로 내보낸 시각 12초 전 내보냄/)).toBeInTheDocument();
+    expect(screen.queryByText(/더 바뀌지 않습니다/)).not.toBeInTheDocument();
+  });
+
+  it('shows a running session its open position as a mark, not a result', () => {
+    const document = futuresBarsDocument();
+    document.final = false;
+    document.hypothetical_pnl = {
+      ...document.hypothetical_pnl,
+      session_ended: false,
+      trades: [],
+      totals: { trades: 0, wins: 0, points: null, hypothetical_pnl_krw: null, forced_closes: 0 },
+      open_position: {
+        entry_time_kst: '09:14',
+        entry_rule_id: 'R1-ENTRY-LONG',
+        entry_price_points: '735.64',
+        as_of_time_kst: '15:45',
+        as_of_price_points: '738.58',
+        points: '2.94',
+        unrealized_pnl_krw: '147000',
+        basis: 'OPEN_MARKED_TO_LAST_BAR',
+      },
+    };
+    mount({ document });
+    const block = within(screen.getByRole('group', { name: '가상 거래' }));
+    expect(block.getByText(/보유 중 · 평가/)).toBeInTheDocument();
+    expect(block.getByText(/\(확정 아님\)/)).toBeInTheDocument();
+    // …and it does NOT read «진입 없음»: this session entered and is holding.
+    expect(block.queryByText(/진입 없음/)).not.toBeInTheDocument();
+    expect(block.getAllByText(/확정된 거래 없음/).length).toBe(2);
+    expect(block.getByText('+147,000원')).toBeInTheDocument();
+    // …and it is NOT counted as a round trip.
+    // …and it is not counted as a round trip: the total says 0.
+    expect(screen.getByRole('group', { name: '가상 거래' })).toHaveTextContent('왕복 0회');
+    expect(block.getByText(/보유 중인 건은 합계에 없습니다/)).toBeInTheDocument();
+  });
+
+  it('says a running session is being re-read, and how often', () => {
+    render(<BarsPanel requested="long-20261125" read={read()} refetchMs={60000} />);
+    expect(screen.getAllByText(/진행 중인 세션이라 60초마다 다시 읽습니다/).length).toBeGreaterThan(0);
   });
 
   it.each([

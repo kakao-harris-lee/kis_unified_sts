@@ -257,10 +257,35 @@ describe('내보내기가 멈춘 상태판', () => {
     expect(boardVerdict(todaysClean(), inWindow, 901)).toBe('stopped');
   });
 
-  it('treats an age the reader could not measure as «not clear» in the window', () => {
-    expect(boardVerdict(todaysClean(), inWindow, null)).toBe('stopped');
+  it('calls an age it could not measure unknown, at every hour', () => {
+    // «we do not know when this was written» is never «이상 없음», and the
+    // overnight carve-out is about an age that IS known to be old.
+    expect(boardVerdict(todaysClean(), inWindow, null)).toBe('unknown');
+    expect(boardVerdict(todaysClean(), afterHours, null)).toBe('unknown');
+    const saturdayNull = document({ date: '2026-11-28', blocked: 0, checks: 0 });
+    expect(boardVerdict(saturdayNull, weekend, null)).toBe('unknown');
     // …and a caller that does not measure age at all keeps the old answer.
     expect(boardVerdict(todaysClean(), inWindow)).toBe('clear');
+  });
+
+  it('closes the window at 16:00 KST, not a minute before', () => {
+    const at1559 = new Date('2026-11-25T06:59:00Z'); // 15:59 KST
+    const at1600 = new Date('2026-11-25T07:00:00Z'); // 16:00 KST
+    expect(insideExportWindow(at1559)).toBe(true);
+    expect(insideExportWindow(at1600)).toBe(false);
+    expect(boardVerdict(todaysClean(), at1559, 18000)).toBe('stopped');
+    expect(boardVerdict(todaysClean(), at1600, 18000)).toBe('clear');
+  });
+
+  it('opens it at 09:00 KST — and a Friday board on Monday is stale first', () => {
+    const monday0900 = new Date('2026-11-30T00:00:00Z'); // Mon 09:00 KST
+    const monday0859 = new Date('2026-11-29T23:59:00Z'); // Mon 08:59 KST
+    expect(insideExportWindow(monday0900)).toBe(true);
+    expect(insideExportWindow(monday0859)).toBe(false);
+    // Friday's board, read on Monday morning: the date rule answers before
+    // the age rule ever runs.
+    const friday = document({ date: '2026-11-27', blocked: 0, checks: 0 });
+    expect(boardVerdict(friday, monday0900, 260000)).toBe('stale');
   });
 
   it('wins over the counts, which the caller still has', () => {

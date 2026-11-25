@@ -37,7 +37,13 @@ import {
 import { emptyTradesPhrase } from './HypotheticalTrades';
 import { AsOf, AttentionMark, Badge, ageLabel, type Tone } from './marks';
 import Term from './Term';
-import { barsQueryOptions, type SessionsRead, type SymbolsRead } from './queries';
+import config from '@/config/tos-control-plane.json';
+import {
+  barsQueryOptions,
+  isLiveSession,
+  type SessionsRead,
+  type SymbolsRead,
+} from './queries';
 
 interface TenantCardsProps {
   sessions: SessionsRead;
@@ -190,6 +196,7 @@ function HypotheticalPnl({ document }: { document: TosBarsDocument | null }) {
   const totals = block?.totals;
   const assumptions = (block?.assumptions ?? []).map((code) => glossaryLabel(code)).join(' · ');
   const excluded = excludedDecisionCount(block);
+  const open = block?.open_position ?? null;
   const empty = totals == null || totals.trades === 0 || totals.hypothetical_pnl_krw == null;
   return (
     <div className="mt-3">
@@ -203,7 +210,7 @@ function HypotheticalPnl({ document }: { document: TosBarsDocument | null }) {
           <Term name="hypothetical_pnl">가상 손익(체결 가정)</Term>
         </span>
         {empty ? (
-          <span className="font-medium">{emptyTradesPhrase(excluded)}</span>
+          <span className="font-medium">{emptyTradesPhrase(excluded, open != null)}</span>
         ) : (
           <>
             <span className="tabular-nums font-medium">{pointsLabel(totals?.points)}</span>
@@ -215,6 +222,17 @@ function HypotheticalPnl({ document }: { document: TosBarsDocument | null }) {
           </>
         )}
       </p>
+      {/* Still holding: a mark against the last bar, never a result — and
+          never inside the total, which counts finished round trips only. */}
+      {open && (
+        <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs">
+          <span className="text-slate-500 dark:text-slate-400">
+            <Term name="open_position">보유 중 · 평가</Term> (확정 아님)
+          </span>
+          <span className="tabular-nums font-medium">{pointsLabel(open.points)}</span>
+          <Money krw={open.unrealized_pnl_krw} />
+        </p>
+      )}
     </div>
   );
 }
@@ -424,13 +442,22 @@ export default function TenantCards({ sessions, symbols, selected, onSelect }: T
   // The route orders newest day first and grouping preserves that order.
   const today = groups[0]?.sessions ?? [];
 
-  const documents = useQueries({
-    queries: today.map((entry) => barsQueryOptions(entry.session)),
-  });
-
   const rows = symbols.document?.symbols ?? [];
   const rowFor = (session: string): TosSymbolRow | null =>
     rows.find((row) => row.session?.name === session) ?? null;
+
+  // A card whose session is still running follows the same intraday cadence as
+  // the panel below it — the host rewrites every live session's document, not
+  // just the selected one, and a card frozen at its boot reading would
+  // disagree with ③ about the same tenant.
+  const documents = useQueries({
+    queries: today.map((entry) =>
+      barsQueryOptions(
+        entry.session,
+        isLiveSession(entry, rowFor(entry.session)) ? config.barsRefetchMs : undefined,
+      ),
+    ),
+  });
 
   return (
     <section

@@ -34,20 +34,43 @@ __all__ = ["ACCOUNT_PLACEHOLDER", "PATH_PLACEHOLDER", "redact_payload"]
 PATH_PLACEHOLDER = "<경로>"
 ACCOUNT_PLACEHOLDER = "<계좌>"
 
-#: A web URL, matched only so it can be handed back **unchanged**: without it
-#: the path rule eats ``//host/path`` and serves half an address.
+#: A web URL. Matched so the scheme and host can be handed back unchanged —
+#: without it the path rule eats ``//host/path`` and serves half an address —
+#: but the PATH after the host is still checked below.
 #:
 #: SAFETY: http(s) only — ``file:///home/…`` and ``sqlite:////home/…`` are host paths wearing a scheme, and a generic ``\w+://`` carve-out would hand them through untouched
 _URL = r"(?P<url>https?://[^\s'\"<>]*)"
 
-#: A dashboard route path. Kept as-is: ``/api/tos/status`` is this service's
+#: Splits a matched URL into ``scheme://host`` and the path that follows it.
+_URL_PARTS = re.compile(
+    r"(?P<scheme>https?://)(?:(?P<userinfo>[^/@\s'\"<>]*)@)?"
+    r"(?P<host>[^/\s'\"<>]*)(?P<path>.*)"
+)
+
+#: A dashboard route path, kept as-is: ``/api/tos/status`` is this service's
 #: own public surface, and masking it turns an instruction into «<경로>».
-_ROUTE = r"(?P<route>/api/[A-Za-z0-9_./\-]*)"
+#:
+#: SAFETY: anchored on the real surface (``/api/tos/``) and refused when the tail traverses or names a known root — ``/api/../home/deploy/x`` is a host path, not a route, and the earlier ``/api/`` prefix handed it through whole
+_ROUTE = r"(?P<route>(?<![A-Za-z0-9_./])/api/tos/[A-Za-z0-9_.\-/]*)"
+
+#: What disqualifies an otherwise exempt path: a traversal, or a segment that
+#: names a filesystem root. Applied to a route tail and to a URL's path alike.
+_UNSAFE_IN_EXEMPT = re.compile(
+    r"\.\.|/\.|/(?:home|tmp|var|mnt|root|etc|usr|opt|srv|data)(?:/|$)",
+    re.IGNORECASE,
+)
+
+#: A traversal run, so the host path behind ``root/api/../../home/…`` is cut at
+#: the traversal rather than leaving ``../..`` on screen.
+_TRAVERSAL = r"(?P<traversal>(?:/\.\.)+/[A-Za-z0-9_./@%+\-]*)"
 
 #: An absolute path glued straight onto an ASCII word (``data_leaf/home/…``),
 #: which the POSIX rule's lookbehind refuses. Only well-known roots, so a word
 #: followed by an ordinary two-segment path is not swept up with it.
-_GLUED_ROOT = r"(?P<glued>/(?:home|tmp|var|mnt|root|etc|usr|opt)/[A-Za-z0-9_./@%+\-]*)"
+_GLUED_ROOT = (
+    r"(?P<glued>/(?i:home|tmp|var|mnt|root|etc|usr|opt|srv|data)"
+    r"/[A-Za-z0-9_./@%+\-]*)"
+)
 
 #: Windows shapes — ``C:\…``, ``C:/…`` and ``\\wsl$\…`` UNC.
 _WINDOWS = (
@@ -75,7 +98,9 @@ _RELATIVE = (
 )
 
 _PATH_TOKEN = re.compile(
-    "|".join((_URL, _WINDOWS, _SHELL, _ROUTE, _GLUED_ROOT, _POSIX, _RELATIVE))
+    "|".join(
+        (_URL, _WINDOWS, _SHELL, _ROUTE, _TRAVERSAL, _GLUED_ROOT, _POSIX, _RELATIVE)
+    )
 )
 
 #: A quoted path is redacted to its closing quote, so the tail of a path with a
@@ -110,10 +135,26 @@ _IDENTIFIER_KEYS = frozenset({"broker_execution_id"})
 
 
 def _replace_path_token(match: re.Match[str]) -> str:
-    """One token, masked — except a URL, a route and a digits-only run."""
+    """One token, masked — except a URL, a route and a digits-only run.
+
+    The two exemptions are conditional: an exempt shape that carries a
+    traversal or a filesystem root in its tail is a host path wearing a route
+    or a URL, and it loses the exemption for that tail.
+    """
     token = match.group(0)
-    if match.lastgroup in {"url", "route"}:
-        return token
+    if match.lastgroup == "route":
+        return PATH_PLACEHOLDER if _UNSAFE_IN_EXEMPT.search(token) else token
+    if match.lastgroup == "url":
+        parts = _URL_PARTS.fullmatch(token)
+        if parts is None:  # pragma: no cover - the branch matched, so it parses
+            return token
+        # SAFETY: userinfo is a credential — keeping the address readable must not mean shipping `user:pw@`
+        origin = f"{parts.group('scheme')}{parts.group('host')}"
+        path = parts.group("path")
+        if path and _UNSAFE_IN_EXEMPT.search(path):
+            return f"{origin}{PATH_PLACEHOLDER}"
+        return token if parts.group("userinfo") is None else f"{origin}{path}"
+
     # SAFETY: «3 /378» is a ratio, not a path — masking it deletes the measurement the sentence exists to report
     if match.lastgroup == "posix" and not _ASCII_LETTER.search(token):
         return token

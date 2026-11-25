@@ -22,6 +22,7 @@ import SystemInternals from './SystemInternals';
 import TenantCards from './TenantCards';
 import {
   PROJECTION_KEY,
+  isLiveSession,
   useBarsDocument,
   useSessionsList,
   useStatusDocument,
@@ -97,7 +98,23 @@ export default function TosPage() {
   const sessions = useSessionsList();
   const status = useStatusDocument();
   const symbols = useSymbolsDocument();
-  const bars = useBarsDocument(session);
+  // A session still running gets its document re-read on the intraday cadence
+  // (plan §P3); a finished one is read once. Deciding here keeps the panel
+  // presentational and keeps the cost to the one session on screen.
+  //
+  // The `latest` sentinel is resolved by the ROUTE, which this decision cannot
+  // wait for without making the read depend on its own result. It uses the
+  // listing's newest entry instead — the same ordering the route resolves
+  // `latest` by. A disagreement would only start or skip polling on one
+  // session; nothing rendered depends on it.
+  const resolvedName =
+    session === LATEST_SESSION ? (sessions.sessions[0]?.session ?? null) : session;
+  const selectedEntry =
+    sessions.sessions.find((entry) => entry.session === resolvedName) ?? null;
+  const selectedRow =
+    symbols.document?.symbols?.find((row) => row.session?.name === resolvedName) ?? null;
+  const live = isLiveSession(selectedEntry, selectedRow);
+  const bars = useBarsDocument(session, live ? config.barsRefetchMs : undefined);
   // Which card is highlighted. A session the operator named is itself, so the
   // card responds to the click rather than to the megabyte that follows it;
   // only the `latest` sentinel waits for the route to say which session it
@@ -157,7 +174,12 @@ export default function TosPage() {
       {/* Three views of ONE session: the evidence a decision rests on, what was
           traded, and what stopped. They share the page's bars read, so a
           megabyte is fetched once rather than once per section. */}
-      <BarsPanel key={active} requested={session} read={bars} />
+      <BarsPanel
+        key={active}
+        requested={session}
+        read={bars}
+        refetchMs={live ? config.barsRefetchMs : undefined}
+      />
       <SymbolsPanel read={symbols} />
       <EventLog bars={bars.document?.bars ?? []} summary={bars.document?.summary} />
 

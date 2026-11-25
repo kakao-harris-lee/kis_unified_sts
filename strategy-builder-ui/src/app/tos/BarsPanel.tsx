@@ -39,6 +39,11 @@ interface BarsPanelProps {
   /** The session id the operator asked for. */
   requested: string;
   read: BarsRead;
+  /**
+   * How often this document is being re-read, when it is. Set only while the
+   * session is still running — the page decides that, not this panel.
+   */
+  refetchMs?: number;
 }
 
 /**
@@ -55,7 +60,7 @@ interface BarsPanelProps {
  * one in the file: a withheld tail would otherwise greet the operator with a
  * bar that has no conditions to show.
  */
-export default function BarsPanel({ requested, read }: BarsPanelProps) {
+export default function BarsPanel({ requested, read, refetchMs }: BarsPanelProps) {
   const { state, document, response, authError } = read;
   const bars = document?.bars ?? [];
   // One probe test for every view of this session — see probePredicate.
@@ -153,9 +158,22 @@ export default function BarsPanel({ requested, read }: BarsPanelProps) {
             isProbe={isProbe}
           />
 
+          {/* What this document IS, by its own age — not a standing claim
+              about when the exporter runs. A session still running is
+              re-read on the intraday cadence; a finished one was written
+              once and says so by being old. */}
           <AsOf>
-            이 기록은 세션이 끝난 뒤 한 번 내보낸 것입니다. 장중에는 직전 세션을 보고 있을 수
-            있습니다.
+            호스트가 내보낸 파일입니다 · 마지막으로 내보낸 시각{' '}
+            {response?.age_seconds != null ? ageLabel(response.age_seconds) : '알 수 없음'}
+            {/* «더 바뀌지 않습니다» is the DOCUMENT's claim, not an inference
+                from the fact that we stopped polling: a document written
+                before the flag existed, or one whose session this page cannot
+                place, says only when it was written. */}
+            {refetchMs
+              ? ` · 진행 중인 세션이라 ${Math.round(refetchMs / 1000)}초마다 다시 읽습니다`
+              : document.final === true
+                ? ' · 끝난 세션이라 더 바뀌지 않습니다'
+                : ''}
           </AsOf>
         </div>
       )}

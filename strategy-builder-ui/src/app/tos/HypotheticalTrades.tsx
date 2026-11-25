@@ -14,12 +14,14 @@ import Term from './Term';
 /**
  * What a session with no countable trade should say.
  *
- * «진입 없음» is a claim that the strategy never decided. It is only true when
- * nothing was left out either — a session whose decisions were all skipped or
- * unpriced DID decide, and saying it did not would hide exactly the thing the
- * operator came to see.
+ * «진입 없음» is a claim that the strategy never decided, and it is true only
+ * when nothing was left out AND nothing is still held. A session whose
+ * decisions were all skipped or unpriced DID decide; a session still holding a
+ * position entered and has not closed yet. Saying «진입 없음» over either one
+ * hides exactly the thing the operator came to see.
  */
-export function emptyTradesPhrase(excluded: number): string {
+export function emptyTradesPhrase(excluded: number, holding = false): string {
+  if (holding) return '확정된 거래 없음';
   return excluded > 0 ? `셀 수 있는 거래 없음 (뺀 판단 ${excluded}건)` : '진입 없음';
 }
 
@@ -91,6 +93,7 @@ export default function HypotheticalTrades({ document }: { document: TosBarsDocu
   const unpriced = block?.unpriced_decisions ?? [];
   const assumptions = block?.assumptions ?? [];
   const excluded = excludedDecisionCount(block);
+  const open = block?.open_position ?? null;
 
   // Reasons, counted — «엔진 판단이 아님 1 · 시험 진입 3» says more than «4건».
   const byReason = new Map<string, number>();
@@ -134,9 +137,11 @@ export default function HypotheticalTrades({ document }: { document: TosBarsDocu
 
       {trades.length === 0 ? (
         <p className="text-sm font-medium">
-          {excluded > 0
-            ? `${emptyTradesPhrase(excluded)} — 판단은 있었으나 아래 사유로 합계에서 뺐습니다.`
-            : '진입 없음 — 이 세션은 진입 판단을 내지 않았습니다.'}
+          {open
+            ? `${emptyTradesPhrase(excluded, true)} — 아래 보유 중인 건은 아직 닫히지 않았습니다.`
+            : excluded > 0
+              ? `${emptyTradesPhrase(excluded)} — 판단은 있었으나 아래 사유로 합계에서 뺐습니다.`
+              : '진입 없음 — 이 세션은 진입 판단을 내지 않았습니다.'}
         </p>
       ) : (
         <div className="min-w-0 overflow-x-auto">
@@ -193,10 +198,27 @@ export default function HypotheticalTrades({ document }: { document: TosBarsDocu
         </div>
       )}
 
+      {/* A position the session is still holding: a mark, not a result. It
+          sits above the total and is not in it. */}
+      {open && (
+        <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
+          <span className="text-slate-500 dark:text-slate-400">
+            <Term name="open_position">보유 중 · 평가</Term> (확정 아님)
+          </span>
+          <span className="tabular-nums font-medium">{pointsLabel(open.points)}</span>
+          <Money krw={open.unrealized_pnl_krw} />
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            {open.entry_time_kst ?? '시각 알 수 없음'} 진입 ·{' '}
+            {open.as_of_time_kst ?? '시각 알 수 없음'} 기준 ·{' '}
+            <Term name={open.basis}>{glossaryLabel(open.basis)}</Term>
+          </span>
+        </p>
+      )}
+
       <p className="flex flex-wrap items-baseline gap-x-3 text-sm">
         <span className="text-slate-500 dark:text-slate-400">합계</span>
         {totals?.trades === 0 || totals?.hypothetical_pnl_krw == null ? (
-          <span className="font-medium">{emptyTradesPhrase(excluded)}</span>
+          <span className="font-medium">{emptyTradesPhrase(excluded, open != null)}</span>
         ) : (
           <>
             <span className="tabular-nums font-medium">{pointsLabel(totals?.points)}</span>
@@ -206,6 +228,7 @@ export default function HypotheticalTrades({ document }: { document: TosBarsDocu
         <span className="text-xs text-slate-500 dark:text-slate-400">
           <Term name="round_trip">왕복</Term> {countLabel(totals?.trades)} · 승{' '}
           {countLabel(totals?.wins, '')} · 강제 청산 {countLabel(totals?.forced_closes, '건')}
+          {open ? ' · 보유 중인 건은 합계에 없습니다' : ''}
         </span>
       </p>
 
