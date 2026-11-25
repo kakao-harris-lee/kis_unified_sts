@@ -224,7 +224,15 @@ def _price_field(render_dir: Path, fields_doc: dict[str, Any]) -> tuple[str, int
     """
     import yaml
 
-    raw = yaml.safe_load((render_dir / CONSTRUCTION_FILE_NAME).read_text("utf-8"))
+    try:
+        raw = yaml.safe_load((render_dir / CONSTRUCTION_FILE_NAME).read_text("utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        # Raised as a refusal, not let out: `attach_explanations` must never
+        # fail the export over a block the page can do without, and a bare
+        # YAMLError is not in the exception set it catches.
+        raise bars_explain.ExplainRefusal(
+            f"{CONSTRUCTION_FILE_NAME}: {type(exc).__name__}"
+        ) from exc
     if not isinstance(raw, dict) or not isinstance(
         raw.get(PRICE_FIELD_CONFIG_KEY), str
     ):
@@ -233,10 +241,18 @@ def _price_field(render_dir: Path, fields_doc: dict[str, Any]) -> tuple[str, int
         )
     field = str(raw[PRICE_FIELD_CONFIG_KEY])
     for entry in fields_doc.get("publish") or []:
-        if isinstance(entry, dict) and entry.get("as") == field:
-            scale = entry.get("scale")
-            mult = scale.get("mult") if isinstance(scale, dict) else 1
-            return field, int(mult) if isinstance(mult, int) else 1
+        if not isinstance(entry, dict) or entry.get("as") != field:
+            continue
+        scale = entry.get("scale")
+        # SAFETY: 배수를 모를 때 1 로 떨어지면 가격이 100배가 되고 가상 손익도 100배가 된다 — 틀려 보이지 않고 아주 좋은 날처럼 보인다
+        if scale is None:
+            return field, 1
+        mult = scale.get("mult") if isinstance(scale, dict) else None
+        if isinstance(mult, bool) or not isinstance(mult, int) or mult <= 0:
+            raise bars_explain.ExplainRefusal(
+                f"{field}: publish 배수가 양의 정수가 아니다"
+            )
+        return field, mult
     raise bars_explain.ExplainRefusal(f"{field}: publish 블록에 없다 — 배수를 모른다")
 
 

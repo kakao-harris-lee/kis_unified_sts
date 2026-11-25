@@ -595,6 +595,53 @@ def test_a_contract_the_registry_does_not_know_is_named_not_guessed(
     assert document["explain"]["rules"]
 
 
+def test_a_publish_scale_that_is_not_a_positive_int_refuses_the_number(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """배수를 모를 때 1 로 떨어지면 가상 손익이 **100배**가 된다.
+
+    그리고 그것은 틀려 보이지 않는다 — 아주 좋은 날처럼 보인다. 그래서 떨어지지
+    않고 거부하고, 수 대신 사유를 낸다.
+    """
+    _tenant_content(session_tree, market="futures")
+    render = session_tree / "cp3-sessions" / SESSION / "render"
+    (render / "fields.yaml").write_text(
+        _FIELDS_YAML.replace("{mult: 100, round: half_up}", '{mult: "100"}'),
+        encoding="utf-8",
+    )
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612"},
+        )
+    )
+    assert document["hypothetical_pnl"] is None
+    assert document["hypothetical_pnl_error"] == "ExplainRefusal"
+    assert document["explain"]["rules"]
+
+
+def test_an_unparseable_construction_file_never_fails_the_export(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``yaml.YAMLError`` 가 밖으로 새면 바 문서가 통째로 안 써진다."""
+    _tenant_content(session_tree, market="futures")
+    render = session_tree / "cp3-sessions" / SESSION / "render"
+    (render / "construction.yaml").write_text("price_field_key: [\n", encoding="utf-8")
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612"},
+        )
+    )
+    assert document["bars"] == _DOCUMENT["bars"]
+    assert document["hypothetical_pnl"] is None
+    assert document["hypothetical_pnl_error"] == "ExplainRefusal"
+
+
 def test_no_explanation_block_carries_a_host_path(
     tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
