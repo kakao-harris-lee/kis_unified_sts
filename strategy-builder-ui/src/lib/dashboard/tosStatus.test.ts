@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import {
   SUPPORTED_STATUS_SCHEMA_VERSION,
   boardVerdict,
+  insideExportWindow,
   isAcceptedStatusDocument,
+  kstClock,
   orderedIssues,
   paperLiveness,
   statusState,
@@ -214,5 +216,61 @@ describe('상주 paper 판정', () => {
       'unknown',
     );
     expect(paperLiveness(null)).toBe('unknown');
+  });
+});
+
+describe('내보내기가 멈춘 상태판', () => {
+  // 2026-11-25 is a Wednesday. 02:00Z = 11:00 KST (inside the window),
+  // 11:00Z = 20:00 KST (outside it).
+  const inWindow = new Date('2026-11-25T02:00:00Z');
+  const afterHours = new Date('2026-11-25T11:00:00Z');
+  const weekend = new Date('2026-11-28T02:00:00Z'); // Saturday 11:00 KST
+  const todaysClean = () => document({ date: '2026-11-25', blocked: 0, checks: 0 });
+
+  it('reads the KST wall clock, not the viewer’s', () => {
+    expect(kstClock(inWindow)).toEqual({ hour: 11, weekday: 3 });
+    expect(kstClock(afterHours)).toEqual({ hour: 20, weekday: 3 });
+    expect(insideExportWindow(inWindow)).toBe(true);
+    expect(insideExportWindow(afterHours)).toBe(false);
+    expect(insideExportWindow(weekend)).toBe(false);
+  });
+
+  it('refuses «이상 없음» for a board that stopped being rewritten at 10:00', () => {
+    // The real failure: the */5 export cron dies, the document keeps today's
+    // date and its «0 blocks», and at 15:00 the strip is still green.
+    expect(boardVerdict(todaysClean(), inWindow, 18000)).toBe('stopped');
+  });
+
+  it('leaves the same board alone once the session is over', () => {
+    // Nothing rewrites it overnight, and that is correct — flagging it would
+    // make every evening look like an outage.
+    expect(boardVerdict(todaysClean(), afterHours, 18000)).toBe('clear');
+    // Saturday: the window's weekday list excludes it, so a board dated that
+    // day is judged on its counts alone however old it is.
+    const saturday = document({ date: '2026-11-28', blocked: 0, checks: 0 });
+    expect(boardVerdict(saturday, weekend, 18000)).toBe('clear');
+  });
+
+  it('says clear while the age is still inside the bound', () => {
+    expect(boardVerdict(todaysClean(), inWindow, 300)).toBe('clear');
+    expect(boardVerdict(todaysClean(), inWindow, 899)).toBe('clear');
+    expect(boardVerdict(todaysClean(), inWindow, 901)).toBe('stopped');
+  });
+
+  it('treats an age the reader could not measure as «not clear» in the window', () => {
+    expect(boardVerdict(todaysClean(), inWindow, null)).toBe('stopped');
+    // …and a caller that does not measure age at all keeps the old answer.
+    expect(boardVerdict(todaysClean(), inWindow)).toBe('clear');
+  });
+
+  it('wins over the counts, which the caller still has', () => {
+    const noisy = document({ date: '2026-11-25', blocked: 2, checks: 11 });
+    expect(boardVerdict(noisy, inWindow, 18000)).toBe('stopped');
+    expect(noisy.blocked).toBe(2);
+  });
+
+  it('never outranks staleness, which is about a different day', () => {
+    const yesterday = document({ date: '2026-11-24', blocked: 0, checks: 0 });
+    expect(boardVerdict(yesterday, inWindow, 18000)).toBe('stale');
   });
 });

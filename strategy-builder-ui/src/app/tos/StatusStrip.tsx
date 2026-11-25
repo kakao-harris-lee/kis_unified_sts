@@ -71,9 +71,19 @@ const VERDICT_TONES: Record<BoardVerdict, Tone> = {
   blocked: 'warn',
   check: 'neutral',
   clear: 'good',
+  stopped: 'warn',
   stale: 'warn',
   unknown: 'warn',
 };
+
+/** «12분 전 기록», or that the reader could not tell when it was written. */
+function lastWrittenPhrase(ageSeconds: number | null | undefined): string {
+  if (ageSeconds == null) return '갱신 시각 모름';
+  const minutes = Math.floor(ageSeconds / 60);
+  if (minutes < 1) return '방금 기록';
+  if (minutes < 60) return `${minutes}분 전 기록`;
+  return `${Math.floor(minutes / 60)}시간 ${minutes % 60}분 전 기록`;
+}
 
 const LIVENESS_WORDS: Record<PaperLiveness, string | null> = {
   alive: '상주 중',
@@ -128,7 +138,10 @@ export default function StatusStrip({
   stateLabel,
 }: StatusStripProps) {
   const board = status.document;
-  const verdict = boardVerdict(board);
+  const boardAge = status.response?.age_seconds;
+  // The age is part of the verdict, not a footnote: a board whose export cron
+  // died at 10:00 still reads «0 blocks» at 15:00, and only its age says so.
+  const verdict = boardVerdict(board, new Date(), status.state === 'ready' ? (boardAge ?? null) : undefined);
   const issues = orderedIssues(board);
   const blockedLevel = board?.levels?.blocked ?? '막힘';
   const checkLevel = board?.levels?.check ?? '확인';
@@ -141,8 +154,10 @@ export default function StatusStrip({
       : '알 수 없음';
   facts.push({
     key: 'board',
+    // A stopped export with a block already recorded is still a block: the
+    // icon follows the counts even while the headline is about the silence.
+    alert: verdict === 'blocked' || (verdict === 'stopped' && (board?.blocked ?? 0) > 0),
     label: '상태판',
-    alert: verdict === 'blocked',
     value:
       status.state !== 'ready'
         ? BOARD_STATES[status.state]
@@ -150,10 +165,19 @@ export default function StatusStrip({
           ? '이상 없음'
           : verdict === 'stale'
             ? '오늘 문서 아님'
-            : verdict === 'unknown'
-              ? '알 수 없음'
-              : counts,
-    detail: verdict === 'stale' ? `기준일 ${board?.date ?? '알 수 없음'}` : null,
+            : verdict === 'stopped'
+              ? `갱신 멈춤 · ${lastWrittenPhrase(boardAge)}`
+              : verdict === 'unknown'
+                ? '알 수 없음'
+                : counts,
+    detail:
+      verdict === 'stale'
+        ? `기준일 ${board?.date ?? '알 수 없음'}`
+        : // The counts are not hidden — they are relabelled, because they
+          // describe the last write rather than now.
+          verdict === 'stopped'
+          ? `마지막 기록 기준 ${counts}`
+          : null,
     tone: status.state === 'loading' ? 'neutral' : status.state !== 'ready' ? 'warn' : VERDICT_TONES[verdict],
   });
 

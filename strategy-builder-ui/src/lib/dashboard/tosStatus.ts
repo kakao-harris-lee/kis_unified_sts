@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import config from '@/config/tos-control-plane.json';
 
 // Wire contract: services/dashboard/routes/tos_status.py. Legibility plan
 // docs/plans/2026-11-25-tos-operator-page-legibility-plan.md §4 ① «상태 띠».
@@ -178,7 +179,45 @@ export function statusState(
 }
 
 /** How the strip should read overall. Never derived from a level literal here. */
-export type BoardVerdict = 'blocked' | 'check' | 'clear' | 'stale' | 'unknown';
+export type BoardVerdict = 'blocked' | 'check' | 'clear' | 'stopped' | 'stale' | 'unknown';
+
+/**
+ * The KST wall clock, as the export window is written.
+ *
+ * `weekday` is 0=Sunday … 6=Saturday, matching `Date.getDay()` so the config's
+ * `weekdays: [1,2,3,4,5]` reads the way an operator would write it. Both parts
+ * come from one `Intl` pass in Asia/Seoul, because the viewer's own timezone
+ * must not decide whether the exporter was supposed to be running.
+ */
+export function kstClock(now: Date = new Date()): { hour: number; weekday: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul',
+    hour12: false,
+    hour: '2-digit',
+    weekday: 'short',
+  }).formatToParts(now);
+  const hourPart = parts.find((part) => part.type === 'hour')?.value ?? '0';
+  const weekdayPart = parts.find((part) => part.type === 'weekday')?.value ?? '';
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // `hour12: false` renders midnight as 24 in some ICU builds.
+  const hour = Number(hourPart) % 24;
+  return { hour: Number.isFinite(hour) ? hour : 0, weekday: Math.max(0, names.indexOf(weekdayPart)) };
+}
+
+/**
+ * Whether the exporter is supposed to be rewriting the board right now.
+ *
+ * The window is config (`tos-control-plane.json::statusExportWindowKst`), not a
+ * literal here, because it mirrors the export cron on the host — a schedule
+ * change must not need a UI release to stop the page lying in one direction or
+ * the other.
+ */
+export function insideExportWindow(now: Date = new Date()): boolean {
+  const { hour, weekday } = kstClock(now);
+  const window = config.statusExportWindowKst;
+  if (!window.weekdays.includes(weekday)) return false;
+  return hour >= window.fromHour && hour < window.untilHour;
+}
 
 /**
  * Today in KST, as `YYYY-MM-DD`.
@@ -192,23 +231,46 @@ export function kstToday(now: Date = new Date()): string {
 }
 
 /**
- * The board's one-word verdict, from the counts the exporter already took.
+ * The board's verdict: the counts the exporter took, and whether it is still
+ * taking them.
  *
- * **`stale` beats every other answer.** A board from another day says nothing
- * about now: on the morning after a clean close the document still reads
- * "0 blocks", and rendering that as "clear" is precisely how a stopped
- * exporter passes for a healthy day. The counts are only meaningful once the
- * document is today's.
+ * Two freshness rules, in this order, because each catches a different way the
+ * page could pass a dead exporter off as a healthy day.
+ *
+ * * **`stale` beats every other answer.** A board from another day says nothing
+ *   about now: on the morning after a clean close the document still reads
+ *   "0 blocks", and rendering that as "clear" is precisely how a stopped
+ *   exporter passes for a healthy day.
+ * * **`stopped` catches the same failure WITHIN a day.** The export cron runs
+ *   every five minutes through the session, so a board whose date is today but
+ *   whose age is three intervals old was written before the cron died — and it
+ *   still reads «0 blocks» at 15:00 because nothing has updated it since 10:00.
+ *   The date rule cannot see that; only the age can. It applies **only inside
+ *   the export window**, so the board sitting untouched overnight — which is
+ *   correct and expected — is not flagged until the next session.
+ *
+ * `stopped` wins over `clear` and over the counts, because the counts it would
+ * report are not about now. It does not hide them: the caller still has
+ * `document.blocked`/`checks` and labels them «마지막 기록 기준».
  *
  * `unknown` when the document names no date or no counts — absence stays
  * absence rather than defaulting to good news.
+ *
+ * @param ageSeconds the response's `age_seconds`. `undefined` means the caller
+ *   did not measure it (the pre-P2 call shape) and the age rule is skipped;
+ *   `null` means the reader could not tell, which inside the window is itself
+ *   a reason not to say «이상 없음».
  */
 export function boardVerdict(
   document: TosStatusDocument | null | undefined,
   now: Date = new Date(),
+  ageSeconds?: number | null,
 ): BoardVerdict {
   if (!document?.date) return 'unknown';
   if (document.date !== kstToday(now)) return 'stale';
+  if (ageSeconds !== undefined && insideExportWindow(now)) {
+    if (ageSeconds == null || ageSeconds > config.statusStaleAfterSeconds) return 'stopped';
+  }
   const blocked = document.blocked;
   const checks = document.checks;
   if (typeof blocked !== 'number' || typeof checks !== 'number') return 'unknown';

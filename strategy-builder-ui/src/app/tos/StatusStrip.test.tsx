@@ -93,11 +93,49 @@ describe('상태 띠', () => {
     expect(chip('상태판')).toHaveTextContent('기준일 2026-11-18');
   });
 
+  it('says 갱신 멈춤 for a board nothing has rewritten since 10:00', () => {
+    // 2026-11-25 06:00Z is 15:00 KST, inside the export window; the board is
+    // today's and clean, and only its age says the cron died five hours ago.
+    const clean = statusDocument();
+    clean.checks = 0;
+    clean.issues = [];
+    mount('recent', {}, {
+      status: {
+        state: 'ready',
+        document: clean,
+        response: { available: true, reason: null, age_seconds: 18000, document: clean },
+        authError: false,
+      },
+    });
+    expect(chip('상태판')).toHaveTextContent('갱신 멈춤');
+    expect(chip('상태판')).toHaveTextContent('5시간 0분 전 기록');
+    expect(chip('상태판')).not.toHaveTextContent('이상 없음');
+    // The counts are relabelled, not hidden.
+    expect(chip('상태판')).toHaveTextContent('마지막 기록 기준 막힘 0 · 확인 0');
+    expect(chip('상태판').querySelector('span')?.className).toContain('amber');
+  });
+
   it('says 이상 없음 only when today’s board counted nothing at all', () => {
     const clean = statusDocument();
     clean.checks = 0;
     clean.issues = [];
     mount('recent', {}, { status: status(clean) });
+    expect(chip('상태판')).toHaveTextContent('이상 없음');
+  });
+
+  it('keeps 이상 없음 outside the export window, where nothing should rewrite it', () => {
+    vi.setSystemTime(new Date('2026-11-25T11:00:00Z')); // 20:00 KST
+    const clean = statusDocument();
+    clean.checks = 0;
+    clean.issues = [];
+    mount('recent', {}, {
+      status: {
+        state: 'ready',
+        document: clean,
+        response: { available: true, reason: null, age_seconds: 18000, document: clean },
+        authError: false,
+      },
+    });
     expect(chip('상태판')).toHaveTextContent('이상 없음');
   });
 
