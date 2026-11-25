@@ -1,0 +1,26 @@
+# tos_runtime.compose engine-driver example config (TOS Phase 3 Wave 1 Lane
+# A-R; docs/plans/2026-09-09-tos-phase3-event-core-plan.md §1.1)
+#
+# Loader: tos_runtime.compose._engine_wiring.load_engine_driver_config
+#
+# Every value below is `null` (named-TBD): this is an EXAMPLE file, not an
+# approved profile. A real deployment copies this file and fills in a
+# concrete value; a missing or still-null key is a fail-closed startup
+# rejection (EngineDriverConfigError) — never a silent default (CLAUDE.md
+# "configuration-driven only").
+
+# How many of the most-recently-admitted inbox events
+# tos_runtime.compose._boot_integrity re-derives via
+# tos_runtime.engine.replay.replay_engine on every boot, after
+# verify_rcl_log_or_halt.
+#
+# WARNING (see replay_engine's own "path-dependency caveat" docstring): a
+# window smaller than the whole inbox is sound only when the windowed-out
+# prefix left no reservation-ledger state outstanding into the window (a
+# fresh core's ledger always starts empty). For a stream where a strategy
+# can hold an outstanding attempt across ticks, a partial window can report
+# a FALSE divergence purely from lost ledger context. Set this to a value
+# that comfortably covers the whole admitted history unless the deployment
+# has independently confirmed windowed replay is sound for its own
+# strategy/ledger shape.
+replay_window_events: null

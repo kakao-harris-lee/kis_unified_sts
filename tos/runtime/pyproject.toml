@@ -1,0 +1,46 @@
+# Separate I/O adapter distribution; runtime may depend on the kernel, never
+# the reverse (design #40 D1; enforced by the import firewall).
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tos-runtime"
+version = "0.0.1"
+description = "tos runtime shell — composition root and I/O adapters for the tos kernel (design #40 D1 ratified by the operator 2026-09-08; no I/O lands until the D2/D3 implementation lanes)"
+requires-python = ">=3.11"
+authors = [{ name = "Harris Lee" }]
+
+# Hatchling expands {root:uri} to this directory's absolute URI so the kernel
+# dependency works across checkout locations; pip rejects relative file:// URLs.
+dependencies = [
+    "tos @ {root:uri}/../",
+]
+
+[project.optional-dependencies]
+# Test-only third parties — same pinned versions as the kernel's own [test]
+# extra (tos/pyproject.toml), so a run manifest recording both distributions'
+# dependency sets stays consistent.
+test = [
+    "pytest==9.0.2",
+    "hypothesis==6.150.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tos_runtime"]
+
+# Hatchling requires this opt-in for the in-repo PEP 508 direct reference.
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# Isolate `pytest tos/runtime/tests` from both the repo-root pytest config
+# AND the kernel's own tos/pyproject.toml config — this file carrying its own
+# [tool.pytest.ini_options] resolves pytest's rootdir to tos/runtime/ when
+# tos/runtime/tests is the target, so neither the repo-root
+# tests/conftest.py (loads .env, scrubs credentials) nor the kernel's
+# tos/tests/conftest.py (EV-L2 fault-schedule option) is an ancestor.
+# Mirrors tos/pyproject.toml's own isolation comment (design #1 §2.4).
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]

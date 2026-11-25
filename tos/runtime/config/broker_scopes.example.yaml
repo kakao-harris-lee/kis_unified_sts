@@ -1,0 +1,354 @@
+# Broker Scope table (tos_runtime.compose.brokercap.scopes) — TOS Phase 4
+# plan §2 decisions 1-2
+# (docs/plans/2026-09-09-tos-phase4-scopes-and-verify-realization-plan.md).
+#
+# A "scope" is a runtime-configured, named bundle of ONE OR MORE kernel
+# CapabilityTuple values (tos.brokercap.routing) plus the transport/principal
+# facts a scope's endpoint implies. The kernel carries no KIS (or any broker)
+# string at all (tos-spec-broker-agnostic project memory) — every concrete
+# broker coordinate below (broker_id, environment strings, instrument_class)
+# is runtime configuration, never a kernel constant.
+#
+# Only `active_scope` is named-TBD `null` in THIS example (below) — every
+# other structural field on every scope (name/principal_class/principal/
+# endpoint_class/allowed_methods/capability_tuples) is filled with a
+# concrete value here already, because these facts are the same across
+# every deployment of this repo's own compose root. A still-null structural
+# field (in a deployment that removed one) refuses to load (fail-closed,
+# never a silent default), naming the offending scope/field.
+#
+# `instance_path` (TOS Phase 4 plan §2 decision 4, 작업 5 items 6/12) names
+# the Broker Capability Profile INSTANCE file every scope below that
+# declares an `instance` block binds to — the KIS draft's own non-normative,
+# byte-immutable location (docs/broker-profiles/, never copied or moved),
+# resolved relative to THIS config file's own directory. A scope declaring
+# `instance` with this path still null refuses to load (one source of truth
+# — tos_runtime.brokercap.scopes._resolve_instance_path).
+instance_path: ../../../docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml
+#
+# `principal` values contain the literal token `{environment_label}`,
+# substituted by the loader with the runtime's own environment label — the
+# ONLY templating this loader performs (same rule as
+# tos_runtime.compose._egress_coordinates's `active_principal`). The
+# SYNTHETIC_FUTURES_ORDER principal is deliberately the exact string the
+# transport's own declared identity already used
+# (`f"synthetic-paper-{environment_label}"`, G-4) — this scope now IS that
+# transport's identity, not a second, independently-typed copy of it.
+#
+# `profile_evidence_ok` is NOT a named-TBD field — `null` there is a
+# legitimate, permanent value (evidence not established), passed straight
+# through to the kernel's `routing_admissibility(..., profile_evidence_ok=...)`,
+# which treats `None`/`False` identically (fail-closed to PROHIBITED for the
+# MOCK-stock-order rule).
+#
+# `inside_boundary` (independent-review finding F1) IS a named-TBD field —
+# every scope below must say whether its own principal is inside the
+# CURRENT workload's egress boundary (ADR-002-013 §8: "no authority outside
+# the committed [Active Egress Principal] set" — this deployment's own
+# runtime processes are that committed set). Every scope in this config is
+# one of this deployment's own principals, so every one is `true` here; a
+# principal genuinely outside this workload (a different service, a legacy
+# path, a vendor-support identity) would be `false`, making it visible to
+# the kernel's `credential_route_authority_disjoint` boundary check
+# (tos.egress.predicates) instead of being silently folded into "inside" by
+# a hardcoded loader literal.
+#
+# `instance.degraded_since_authorization` (independent-review finding F5) is
+# the ONE deliberate exception to named-TBD inside an `instance:` block —
+# `null` is a legitimate, permanent value meaning "unknown until an
+# authorization act exists"; the kernel's `profile_version_current`
+# predicate denies on anything but `degraded_since_authorization is False`,
+# so `null` here correctly denies rather than assuming no degradation.
+#
+# `active_scope` names which of the `scopes` below this deployment currently
+# runs as. It is named-TBD `null` here; the runtime/test fixture that fills
+# this file in sets it to `SYNTHETIC_FUTURES_ORDER` — the only scope this
+# Phase's paper runtime actually activates. An active_scope that resolves to
+# a PROHIBITED scope is a boot refusal (never "start reduced").
+active_scope: null
+
+# environment_binding / asset_binding are the injected string-correspondence
+# tables tos.brokercap.routing.endpoint_binding_from_profile_ok compares a
+# scope's ProfileKey coordinates against — copied verbatim from the KIS
+# Broker Capability Profile INSTANCE's own `profile_identity` /
+# `_model_view` blocks (docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-
+# draft.yaml `environment:` / `instrument_class:` fields for the MOCK_VTS and
+# REAL_PROD documents) — never a kernel constant, and never invented here.
+environment_binding:
+  SYNTHETIC: SYNTHETIC
+  BROKER_SIMULATION: MOCK_VTS
+  BROKER_PRODUCTION: REAL_PROD
+
+# Honest fact (independent-review finding F4), not a loader gap: the KIS
+# INSTANCE declares ONE instrument class for BOTH domestic stock and index
+# futures (INSTANCE `profile_identity.instrument_class:
+# DOMESTIC_STOCK_AND_INDEX_FUTURES` — P0-2 instance authoring's own shape).
+# Mapping STOCK and FUTURES to that SAME string here means the asset axis of
+# `endpoint_binding_from_profile_ok` cannot discriminate STOCK from FUTURES
+# for any KIS-bound scope — that is the real INSTANCE's own shape, not
+# something this loader invents or could fix by picking different strings.
+# A scope that DOES need asset discrimination (e.g. a synthetic scope with
+# its own, non-KIS instrument-class string) declares its own per-scope
+# `asset_binding` override block below instead (finding F4) — see
+# SYNTHETIC_FUTURES_ORDER.
+asset_binding:
+  STOCK: DOMESTIC_STOCK_AND_INDEX_FUTURES
+  FUTURES: DOMESTIC_STOCK_AND_INDEX_FUTURES
+
+scopes:
+  # ---------------------------------------------------------------------
+  # SYNTHETIC_FUTURES_ORDER — the only scope this Phase's paper runtime
+  # actually activates. A non-authoritative synthetic fill; no broker is
+  # ever reached (G-4: this scope IS the transport's own declared nature).
+  # ---------------------------------------------------------------------
+  - name: SYNTHETIC_FUTURES_ORDER
+    principal_class: SYNTHETIC
+    principal: "synthetic-paper-{environment_label}"
+    endpoint_class: SYNTHETIC
+    allowed_methods: ["SUBMIT", "CANCEL"]
+    profile_evidence_ok: null
+    # This deployment's own transport identity — always inside its own
+    # workload boundary (finding F1; see the top-of-file comment).
+    inside_boundary: true
+    # Own override (finding F4) — a SYNTHETIC scope names no real KIS
+    # broker, so it gets its own, non-KIS instrument-class string here
+    # instead of borrowing the global asset_binding table's KIS strings
+    # (which cannot discriminate STOCK from FUTURES — see the global
+    # asset_binding comment above).
+    environment_binding:
+      SYNTHETIC: SYNTHETIC
+    asset_binding:
+      FUTURES: SYNTHETIC_FUTURES
+    profile_key:
+      broker_id: SYNTHETIC
+      api_product: null
+      api_version: null
+      environment: SYNTHETIC
+      account_type: null
+      market: null
+      # Own, non-KIS instrument-class string (finding F4) bound through
+      # this scope's OWN asset_binding override above, not the global
+      # table — a synthetic scope still has a coordinate to bind, it
+      # simply names no real broker endpoint.
+      instrument_class: SYNTHETIC_FUTURES
+      order_type: null
+      session_type: null
+      credential_scope: null
+    capability_tuples:
+      - environment: SYNTHETIC
+        operation_class: ORDER_SEND
+        economic_effect: NONE
+        asset_scope: FUTURES
+        authorization_class: SYNTHETIC_ORDER
+      - environment: SYNTHETIC
+        operation_class: CANCEL_REPLACE
+        economic_effect: NONE
+        asset_scope: FUTURES
+        authorization_class: SYNTHETIC_ORDER
+    provenance: []
+
+  # ---------------------------------------------------------------------
+  # REAL_READ — a read-only/probe scope against the real KIS production
+  # endpoint. NON_AUTHORIZING_READ never authorizes an order (kernel rule
+  # 2). Carries one CONTROLLED_GET_PROBE provenance (EC-4: MOCK-unsupported
+  # conditions are still measurable via evidence-bearing reads/probes).
+  # ---------------------------------------------------------------------
+  - name: REAL_READ
+    principal_class: READ
+    principal: "kis-read-{environment_label}"
+    endpoint_class: BROKER_GET
+    allowed_methods: ["GET"]
+    profile_evidence_ok: null
+    # This deployment's own read principal — inside its own workload
+    # boundary (finding F1; see the top-of-file comment).
+    inside_boundary: true
+    # Binds to the REAL_PROD INSTANCE document (plan §2 decision 4) — one
+    # source of truth with environment_binding.BROKER_PRODUCTION below.
+    instance:
+      environment: REAL_PROD
+      # Unknown until an authorization act exists; null denies (finding F5).
+      degraded_since_authorization: null
+    profile_key:
+      broker_id: KIS_KOREA_INVESTMENT_SECURITIES
+      api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
+      api_version: UNKNOWN
+      environment: REAL_PROD
+      account_type: 실전_위탁
+      market: KRX_DOMESTIC
+      instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
+      order_type: null
+      session_type: UNKNOWN
+      credential_scope: APP_KEY_APP_SECRET_PER_ENVIRONMENT
+    capability_tuples:
+      - environment: BROKER_PRODUCTION
+        operation_class: MARKET_DATA_READ
+        economic_effect: NONE
+        asset_scope: STOCK
+        authorization_class: NON_AUTHORIZING_READ
+      - environment: BROKER_PRODUCTION
+        operation_class: ACCOUNT_READ
+        economic_effect: NONE
+        asset_scope: STOCK
+        authorization_class: NON_AUTHORIZING_READ
+      - environment: BROKER_PRODUCTION
+        operation_class: CAPABILITY_PROBE
+        economic_effect: NONE
+        asset_scope: STOCK
+        authorization_class: NON_AUTHORIZING_READ
+      - environment: BROKER_PRODUCTION
+        operation_class: MARKET_DATA_READ
+        economic_effect: NONE
+        asset_scope: FUTURES
+        authorization_class: NON_AUTHORIZING_READ
+      - environment: BROKER_PRODUCTION
+        operation_class: ACCOUNT_READ
+        economic_effect: NONE
+        asset_scope: FUTURES
+        authorization_class: NON_AUTHORIZING_READ
+      - environment: BROKER_PRODUCTION
+        operation_class: CAPABILITY_PROBE
+        economic_effect: NONE
+        asset_scope: FUTURES
+        authorization_class: NON_AUTHORIZING_READ
+    # Schema+data wiring only (EC-4) — the REAL P0-2 probe values (source_ref
+    # date/id, evidence digest) are the operator lane's job (§6 "작업 4"),
+    # not this slice's. These are honest PLACEHOLDER coordinates, not
+    # invented measurements: evidence_ref carries no digest, and
+    # provenance_admits_claim's positive verdict here only proves the
+    # SCHEMA correctly admits a CONTROLLED_GET_PROBE claim once real P0-2
+    # evidence lands — it is not itself a claim that KIS market-data reads
+    # have been measured.
+    provenance:
+      - provenance_class: CONTROLLED_GET_PROBE
+        source_ref: kis-open-api-market-data-get-placeholder
+        captured_at: "1970-01-01T00:00:00Z"
+        evidence_ref:
+          evidence_id: phase4-real-read-controlled-probe-placeholder
+          generation: 0
+          digest: null
+          environment: REAL_PROD
+        probe_manifest:
+          emits_orders: false
+          allowed_methods: ["GET"]
+          retention: "24h"
+          ttl: "24h"
+          provenance: kis-open-api-market-data-get-placeholder
+
+  # ---------------------------------------------------------------------
+  # MOCK_STOCK_ORDER — the KIS 모의투자 (paper) stock order-verification
+  # scope (kernel §5.2 row 3). REDUCED only when `profile_evidence_ok` is
+  # positively `true`; `null` here fails closed to PROHIBITED.
+  # ---------------------------------------------------------------------
+  - name: MOCK_STOCK_ORDER
+    principal_class: ORDER
+    principal: "kis-mock-order-{environment_label}"
+    endpoint_class: BROKER_ORDER
+    allowed_methods: ["SUBMIT", "CANCEL_REPLACE"]
+    profile_evidence_ok: null
+    # This deployment's own mock-order principal — inside its own workload
+    # boundary (finding F1; see the top-of-file comment).
+    inside_boundary: true
+    # Binds to the MOCK_VTS INSTANCE document (plan §2 decision 4) — one
+    # source of truth with environment_binding.BROKER_SIMULATION below.
+    instance:
+      environment: MOCK_VTS
+      # Unknown until an authorization act exists; null denies (finding F5).
+      degraded_since_authorization: null
+    # A minimal order-send capability set (plan §2 decision 4 — real
+    # CapabilityDimension/AssuranceLevel member names; CANCELLATION stands
+    # in for the illustrative "cancellation finality" — there is no
+    # CANCELLATION_FINALITY member). minimum_live_gate_satisfied stays null
+    # (honest — no §11 gate evidence exists yet, task 4/operator lane) and
+    # the kernel treats non-True as PROHIBITED, never a silent pass.
+    required_capability_set:
+      required_dimensions:
+        - ORDER_IDENTITY
+        - SUBMISSION_IDEMPOTENCY
+        - ACKNOWLEDGEMENT_SEMANTICS
+        - CANCELLATION
+      required_level: LEVEL_2_CONTROLLED_TEST_VERIFIED
+      minimum_live_gate_satisfied: null
+      approved_fallback_dimensions: []
+    profile_key:
+      broker_id: KIS_KOREA_INVESTMENT_SECURITIES
+      api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
+      api_version: UNKNOWN
+      environment: MOCK_VTS
+      account_type: 모의투자_위탁
+      market: KRX_DOMESTIC
+      instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
+      order_type: LIMIT
+      session_type: REGULAR_DAY_ONLY
+      credential_scope: APP_KEY_APP_SECRET_PER_ENVIRONMENT
+    capability_tuples:
+      - environment: BROKER_SIMULATION
+        operation_class: ORDER_SEND
+        economic_effect: BROKER_RESOURCE_ONLY
+        asset_scope: STOCK
+        authorization_class: MOCK_ORDER
+      - environment: BROKER_SIMULATION
+        operation_class: CANCEL_REPLACE
+        economic_effect: BROKER_RESOURCE_ONLY
+        asset_scope: STOCK
+        authorization_class: MOCK_ORDER
+    provenance: []
+
+  # ---------------------------------------------------------------------
+  # REAL_ORDER — listed for VISIBILITY ONLY. STOCK is the only asset a
+  # BROKER_PRODUCTION order tuple can even be CONSTRUCTED for (kernel rule
+  # 4 rejects BROKER_PRODUCTION x order x FUTURES at construction time —
+  # there is no FUTURES member of this scope, and there never will be).
+  # This scope's admissibility is ALWAYS PROHIBITED (no rule in
+  # routing_admissibility ever admits a BROKER_PRODUCTION order tuple) —
+  # the root CLAUDE.md non-negotiable "the real futures account is never
+  # funded with margin" / "real-money futures order paths are permanently
+  # blocked by policy" extends to stock here too: this repo has no
+  # sanctioned real-order path for ANY asset. Listing it (rather than
+  # omitting it) makes the permanent block visible on the config surface;
+  # it opens no path — no code in this runtime ever reads a PROHIBITED
+  # scope's endpoint_class to route a call (negative-grep pinned,
+  # EC-1). `active_scope` MUST NOT ever name this scope (boot refusal).
+  # ---------------------------------------------------------------------
+  - name: REAL_ORDER
+    principal_class: ORDER
+    principal: "kis-real-order-{environment_label}"
+    endpoint_class: BROKER_ORDER
+    allowed_methods: ["SUBMIT"]
+    profile_evidence_ok: null
+    # Visibility only (this scope is ALWAYS PROHIBITED and never active) —
+    # still this deployment's own principal, inside its own workload
+    # boundary (finding F1; see the top-of-file comment).
+    inside_boundary: true
+    # Binds to the REAL_PROD INSTANCE document — visibility only (module
+    # docstring above: this scope is ALWAYS PROHIBITED and never active).
+    instance:
+      environment: REAL_PROD
+      # Unknown until an authorization act exists; null denies (finding F5).
+      degraded_since_authorization: null
+    required_capability_set:
+      required_dimensions:
+        - ORDER_IDENTITY
+        - SUBMISSION_IDEMPOTENCY
+        - ACKNOWLEDGEMENT_SEMANTICS
+        - CANCELLATION
+      required_level: LEVEL_2_CONTROLLED_TEST_VERIFIED
+      minimum_live_gate_satisfied: null
+      approved_fallback_dimensions: []
+    profile_key:
+      broker_id: KIS_KOREA_INVESTMENT_SECURITIES
+      api_product: KIS_OPEN_TRADING_API_REST_AND_WEBSOCKET
+      api_version: UNKNOWN
+      environment: REAL_PROD
+      account_type: 실전_위탁
+      market: KRX_DOMESTIC
+      instrument_class: DOMESTIC_STOCK_AND_INDEX_FUTURES
+      order_type: null
+      session_type: UNKNOWN
+      credential_scope: APP_KEY_APP_SECRET_PER_ENVIRONMENT
+    capability_tuples:
+      - environment: BROKER_PRODUCTION
+        operation_class: ORDER_SEND
+        economic_effect: POSITION_OR_CASH
+        asset_scope: STOCK
+        authorization_class: REAL_ORDER
+    provenance: []

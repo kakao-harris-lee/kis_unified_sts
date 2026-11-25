@@ -1,0 +1,193 @@
+"""Replay divergence + baseline binding — ERI-EV-007/008 (design #4 §6)."""
+
+from __future__ import annotations
+
+from typing import TypedDict, Unpack
+
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
+from pydantic import ValidationError
+from tos.evidence import (
+    ReplayResultState,
+    compute_replay_result,
+    reevaluation_is_distinct_named_result,
+    replay_baseline_supported,
+)
+from tos.evidence.replay import ReplayBaseline, ReplayIsolation, ReplayResult
+
+from ._evidence_strategies import issue_replay
+
+
+class _ReplayKwargs(TypedDict):
+    """1:1 with :func:`compute_replay_result`'s signature (plan §1.1 A-fn) — a"""
+
+    baseline_supported: bool
+    input_complete: bool
+    schema_compatible: bool
+    nondeterminism_bounded: bool
+    expected_state_digest: str | None
+    actual_state_digest: str | None
+
+
+class _ReplayKwargsPartial(TypedDict, total=False):
+    """Same fields as :class:`_ReplayKwargs`, all optional — the override-kwargs shape for"""
+
+    baseline_supported: bool
+    input_complete: bool
+    schema_compatible: bool
+    nondeterminism_bounded: bool
+    expected_state_digest: str | None
+    actual_state_digest: str | None
+
+
+def _replay_kwargs(**overrides: Unpack[_ReplayKwargsPartial]) -> _ReplayKwargs:
+    base: _ReplayKwargs = {
+        "baseline_supported": True,
+        "input_complete": True,
+        "schema_compatible": True,
+        "nondeterminism_bounded": True,
+        "expected_state_digest": "s",
+        "actual_state_digest": "s",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_all_good_is_match() -> None:
+    """When everything holds and digests agree, the result is MATCH."""
+    assert compute_replay_result(**_replay_kwargs()) is ReplayResultState.MATCH
+
+
+def test_unsupported_baseline_never_match() -> None:
+    """An unsupported baseline yields UNSUPPORTED_BASELINE, never MATCH (§6.2)."""
+    result = compute_replay_result(**_replay_kwargs(baseline_supported=False))
+    assert result is ReplayResultState.UNSUPPORTED_BASELINE
+
+
+def test_missing_input_never_match() -> None:
+    """A missing/corrupt input yields CORRUPT_INPUT, never MATCH (§6.1)."""
+    result = compute_replay_result(**_replay_kwargs(input_complete=False))
+    assert result is ReplayResultState.CORRUPT_INPUT
+
+
+def test_digest_mismatch_diverges() -> None:
+    """A safety-relevant digest mismatch yields DIVERGED (§6.1)."""
+    result = compute_replay_result(**_replay_kwargs(actual_state_digest="other"))
+    assert result is ReplayResultState.DIVERGED
+
+
+def test_unbounded_nondeterminism_never_match() -> None:
+    """Unbounded nondeterminism can never be MATCH, even if digests agree (§2.5 D)."""
+    result = compute_replay_result(**_replay_kwargs(nondeterminism_bounded=False))
+    assert result is not ReplayResultState.MATCH
+
+
+def test_schema_incompatibility_never_match() -> None:
+    """Schema incompatibility can never be MATCH (§6.1)."""
+    result = compute_replay_result(**_replay_kwargs(schema_compatible=False))
+    assert result is not ReplayResultState.MATCH
+
+
+@given(
+    baseline_ok=st.booleans(),
+    input_ok=st.booleans(),
+    schema_ok=st.booleans(),
+    nondet_ok=st.booleans(),
+    digests_agree=st.booleans(),
+)
+def test_match_iff_everything_holds(
+    baseline_ok: bool,
+    input_ok: bool,
+    schema_ok: bool,
+    nondet_ok: bool,
+    digests_agree: bool,
+) -> None:
+    """Property: result is MATCH iff every condition holds AND digests agree (§6.1)."""
+    result = compute_replay_result(
+        baseline_supported=baseline_ok,
+        input_complete=input_ok,
+        schema_compatible=schema_ok,
+        nondeterminism_bounded=nondet_ok,
+        expected_state_digest="s",
+        actual_state_digest="s" if digests_agree else "t",
+    )
+    should_match = (
+        baseline_ok and input_ok and schema_ok and nondet_ok and digests_agree
+    )
+    assert (result is ReplayResultState.MATCH) is should_match
+
+
+def test_not_run_when_no_actual_digest() -> None:
+    """No actual state digest (not run to completion) is INCONCLUSIVE, not MATCH."""
+    result = compute_replay_result(**_replay_kwargs(actual_state_digest=None))
+    assert result is ReplayResultState.INCONCLUSIVE
+
+
+def test_exact_baseline_supported() -> None:
+    """A capsule whose baseline matches an approved baseline is supported (§6.2)."""
+    capsule = issue_replay(baseline=ReplayBaseline(repository_commit_sha="sha-1"))
+    approved = [ReplayBaseline(repository_commit_sha="sha-1")]
+    assert replay_baseline_supported(capsule, approved) is True
+
+
+def test_changed_baseline_unsupported() -> None:
+    """A changed baseline is unsupported => UNSUPPORTED_BASELINE, never PASS (§6.2)."""
+    capsule = issue_replay(baseline=ReplayBaseline(repository_commit_sha="sha-9"))
+    approved = [ReplayBaseline(repository_commit_sha="sha-1")]
+    supported = replay_baseline_supported(capsule, approved)
+    assert supported is False
+    result = compute_replay_result(
+        baseline_supported=supported,
+        input_complete=True,
+        schema_compatible=True,
+        nondeterminism_bounded=True,
+        expected_state_digest="s",
+        actual_state_digest="s",
+    )
+    assert result is ReplayResultState.UNSUPPORTED_BASELINE
+
+
+def test_isolation_live_flag_unconstructable() -> None:
+    """A true live-reachability flag makes the isolation block unconstructable (§6.3)."""
+    with pytest.raises(ValidationError):
+        ReplayIsolation(live_broker_route_reachable=True)
+
+
+def test_result_authority_flag_unconstructable() -> None:
+    """A true result-authority flag is unconstructable (reproducibility != adequacy)."""
+    with pytest.raises(ValidationError):
+        ReplayResult(creates_authority=True)
+
+
+def test_issued_replay_isolation_defaults_false() -> None:
+    """An issued replay capsule is isolated by default (all live flags false)."""
+    capsule = issue_replay()
+    iso = capsule.isolation
+    assert not iso.live_credentials_present
+    assert not iso.live_broker_route_reachable
+    assert not iso.production_mutation_endpoint_reachable
+    assert not iso.live_approval_or_authorization_consumable
+
+
+def test_current_rule_reevaluation_is_distinct_named_result() -> None:
+    """A current-rule re-evaluation is a distinct record, not a historical overwrite."""
+    historical = issue_replay(
+        replay_capsule_id="rc-historical",
+        baseline=ReplayBaseline(repository_commit_sha="commit-OLD"),
+        result=ReplayResult(state=ReplayResultState.MATCH),
+    )
+    reevaluation = issue_replay(
+        replay_capsule_id="rc-current",
+        baseline=ReplayBaseline(repository_commit_sha="commit-NEW"),
+        result=ReplayResult(state=ReplayResultState.DIVERGED),
+    )
+    assert reevaluation_is_distinct_named_result(historical, reevaluation) is True
+    assert historical.result.state is ReplayResultState.MATCH
+    assert historical.replay_capsule_id != reevaluation.replay_capsule_id
+
+
+def test_reevaluation_reusing_historical_identity_is_rejected() -> None:
+    """Re-evaluating "in place" (same id / same baseline) is not a distinct result."""
+    historical = issue_replay(replay_capsule_id="rc-1")
+    assert reevaluation_is_distinct_named_result(historical, historical) is False

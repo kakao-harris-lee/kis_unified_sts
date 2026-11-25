@@ -1,0 +1,300 @@
+"""``ReservationProjectionReader`` / ``SqliteReservationProjectionReader`` tests."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+from tos.engine.records import InstrumentKey
+from tos.rcl import (
+    AppendReceipt,
+    CapacityComponent,
+    CapacityReservationTransition,
+    CapacityState,
+    CapacityVector,
+    CommandType,
+    ReservationScope,
+    TransitionCause,
+)
+from tos.workload import RuntimeIdentity
+from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.projection import (
+    ReservationProjectionReader,
+    ScopeReservation,
+    SqliteReservationProjectionReader,
+    outstanding_reservations,
+)
+
+from .conftest import bind_attempt
+
+DEFAULT_SCOPE = ReservationScope(account="acct-1", instrument="101S06")
+
+
+def test_projection_reader_satisfies_protocol(log: SqliteCommitLog) -> None:
+    reader = SqliteReservationProjectionReader(log)
+    assert isinstance(reader, ReservationProjectionReader)
+
+
+def test_unknown_reservation_reads_as_none(log: SqliteCommitLog) -> None:
+    reader = SqliteReservationProjectionReader(log)
+    assert reader.reservation_state("nonexistent") is None
+    assert reader.reservation_last_seq("nonexistent") is None
+    assert reader.all_reservations() == {}
+
+
+def test_projection_reflects_committed_transition(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
+    )
+    result = bind_attempt(log, transition)
+    assert isinstance(result, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    assert reader.reservation_state("res-1") == CapacityState.ATTEMPT_BOUND
+    assert reader.reservation_last_seq("res-1") == result.seq
+    assert reader.all_reservations() == {"res-1": CapacityState.ATTEMPT_BOUND}
+
+
+_NON_EMPTY_VECTOR = CapacityVector(
+    components=(CapacityComponent(dimension_id="notional", magnitude=Decimal("100")),)
+)
+
+
+def test_reservation_committed_vector_reads_back_the_committed_value(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
+        committed_vector=_NON_EMPTY_VECTOR,
+    )
+    result = bind_attempt(log, transition)
+    assert isinstance(result, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    assert reader.reservation_committed_vector("res-1") == _NON_EMPTY_VECTOR
+    key = InstrumentKey(
+        account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
+    )
+    ((row,),) = (reader.scope_reservations(key),)
+    assert reader.reservation_committed_vector(row.reservation_id) == _NON_EMPTY_VECTOR
+
+
+def test_committed_vector_reads_as_none_when_never_committed(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """A transition committed with the default ``committed_vector=None`` reads"""
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
+    )
+    result = bind_attempt(log, transition)
+    assert isinstance(result, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    assert reader.reservation_committed_vector("res-1") is None
+    key = InstrumentKey(
+        account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
+    )
+    ((row,),) = (reader.scope_reservations(key),)
+    assert reader.reservation_committed_vector(row.reservation_id) is None
+
+
+def test_explicitly_empty_committed_vector_is_distinguishable_from_none(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """(round #4 review disposition — resolves the apparent commitlog.py/gates.py wording"""
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
+        committed_vector=CapacityVector(),
+    )
+    result = bind_attempt(log, transition)
+    assert isinstance(result, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    read_back = reader.reservation_committed_vector("res-1")
+    assert read_back is not None
+    assert read_back == CapacityVector()
+
+
+def test_unknown_instrument_reads_as_no_rows(log: SqliteCommitLog) -> None:
+    reader = SqliteReservationProjectionReader(log)
+    key = InstrumentKey(account="acct-1", instrument="101S06")
+    assert reader.scope_reservations(key) == ()
+
+
+def test_projection_reads_by_instrument_key_after_a_transition(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    epoch = log.acquire_epoch(identity)
+    transition = CapacityReservationTransition(
+        reservation_id="res-1",
+        writer_epoch=epoch,
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.ATTEMPT_BOUND,
+        scope=DEFAULT_SCOPE,
+    )
+    result = bind_attempt(log, transition)
+    assert isinstance(result, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    key = InstrumentKey(
+        account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
+    )
+    assert result.seq is not None
+    assert reader.scope_reservations(key) == (
+        ScopeReservation(
+            reservation_id="res-1",
+            state=CapacityState.ATTEMPT_BOUND,
+            last_seq=result.seq,
+        ),
+    )
+
+    other_key = InstrumentKey(account="acct-2", instrument="201S03")
+    assert reader.scope_reservations(other_key) == ()
+
+
+def test_two_reservations_with_different_scopes_do_not_collide(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """Two DIFFERENT reservation_ids, each bound to its own distinct scope —"""
+    epoch = log.acquire_epoch(identity)
+    scope_a = ReservationScope(account="acct-1", instrument="101S06")
+    scope_b = ReservationScope(account="acct-2", instrument="201S03")
+
+    first = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id="res-a",
+            writer_epoch=epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=CapacityState.ATTEMPT_BOUND,
+            scope=scope_a,
+        ),
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.BIND_ATTEMPT,
+        command_id="cmd-a",
+        command_digest="dig-a",
+        expected_seq=-1,
+    )
+    assert isinstance(first, AppendReceipt)
+    assert first.seq is not None
+
+    second = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id="res-b",
+            writer_epoch=epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=CapacityState.POTENTIALLY_LIVE,
+            scope=scope_b,
+        ),
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.COMMIT_RESERVATION,
+        command_id="cmd-b",
+        command_digest="dig-b",
+        expected_seq=first.seq,
+    )
+    assert isinstance(second, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    key_a = InstrumentKey(account=scope_a.account, instrument=scope_a.instrument)
+    key_b = InstrumentKey(account=scope_b.account, instrument=scope_b.instrument)
+    assert first.seq is not None and second.seq is not None
+    assert reader.scope_reservations(key_a) == (
+        ScopeReservation(
+            reservation_id="res-a",
+            state=CapacityState.ATTEMPT_BOUND,
+            last_seq=first.seq,
+        ),
+    )
+    assert reader.scope_reservations(key_b) == (
+        ScopeReservation(
+            reservation_id="res-b",
+            state=CapacityState.POTENTIALLY_LIVE,
+            last_seq=second.seq,
+        ),
+    )
+    assert reader.all_reservations() == {
+        "res-a": CapacityState.ATTEMPT_BOUND,
+        "res-b": CapacityState.POTENTIALLY_LIVE,
+    }
+
+
+def test_scope_reservations_reports_every_row_of_the_scope(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    epoch = log.acquire_epoch(identity)
+    entry = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id="resv-entry",
+            writer_epoch=epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=CapacityState.POSITION_CONSUMED,
+            scope=DEFAULT_SCOPE,
+        ),
+        TransitionCause.FINAL_QUANTITY_PROOF,
+        command_type=CommandType.RELEASE_RESERVATION,
+        command_id="cmd-entry",
+        command_digest="dig-entry",
+        expected_seq=-1,
+        finality_witness=True,
+    )
+    assert isinstance(entry, AppendReceipt)
+    close = log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id="resv-close",
+            writer_epoch=epoch,
+            from_state=CapacityState.COMMITTED_UNBOUND,
+            to_state=CapacityState.COMMITTED_UNBOUND,
+            scope=DEFAULT_SCOPE,
+        ),
+        TransitionCause.STRONGLY_AUTHORIZED_COMMAND,
+        command_type=CommandType.COMMIT_RESERVATION,
+        command_id="cmd-close",
+        command_digest="dig-close",
+        expected_seq=-1 if entry.seq is None else entry.seq,
+    )
+    assert isinstance(close, AppendReceipt)
+
+    reader = SqliteReservationProjectionReader(log)
+    key = InstrumentKey(
+        account=DEFAULT_SCOPE.account, instrument=DEFAULT_SCOPE.instrument
+    )
+    rows = reader.scope_reservations(key)
+    assert {(row.reservation_id, row.state) for row in rows} == {
+        ("resv-entry", CapacityState.POSITION_CONSUMED),
+        ("resv-close", CapacityState.COMMITTED_UNBOUND),
+    }
+    assert len(outstanding_reservations(rows)) == 2
+
+
+def test_outstanding_reservations_excludes_only_released(
+    log: SqliteCommitLog, identity: RuntimeIdentity
+) -> None:
+    """``RELEASED`` is the one non-consuming state; ``POSITION_CONSUMED`` still consumes."""
+    rows = tuple(
+        ScopeReservation(reservation_id=state.value, state=state, last_seq=0)
+        for state in CapacityState
+    )
+    kept = outstanding_reservations(rows)
+    assert CapacityState.RELEASED not in {row.state for row in kept}
+    assert CapacityState.POSITION_CONSUMED in {row.state for row in kept}
+    assert len(kept) == len(tuple(CapacityState)) - 1

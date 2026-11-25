@@ -1,0 +1,174 @@
+"""Release-admission runtime config loader (design #40 §5 order 6, lane R item 4)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from tos_runtime._named_tbd import reject_named_tbd
+from tos_runtime.release.verdict import AdmissionResult, ReleaseRestriction
+
+__all__ = [
+    "ReleaseAdmissionConfig",
+    "ReleaseAdmissionConfigError",
+    "load_release_config",
+]
+
+_ADMISSION_RESULT_BY_NAME: dict[str, AdmissionResult] = {
+    member.value: member for member in AdmissionResult
+}
+
+
+class ReleaseAdmissionConfigError(Exception):
+    """Raised when the release-admission config is missing, malformed, or"""
+
+
+@dataclass(frozen=True)
+class ReleaseAdmissionConfig:
+    """Fully-valued release-admission runtime configuration."""
+
+    expected_code_digest: str
+    expected_dependency_set_digest: str
+    admission_result: AdmissionResult
+    restriction_state_resolved: bool
+    restriction_present: bool
+    restriction: ReleaseRestriction | None
+
+
+def _require_mapping(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config file not found: {path}"
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config file could not be read: {path}"
+        ) from exc
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config file is not valid YAML: {path}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config file must be a top-level mapping: {path} "
+            f"(got {type(raw)!r})"
+        )
+    return raw
+
+
+def _require_str(raw: dict[str, Any], key: str) -> str:
+    if key not in raw:
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config missing required key: {key!r}"
+        )
+    value = raw[key]
+    if value is None:
+        raise ReleaseAdmissionConfigError(
+            "release-admission config has an unfilled (named-TBD) key — "
+            f"fail-closed at startup until an operator fills it: {key!r}"
+        )
+    if not isinstance(value, str) or not value.strip():
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config key {key!r} must be a non-blank string "
+            f"(got {value!r})"
+        )
+    reject_named_tbd(
+        value,
+        field=key,
+        context="release-admission config",
+        error_cls=ReleaseAdmissionConfigError,
+    )
+    return value
+
+
+def _require_bool(raw: dict[str, Any], key: str) -> bool:
+    if key not in raw:
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config missing required key: {key!r}"
+        )
+    value = raw[key]
+    if value is None:
+        raise ReleaseAdmissionConfigError(
+            "release-admission config has an unfilled (named-TBD) key — "
+            f"fail-closed at startup until an operator fills it: {key!r}"
+        )
+    if not isinstance(value, bool):
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config key {key!r} must be a bool (got {value!r})"
+        )
+    return value
+
+
+def _resolve_admission_result(raw: dict[str, Any]) -> AdmissionResult:
+    value = _require_str(raw, "admission_result")
+    resolved = _ADMISSION_RESULT_BY_NAME.get(value)
+    if resolved is None:
+        raise ReleaseAdmissionConfigError(
+            "release-admission config key 'admission_result' must be one of "
+            f"{sorted(_ADMISSION_RESULT_BY_NAME)} (got {value!r})"
+        )
+    return resolved
+
+
+def _resolve_restriction(
+    raw: dict[str, Any], *, present: bool
+) -> ReleaseRestriction | None:
+    if not present:
+        return None
+    section = raw.get("restriction")
+    if not isinstance(section, dict):
+        raise ReleaseAdmissionConfigError(
+            "release-admission config: 'restriction_present' is true but "
+            "'restriction' is not a mapping — fail-closed"
+        )
+    restriction_id = section.get("restriction_id")
+    restriction_generation = section.get("restriction_generation")
+    trigger_class = section.get("trigger_class")
+    if restriction_id is None or restriction_generation is None:
+        raise ReleaseAdmissionConfigError(
+            "release-admission config: 'restriction_present' is true but "
+            "'restriction.restriction_id'/'restriction_generation' is "
+            "unfilled (named-TBD) — fail-closed"
+        )
+    reject_named_tbd(
+        restriction_id,
+        field="restriction.restriction_id",
+        context="release-admission config",
+        error_cls=ReleaseAdmissionConfigError,
+    )
+    try:
+        return ReleaseRestriction(
+            restriction_id=restriction_id,
+            restriction_generation=restriction_generation,
+            trigger_class=trigger_class,
+        )
+    except ValueError as exc:
+        raise ReleaseAdmissionConfigError(
+            f"release-admission config: 'restriction' is malformed — fail-closed ({exc})"
+        ) from exc
+
+
+def load_release_config(path: Path) -> ReleaseAdmissionConfig:
+    """Load + validate the release-admission config file, fail-closed."""
+    raw = _require_mapping(path)
+    expected_code_digest = _require_str(raw, "expected_code_digest")
+    expected_dependency_set_digest = _require_str(raw, "expected_dependency_set_digest")
+    admission_result = _resolve_admission_result(raw)
+    restriction_state_resolved = _require_bool(raw, "restriction_state_resolved")
+    restriction_present = _require_bool(raw, "restriction_present")
+    restriction = _resolve_restriction(raw, present=restriction_present)
+    return ReleaseAdmissionConfig(
+        expected_code_digest=expected_code_digest,
+        expected_dependency_set_digest=expected_dependency_set_digest,
+        admission_result=admission_result,
+        restriction_state_resolved=restriction_state_resolved,
+        restriction_present=restriction_present,
+        restriction=restriction,
+    )

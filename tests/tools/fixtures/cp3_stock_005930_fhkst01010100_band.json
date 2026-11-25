@@ -1,0 +1,17 @@
+{
+  "_note": "Shape-faithful FHKST01010100 (주식현재가 시세) response for 005930, trimmed to the fields the band reads plus neighbours. NOT a live capture: tests may not make network calls and none was made to build it. Field names follow KIS open-trading-api examples_llm/domestic_stock/inquire_price (chk_inquire_price COLUMN_MAPPING: stck_mxpr 상한가, stck_llam 하한가, stck_sdpr 기준가, aspr_unit 호가단위). Values: base 270,000원 → ±30% limits 351,000 / 189,000.",
+  "rt_cd": "0",
+  "msg_cd": "MCA00000",
+  "msg1": "정상처리 되었습니다.",
+  "output": {
+    "stck_prpr": "271500",
+    "stck_oprc": "270000",
+    "stck_hgpr": "272000",
+    "stck_lwpr": "269500",
+    "stck_mxpr": "351000",
+    "stck_llam": "189000",
+    "stck_sdpr": "270000",
+    "aspr_unit": "500",
+    "temp_stop_yn": "N"
+  }
+}

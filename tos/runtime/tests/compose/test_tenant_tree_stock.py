@@ -1,0 +1,650 @@
+"""CP-3 stock tenant tree ``cp3-setup-d-stock-005930`` (rescope M2, 2026-10-22)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.dsl.serialization import parse_strategy
+from tos.dsl.vocabulary import DecisionKind, evaluate_policy
+from tos.engine.admission import (
+    AdmissionVerdict,
+    policy_work_steps,
+    strategy_admissible,
+)
+from tos.engine.vocabulary import CommitmentStep, StageOutcome
+from tos.venue import OrderAdmissibilityResult, OrderShapeFields
+from tos.venue.predicates import order_shape_admissible
+from tos_runtime.calendar.ports import FixedWallClockReference
+from tos_runtime.compose._transport_wiring import TransportKind
+from tos_runtime.compose._venue_wiring import VenuePolicyScopeMismatch
+from tos_runtime.compose.root import compose_paper_runtime
+from tos_runtime.venue import (
+    load_order_construction_policy,
+    load_venue_constraint_policy,
+)
+
+from . import _fixtures as fx
+from .conftest import (
+    _VENUE_POLICY_ACCOUNT,
+    _VENUE_POLICY_ENVIRONMENT,
+    _VENUE_POLICY_INSTRUMENT,
+)
+from .test_compose_root import (
+    _action_flow_inputs_for,
+    _aggregate_inputs,
+    _LiveRuntimeFacts,
+    _reach_trusted,
+)
+from .test_deploy_config import _kst_unix_ms
+from .test_deploy_policies import _filled
+from .test_kis_mock_e2e_honesty import _sealed_mock_deployment
+from .test_venue_wiring import _kind_count, _rows
+
+pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write_guard")
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_LONG = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-long"
+_STOCK = _REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-stock-005930"
+_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
+
+_DIFFERS_FROM_LONG: dict[str, frozenset[str] | None] = {
+    "README.md": None,
+    "fields.yaml": frozenset(
+        {
+            "fields.8.params.open_hour",
+            "fields.8.params.open_minute",
+        }
+    ),
+    "RENDER.yaml": frozenset(
+        {
+            "tree_id",
+            "account.env_key",
+            "instrument",
+            "market",
+            "slots.23",
+        }
+    ),
+    "broker_scopes.yaml": frozenset({"active_scope", "scopes.2.profile_evidence_ok"}),
+    "engine.yaml": frozenset(),
+    "coordinator_preconditions.yaml": frozenset({"nonlive_broker_consuming.admitted"}),
+    "authority.yaml": frozenset(
+        {"containment_bound_ms", "standing_approval_max_uses_per_action"}
+    ),
+    "egress_coordinates.yaml": frozenset({"endpoint.value", "route_identity.value"}),
+    "finality.yaml": frozenset({"witness"}),
+    "construction.yaml": frozenset({"instrument_class"}),
+    "marketfeed.yaml": frozenset({"instrument_class", "unit"}),
+    "aggregate_risk_policy.yaml": frozenset(
+        {"policy_id", "_runtime.unit", "risk_dimensions.0"}
+    ),
+    "action_flow_policy.yaml": frozenset({"policy_id"}),
+    "critical_input_policy.yaml": frozenset({"policy_id", "issuer_principal_id"}),
+    "order_construction_policy.yaml": frozenset(
+        {
+            "policy_id",
+            "unit_multiplier_currency_and_numeric_rules.0",
+            "_runtime.construction.effect_dimensions.0.unit",
+            "_runtime.wire_codec",
+            "policy_generation",
+            "_model_view.policy_generation",
+            "approved_by.3",
+            "approved_by.4",
+        }
+    ),
+    "strategies/setup_d_long.strategy.yaml": frozenset({"policy.rules.3"}),
+    "strategy_bindings.yaml": frozenset(
+        {"strategies.setup_d_long.strategy.bindings.m2_probe_entry_enabled"}
+    ),
+    "venue_constraint_policy.yaml": frozenset(
+        {
+            "policy_id",
+            "approved_by",
+            "effective_from",
+            "scope.market_segments.0",
+            "approved_sources",
+            "session_phase_state_machines.0",
+            "instrument_and_contract_rules.0",
+            "price_band_tick_and_lot_rules",
+            "residual_risks",
+            "_model_view.shape_constraints.tick_size",
+            "_model_view.shape_constraints.price_band_ticks",
+            "_model_view.shape_constraints.max_quantity",
+            "_runtime.instrument_class",
+            "_runtime.quantity_unit",
+        }
+    ),
+}
+
+
+def _files(tree: Path) -> set[str]:
+    return {str(p.relative_to(tree)) for p in tree.rglob("*") if p.is_file()}
+
+
+def _leaves(node: Any, prefix: str = "") -> dict[str, Any]:
+    if isinstance(node, dict):
+        out: dict[str, Any] = {}
+        for key, value in node.items():
+            out.update(_leaves(value, f"{prefix}{key}."))
+        return out or {prefix.rstrip("."): {}}
+    if isinstance(node, list):
+        out = {}
+        for index, value in enumerate(node):
+            out.update(_leaves(value, f"{prefix}{index}."))
+        return out or {prefix.rstrip("."): []}
+    return {prefix.rstrip("."): node}
+
+
+def _differing_paths(name: str) -> set[str]:
+    long_leaves = _leaves(yaml.safe_load((_LONG / name).read_text(encoding="utf-8")))
+    stock_leaves = _leaves(yaml.safe_load((_STOCK / name).read_text(encoding="utf-8")))
+    return {
+        key
+        for key in set(long_leaves) | set(stock_leaves)
+        if long_leaves.get(key, object()) != stock_leaves.get(key, object())
+    }
+
+
+def _covered(path: str, allowed: frozenset[str]) -> bool:
+    return any(path == a or path.startswith(a + ".") for a in allowed)
+
+
+_STOCK_ONLY = {"broker_facts.yaml", "fill_observer.yaml"}
+
+
+def test_the_stock_tree_has_exactly_the_long_trees_files() -> None:
+    assert _files(_STOCK) == _files(_LONG) | _STOCK_ONLY
+
+
+@pytest.mark.parametrize("name", sorted(_files(_LONG)))
+def test_every_file_is_a_byte_copy_or_differs_only_where_declared(name: str) -> None:
+    long_bytes = (_LONG / name).read_bytes()
+    stock_bytes = (_STOCK / name).read_bytes()
+    if name not in _DIFFERS_FROM_LONG:
+        assert stock_bytes == long_bytes, f"{name} must stay a byte copy of LONG"
+        return
+    assert stock_bytes != long_bytes, f"{name} is declared different but is identical"
+    allowed = _DIFFERS_FROM_LONG[name]
+    if allowed is None:
+        return
+    differing = _differing_paths(name)
+    stray = sorted(p for p in differing if not _covered(p, allowed))
+    assert stray == [], f"{name}: undeclared differences {stray}"
+    unused = sorted(
+        a for a in allowed if not any(_covered(p, frozenset({a})) for p in differing)
+    )
+    assert unused == [], f"{name}: declared but not different {unused}"
+
+
+def test_the_stock_tree_carries_the_operator_decisions() -> None:
+    """005930 · Setup D LONG as-is · 1 share · krx-stock 09:00-15:30 · MOCK order (PR-3a)."""
+    vcp = yaml.safe_load((_STOCK / "venue_constraint_policy.yaml").read_text("utf-8"))
+    shape = vcp["_model_view"]["shape_constraints"]
+    assert (shape["tick_size"], shape["lot_size"], shape["max_quantity"]) == (
+        None,
+        1,
+        1,
+    )
+    assert vcp["_runtime"] == {
+        "instrument_class": "krx-stock",
+        "quantity_unit": "SHARES",
+        "currency": "KRW",
+        "price_scale": 100,
+        "band_source": yaml.safe_load(
+            (_LONG / "venue_constraint_policy.yaml").read_text("utf-8")
+        )["_runtime"]["band_source"],
+    }
+    calendar = yaml.safe_load((_STOCK / "calendar.yaml").read_text("utf-8"))
+    continuous = [
+        w for w in calendar["sessions"]["krx-stock"] if w["phase"] == "CONTINUOUS"
+    ]
+    assert [(w["start"], w["end"]) for w in continuous] == [("09:00", "15:30")]
+    ocp = yaml.safe_load((_STOCK / "order_construction_policy.yaml").read_text("utf-8"))
+    sizing = ocp["_runtime"]["construction"]["sizing"]
+    assert (sizing["max_quantity"], sizing["min_quantity"]) == (1, 1)
+    scopes = yaml.safe_load((_STOCK / "broker_scopes.yaml").read_text("utf-8"))
+    assert scopes["active_scope"] == "MOCK_STOCK_ORDER"
+    (mock,) = [s for s in scopes["scopes"] if s["name"] == "MOCK_STOCK_ORDER"]
+    assert mock["profile_evidence_ok"] is True
+    pre = yaml.safe_load((_STOCK / "coordinator_preconditions.yaml").read_text("utf-8"))
+    assert pre == {
+        "live_authorization_state": "NOT_AUTHORIZED",
+        "nonlive_broker_consuming": {"admitted": True},
+    }
+    for tree in ("cp3-setup-d-long", "cp3-setup-d-short"):
+        other = _REPO_ROOT / "config" / "tos_runtime" / tree
+        assert (
+            yaml.safe_load((other / "broker_scopes.yaml").read_text("utf-8"))[
+                "active_scope"
+            ]
+            == "SYNTHETIC_FUTURES_ORDER"
+        )
+    render = yaml.safe_load((_STOCK / "RENDER.yaml").read_text("utf-8"))
+    assert render["account"] == {"env_key": "KIS_STOCK_ACCOUNT_NO"}
+    assert render["direction"] == {"mode": "declared", "value": "LONG"}
+    stock_policy = yaml.safe_load(
+        (_STOCK / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
+    )
+    long_policy = yaml.safe_load(
+        (_LONG / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
+    )
+    assert stock_policy["dsl_version"] == long_policy["dsl_version"]
+    assert (
+        stock_policy["config_binding_version"] == long_policy["config_binding_version"]
+    )
+    assert stock_policy["policy"]["default"] == long_policy["policy"]["default"]
+    assert len(long_policy["policy"]["rules"]) == 3
+    assert stock_policy["policy"]["rules"][:3] == long_policy["policy"]["rules"]
+    (probe,) = stock_policy["policy"]["rules"][3:]
+    assert probe["decision"]["rationale"].startswith("R4-M2-PROBE-ENTRY-LONG:")
+
+
+def _stock_strategy_and_config() -> tuple[Any, dict[str, Any]]:
+    """The committed stock strategy (issued + admitted) and its committed bindings."""
+    raw = yaml.safe_load(
+        (_STOCK / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
+    )
+    strategy = parse_strategy(raw)
+    entry = yaml.safe_load((_STOCK / "strategy_bindings.yaml").read_text("utf-8"))[
+        "strategies"
+    ]["setup_d_long.strategy"]
+    assert entry["config_binding_version"] == raw["config_binding_version"]
+    return strategy, dict(entry["bindings"])
+
+
+def _decide(strategy: Any, resolved: dict[str, Any], config: dict[str, Any]) -> Any:
+    """Evaluate the policy the way the engine does — the kernel's own pure evaluator."""
+    return evaluate_policy(
+        strategy.policy, {"capsule": {"resolved_values": resolved}, "config": config}
+    )
+
+
+def test_the_committed_stock_strategy_is_admissible_within_its_engine_budget() -> None:
+    """R4 keeps the strategy admissible: every compare still reads a capsule operand."""
+    strategy, _ = _stock_strategy_and_config()
+    result = strategy_admissible(strategy)
+    assert result.verdict is AdmissionVerdict.ADMISSIBLE, result.reasons
+    budget = yaml.safe_load((_STOCK / "engine.yaml").read_text("utf-8"))[
+        "dsl_evaluation_budget_steps"
+    ]
+    assert policy_work_steps(strategy.policy) == 31 <= budget
+
+
+def test_the_m2_probe_proposes_an_entry_only_while_its_binding_is_on() -> None:
+    """R4 fires on the entry window alone — with every other Setup D gate false/absent."""
+    strategy, config = _stock_strategy_and_config()
+    assert config["m2_probe_entry_enabled"] is True
+
+    decision = _decide(
+        strategy,
+        {
+            "entry_window": True,
+            "hi_vol": False,
+            "stall_ok": False,
+            "reversal_ok": False,
+            "z_x1000": 0,
+            "vwap_reverted": False,
+            "eod": False,
+        },
+        config,
+    )
+    assert decision.kind is DecisionKind.ACTION
+    assert decision.rationale.startswith("R4-M2-PROBE-ENTRY-LONG:")
+    assert decision.target is not None
+    assert (decision.target.direction, decision.target.position_effect) == (
+        "LONG",
+        "OPEN",
+    )
+    assert decision.target.quantity_basis == "RISK"
+    r1_target = strategy.policy.rules[0].decision.target
+    assert r1_target is not None
+    assert (decision.target.account, decision.target.instrument) == (
+        r1_target.account,
+        r1_target.instrument,
+    )
+
+    assert (
+        _decide(strategy, {"entry_window": False}, config).kind
+        is DecisionKind.NO_ACTION
+    )
+    assert _decide(strategy, {}, config).kind is DecisionKind.NO_ACTION
+
+    off = dict(config, m2_probe_entry_enabled=False)
+    assert _decide(strategy, {"entry_window": True}, off).kind is DecisionKind.NO_ACTION
+    gates = {
+        "entry_window": True,
+        "hi_vol": True,
+        "stall_ok": True,
+        "reversal_ok": True,
+        "z_x1000": config["z_entry_max_x1000"] - 1,
+    }
+    for cfg in (config, off):
+        r1 = _decide(strategy, gates, cfg)
+        assert r1.kind is DecisionKind.ACTION
+        assert r1.rationale.startswith("R1-ENTRY-LONG:")
+
+
+@pytest.mark.parametrize(
+    ("exit_field", "rationale_prefix"),
+    [("vwap_reverted", "R2-EXIT-VWAP-REVERTED:"), ("eod", "R3-EXIT-EOD:")],
+)
+def test_the_exits_win_over_the_m2_probe(
+    exit_field: str, rationale_prefix: str
+) -> None:
+    """First-match ordering: R4 sits AFTER R2/R3, so a live exit always wins."""
+    strategy, config = _stock_strategy_and_config()
+    decision = _decide(strategy, {"entry_window": True, exit_field: True}, config)
+    assert decision.kind is DecisionKind.FLAT
+    assert decision.rationale.startswith(rationale_prefix)
+    assert decision.target is not None
+    assert (decision.target.direction, decision.target.position_effect) == (
+        "SHORT",
+        "CLOSE",
+    )
+
+
+def test_the_m2_probe_does_not_widen_the_standing_approvals_action_set() -> None:
+    """The standing approval's derived actions come from the strategy's target pairs."""
+    strategy, _ = _stock_strategy_and_config()
+    pairs = set()
+    stack: list[Any] = [strategy.model_dump(mode="json")]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            effect, direction = node.get("position_effect"), node.get("direction")
+            if isinstance(effect, str) and isinstance(direction, str):
+                pairs.add((effect, direction))
+            stack.extend(node.values())
+        elif isinstance(node, list | tuple):
+            stack.extend(node)
+    assert pairs == {("OPEN", "LONG"), ("CLOSE", "SHORT")}
+
+
+def test_the_render_direction_anchor_still_matches_exactly_once() -> None:
+    """``_apply_rules`` requires EXACTLY ONE match of each RENDER.yaml anchor line."""
+    text = (_STOCK / "strategies/setup_d_long.strategy.yaml").read_text("utf-8")
+    lines = text.split("\n")
+    manifest = yaml.safe_load((_STOCK / "RENDER.yaml").read_text("utf-8"))
+    slots = [
+        s
+        for s in manifest["slots"]
+        if s["file"] == "strategies/setup_d_long.strategy.yaml"
+    ]
+    assert len(slots) == 3
+    for slot in slots:
+        assert lines.count(slot["anchor"]) == 1, slot["key"]
+
+
+def _stock_policy(tmp_path: Path) -> Any:
+    raw = _filled(
+        _STOCK / "venue_constraint_policy.yaml",
+        environment=_VENUE_POLICY_ENVIRONMENT,
+        account=_VENUE_POLICY_ACCOUNT,
+        instrument=_VENUE_POLICY_INSTRUMENT,
+    )
+    path = tmp_path / "venue_constraint_policy.yaml"
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return load_venue_constraint_policy(path, scheme=_SCHEME)
+
+
+@pytest.mark.parametrize(
+    ("won", "expected"),
+    [
+        ("199900", OrderAdmissibilityResult.ADMISSIBLE),
+        ("199950", OrderAdmissibilityResult.INADMISSIBLE),
+        ("270000", OrderAdmissibilityResult.ADMISSIBLE),
+        ("270100", OrderAdmissibilityResult.INADMISSIBLE),
+        ("1999", OrderAdmissibilityResult.ADMISSIBLE),
+        ("2001", OrderAdmissibilityResult.INADMISSIBLE),
+        ("200000", OrderAdmissibilityResult.ADMISSIBLE),
+        ("200100", OrderAdmissibilityResult.INADMISSIBLE),
+        ("500000", OrderAdmissibilityResult.ADMISSIBLE),
+        ("500500", OrderAdmissibilityResult.INADMISSIBLE),
+        ("1001000", OrderAdmissibilityResult.ADMISSIBLE),
+        ("1000500", OrderAdmissibilityResult.INADMISSIBLE),
+        (
+            "10000000",
+            OrderAdmissibilityResult.UNKNOWN,
+        ),
+    ],
+)
+def test_the_stock_tree_tick_ladder_resolves_each_rung(
+    tmp_path: Path, won: str, expected: OrderAdmissibilityResult
+) -> None:
+    """The REAL stock file's ``price_band_ticks`` (×100), through the kernel predicate. The"""
+    loaded = _stock_policy(tmp_path)
+    assert loaded.policy.shape_constraints.tick_size is None
+    constraints = loaded.policy.shape_constraints.model_copy(
+        update={"price_min": 0, "price_max": 10**12}
+    )
+    shape = OrderShapeFields(
+        price=int(won) * loaded.price_scale,
+        quantity=1,
+        order_type="LIMIT",
+        tif="DAY",
+        side="BUY",
+        position_effect="OPEN",
+        silently_rounded=False,
+    )
+    assert order_shape_admissible(shape, constraints) is expected
+
+
+def test_the_stock_tree_tick_ladder_is_contiguous_from_one_won(tmp_path: Path) -> None:
+    """No gap between rungs: every ×100 integer from 1원 to the top row's bound has a row."""
+    rows = _stock_policy(tmp_path).policy.shape_constraints.price_band_ticks
+    assert rows is not None and rows[0].band_min == 100
+    for below, above in zip(rows, rows[1:]):
+        assert above.band_min == below.band_max + 1
+
+
+def test_the_stock_tree_states_the_price_scale_a_kis_mock_boot_checks(
+    tmp_path: Path,
+) -> None:
+    """PR #927 review M1: ``ORD_UNPR = price / price_scale`` must divide by the scale the"""
+    raw = _filled(
+        _STOCK / "venue_constraint_policy.yaml",
+        environment=_VENUE_POLICY_ENVIRONMENT,
+        account=_VENUE_POLICY_ACCOUNT,
+        instrument=_VENUE_POLICY_INSTRUMENT,
+    )
+    path = tmp_path / "venue_constraint_policy.yaml"
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    assert load_venue_constraint_policy(path, scheme=_SCHEME).price_scale == 100
+
+
+def _install_stock_tree(config_dir: Path) -> str:
+    """The stock tree's calendar + its two filled venue policies over the fixture tree."""
+    calendar_text = (_STOCK / "calendar.yaml").read_text(encoding="utf-8")
+    (config_dir / "calendar.yaml").write_text(calendar_text, encoding="utf-8")
+    time_path = config_dir / "time.yaml"
+    time_cfg = yaml.safe_load(time_path.read_text(encoding="utf-8"))
+    time_cfg["trading_calendar_version"] = yaml.safe_load(calendar_text)[
+        "calendar_version"
+    ]
+    time_path.write_text(yaml.safe_dump(time_cfg, sort_keys=False), encoding="utf-8")
+    for name in ("venue_constraint_policy.yaml", "order_construction_policy.yaml"):
+        raw = _filled(
+            _STOCK / name,
+            environment=_VENUE_POLICY_ENVIRONMENT,
+            account=_VENUE_POLICY_ACCOUNT,
+            instrument=_VENUE_POLICY_INSTRUMENT,
+            admits_flat_exit=name == "order_construction_policy.yaml",
+        )
+        (config_dir / name).write_text(
+            yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
+    venue = load_venue_constraint_policy(
+        config_dir / "venue_constraint_policy.yaml", scheme=_SCHEME
+    )
+    ocp = load_order_construction_policy(
+        config_dir / "order_construction_policy.yaml", scheme=_SCHEME
+    )
+    del ocp
+    digest = venue.policy.canonical_digest
+    assert digest is not None, "the loaded stock VCP carries no canonical_digest"
+    return digest
+
+
+def _boot(config_dir, data_dir, custody_root, *, hour: int, minute: int):
+    """``test_compose_root._compose`` with the construction's class set to ``krx-stock`` and"""
+    fx.write_band_strategy_file(config_dir)
+    facts = _LiveRuntimeFacts()
+    runtime = compose_paper_runtime(
+        config_dir,
+        data_dir,
+        custody_root,
+        "non-live-test",
+        construction=fx.construction_config(instrument_class="krx-stock"),
+        aggregate_risk_inputs_provider=_aggregate_inputs,
+        action_flow_inputs_provider=_action_flow_inputs_for(facts),
+        transport_kind=TransportKind.KIS_MOCK,
+        wall_clock=FixedWallClockReference(_kst_unix_ms(2026, 10, 19, hour, minute)),
+    )
+    facts.runtime = runtime
+    return runtime
+
+
+def _mock_stock_deployment(config_dir, custody_root, server, monkeypatch) -> str:
+    """The fixture tree sealed to the fake KIS host (dry_run), THEN the stock tree's files."""
+    _sealed_mock_deployment(
+        config_dir, custody_root, server, monkeypatch, mode="dry_run"
+    )
+    return _install_stock_tree(config_dir)
+
+
+def test_the_stock_tree_boots_and_a_session_attempt_sends_nothing(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    server,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    venue_digest = _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
+    runtime = _boot(config_dir, data_dir, custody_root, hour=10, minute=0)
+    _reach_trusted(runtime)
+
+    bound = _rows(runtime, "VENUE_POLICY_BOUND")
+    assert [row["canonical_digest"] for row in bound] == [venue_digest]
+    assert runtime.venue.shape_constraints.tick_size is None
+    ticks = runtime.venue.shape_constraints.price_band_ticks
+    assert ticks is not None and len(ticks) == 7
+    assert runtime.venue.quantity_constraint.max_quantity == 1
+    assert runtime.session_facts.phase_for_step3("krx-stock") == "CONTINUOUS"
+
+    results = runtime.run_once((fx.crossing_event(),))
+    flow = results[0].flow
+    assert flow is not None
+    verdicts = {v.step: v for v in flow.verdicts}
+    assert verdicts[CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION].outcome is (
+        StageOutcome.ADMIT
+    )
+    assert verdicts[CommitmentStep.VENUE_ADMISSIBILITY_DECISION].outcome is (
+        StageOutcome.UNKNOWN
+    )
+    assert set(verdicts) == {
+        CommitmentStep.DECISION_PROPOSAL,
+        CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION,
+        CommitmentStep.VENUE_ADMISSIBILITY_DECISION,
+    }
+    assert _kind_count(runtime, "SEND_SEALED") == 0
+
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+def test_at_0850_the_futures_session_is_open_but_the_stock_one_is_not(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    tmp_path: Path,
+    server,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stock tree's session is ``krx-stock``: 08:50 is futures CONTINUOUS, stock not."""
+    _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
+    runtime = _boot(config_dir, data_dir, custody_root, hour=8, minute=50)
+    assert runtime.session_facts.phase_for_step3("krx-index-futures") == "CONTINUOUS"
+    assert runtime.session_facts.phase_for_step3("krx-stock") != "CONTINUOUS"
+    runtime.rcl_log.close()
+    runtime.evidence_store.close()
+
+
+def test_the_stock_ocp_declares_the_kis_mock_wire_codec_and_a_null_one_refuses_the_boot(
+    config_dir: Path,
+    data_dir: Path,
+    custody_root: Path,
+    server,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3 (2026-10-24 dry-run). Generation 3 of this tree's OCP said ``wire_codec: null``, and"""
+    from tos_runtime.transport.kis_mock.codec import KIS_ORDER_CASH_WIRE_FIELDS
+
+    ocp = load_order_construction_policy(
+        _write_filled(config_dir.parent, "order_construction_policy.yaml"),
+        scheme=_SCHEME,
+    )
+    assert ocp.wire_codec_kind == "kis-order-cash-v1"
+    assert ocp.wire_fields == KIS_ORDER_CASH_WIRE_FIELDS
+    assert ocp.policy.policy_generation == 5
+
+    _mock_stock_deployment(config_dir, custody_root, server, monkeypatch)
+    path = config_dir / "order_construction_policy.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw["_runtime"]["wire_codec"] = None
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    with pytest.raises(VenuePolicyScopeMismatch, match="kis-order-cash-v1"):
+        _boot(config_dir, data_dir, custody_root, hour=10, minute=0)
+
+
+def _write_filled(directory: Path, name: str) -> Path:
+    raw = _filled(
+        _STOCK / name,
+        environment=_VENUE_POLICY_ENVIRONMENT,
+        account=_VENUE_POLICY_ACCOUNT,
+        instrument=_VENUE_POLICY_INSTRUMENT,
+        admits_flat_exit=name == "order_construction_policy.yaml",
+    )
+    path = directory / name
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return path
+
+
+def test_the_stock_trees_mock_scope_egress_and_broker_facts_agree() -> None:
+    """The three facts item 5 / item 6 / item 12 read off this tree, pinned against their own"""
+    from tos.brokercap import mock_order_without_position_or_cash
+    from tos_runtime.brokercap import load_broker_scopes
+    from tos_runtime.brokercap.instance import load_instance_documents
+    from tos_runtime.transport.kis_mock.broker_facts import load_broker_facts_config
+
+    scopes = load_broker_scopes(
+        _STOCK / "broker_scopes.yaml", environment_label="paper"
+    )
+    assert scopes.active_scope.name == "MOCK_STOCK_ORDER"
+    assert mock_order_without_position_or_cash(scopes.active_scope.capability_tuples)
+
+    assert scopes.instance_path is not None
+    (mock_doc,) = [
+        d
+        for d in load_instance_documents(scopes.instance_path)
+        if d.environment == "MOCK_VTS"
+    ]
+    egress = yaml.safe_load((_STOCK / "egress_coordinates.yaml").read_text("utf-8"))
+    assert egress["endpoint"]["value"] == (
+        f"{mock_doc.rest_base}/uapi/domestic-stock/v1/trading/order-cash"
+    )
+    assert "openapivts" in egress["endpoint"]["value"]
+
+    facts = load_broker_facts_config(_STOCK / "broker_facts.yaml")
+    assert facts.balance_tr_id.startswith("V")

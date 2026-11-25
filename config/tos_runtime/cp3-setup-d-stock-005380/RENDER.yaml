@@ -1,0 +1,138 @@
+# Render manifest for THIS tree — read ONLY by scripts/tos/render_paper_config.py.
+
+tree_id: "cp3-setup-d-stock-005380"
+market: "stock"
+
+direction:
+  mode: "declared"
+  value: "LONG"
+
+journal:
+  mode: "external"
+
+account:
+  env_key: "KIS_STOCK_ACCOUNT_NO"
+instrument:
+  pattern: "005380"
+
+slots:
+  - file: "venue_constraint_policy.yaml"
+    key: "scope.accounts"
+    anchor: '  accounts: ["TBD"]'
+    replacement: '  accounts: ["{value}"]'
+    value: "account"
+  - file: "venue_constraint_policy.yaml"
+    key: "scope.instruments"
+    anchor: '  instruments: ["TBD"]'
+    replacement: '  instruments: ["{value}"]'
+    value: "instrument"
+  - file: "venue_constraint_policy.yaml"
+    key: "_runtime.band_source.instrument"
+    anchor: '    instrument: "TBD"'
+    replacement: '    instrument: "{value}"'
+    value: "instrument"
+  - file: "venue_constraint_policy.yaml"
+    key: "_runtime.band_source.band_journal_path"
+    anchor: '    band_journal_path: "TBD"'
+    replacement: '    band_journal_path: "{value}"'
+    value: "band_journal_path"
+  - file: "venue_constraint_policy.yaml"
+    key: "_runtime.band_source.approved_source_prefixes"
+    anchor: '    approved_source_prefixes: ["TBD"]'
+    replacement: '    approved_source_prefixes: ["{value}"]'
+    value: "approved_source_prefixes"
+  - file: "order_construction_policy.yaml"
+    key: "scope.accounts"
+    anchor: '  accounts: ["TBD"]'
+    replacement: '  accounts: ["{value}"]'
+    value: "account"
+  - file: "order_construction_policy.yaml"
+    key: "scope.instruments"
+    anchor: '  instruments: ["TBD"]'
+    replacement: '  instruments: ["{value}"]'
+    value: "instrument"
+  - file: "order_construction_policy.yaml"
+    key: "_runtime.construction.axes.DIRECTION"
+    anchor: '        value: "LONG"'
+    replacement: '        value: "{value}"'
+    value: "direction"
+  - file: "aggregate_risk_policy.yaml"
+    key: "account_scope"
+    anchor: 'account_scope: ["TBD"]'
+    replacement: 'account_scope: ["{value}"]'
+    value: "account"
+  - file: "aggregate_risk_policy.yaml"
+    key: "instrument_scope"
+    anchor: 'instrument_scope: ["TBD"]'
+    replacement: 'instrument_scope: ["{value}"]'
+    value: "instrument"
+  - file: "action_flow_policy.yaml"
+    key: "account_scope"
+    anchor: 'account_scope: ["TBD"]'
+    replacement: 'account_scope: ["{value}"]'
+    value: "account"
+  - file: "construction.yaml"
+    key: "account"
+    anchor: 'account: "TBD"'
+    replacement: 'account: "{value}"'
+    value: "account"
+  - file: "construction.yaml"
+    key: "instrument"
+    anchor: 'instrument: "TBD"'
+    replacement: 'instrument: "{value}"'
+    value: "instrument"
+  - file: "construction.yaml"
+    key: "action_class"
+    anchor: 'action_class: "NEW_LONG"'
+    replacement: 'action_class: "{value}"'
+    value: "direction_action_class"
+  - file: "construction.yaml"
+    key: "outbound_side"
+    anchor: 'outbound_side: "BUY"'
+    replacement: 'outbound_side: "{value}"'
+    value: "direction_side"
+  - file: "strategies/rsi_wr_reversion_long.strategy.yaml"
+    key: "policy.rules[0].decision.target.account"
+    anchor: '          account: &account "TBD"'
+    replacement: '          account: &account "{value}"'
+    value: "account"
+  - file: "strategies/rsi_wr_reversion_long.strategy.yaml"
+    key: "policy.rules[0].decision.target.instrument"
+    anchor: '          instrument: &instrument "TBD"'
+    replacement: '          instrument: &instrument "{value}"'
+    value: "instrument"
+  - file: "strategies/rsi_wr_reversion_long.strategy.yaml"
+    key: "policy.rules[0].decision.target.direction"
+    anchor: "          direction: LONG"
+    replacement: "          direction: {value}"
+    value: "direction"
+  - file: "marketfeed.yaml"
+    key: "instruments"
+    anchor: 'instruments: ["TBD"]'
+    replacement: 'instruments: ["{value}"]'
+    value: "instrument"
+  - file: "marketfeed.yaml"
+    key: "account"
+    anchor: 'account: "TBD"'
+    replacement: 'account: "{value}"'
+    value: "account"
+  - file: "marketfeed.yaml"
+    key: "direction"
+    anchor: 'direction: "LONG"'
+    replacement: 'direction: "{value}"'
+    value: "direction"
+  - file: "marketfeed.yaml"
+    key: "journal_path"
+    anchor: 'journal_path: "TBD"'
+    replacement: 'journal_path: "{value}"'
+    value: "journal_path"
+  - file: "finality.yaml"
+    key: "source_revision"
+    anchor: "source_revision: null"
+    replacement: 'source_revision: "{value}"'
+    value: "revision"
+  - file: "broker_scopes.yaml"
+    key: "instance_path"
+    anchor: "instance_path: ../../../docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml"
+    replacement: 'instance_path: "{value}"'
+    value: "broker_profile_instance_path"

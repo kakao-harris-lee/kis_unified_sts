@@ -1,0 +1,230 @@
+"""Focused tests for the ``expected_code_digest`` re-derivation tool."""
+
+from __future__ import annotations
+
+import importlib.util
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_MODULE_PATH = _REPO_ROOT / "tools" / "tos_redigest.py"
+
+
+def _load_redigest_module():
+    spec = importlib.util.spec_from_file_location("tos_redigest", _MODULE_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+tr = _load_redigest_module()
+
+_MEASURED = "a" * 64
+_STALE = "b" * 64
+
+
+@pytest.fixture()
+def fake_repo(tmp_path: Path) -> Path:
+    """A scratch repo root holding copies of the three real ``release.yaml`` files."""
+    for name in tr.RELEASE_FILES:
+        destination = tmp_path / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(_REPO_ROOT / name, destination)
+    return tmp_path
+
+
+def _stub_measurement(monkeypatch: pytest.MonkeyPatch, digest: str) -> None:
+    monkeypatch.setattr(tr, "measure_code_digest", lambda *a, **k: digest)
+
+
+def test_check_is_green_when_every_pin_matches_the_measurement(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name in tr.RELEASE_FILES:
+        tr.write_pin(fake_repo / name, _MEASURED)
+    _stub_measurement(monkeypatch, _MEASURED)
+
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 0
+    assert "OK" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("stale_file", tr.RELEASE_FILES)
+def test_check_is_red_when_any_one_pin_is_stale(
+    stale_file: str,
+    fake_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Parametrized over all three files: the tenant copies have never booted, so a"""
+    for name in tr.RELEASE_FILES:
+        tr.write_pin(fake_repo / name, _MEASURED)
+    tr.write_pin(fake_repo / stale_file, _STALE)
+    _stub_measurement(monkeypatch, _MEASURED)
+
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 1
+    err = capsys.readouterr().err
+    assert _MEASURED in err and _STALE in err
+    assert stale_file in err
+    assert "tools/tos_redigest.py --write" in err
+
+
+def test_write_changes_the_pin_line_in_all_three_files_and_nothing_else(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = {
+        name: (fake_repo / name).read_text(encoding="utf-8")
+        for name in tr.RELEASE_FILES
+    }
+    _stub_measurement(monkeypatch, _MEASURED)
+
+    assert tr.main(["--write", "--repo-root", str(fake_repo)]) == 0
+
+    for name in tr.RELEASE_FILES:
+        after = (fake_repo / name).read_text(encoding="utf-8")
+        assert tr.read_pin(fake_repo / name) == _MEASURED
+        before_lines = before[name].splitlines(keepends=True)
+        after_lines = after.splitlines(keepends=True)
+        assert len(before_lines) == len(after_lines)
+        moved = [i for i, (b, a) in enumerate(zip(before_lines, after_lines)) if b != a]
+        assert len(moved) == 1, f"{name}: {len(moved)} lines changed, expected 1"
+        assert after_lines[moved[0]].startswith("expected_code_digest:")
+
+
+def test_write_is_a_no_op_when_the_pins_are_already_current(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for name in tr.RELEASE_FILES:
+        tr.write_pin(fake_repo / name, _MEASURED)
+    mtimes = {name: (fake_repo / name).stat().st_mtime_ns for name in tr.RELEASE_FILES}
+    _stub_measurement(monkeypatch, _MEASURED)
+
+    assert tr.main(["--write", "--repo-root", str(fake_repo)]) == 0
+    assert "already current" in capsys.readouterr().out
+    for name in tr.RELEASE_FILES:
+        assert (fake_repo / name).stat().st_mtime_ns == mtimes[name]
+
+
+def test_an_unreadable_pin_is_an_error_not_a_pass(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fail-closed: if the key is renamed away, ``--check`` must not conclude that"""
+    target = fake_repo / tr.RELEASE_FILES[0]
+    target.write_text(
+        target.read_text(encoding="utf-8").replace(
+            "\nexpected_code_digest:", "\nrenamed_key:"
+        ),
+        encoding="utf-8",
+    )
+    _stub_measurement(monkeypatch, _MEASURED)
+
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 2
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_measurement_runs_the_runtime_cli_and_returns_a_real_digest() -> None:
+    """The one test that exercises the real subprocess path: the tool must get its"""
+    measured = tr.measure_code_digest(_REPO_ROOT)
+    assert re.fullmatch(r"[0-9a-f]{64}", measured)
+
+
+def test_measurement_output_without_a_digest_line_is_an_error(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``print-digests`` exiting 0 is not the same as ``print-digests`` answering."""
+    (fake_repo / "tos" / "src").mkdir(parents=True)
+    (fake_repo / "tos" / "runtime" / "src").mkdir(parents=True)
+    monkeypatch.setattr(
+        tr.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="python_version: 3.12.12\n", stderr=""
+        ),
+    )
+
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 2
+    err = capsys.readouterr().err
+    assert "ERROR" in err and "refusing to compare nothing" in err
+
+
+def test_a_repo_root_without_the_source_roots_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """⛔ The failure this guard exists for: measuring one tree, pinning another."""
+    assert tr.main(["--check", "--repo-root", str(tmp_path)]) == 2
+    err = capsys.readouterr().err
+    assert "missing source root(s)" in err
+    assert str(tmp_path / "tos" / "src") in err
+
+
+def test_source_roots_that_cannot_serve_the_packages_are_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same failure one step in: the roots EXIST but hold no packages."""
+    (tmp_path / "tos" / "src").mkdir(parents=True)
+    (tmp_path / "tos" / "runtime" / "src").mkdir(parents=True)
+
+    assert tr.main(["--check", "--repo-root", str(tmp_path)]) == 2
+    assert "tos_redigest: ERROR" in capsys.readouterr().err
+
+
+def _add_tree(repo: Path, name: str, digest: str) -> Path:
+    path = repo / "config" / "tos_runtime" / name / "release.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(repo / tr.RELEASE_FILES[0], path)
+    tr.write_pin(path, digest)
+    return path
+
+
+def test_check_is_red_when_a_tree_outside_the_known_three_is_stale(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The incident: the stock tree (#926) kept the old digest while a hand-kept list of"""
+    for name in tr.RELEASE_FILES:
+        tr.write_pin(fake_repo / name, _MEASURED)
+    _add_tree(fake_repo, "cp3-setup-d-stock-005930", _STALE)
+    _stub_measurement(monkeypatch, _MEASURED)
+
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 1
+    assert "cp3-setup-d-stock-005930" in capsys.readouterr().err
+
+
+def test_write_rewrites_a_discovered_tree_too(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    added = _add_tree(fake_repo, "cp3-setup-d-stock-005930", _STALE)
+    _stub_measurement(monkeypatch, _MEASURED)
+
+    assert tr.main(["--write", "--repo-root", str(fake_repo)]) == 0
+    assert tr.read_pin(added) == _MEASURED
+
+
+def test_zero_release_files_is_an_error_not_a_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_measurement(monkeypatch, _MEASURED)
+    assert tr.main(["--check", "--repo-root", str(tmp_path)]) == 2
+
+
+def test_a_missing_required_tree_is_an_error(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (fake_repo / tr.RELEASE_FILES[1]).unlink()
+    _stub_measurement(monkeypatch, _MEASURED)
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 2
+
+
+def test_a_discovered_release_file_without_a_pin_is_an_error(
+    fake_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = fake_repo / "config" / "tos_runtime" / "new-tree" / "release.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("admission_result: ADMIT\n", encoding="utf-8")
+    _stub_measurement(monkeypatch, _MEASURED)
+    assert tr.main(["--check", "--repo-root", str(fake_repo)]) == 2

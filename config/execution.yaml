@@ -1,0 +1,340 @@
+execution:
+  trading_mode: ${TRADING_MODE:PAPER}
+  max_retries: 3
+  retry_delay: 1.0
+  # 레거시 철자 — ExecutionConfig가 requests_per_second로 접어 넣는다.
+  # 두 철자를 동시에 다른 값으로 쓰면 부팅 시 명시적 에러.
+  #
+  # ⚠ PER-ORDER REQUEST BUDGET (이 값과 반드시 같이 읽을 것)
+  # 선물 주문 1건이 kis:ratelimit:futures 버킷에서 소모하는 요청 수:
+  #   체결확인 폴링  = ceil(futures_fill_check_timeout_seconds
+  #                        / futures_fill_check_poll_interval_seconds)
+  #                    x 조회 날짜 walk 1~2회        -> 현재 최대 10
+  #   주문 제출                                      -> 1
+  #   취소 후 재조회 x 날짜 walk                     -> 최대 2
+  #   합계                                           -> 최대 13
+  # 즉 주문 1건이 5.0 rps 버킷을 초과한다. 취소(안전 조작)는 별도 버킷
+  # (cancel_rate_limit_suffix)에서 획득하므로 자기 자신의 폴링에 굶지 않는다.
+  # 5.0은 측정된 브로커 상한이 아니다 — P-13에서 조회 클래스는 clean 1.0 rps /
+  # throttled 2.0 rps로만 측정됐다. 실환경 측정 후 조정 대상.
+  orders_per_second: 5.0
+  account_no: ${KIS_ACCOUNT_NO:}
+  order_request_timeout_seconds: 5.0
+
+  # Futures live execution safety: fill inquiry + timeout cancel
+  futures_fill_check_enabled: true
+  futures_fill_check_poll_interval_seconds: 0.2
+  futures_fill_check_timeout_seconds: 1.0
+  futures_auto_cancel_unfilled: true
+
+  # 타임아웃 취소 재시도 — 취소 1회 실패는 주문이 브로커에 그대로 남는다는 뜻.
+  # 재시도는 결과가 바뀔 수 있는 실패(throttle / 5xx / 429)에만 소모한다.
+  futures_cancel_max_attempts: 3
+  futures_cancel_retry_delay_seconds: 0.3
+  # 취소 전용 rate-limit 버킷 접미사. 취소가 자신을 유발한 체결 폴링 뒤에
+  # 줄서지 않도록 분리한다 (위 PER-ORDER REQUEST BUDGET 참조).
+  cancel_rate_limit_suffix: "-cancel"
+  # 체결 폴링의 rate-limit 획득 타임아웃(초). rate_limit_timeout보다 짧게 두어
+  # 폴링이 버킷을 붙잡는 대신 양보하게 한다. 획득 실패는 QUERY_FAILED로
+  # 표면화된다 ("미체결"이 아니라 "알 수 없음").
+  futures_fill_check_rate_limit_timeout_seconds: 0.5
+
+  # inquire-ccnl 응답 페이지 크기(모의 측정치 P-5b). 절단 "감지"에만 쓰인다 —
+  # 런타임 조회는 방금 낸 주문 1건 타깃 조회라 연속조회 walk를 하지 않는다.
+  futures_inquire_page_size: 15
+
+  # KIS 초당 거래건수 초과(EGW00201) 백오프. retry_delay 대신 적용된다:
+  # 이미 거부당한 페이싱보다 더 촘촘하게 재시도하면 스로틀만 깊어진다.
+  # 아래 값은 측정된 브로커 상한이 아니라 보수적 기본값 —
+  # 실환경 측정 후 조정한다.
+  throttle_backoff_initial_seconds: 2.0
+  throttle_backoff_multiplier: 2.0
+  throttle_backoff_max_seconds: 30.0
+  # 연속 스로틀 N회 = throttle storm(게이트웨이가 전부 거부). EGW00201은
+  # api_error_rate_5min에서 의도적으로 제외되므로, 이 카운트가 해당 상태의
+  # 유일한 경보 신호다. rate가 아니라 count.
+  throttle_storm_alert_threshold: 10
+
+# 유동성 부족 포지션 자동 청산 — 틱 수신 없는 포지션 타임아웃 강제 청산
+stale_position:
+  enabled: true
+  timeout_seconds: 600        # 10분 이상 틱 없으면 청산 (IndicatorEngine stale 180s + 버퍼)
+  min_holding_seconds: 120    # 진입 후 최소 2분은 대기 (진입 직후 스프레드 안정화)
+  asset_classes: [stock]      # 주식만 적용 (선물은 유동성 충분)
+
+# Position tracker batch insert settings
+position_tracker:
+  batch_size: 50                  # Number of closed positions to batch before flush
+  flush_interval_seconds: 5.0     # Max seconds to wait before auto-flush (0 = disabled)
+  # Durably mirror open positions to the SQLite runtime ledger
+  # (position_snapshots) on every auto-flush so open positions survive a
+  # Redis loss / container recreate. Idempotent UPSERT per position id
+  # (no duplicate-row spam). Applies to BOTH stock and futures.
+  snapshot_open_positions: true
+
+# Post-exit re-entry guard — prevents same-symbol churn after a loss/exit signal.
+# This is especially important for stock paper trading where a stop-loss can
+# otherwise be followed by immediate re-entry while the same noisy condition persists.
+entry_reentry_guard:
+  enabled: true
+  scope: symbol_strategy           # symbol_strategy | symbol
+  default_cooldown_seconds: 900    # 15 min for ordinary exits (stock)
+  reason_cooldown_seconds:
+    stop_loss: 3600                # 60 min after hard stop
+    stale_timeout: 3600            # 60 min when tick data disappeared
+    momentum_decay: 1800           # 30 min after failed momentum follow-through
+    vwap_breakdown: 1800           # 30 min after structural intraday breakdown
+    trailing_stop: 600             # 10 min after profit-protecting exit
+  # Futures override (merged when asset_class==futures). SHORT cooldowns — the
+  # active futures setups are mean-reversion (Setup A/C/D), where the reversal
+  # that ends a losing streak IS the winning trade, so a long post-stop cooldown
+  # cuts the strategy's edge. On 2026-07-07 a 30-min stop_loss cooldown would
+  # have cut both reversal wins (10:40 +20, 14:28 +39) → net worse than nothing;
+  # a 3-min cooldown skips only the sub-3-min impulsive re-chases (all losers
+  # that day) and keeps the reversals (+10 vs −8 actual). Keep stop_loss <= ~3
+  # min; >4 min starts cutting fast reversals.
+  futures:
+    default_cooldown_seconds: 600  # 10 min for ordinary exits (target/session)
+    reason_cooldown_seconds:
+      stop_loss: ${FUTURES_REENTRY_STOP_LOSS_COOLDOWN_SECONDS:180}  # 3 min (was 1800 — cut reversals)
+      momentum_decay: 900          # 15 min
+      vwap_breakdown: 900          # 15 min
+      trailing_stop: 600           # 10 min
+      force_close: 1800            # 30 min after crash guard FORCE_CLOSE (Track A exit)
+
+# 전략별 승률 기반 투자금액 동적 조정
+adaptive_sizing:
+  enabled: true
+  min_trades: 5              # 최소 거래 수 (미달 시 1.0x)
+  lookback_trades: 30        # 최근 N거래 기준
+  max_multiplier: 2.0
+  min_multiplier: 0.5
+  tiers:                     # [min_wr, max_wr, multiplier]
+    - [0.0,  0.30, 0.5]     # 0~30%: 절반
+    - [0.30, 0.45, 0.75]    # 30~45%: 축소
+    - [0.45, 0.55, 1.0]     # 45~55%: 기본
+    - [0.55, 0.65, 1.3]     # 55~65%: 확대
+    - [0.65, 1.0,  1.8]     # 65%+: 대폭 확대
+
+# 브로커 잔고 검증 — 시작 시 Redis 포지션과 실제 브로커 잔고 비교
+broker_verification:
+  enabled: true                  # 검증 활성화
+  auto_track_external: true      # 브로커 보유/Redis 누락 포지션 자동 추적
+  remove_redis_only: true        # 브로커 미보유/Redis 잔존 포지션은 런타임 추적에서 제거
+  reconcile_quantity: true       # 수량 불일치 시 브로커 기준 보정
+  reconcile_price: true          # 평균단가 불일치 시 브로커 기준 보정
+  sync_runtime_ledger: true      # 검증 결과를 RuntimeLedger open snapshot에 동기화
+  notify_on_mismatch: true       # 불일치 시 Telegram 알림
+
+# KOSPI200 Mini 슬리피지 모델 (백테스트/페이퍼 트레이딩 전용)
+# 실제 실행 슬리피지를 모델링하여 백테스트 P&L과 실전 결과 격차 최소화
+slippage_model:
+  enabled: true                  # 슬리피지 모델 활성화
+  base_spread_bps: 1.5           # 기본 스프레드 비용 (1.5 bps = 0.015%)
+  depth_impact_factor: 0.8       # 유동성 부족 시 추가 슬리피지 배수 (mini는 유동성 1/9~1/42로 높게 설정)
+  min_slippage_bps: 0.5          # 최소 슬리피지 (0.5 bps)
+  max_slippage_bps: 15.0         # 최대 슬리피지 (15 bps, 극단적 상황 방지)
+  typical_spread: 0.05           # 스프레드 정규화 기준값 (mini futures 일반적 스프레드)
+  default_spread: 0.05           # 호가 데이터 없을 때 기본 스프레드 (backtest/paper fallback)
+  default_depth: 10.0            # 호가 데이터 없을 때 기본 잔량 (backtest/paper fallback)
+
+  # 시간대별 슬리피지 배수 (HH:MM-HH:MM 형식)
+  time_of_day_multipliers:
+    "08:45-09:15": 1.5           # 장 초반 변동성 높음 (08:45 개장~09:15)
+    "09:15-11:30": 1.0           # 정상 거래
+    "11:30-13:00": 1.2           # 점심 시간대 유동성 감소
+    "13:00-15:00": 1.0           # 오후 정상 거래
+    "15:00-15:20": 1.3           # 장 마감 전 변동성 증가
+    "15:20-15:45": 1.8           # 장 마감 직전 스프레드 확대
+
+# Korean ATS (넥스트레이드) Routing Configuration
+# 주식 전용: KRX vs ATS 간 주문 라우팅 의사결정
+ats_routing:
+  enabled: false                             # ATS 라우팅 활성화 (기본값: 비활성)
+  default_venue: KRX                         # 기본 실행 거래소 (KRX | ATS)
+
+  # Rule 1: 가격 개선 임계값
+  price_improvement_threshold_bps: 5.0       # ATS 선택을 위한 최소 가격 개선 (5 bps = 0.05%)
+
+  # Rule 2: 유동성 요구사항
+  min_liquidity_depth: 100.0                 # 최소 호가 잔량 (주문 크기의 배수)
+  min_depth_multiplier: 2.0                  # 주문 크기 대비 최소 잔량 배수
+
+  # Rule 3: 스프레드 제한
+  max_spread_bps: 30.0                       # ATS 사용 최대 스프레드 (30 bps)
+  spread_comparison_enabled: true            # KRX vs ATS 스프레드 비교 활성화
+
+  # Rule 4: 체결 확률 모델
+  ats_fill_rate_threshold: 0.7               # 최소 체결 확률 (70%)
+  prefer_certainty: true                     # 불확실성 높을 때 KRX 선호
+
+  # Rule 5: 시간대별 라우팅 선호도
+  time_of_day_preferences:
+    "09:00-09:30": KRX                       # 장 초반: KRX 선호 (높은 유동성)
+    "09:30-11:30": AUTO                      # 오전: 자동 라우팅
+    "11:30-13:00": KRX                       # 점심: KRX 선호 (ATS 유동성 감소)
+    "13:00-15:00": AUTO                      # 오후: 자동 라우팅
+    "15:00-15:30": KRX                       # 장 마감: KRX 선호
+
+  # Rule 6: 종목별 필터
+  min_market_cap: 1000000000000              # 최소 시가총액 (1조원, ATS 유동성 고려)
+  excluded_sectors: []                       # 제외 섹터 (예: ["금융", "보험"])
+
+  # 백테스트/페이퍼 트레이딩용 ATS 시뮬레이션 파라미터
+  simulation:
+    ats_fill_rate: 0.65                      # ATS 평균 체결률 (65%)
+    price_improvement_mean_bps: 3.0          # 평균 가격 개선 (3 bps)
+    price_improvement_std_bps: 2.0           # 가격 개선 표준편차
+    latency_penalty_ms: 15.0                 # ATS 추가 레이턴시 (15ms)
+
+# KOSPI200 실시간 진입 슬리피지 제어 (선물 전용)
+# tick_size는 거래 상품에 맞춰야 한다: mini=0.02, full(F200)=0.05. 환경변수로
+# 오버라이드 — F200 paper 검증 시 FUTURES_SLIPPAGE_TICK_SIZE=0.05 (기본 mini 0.02).
+# spread_ticks = spread_points / tick_size 이므로 틀리면 진입이 전량 차단된다.
+futures_slippage_control:
+  enabled: true
+  tick_size: ${FUTURES_SLIPPAGE_TICK_SIZE:0.02}
+
+  # order_router 전송 직전 게이트만의 롤백 스위치(F-9 Gate 1b 제어 동등성) — 모놀리식은 이 키를 무시한다.
+  order_router_gate: ${FUTURES_ROUTER_SLIPPAGE_GATE:true}
+
+  # 호가 자신의 시각(quote_ts) 상한(초). order_router 전용 — 모놀리식은 이 키를
+  # 무시한다. 0 = 비활성. evaluate_entry 는 신호 나이(max_signal_age_seconds)만
+  # 보고 호가 시각은 보지 않는다.
+  #   주 케이스: 호가(H0IFASP0)가 얼어붙었는데 체결(H0IFCNT0)은 계속 찍히는 구간.
+  #     producer 가 ~0.2초마다 얼어붙은 호가를 새 체결에 얹어 발행하므로 체결 시각을
+  #     보면 영원히 나이 0 이다. quote_ts 만이 죽은 호가를 드러낸다.
+  #   부 케이스: 체결 자체가 끊긴 구간 — 그때는 두 시각이 함께 늙는다.
+  # 기동 시 시드도 같은 상한을 쓴다(게이트가 꺼져 있어도 적용).
+  order_router_max_quote_age_seconds: ${FUTURES_ROUTER_MAX_QUOTE_AGE_SECONDS:10}
+
+  # Rule 1: 유동성/스프레드 필터
+  max_spread_ticks: 1
+  min_depth_multiplier: 3.0
+
+  # Rule 2: 지정가 후 TIF 관리
+  passive_timeout_seconds: 0.7
+  retry_policy: market_once        # market_once | abort
+  max_price_deviation_ticks: 2
+  max_signal_age_seconds: 2.0
+
+  # Rule 3: 변동성 필터
+  volatility:
+    window_ticks: 20
+    spike_multiplier: 2.5
+    cooldown_seconds: 2.0
+
+  # Rule 3 (Cross-Asset): 대형선물 호가 상태 참조
+  cross_asset:
+    enabled: true
+    reference_symbol: "101S6000"   # KOSPI200 선물 근월 연결코드
+    max_spread_ticks: 2
+
+  # Rule 4: 시간대 필터 (포함 범위)
+  blocked_time_windows:
+    - start: "08:45"
+      end: "08:50"
+    - start: "15:40"
+      end: "15:45"
+
+  # 주요 경제지표 발표 등 수동 블랙아웃 구간
+  event_time_windows: []
+
+  # Paper 전용 완화 오버라이드 (live에는 적용되지 않음)
+  # 목적: 강한 신호 구간에서 진입 시도 수를 늘려 실험 가능성 확보
+  paper_override:
+    enabled: true
+    max_spread_ticks: ${FUTURES_PAPER_MAX_SPREAD_TICKS:6}
+    min_depth_multiplier: ${FUTURES_PAPER_MIN_DEPTH_MULTIPLIER:1.0}
+    max_price_deviation_ticks: ${FUTURES_PAPER_MAX_PRICE_DEVIATION_TICKS:6}
+    max_signal_age_seconds: ${FUTURES_PAPER_MAX_SIGNAL_AGE_SECONDS:3.5}
+    blocked_time_windows: []
+    volatility:
+      spike_multiplier: ${FUTURES_PAPER_VOL_SPIKE_MULTIPLIER:4.0}
+      cooldown_seconds: ${FUTURES_PAPER_VOL_COOLDOWN_SECONDS:0.5}
+    cross_asset:
+      enabled: ${FUTURES_PAPER_CROSS_ASSET_ENABLED:false}
+      max_spread_ticks: ${FUTURES_PAPER_CROSS_ASSET_MAX_SPREAD_TICKS:6}
+
+# Paper trading broker price guard configuration
+# Applied to VirtualBroker to validate fill prices against recent market data
+paper_broker:
+  # Price source freshness guard — reject fills whose price source time
+  # is older than this many seconds (0 disables guard)
+  max_price_staleness_seconds: 30.0
+
+  # Price deviation guard — reject fills deviating more than this fraction
+  # from reference median price (0 disables guard)
+  max_price_deviation_pct: 0.10
+
+  # Lookback window (minutes) for computing reference median price
+  reference_price_lookback_minutes: 5
+
+  # Asset-specific paper execution costs. The orchestrator's legacy defaults are
+  # stock-oriented; futures paper evaluation must not apply 0.1% price slippage
+  # to index points because that is ~25-35 ticks per side around KOSPI200 1350.
+  futures:
+    commission_rate: 0.00003
+    slippage_rate: 0.00002
+
+# KOSPI200 선물 계약 스펙 (계약당 승수, 틱 크기, 수수료)
+# 모든 계약 상수는 여기서 로드 — 코드에 하드코딩 금지
+futures_contract_spec:
+  kospi200_mini:
+    multiplier_krw_per_point: 50000      # KRW per index point (mini = 50,000)
+    tick_size_points: 0.02               # minimum price movement (index points)
+    tick_value_krw: 1000                 # tick_size_points × multiplier_krw_per_point
+    commission_rate: 0.00003             # 0.003% per side (KIS futures rate)
+    symbol_prefix: "A05"                 # KIS symbol prefix for KOSPI200 mini futures
+
+  kospi200_full:
+    multiplier_krw_per_point: 250000     # KRW per index point (full = 250,000)
+    tick_size_points: 0.05               # minimum price movement (index points)
+    tick_value_krw: 12500                # tick_size_points × multiplier_krw_per_point
+    commission_rate: 0.00003             # 0.003% per side (KIS futures rate)
+    symbol_prefix: "101,A01"             # KIS prefixes: 101=연결선물(backtest), A01=live 근월물(F200)
+
+# 주식 종목 스펙 — CP-3 실시간 필드 생산자 전용(M2 주식 MOCK 한 줄, 2026-10-22).
+# 읽는 곳: tools/tos_cp3/live_producer (config/tos_probes/cp3-live-producer-stock-005930.yaml
+# 의 contract_spec_block). 레거시 런타임은 이 블록을 읽지 않는다.
+# 필드 이름은 ContractSpec 그대로다(선물 단위 이름): 주식에서 "point" = 원.
+stock_contract_spec:
+  krx_stock_005930:
+    multiplier_krw_per_point: 1          # 1주 = 가격(원) × 1
+    # KRX 주식 호가단위는 **가격대별 사다리**(1~1,000원)이고 이 스펙 한 칸으로는
+    # 표현할 수 없다. 여기 값은 그 사다리의 공통 약수인 1원 — 생산자가 가격을
+    # 정수(×100)로 싣는 것이 손실 없는지 확인(_assert_scale_covers_tick)하는 데만
+    # 쓰인다. 주문 가격의 호가단위 검증은 tenant 트리의 venue 제약이 맡는다.
+    tick_size_points: 1
+    tick_value_krw: 1
+    commission_rate: 0.00015             # 0.015% per side (KIS 주식 온라인 위탁 기준, 필드 산출에는 쓰이지 않음)
+    symbol_prefix: "005930"              # 종목코드 정확 일치(6자리)
+  # 운영자 지시 2026-11-19 「유동성이 큰 대형주들로 최종 모의투자에서 매수/매도가 잘 동작하게
+  # 완료해」 — 주식 tenant 를 세 종목으로 늘렸다. 값은 005930 블록과 **같다**: 주식 1주는
+  # 가격(원) × 1 이고, 호가단위는 종목이 아니라 가격대가 고르므로(그 사다리는 각 tenant 트리의
+  # venue_constraint_policy.yaml::price_band_ticks 가 맡는다) 여기 `tick_size_points` 는 그
+  # 사다리의 공통 약수 1원 그대로다. `resolve_contract_spec` 은 symbol_prefix 접두 일치로
+  # 고르므로 종목마다 한 블록이 필요하다 — 없으면 생산자가 기동하지 않는다.
+  krx_stock_000660:
+    multiplier_krw_per_point: 1          # 1주 = 가격(원) × 1
+    tick_size_points: 1
+    tick_value_krw: 1
+    commission_rate: 0.00015
+    symbol_prefix: "000660"              # SK하이닉스 — 종목코드 정확 일치(6자리)
+  krx_stock_005380:
+    multiplier_krw_per_point: 1          # 1주 = 가격(원) × 1
+    tick_size_points: 1
+    tick_value_krw: 1
+    commission_rate: 0.00015
+    symbol_prefix: "005380"              # 현대차 — 종목코드 정확 일치(6자리)
+
+# Phase 4 — passive maker + force-close timings (spec §3.2 / §4.3).
+# Loaded by services.order_router._build_and_run via Phase4ExecutionConfig.
+phase4_execution:
+  passive_timeout_seconds: 30          # PassiveMaker._wait_for_fill timeout
+  eod_kst_hour: 15                     # ForceCloseExecutor EOD KST hour
+  eod_kst_minute: 10                   # ForceCloseExecutor EOD KST minute
+  base_quantity: 1                     # OrderRouterDaemon base contracts per signal
+  final_stream_maxlen: 10000           # stream:signal.final XADD MAXLEN ~
+  xread_block_ms: 2000                 # XREADGROUP block (idle wait)
+  xread_batch_size: 10                 # XREADGROUP COUNT

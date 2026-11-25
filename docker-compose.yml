@@ -1,0 +1,351 @@
+# KIS Unified Trading Platform - Docker Compose
+# 개발/운영 환경 통합 구성
+
+services:
+  # =============================================================================
+  # 대시보드 API
+  # =============================================================================
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-dashboard
+    restart: unless-stopped
+    expose:
+      - "8001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Only what the reduced app still reads. The Redis and runtime-storage
+      # blocks (REDIS_*, RUNTIME_STORAGE_*, MARKET_DATA_*,
+      # DASHBOARD_TRADE_STATS_SOURCE) went with their readers in L4/L6; so did
+      # DASHBOARD_KRX_NAME_FALLBACK, KRX_API_KEY, METRICS_REQUIRE_AUTH and
+      # TRADING_ASSET_CLASS. ENVIRONMENT stays — shared/api/cors.py reads it.
+      ENVIRONMENT: "${ENVIRONMENT:-dev}"
+      API_KEY: "${API_KEY:-}"
+      DASHBOARD_REQUIRE_AUTH: "${DASHBOARD_REQUIRE_AUTH:-true}"
+      DASHBOARD_API_KEY: "${DASHBOARD_API_KEY:-}"
+      DASHBOARD_DEV_MODE: "${DASHBOARD_DEV_MODE:-false}"
+      # The file the dashboard reads INSIDE the container. Its host side is
+      # TOS_OPERATOR_PROJECTION_DIR (the mount source under `volumes:` below) —
+      # the two are a pair, and one wrong value looks exactly like no value at
+      # all (`available=false, reason="projection file absent"`).
+      TOS_OPERATOR_PROJECTION_PATH: "${TOS_OPERATOR_PROJECTION_PATH:-/app/data/tos_runtime/operator_projection.json}"
+    volumes:
+      # Read-only throughout: the nested rw bind on config/strategies/built
+      # existed for POST /api/kis-builder/register-paper, which L4 deleted along
+      # with the rest of the builder routes. Nothing in the app writes here now.
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./reports:/app/reports:ro
+      - ./data/runtime:/app/data/runtime
+      - ./data/market:/app/data/market:ro
+      # Phase 5 W4 e5 (plan §2 decision 9): read-only mount of the
+      # tos_runtime-exported operator projection JSON. The dashboard opens
+      # it by path only (never imports tos/tos_runtime, never writes here).
+      #
+      # TOS_OPERATOR_PROJECTION_DIR is the HOST directory the producer writes
+      # into; TOS_OPERATOR_PROJECTION_PATH (above) is the file path INSIDE the
+      # container. Set both or neither — they are not derived from each other.
+      #
+      # The fallback `./data/tos_runtime` does NOT exist in this repository
+      # (`data/` is gitignored). A recreate without `--env-file` therefore has
+      # Docker create a root-owned empty directory here and the page reports
+      # "projection file absent" forever. Always recreate with the env file
+      # (paper: `scripts/deploy_paper.sh`, which forces `--env-file .env.paper`);
+      # the two variables are documented in every `.env*.example`.
+      - ${TOS_OPERATOR_PROJECTION_DIR:-./data/tos_runtime}:/app/data/tos_runtime:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - trading-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
+  # Strategy Builder UI (visual strategy builder, Next.js)
+  # =============================================================================
+  strategy-builder-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.strategy_builder_ui
+      args:
+        NEXT_PUBLIC_API_KEY: "${NEXT_PUBLIC_API_KEY:-${DASHBOARD_API_KEY:-}}"
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-strategy-builder-ui
+    restart: unless-stopped
+    # External access goes through caddy on DASHBOARD_HOST_PORT. Port 3100
+    # is container-internal only and must not be published on the host.
+    expose:
+      - "3100"
+    environment:
+      - KIS_BUILDER_API_BASE=http://dashboard:8001
+      - KIS_BUILDER_API_KEY=${DASHBOARD_API_KEY:-}
+      - NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY:-${DASHBOARD_API_KEY:-}}
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    # Healthcheck mirrors the Dockerfile so docker-compose can express
+    # dependency ordering on it (caddy depends_on service_healthy).
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3100/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - trading-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
+  # Caddy reverse proxy — single external entry on DASHBOARD_HOST_PORT.
+  # STS API → dashboard:8001 (FastAPI, API-only): /api/tos/*, plus /health,
+  #   /docs, /openapi.json and /redoc. That is the dashboard's whole surface
+  #   after legacy removal L4 — the /api/{kis-builder,trading,signals,trades,
+  #   strategies,strategy-lab,strategy-builder,metrics,health}* prefixes,
+  #   /metrics and /ws are gone.
+  # Everything else → strategy-builder-ui:3100 (Next.js): the /tos page, the /
+  #   redirect to it, /_next/* assets, and the catch-all /api proxy, which
+  #   resolves /api/tos/projection so `npm run dev` (no Caddy) works too.
+  # HTTP-only; expose one host web port mapped to Caddy's internal :5080.
+  # =============================================================================
+  caddy:
+    image: caddy:2
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-caddy
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_HOST_PORT:-5081}:5080"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      dashboard:
+        condition: service_healthy
+      strategy-builder-ui:
+        condition: service_healthy
+    networks:
+      - trading-network
+      # Caddy is the ONLY service that joins tunnel-network: it is what makes
+      # `caddy:5080` resolvable for cloudflared without putting cloudflared next
+      # to dashboard:8001. Adding this to another service undoes that isolation.
+      # Caddy's network set changed when this landed, so the FIRST `up -d` after
+      # that — with or without the profile — recreates this container (a few
+      # seconds of UI blip). Recreate it, never `down` the stack for it.
+      - tunnel-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
+  # Cloudflare Tunnel (profile: tunnel) — optional outbound-only public entry.
+  #
+  # Not part of the default stack: `docker compose up -d` ignores a profiled
+  # service, so a checkout with no CLOUDFLARE_TUNNEL_TOKEN brings the stack up
+  # exactly as before. Start and stop it on its own:
+  #
+  #   docker compose --profile tunnel up -d cloudflared   # publish
+  #   docker compose --profile tunnel stop cloudflared    # unpublish (rollback)
+  #
+  # Publishes NO host port, so docs/ports.md stays a one-row table: cloudflared
+  # dials OUT to Cloudflare and reaches Caddy over tunnel-network. The public
+  # hostname → origin mapping (the operator's hostname → http://caddy:5080) and
+  # the Cloudflare Access policy in front of it are configured in the Cloudflare
+  # dashboard, not here — docs/runbooks/cloudflare-tunnel.md.
+  #
+  # SAFETY: a container on trading-network can reach dashboard:8001 directly,
+  # whose /health, /docs and /openapi.json need no API key — so a second public
+  # hostname or a WARP private-network route on this tunnel would put them on
+  # the internet with no Access policy in front. cloudflared is therefore on
+  # tunnel-network ONLY, which holds exactly one other member, caddy. Misrouting
+  # it then reaches the Caddyfile's routing (and Access), not a bare service
+  # port. Do not add trading-network here, and keep one public hostname.
+  # =============================================================================
+  cloudflared:
+    # Pinned by tag AND by the manifest-list digest (`docker buildx imagetools
+    # inspect cloudflare/cloudflared:<tag>` prints it; the list digest keeps
+    # per-arch selection working). Never `latest`: an image that moves under a
+    # resident operator stack breaks a working tunnel on an unrelated `up -d`.
+    image: cloudflare/cloudflared:2026.11.1@sha256:e613aadbc2d9511785d2e67a86b0c8ac18dd63a3f9af0d06faf04cbfdcb35f2d
+    profiles: ["tunnel"]
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-cloudflared
+    # Right for a long-lived connector: it must come back after a host reboot or
+    # a Cloudflare-side drop. The cost is that an empty/invalid token restart-
+    # loops instead of failing once — the runbook says to `stop` it and fix the
+    # token rather than wait.
+    restart: unless-stopped
+    # Remotely-managed tunnel: ingress rules travel with the token from
+    # Cloudflare, so there is no local config.yml to keep in step.
+    # --no-autoupdate keeps the pinned version pinned.
+    command: tunnel --no-autoupdate run
+    environment:
+      # SAFETY: the tunnel token IS the credential that lets anything claim this
+      # tunnel — it only ever comes from the uncommitted env file. A literal
+      # value here would be a committed secret. `:-` (not `:?`) on purpose: an
+      # unset token must not break `docker compose config` or the default stack,
+      # only this service, which no one starts without the profile.
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+    depends_on:
+      # Short form: caddy declares no healthcheck, so service_started is all
+      # that can be expressed. cloudflared retries a refused origin anyway.
+      - caddy
+    networks:
+      # Isolation boundary — see the SAFETY note above. `caddy:5080` still
+      # resolves because caddy joins this network too.
+      - tunnel-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
+  # Redis (상태 캐시, 세션)
+  # =============================================================================
+  # NOTE: REDIS_PASSWORD uses ${VAR-default} (no colon) on purpose — an explicitly
+  # empty REDIS_PASSWORD must pass through as "no auth" (e.g. the paper stack points
+  # at a password-less host redis via host.docker.internal). With ${VAR:-default} an
+  # empty value would become "changeme" and AUTH would fail against that server.
+  # Unset still defaults to changeme. Do NOT re-add the colon.
+  redis:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD-changeme}"
+    volumes:
+      - redis-data:/data
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - "${REDIS_PASSWORD-changeme}"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "REDISCLI_AUTH=$${REDIS_PASSWORD-changeme} redis-cli ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-network
+
+  # =============================================================================
+  # Prometheus (메트릭 수집)
+  # =============================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    networks:
+      - trading-network
+
+# =============================================================================
+# Test runner (profile: test)
+#
+# Runs the full pytest suite in Docker, mirroring .github/workflows/test.yml
+# (parallel non-serial pass + serial pass). Uses an isolated, password-less,
+# ephemeral `redis-test` — it never touches the real `redis` service or its
+# paper-trading DB 1.
+#
+#   # Run the whole suite (exit code = pytest result):
+#   docker compose --profile test run --rm tests
+#
+#   # Ad-hoc subset:
+#   docker compose --profile test run --rm tests pytest tests/unit/strategy -q
+#
+#   # Tear down the lingering redis-test afterwards:
+#   docker compose --profile test down
+#
+# `run` starts only `tests` + its dependency `redis-test` (not the default
+# stack). KIS_RUN_LIVE_INFRA_TESTS=1 opts into the live-infra tests — safe here
+# because that target is the isolated redis-test, not DB 1 on the real server.
+# =============================================================================
+  redis-test:
+    image: redis:7-alpine
+    profiles: ["test"]
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-redis-test
+    # No auth + ephemeral (no volume): matches CI's bare redis:7-alpine and
+    # keeps the suite isolated from the real `redis` service's paper DB 1.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - trading-network
+
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    image: ${COMPOSE_PROJECT_NAME:-kis}-tests
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-tests
+    environment:
+      ENVIRONMENT: test
+      REDIS_URL: "redis://localhost:6379/1"
+      # Default off (CI parity). The live-infra tests write real Redis keys, but
+      # here that target is the isolated redis-test, so 1 is safe if desired.
+      KIS_RUN_LIVE_INFRA_TESTS: "${KIS_RUN_LIVE_INFRA_TESTS:-0}"
+    # Share redis-test's network namespace so Redis is reachable at
+    # localhost:6379 exactly like CI's runner. NOTE: network_mode forbids a
+    # sibling `networks:` key — connectivity is inherited from redis-test.
+    network_mode: "service:redis-test"
+    depends_on:
+      redis-test:
+        condition: service_healthy
+
+# =============================================================================
+# 네트워크
+# =============================================================================
+networks:
+  trading-network:
+    driver: bridge
+
+  # Two members only: caddy and (under profile `tunnel`) cloudflared. It exists
+  # so the tunnel connector cannot reach dashboard:8001 or redis directly —
+  # see the SAFETY note on the cloudflared service. Created on the first
+  # `--profile tunnel up -d`; harmless and empty when the tunnel is not running.
+  tunnel-network:
+    driver: bridge
+
+# =============================================================================
+# 볼륨
+# =============================================================================
+volumes:
+  redis-data:
+  prometheus-data:
+  caddy-data:
+  caddy-config:

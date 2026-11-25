@@ -1,0 +1,34 @@
+# Post-ACK fill observer + stock broker witness — CP-3 stock tenant / KIS 모의투자 (VTS), GET only
+order_inquiry_tr_id: "VTTC0081R"
+order_inquiry_path: "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+balance_tr_id: "VTTC8434R"
+balance_path: "/uapi/domestic-stock/v1/trading/inquire-balance"
+max_pages: 10
+poll_interval_ms: 9000
+witness_request_timeout_s: 5.0
+loop_witness_request_timeout_s: 2.0
+loop_witness_deadline_ms: 3000
+loop_witness_deadline_max_ms: 9000
+poll_deadline_ms: 4000
+overdue_after_ms: 600000
+finality_retry_interval_ms: 60000
+prior_day_poll_interval_ms: 600000
+release_snapshot_max_age_ms: 6000
+
+held_position_poll_interval_ms: 36000
+held_position_max_age_ms: 44000
+
+ack_date_recovery_lookback_trading_days: 5
+
+broker_flat_release: true
+broker_flat_release_settle_ms: 30000
+
+uncertain_send_reconcile: true
+uncertain_send_settle_ms: 30000
+uncertain_send_ord_tmd_tolerance_s: 5
+uncertain_send_foreign_min_age_s: 120
+# SAFETY: 호스트 시계가 브로커 Date 헤더에서 이만큼 넘게 벗어나면 행의 «나이» 가 아무것도 증명하지 못한다 — 우리 주문을 남의 것으로 버리고 풀어 두 번 보낸다 (#1138)
+uncertain_send_broker_skew_tolerance_s: 30
+uncertain_send_side_codes:
+  BUY: "02"
+  SELL: "01"

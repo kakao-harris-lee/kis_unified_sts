@@ -1,0 +1,469 @@
+"""Base configuration class for services.
+
+Provides standard from_yaml() and from_env() class methods that eliminate
+boilerplate across service config classes.
+
+Usage:
+    from pydantic import Field
+    from shared.config.base import ServiceConfigBase
+
+    class MyServiceConfig(ServiceConfigBase):
+        threshold: float = Field(default=0.5, description="Detection threshold")
+        enabled: bool = Field(default=True, description="Service enabled")
+        database: str = Field(default="market", description="Database name")
+
+    # Load from YAML file
+    config = MyServiceConfig.from_yaml("my_service.yaml")
+
+    # Load from YAML with specific section
+    config = MyServiceConfig.from_yaml("services.yaml", section="my_service")
+
+    # Load from environment variables
+    config = MyServiceConfig.from_env(env_prefix="MY_SERVICE_")
+
+    # Load from YAML with env var overrides
+    config = MyServiceConfig.from_yaml(
+        "my_service.yaml",
+        apply_env_overrides=True,
+        env_prefix="MY_SERVICE_"
+    )
+
+    # Validate database name
+    MyServiceConfig.validate_database_name("market")  # OK
+    MyServiceConfig.validate_database_name("drop; table")  # Raises ValueError
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+from pathlib import Path
+from typing import Any, ClassVar
+
+try:
+    from typing import Self  # Python 3.11+
+except ImportError:
+    from typing import Self  # Python 3.10 backport
+
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from shared.config.dotenv_guard import TRUTHY_VALUES
+from shared.config.loader import ConfigError, ConfigLoader, ConfigNotFoundError
+
+logger = logging.getLogger(__name__)
+
+
+class ConfigSectionNotFoundError(ConfigError):
+    """A requested config section could not be resolved in the loaded document.
+
+    Deliberately **not** a subclass of :class:`ConfigNotFoundError`. A missing
+    config *file* is an opt-in to defaults across this codebase (many call sites
+    are written ``except ConfigNotFoundError: return cls()``). A missing
+    *section* inside a file that does exist is a configuration defect, and must
+    not inherit that escape hatch — otherwise the config silently loads as pure
+    Pydantic defaults, indistinguishable from a file that was read successfully.
+    """
+
+
+# Sentinel: distinguishes "section resolved to None" from "section unresolvable".
+_UNRESOLVED = object()
+
+
+class ServiceConfigBase(BaseModel):
+    """Base class for service configurations.
+
+    Provides standard configuration loading patterns:
+    - from_yaml(): Load from YAML file with optional section extraction
+    - from_env(): Load from environment variables with prefix
+    - Environment variable precedence over YAML values
+    - Database name validation
+
+    All subclasses automatically inherit these methods and can customize
+    behavior by overriding class attributes or methods.
+
+    Class Attributes:
+        _default_config_file: Default YAML filename (e.g., "my_service.yaml")
+        _default_section: Default section name in YAML file
+        _env_prefix: Default environment variable prefix
+    """
+
+    model_config = ConfigDict(
+        frozen=False,  # Allow mutation for now, subclasses can override
+        extra="ignore",  # Ignore unknown fields from YAML/env
+        validate_assignment=True,  # Validate on field assignment
+    )
+
+    # Class-level configuration (override in subclasses)
+    _default_config_file: ClassVar[str | None] = None
+    _default_section: ClassVar[str | None] = None
+    _env_prefix: ClassVar[str | None] = None
+
+    # Database name validation pattern (alphanumeric + underscore only)
+    _DATABASE_NAME_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^[a-zA-Z0-9_]+$")
+
+    @classmethod
+    def from_yaml(
+        cls,
+        path: str | None = None,
+        section: str | None = None,
+        *,
+        sections: list[str] | None = None,
+        apply_env_overrides: bool = False,
+        env_prefix: str | None = None,
+    ) -> Self:
+        """Load configuration from YAML file.
+
+        Args:
+            path: YAML file path (relative to config directory).
+                  If None, uses cls._default_config_file.
+            section: Section name to extract from YAML. May be a dotted path
+                     into nested mappings ("strategy.entry.params"); a literal
+                     top-level key of that name takes precedence.
+                     If None, uses cls._default_section.
+                     If neither is set, the entire YAML is the config dict.
+                     A requested section that cannot be resolved raises
+                     ConfigSectionNotFoundError rather than silently falling
+                     back to defaults.
+                     Mutually exclusive with sections.
+            sections: Merge multiple top-level section keys into a single
+                      dict (later sections override earlier ones). Useful when
+                      config fields span multiple YAML sections.
+                      Mutually exclusive with section.
+            apply_env_overrides: If True, apply environment variable overrides
+                                 after loading from YAML (default: False)
+            env_prefix: Environment variable prefix for overrides
+                        (e.g., "MY_SERVICE_"). If None, uses cls._env_prefix.
+
+        Returns:
+            Config instance with values from YAML (and optionally env vars)
+
+        Raises:
+            ValueError: If both section and sections are provided.
+            ConfigNotFoundError: If config file not found
+            ConfigSectionNotFoundError: If the requested section (explicit or
+                from _default_section) does not resolve in the document.
+            ConfigValidationError: If validation fails
+
+        Example:
+            # Load from default file
+            config = MyConfig.from_yaml()
+
+            # Load from specific file
+            config = MyConfig.from_yaml("my_service.yaml")
+
+            # Load specific section
+            config = MyConfig.from_yaml("services.yaml", section="my_service")
+
+            # Merge multiple sections
+            config = MyConfig.from_yaml("ml/rl.yaml", sections=["env", "reward"])
+
+            # Load with env var overrides
+            config = MyConfig.from_yaml(
+                "my_service.yaml",
+                apply_env_overrides=True,
+                env_prefix="MY_SERVICE_"
+            )
+        """
+        if section is not None and sections is not None:
+            raise ValueError("Cannot specify both 'section' and 'sections'")
+
+        # Determine config file path
+        if path is None:
+            path = cls._default_config_file
+            if path is None:
+                raise ValueError(
+                    f"{cls.__name__} requires 'path' argument or "
+                    "_default_config_file class attribute"
+                )
+
+        # Load YAML via ConfigLoader
+        # For absolute paths, read YAML directly (bypass ConfigLoader path validation
+        # which restricts paths to the config directory).
+        if os.path.isabs(str(path)):
+            import yaml
+
+            abs_path = str(path)
+            if not os.path.exists(abs_path):
+                raise ConfigNotFoundError(f"Config file not found: {abs_path}")
+            with open(abs_path, encoding="utf-8") as f:
+                raw_data = yaml.safe_load(f) or {}
+        else:
+            # If KIS_CONFIG_DIR env var is set and differs from ConfigLoader's
+            # current config dir (e.g. during tests with monkeypatched env),
+            # update ConfigLoader to use the new directory.
+            env_config_dir = os.environ.get("KIS_CONFIG_DIR")
+            if env_config_dir and Path(env_config_dir) != ConfigLoader.get_config_dir():
+                ConfigLoader.set_config_dir(env_config_dir)
+            raw_data = ConfigLoader.load(path)
+
+        # Multi-section merge: combine multiple top-level keys
+        if sections is not None:
+            config_data: dict[str, Any] = {}
+            if isinstance(raw_data, dict):
+                for key in sections:
+                    section_data = raw_data.get(key, {})
+                    if isinstance(section_data, dict):
+                        config_data.update(section_data)
+        else:
+            # Single-section extraction
+            if section is not None:
+                section_key = section
+            elif cls._default_section is not None:
+                section_key = cls._default_section
+            else:
+                section_key = None
+
+            if section_key is not None:
+                resolved = cls._resolve_section(raw_data, section_key)
+                if resolved is _UNRESOLVED:
+                    available = (
+                        sorted(raw_data)
+                        if isinstance(raw_data, dict)
+                        else "<not a mapping>"
+                    )
+                    raise ConfigSectionNotFoundError(
+                        f"{cls.__name__}: section {section_key!r} could not be "
+                        f"resolved in {path!r}. Available top-level keys: "
+                        f"{available}. Refusing to fall back to defaults — fix "
+                        f"the section name or the config file."
+                    )
+                config_data = resolved
+            else:
+                config_data = raw_data
+
+        # Ensure we have a dict
+        if not isinstance(config_data, dict):
+            config_data = {}
+
+        # Remove None values so Pydantic field defaults take effect
+        # (e.g. YAML "name: null" should fall back to the field default)
+        config_data = {k: v for k, v in config_data.items() if v is not None}
+
+        # Apply environment variable overrides if requested
+        if apply_env_overrides:
+            prefix = env_prefix if env_prefix is not None else cls._env_prefix
+            if prefix:
+                env_overrides = cls._extract_env_vars(prefix)
+                config_data.update(env_overrides)
+
+        # Create and validate config instance
+        return cls(**config_data)
+
+    @classmethod
+    def _resolve_section(cls, raw_data: Any, section_key: str) -> Any:
+        """Resolve a section key against a loaded YAML document.
+
+        A literal top-level key always wins, so existing flat section names keep
+        their exact behaviour even if they happen to contain a dot. Otherwise a
+        dotted key is walked as a path into nested mappings, which is what
+        declarations like ``"strategy.entry.params"`` have always meant.
+
+        Args:
+            raw_data: The parsed YAML document.
+            section_key: Section name, optionally a dotted nested path.
+
+        Returns:
+            The resolved node, or the module-level ``_UNRESOLVED`` sentinel.
+            A section that exists but holds ``None`` resolves to ``None`` — that
+            is a declared-but-empty section, not an unresolvable one.
+        """
+        if not isinstance(raw_data, dict):
+            return _UNRESOLVED
+        if section_key in raw_data:
+            return raw_data[section_key]
+        if "." not in section_key:
+            return _UNRESOLVED
+
+        node: Any = raw_data
+        for part in section_key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return _UNRESOLVED
+            node = node[part]
+        return node
+
+    @classmethod
+    def from_env(cls, env_prefix: str | None = None, **overrides: Any) -> Self:
+        """Load configuration from environment variables.
+
+        Args:
+            env_prefix: Environment variable prefix (e.g., "MY_SERVICE_").
+                        If None, uses cls._env_prefix.
+                        Prefix is stripped before mapping to field names.
+            **overrides: Additional field overrides (take precedence over env vars)
+
+        Returns:
+            Config instance with values from environment variables
+
+        Example:
+            # With default prefix from class
+            config = MyConfig.from_env()
+
+            # With custom prefix
+            config = MyConfig.from_env(env_prefix="MY_SERVICE_")
+
+            # With overrides
+            config = MyConfig.from_env(env_prefix="MY_SERVICE_", enabled=False)
+
+        Environment variable mapping:
+            - Field name is converted to uppercase
+            - Prefix is prepended
+            - Example: field "threshold" with prefix "MY_SERVICE_"
+                       maps to "MY_SERVICE_THRESHOLD"
+            - Boolean fields: "true"/"false" (case-insensitive)
+            - Numeric fields: parsed as int/float
+        """
+        # Determine prefix
+        prefix = env_prefix if env_prefix is not None else cls._env_prefix
+        if prefix is None:
+            # No prefix - load all model fields from env directly
+            prefix = ""
+
+        # Extract env vars matching prefix
+        env_data = cls._extract_env_vars(prefix)
+
+        # Apply overrides (take precedence)
+        env_data.update(overrides)
+
+        # Create and validate config instance
+        return cls(**env_data)
+
+    @classmethod
+    def _extract_env_vars(cls, prefix: str) -> dict[str, Any]:
+        """Extract environment variables matching prefix and field names.
+
+        Args:
+            prefix: Environment variable prefix (e.g., "MY_SERVICE_")
+
+        Returns:
+            Dictionary mapping field names to parsed values
+        """
+        env_data: dict[str, Any] = {}
+
+        # Get field names from model
+        field_names = set(cls.model_fields.keys())
+
+        # Scan environment variables
+        for env_key, env_value in os.environ.items():
+            # Check if env var matches prefix
+            if not env_key.startswith(prefix):
+                continue
+
+            # Strip prefix and convert to lowercase for field matching
+            field_name = env_key[len(prefix) :].lower()
+
+            # Check if this matches a model field
+            if field_name not in field_names:
+                continue
+
+            # Get field info for type conversion
+            field_info = cls.model_fields[field_name]
+            field_type = field_info.annotation
+
+            # Parse value based on type
+            try:
+                parsed_value = cls._parse_env_value(env_value, field_type)
+                # Skip None values so Pydantic field defaults take effect
+                # (empty string env var → None → use field default)
+                if parsed_value is not None:
+                    env_data[field_name] = parsed_value
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    f"Failed to parse {env_key}={env_value} as {field_type}: {e}"
+                )
+                # Use raw string value as fallback
+                env_data[field_name] = env_value
+
+        return env_data
+
+    @classmethod
+    def _parse_env_value(cls, value: str, field_type: Any) -> Any:
+        """Parse environment variable value based on field type.
+
+        Args:
+            value: String value from environment variable
+            field_type: Target field type annotation
+
+        Returns:
+            Parsed value in appropriate type
+
+        Raises:
+            ValueError: If parsing fails
+        """
+        # Handle None/optional types
+        if value == "":
+            return None
+
+        # Get the actual type (unwrap Optional, etc.)
+        actual_type = field_type
+        if hasattr(field_type, "__origin__"):
+            # Handle Optional[X] -> X
+            if field_type.__origin__ is type(None) or str(field_type).startswith(
+                "typing.Union"
+            ):
+                args = getattr(field_type, "__args__", ())
+                # Get first non-None type
+                actual_type = next((t for t in args if t is not type(None)), str)
+
+        # Type-specific parsing
+        if actual_type is bool or str(actual_type) == "<class 'bool'>":
+            # The shared truthy set, not a fourth copy of it (#847).
+            return value.lower() in TRUTHY_VALUES
+        elif actual_type is int or str(actual_type) == "<class 'int'>":
+            return int(value)
+        elif actual_type is float or str(actual_type) == "<class 'float'>":
+            return float(value)
+        else:
+            # Default to string
+            return value
+
+    @classmethod
+    def validate_database_name(cls, name: str) -> str:
+        """Validate database name to prevent SQL injection.
+
+        Args:
+            name: Database name to validate
+
+        Returns:
+            Validated database name (same as input)
+
+        Raises:
+            ValueError: If name contains invalid characters
+
+        Example:
+            validate_database_name("market")  # OK
+            validate_database_name("market_data")  # OK
+            validate_database_name("drop; table")  # Raises ValueError
+        """
+        if not cls._DATABASE_NAME_PATTERN.match(name):
+            raise ValueError(
+                f"Database name must contain only alphanumeric characters "
+                f"and underscores, got: {name!r}"
+            )
+        return name
+
+    @field_validator("database", mode="before", check_fields=False)
+    @classmethod
+    def _validate_database_field(cls, v: Any) -> Any:
+        """Validate 'database' field if present in the model.
+
+        This validator runs automatically for any subclass that has
+        a 'database' field.
+        """
+        if isinstance(v, str):
+            return cls.validate_database_name(v)
+        return v
+
+    def model_dump_yaml(self) -> str:
+        """Export configuration as YAML string.
+
+        Returns:
+            YAML representation of config
+
+        Example:
+            config = MyConfig(threshold=0.7, enabled=True)
+            print(config.model_dump_yaml())
+        """
+        import yaml
+
+        return yaml.dump(self.model_dump(), default_flow_style=False, sort_keys=False)

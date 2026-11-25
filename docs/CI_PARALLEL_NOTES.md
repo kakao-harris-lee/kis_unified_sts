@@ -1,0 +1,298 @@
+# CI Parallel Test Execution — Notes
+
+**Status**: **ENABLED in CI (2026-06-03)** via a two-pass split — `-n auto -m "not serial"`
+parallel pass + a serial pass for `serial`-marked tests.
+
+## Update 2026-11-15 — the `tos-firewall` serial pass has no members
+
+`tools/tos_evidence_scan_measure.py` and its test were retired (no CI step,
+cron, runner script or runbook called the tool). That test was the **only**
+`serial`-marked test in the `tos-firewall` governance corpus, so the second
+pass there now collects nothing and pytest exits 5 (`no tests ran`).
+
+The pass was kept rather than deleted: the `-m "not serial"` filter on the
+first pass would otherwise silently skip the next `serial` test anyone adds
+under `tests/tools/test_tos_*.py` or `tests/tos_l3`. The step accepts exit 5
+and **only** exit 5 — a real serial-pass failure still turns it red.
+
+The `test` workflow's serial pass is unaffected; `tests/tools/test_cp3_*.py`
+and `test_broker_probes_ca.py` still carry `serial` markers and still run there
+(`test_bcp_digest.py` went with `tools/bcp_digest.py` on 2026-11-15).
+
+The sections below are the record of earlier changes to the split; the
+2026-05-09 pre-enablement analysis was deleted on 2026-11-20 (it named tests
+removed in the legacy-runtime removal) — `git log --diff-filter=D -- docs/`.
+
+## Update 2026-06-03 — enabled via parallel + serial split
+
+The `test` job's "Run tests" step now runs:
+
+```bash
+pytest tests/ --ignore=tests/performance -n auto -m "not serial" --cov=... --cov-report= && \
+pytest tests/ --ignore=tests/performance -m serial --cov=... --cov-append --cov-report=xml ...
+```
+
+Rather than fix every parallel-unsafe test for in-process worker isolation, the
+genuinely-unsafe tests are marked `@pytest.mark.serial` (registered in
+`pyproject.toml`) and run in a second, non-parallel pass where there is no
+concurrent worker to race them. xdist workers are separate **processes**, so
+in-process singletons are already isolated; the only cross-worker hazards are
+*external* shared state, which the serial pass removes:
+
+- `tests/integration/test_graceful_shutdown.py` — shared Redis DB 1 keys
+- `tests/integration/test_redis_tls.py` — real Redis, short socket timeouts
+- `tests/unit/kis/test_rate_limiter.py::...test_acquire_respects_penalty` — wall-clock timing
+- `tests/unit/dashboard/routes/test_health.py::...test_caches_response_1s` — 1s cache window
+
+Hypothesis' shared example DB is isolated per worker via
+`HYPOTHESIS_STORAGE_DIRECTORY` in `tests/conftest.py` (parallel pass).
+
+`tests/performance/` is excluded from both passes and runs in its own
+`performance` job, which measures each benchmark over several rounds and
+compares medians. That job, its thresholds, and how to regenerate its baseline
+are documented in ``docs/performance_slas.md`` (2026-11-13 은퇴 — `git log --diff-filter=D -- docs/`).
+
+Validated: full suite at `-n auto` (16 workers, the worst-case contention,
+≥ CI's 2–4) — parallel pass 0 failures, serial pass 0 failures.
+
+## Update 2026-10-22 — the two-pass split reached `tos-firewall`, and both workflows were sharded
+
+Measured before the change (green runs 39619902863 / 39732037775):
+
+| workflow / job | wall | the steps that were 85% of it |
+| --- | --- | --- |
+| `Tests` / `test` | 973s | `Run tests` 874s = parallel pass 667s + serial pass 204s |
+| `tos-firewall` / `tos-firewall` | 742s | governance batteries 202s, `tos/runtime/tests` 187s, Layer 4 mutation battery 131s, `tos/tests` 114s |
+
+Three things changed, and only the first is new behaviour for any test:
+
+1. **`tos-firewall` ran one unfiltered pass and so ignored the `serial`
+   marker.** `tests/tools/test_tos_evidence_scan_measure.py::test_a_stop_signal_
+   during_the_end_of_run_bookkeeping_is_deferred_not_lost` has carried
+   `@pytest.mark.serial` all along, but the step that runs it — the tos
+   governance batteries — ran `pytest <paths> -q` with no `-m` filter, so the
+   marker did nothing there. Under `-n 4` the test fails: it blocks SIGTERM
+   with `signal.pthread_sigmask` and then sends itself one, expecting it to
+   stay pending until the bookkeeping finishes — but `pthread_sigmask` blocks
+   the **calling thread only**, and an xdist worker is multi-threaded (execnet
+   runs a receiver thread), so the signal lands on the other thread and the
+   measure tool's handler raises `MeasureSignalled` out of the middle of
+   `Path.write_text`. The step is now the same parallel+serial two-pass this
+   document describes for `test.yml`.
+
+2. **The other tos suites are hermetic and went straight to `-n auto`.**
+   `tos/tests` has no `.env`, network or Redis; `tos/runtime/tests` is loopback
+   + `tmp_path` only with autouse network/write guards. Neither has any
+   `serial`-marked test (the marker is not even registered in their
+   `[tool.pytest.ini_options]`, so `--strict-markers` would reject one). xdist
+   workers talk to the controller over execnet **pipes**, not sockets, so the
+   runtime suite's socket guard never sees them. Measured locally at `-n 4`
+   (16-core host, pinned to 4 to mimic the runner): `tos/tests` 119.8s → 48.4s,
+   `tos/runtime/tests` 338.3s → 93.7s, identical pass counts.
+   `tos/runtime/cp3/tests` is left serial — it measures 3s, below xdist's own
+   spin-up.
+
+3. **Both workflows went from one long job to several parallel ones, keeping
+   their check NAME.** `tos-firewall` is now `tos-firewall-gates` +
+   `tos-firewall-tests` + `tos-firewall-static`, and `test` is now
+   `test (shard a)` + `test (shard b)` + `test-serial`. In each workflow a
+   final aggregator job carries the original name, `needs:` all the others and
+   fails unless every one of them reports `success` (`skipped` and `cancelled`
+   included) — so a required-check setting that names `tos-firewall` or `test`
+   still means "all of it passed". The shard boundary is one list read twice
+   (`SHARD_A_PATHS` as targets for shard a, as `--ignore` for shard b), so a
+   new test directory lands in shard b rather than nowhere, and a renamed one
+   makes shard a exit 4 by name.
+
+Nothing was removed from either suite.
+
+### `--dist load` was idling half of shard a away
+
+Worth recording separately, because "add more workers / add more shards" was the
+wrong answer and the numbers said so. At `-n 4` on one host:
+
+| | wall |
+| --- | ---: |
+| `tests/tools`, `--dist load` | 425s (re-measured 426s) |
+| `tests/tools`, `--dist worksteal` | **239s** |
+| `tests/tools/test_cp3_bootproof.py` alone | 168s |
+| `tests/tools` minus that one file | 58s |
+
+The two halves add to 226s but together took 425s. That super-additivity is the
+whole finding: xdist's default `load` hands each worker a chunk of the queue up
+front, so whichever worker draws the 136s sleeper in `test_cp3_bootproof.py`
+finishes long after the other three go idle. `worksteal` lets the idle ones take
+queued tests back, and recovers nearly all 200s of it.
+
+The flag is on shard a only. The one A/B that pointed the other way — a ~990-test
+governance battery of mostly short tests, where worksteal measured *slower* — is
+the same shape as shard b at a tenth the size, so shard b keeps `load`. (That
+counter-sample was taken while the host was at load average 14.6/16, so it is
+weak evidence; it is enough to not spray the flag, not enough to act on further.)
+
+### The one test that changed
+
+`tests/tools/test_tos_evidence_scan_measure.py::test_the_output_directory_lock_refuses_a_second_run_and_survives_a_kill`
+gained a `_await_exec()` wait, and it is the only test body this work touched.
+
+`subprocess.Popen` returns when the child's close-on-exec error pipe reaches EOF,
+i.e. once `execve` has got far enough to close it — the child is already *inside*
+exec. But the kernel has not yet published `mm->arg_start`/`arg_end` for the new
+image, so `/proc/<pid>/cmdline` reads back **empty** for a moment longer.
+`read_lock()` reads exactly that file and treats an empty or non-matching one as
+"owner gone", so spawning a child, writing a lock naming it, and asserting the
+lock is live races that publication.
+
+Which window it is was measured rather than assumed: spawning `/bin/sleep` (an
+argv0 that differs from the parent's) 400 times and reading the file immediately
+gave 154 fully exec'd, 246 empty, and **0** showing the parent's own cmdline. A
+pre-exec fork would have shown the parent's command line — the child shares its
+mm until exec replaces it — and it never appeared.
+
+The cost, reproduced standalone over 300 spawns with the same interposed JSON
+write: `read_lock` said "owner gone" **3.7%** of the time with the host idle and
+**6.3%** with every core busy. The serial battery had been carrying that ~4% all
+along; `-n auto` on a 4-vCPU runner simply pushed it over the line often enough
+to be seen.
+
+This is the reason it was fixed rather than marked `serial`: the marker would
+have halved the rate and left the test asserting a reason that was not the real
+one. Sibling tests that spawn a child and immediately read `/proc/<pid>/status`
+PPid are **not** in this class — that field is populated at fork.
+
+## Update 2026-10-02 — the session is hermetic by construction (#698)
+
+A pytest process must never reach a real `.env`, a real broker credential or a
+real token cache. On 2026-09-15 it did: a unit run inside a worktree under
+`<repo>/.claude/worktrees/<name>/` loaded the **primary** checkout's `.env` and
+had a real KIS token issued and written to `.kis_token_real`. The mechanism was
+python-dotenv's `find_dotenv()`, which walks from the calling file up to the
+filesystem root, reached by an argument-less `load_dotenv()` in
+`cli/commands/common.py` that ran during collection.
+
+### The rules
+
+- **Entrypoints never walk.** Every `.env` load goes through
+  `shared.config.dotenv_guard.load_project_dotenv()`, which reads at most
+  `<checkout>/.env` and then `<cwd>/.env`. No ancestor directory is ever
+  consulted, so a nested worktree cannot reach the checkout above it. The
+  checkout wins because thirteen scripts previously loaded `REPO_ROOT/.env`
+  explicitly: preferring the working directory would make them read another
+  project's `.env` when run from that project's directory.
+- **The rule is enforced, not just written here.**
+  `tests/unit/config/test_dotenv_call_gate.py` walks the AST of every `.py`
+  file **git tracks** and rejects a call to or import of `load_dotenv`,
+  `dotenv_values` or `find_dotenv` outside a four-entry allowlist. Tracked
+  files rather than an `rglob`, because a worktree under
+  `.claude/worktrees/<name>/` would otherwise be scanned as part of the
+  primary checkout and report every nested copy as an offender. The runtime
+  guard below only fires for modules a test imports, which is almost no script
+  under `scripts/analysis/`; the gate covers the rest. Three helpers parse
+  `.env` with their own line loop where no dotenv-shaped check can see them —
+  each is registered in the same file with its function name and a reason,
+  and the gate checks by AST that the named function *calls*
+  `hermetic_mode_enabled`. A substring check would pass on the import line
+  alone.
+- **`KIS_TEST_HERMETIC` switches the loader off.** `tests/conftest.py` sets it
+  at import time, before collection. It is the only knob this adds, it is a
+  test switch rather than a configuration surface, and the paper/live runtime
+  never sets it — with it unset the entrypoints behave exactly as before. The
+  name and its truthy values live in `dotenv_guard` and are imported by the
+  test-side helper, so the two halves of the switch cannot drift apart.
+- **The credential namespace is emptied.** The whole `KIS_*` and `TELEGRAM_*`
+  space is removed from `os.environ`, whatever its source — a `.env` already
+  loaded, or variables exported in the operator's shell. Only the test switches
+  survive (`KIS_TEST_HERMETIC`, `KIS_RUN_LIVE_INFRA_TESTS`,
+  `KIS_TEST_IMAGE_NO_GIT_METADATA`). This also keeps local runs honest: CI sets
+  none of these, so a test that quietly depended on one used to pass locally
+  and fail in CI.
+- **Config and token caches are pinned.** `KIS_CONFIG_DIR` points at *this*
+  checkout's `config/`, and `KIS_TOKEN_CACHE_DIR` at a per-process temp
+  directory, so a `.kis_token_*` can no longer land in a repository root (the
+  default is `Path.cwd()`). Both pins, the scrub and the switch are written by
+  one `_apply_hermetic_pins()` called from the import-time block and again
+  from the session fixture, so a pin added to one is never missing from the
+  other.
+- **A stray token cache is detected by comparison, not by absence, and at
+  session end.** The session snapshots size and mtime of every place a token
+  can land — the checkout root, the working directory, the pinned
+  `KIS_TOKEN_CACHE_DIR`, and `~/.cache/kis_token_*.json`, which two collectors
+  hardcode — and `pytest_sessionfinish` fails the run on any file this session
+  created or rewrote. The verdict is a hook rather than a test because a test
+  only sees what ran before it, and under `-n auto` it lands mid-session on
+  one worker. An absence check would fail forever on the primary checkout,
+  which legitimately holds `.kis_token_real` (2026-07-08) and
+  `.kis_token_mock` (2026-06-09) from ordinary host `sts` runs.
+- **A leftover `.env` read fails loudly.** All three python-dotenv readers
+  (`load_dotenv`, `dotenv_values`, `find_dotenv`) are wrapped for the session:
+  an argument-less call is refused outright, a path that *exists* outside the
+  temp sandbox is refused by name, and `find_dotenv` may walk but may not hand
+  back a real file from outside it. A path that does not exist passes through,
+  so CI — which has no `.env` anywhere — is unaffected and the guard only
+  speaks when there is something real to read. Installing the guard also
+  sweeps `sys.modules` to rebind names a plugin or `sitecustomize` imported
+  with `from dotenv import load_dotenv` before `tests/conftest.py` ran; the
+  sweep tests `name in vars(module)` rather than `getattr`, so a package with
+  a lazy module-level `__getattr__` is not made to import on every name.
+- **The sandbox follows `--basetemp`.** `pytest --basetemp=./.pytest-tmp` puts
+  every `tmp_path` inside the checkout, where the guard would otherwise refuse
+  the suite's own fixture files. `pytest_configure` registers the basetemp, and
+  the roots are read lazily on each check because the guard is installed at
+  conftest import, before the option is parsed.
+
+### `KIS_CONFIG_DIR` and `ConfigLoader.set_config_dir`
+
+Pinning `KIS_CONFIG_DIR` changed what a test must do to redirect config.
+`ServiceConfigBase.from_yaml` re-points the loader at that variable whenever
+the two disagree (`shared/config/base.py`), so **setting only
+`ConfigLoader.set_config_dir(tmp)` is no longer enough** — the next
+`from_yaml` snaps back to `<checkout>/config` and the test reads the real file
+instead of its fixture, passing or failing for the wrong reason. Before the
+pin the variable was unset in CI and the programmatic directory won, so the
+two halves agreed by accident.
+
+Use the `config_dir` fixture in `tests/conftest.py`, which sets both and
+restores the loader at teardown. `test_loader_env_vars`, `test_loader_security`,
+`test_loader_thread_safety` and `test_config_yaml_loading` use it.
+
+### There is no opt-out
+
+Hermeticity is unconditional. `KIS_RUN_LIVE_INFRA_TESTS=1` lifts the **Redis
+gate** and nothing else: it un-skips the `live_infra` tests and lets
+`pytest_runtest_setup` ping Redis. It does not load a `.env`, does not restore
+`KIS_*`/`TELEGRAM_*`, and does not unpin the config or token-cache directories.
+
+The two used to share one switch, and that made the one CI job which always
+opts in — `performance`, which injects `KIS_RUN_LIVE_INFRA_TESTS=1` — the only
+job running with no scrub, no dotenv guard and no token-cache pin. They answer
+different questions:
+
+| question | answered by |
+| --- | --- |
+| may a test talk to real Redis? | `live_infra_enabled()` |
+| may this process hold real broker credentials? | always no |
+
+Nothing in `tests/` needs real broker credentials; the probe harness that does
+live KIS calls is under `tools/`, outside the pytest tree, so there is no
+third mode to support. Redis settings are unaffected by the scrub, which
+touches only `KIS_*` and `TELEGRAM_*`: CI injects `REDIS_HOST`/`PORT`/`DB`
+explicitly, and their defaults (`localhost:6379` db 1, no password) already
+match this host.
+
+`tests/unit/config/test_dotenv_hermeticity.py` asserts all of the above, and
+proves the loader half in subprocesses with the switch *off*, so it still
+catches a regression in the entrypoints if the session guard is ever removed.
+`tests/unit/test_cli_commands.py` covers the ordering the loader depends on:
+`.env` must be read before the command modules capture `DEFAULT_DASHBOARD_URL`
+as a Click default.
+
+## Local usage tips
+
+- `pytest tests/unit/strategy/ -n auto` — for small directories the
+  worker startup cost dominates and serial is faster.  Use parallel
+  for the full suite.
+- `pytest -n auto --dist=loadfile` — keeps tests from the same file
+  on the same worker.  Slightly safer for tests that share file-level
+  state but didn't help our flakiness.
+- `pytest -n 4` — manually set worker count (default `auto` = CPU count
+  which is overkill on most laptops).

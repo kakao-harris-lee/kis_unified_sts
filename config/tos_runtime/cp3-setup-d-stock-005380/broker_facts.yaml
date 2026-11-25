@@ -1,0 +1,17 @@
+# Broker facts (item 12) — CP-3 stock tenant / KIS 모의투자 (VTS), GET only
+balance_tr_id: "VTTC8434R"
+balance_path: "/uapi/domestic-stock/v1/trading/inquire-balance"
+balance_params:
+  AFHR_FLPR_YN: "N"          # 기본값 (시간외단일가·NXT 아님)
+  OFL_YN: ""
+  INQR_DVSN: "02"            # 종목별
+  UNPR_DVSN: "01"
+  FUND_STTL_ICLD_YN: "N"
+  FNCG_AMT_AUTO_RDPT_YN: "N"
+  PRCS_DVSN: "00"            # 전일매매포함
+  CTX_AREA_FK100: ""
+  CTX_AREA_NK100: ""
+quote_tr_id: "FHKST01010100"
+quote_path: "/uapi/domestic-stock/v1/quotations/inquire-price"
+quote_market_div_code: "J"
+max_age_ms: 30000

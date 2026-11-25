@@ -1,0 +1,3175 @@
+"""CP-3 tenant boot-proof journal + run template (plan 2026-10-09 §2.5 / §2.6)."""
+
+from __future__ import annotations
+
+import contextlib
+import datetime
+import json
+import math
+import os
+import re
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import time
+import types
+import zoneinfo
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tools.tos_cp3 import bootproof_guard, bootproof_journal
+from tools.tos_cp3.bootproof_guard import (
+    SYNTHETIC_SOURCE_PREFIX,
+    BootProofGuardRefused,
+    require_scratch_rule,
+)
+from tools.tos_cp3.produce_fields import FIELD_ORDER
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_RUNNER = _REPO_ROOT / "tools" / "tos_cp3" / "runners" / "run_tenant_session.sh"
+_RUNNER_COMMON = _REPO_ROOT / "tools" / "broker_probes" / "runners" / "_common.sh"
+
+_FIXTURE = (
+    _REPO_ROOT / "tos" / "runtime" / "tests" / "fixtures" / "cp3-bootproof-row.jsonl"
+)
+
+_FIXTURE_RAW_EVENT_ID = "101S6000:1m:20251208T092000+0900"
+_FIXTURE_SOURCE_INSTRUMENT = "101S6000"
+_FIXTURE_INSTRUMENT = "A05611"
+
+_TEST_ALLOWLIST = ("tos-cp3-third-producer",)
+
+_RESIDENT_SOURCE_IDS = ("tos-paper-bootproof-render", "tos-paper-resident-session")
+
+JOURNAL_REQUIRED_KEYS_MIRROR = frozenset(
+    {"raw_event_id", "instrument", "as_of_ms", "fields", "source_id"}
+)
+
+
+def _row(*, source_id: str, instrument: str = _FIXTURE_INSTRUMENT) -> dict[str, Any]:
+    return {
+        "raw_event_id": f"row-{source_id}-{instrument}",
+        "source_id": source_id,
+        "instrument": instrument,
+        "as_of_ms": 1791601200000,
+        "fields": {"close_x100": 57950},
+    }
+
+
+def _journal(path: Path, rows: list[dict[str, Any]]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _synthetic_journal(path: Path, instrument: str = _FIXTURE_INSTRUMENT) -> Path:
+    return _journal(
+        path,
+        [
+            _row(
+                source_id=f"{SYNTHETIC_SOURCE_PREFIX}:{_FIXTURE_SOURCE_INSTRUMENT}:bar",
+                instrument=instrument,
+            )
+        ],
+    )
+
+
+def _resident_journal(path: Path, instrument: str = _FIXTURE_INSTRUMENT) -> Path:
+    """The reviewer's H1 input: the resident deployment's own source_ids."""
+    return _journal(
+        path,
+        [_row(source_id=sid, instrument=instrument) for sid in _RESIDENT_SOURCE_IDS],
+    )
+
+
+def _allowlisted_journal(path: Path, instrument: str = _FIXTURE_INSTRUMENT) -> Path:
+    return _journal(
+        path, [_row(source_id=_TEST_ALLOWLIST[0] + "/0.1.0", instrument=instrument)]
+    )
+
+
+@pytest.fixture
+def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
+    """``HOME`` in ``tmp_path``, with the §7.2-b directory names laid out under it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tos = tmp_path / ".local" / "state" / "tos"
+    scratch = tos / "scratch"
+    scratch.mkdir(parents=True)
+    designated = tos / "cp3-setup-d-long-data"
+    designated.mkdir(parents=True)
+    resident = tos / "paper-data"
+    resident.mkdir(parents=True)
+    return types.SimpleNamespace(
+        home=tmp_path,
+        tos=tos,
+        scratch=scratch,
+        designated=designated,
+        resident=resident,
+    )
+
+
+def _allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        bootproof_guard, "APPROVED_REAL_PRODUCER_PREFIXES", _TEST_ALLOWLIST
+    )
+
+
+def test_the_allowlist_holds_exactly_the_one_approved_producer() -> None:
+    """The literal, pinned."""
+    assert bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES == ("tos-cp3-live",)
+    assert str(bootproof_guard.DEFAULT_SCRATCH_ROOT) == "~/.local/state/tos/scratch"
+    assert str(bootproof_guard.RESIDENT_DATA_ROOT) == "~/.local/state/tos/paper-data"
+    assert bootproof_guard.DESIGNATED_PARENT_GLOBS == (
+        "cp3-setup-d-*-data",
+        "paper-data",
+    )
+    assert bootproof_guard.POLICY_VERSION == "cp3-tenant-bootproof/2"
+
+
+def test_an_empty_allowlist_marks_every_row_unapproved(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """``any()`` over no prefixes is False, which is what makes the empty"""
+    journal = _journal(
+        tmp_path / "j.jsonl",
+        [
+            _row(source_id="anything-at-all"),
+            _row(source_id=_TEST_ALLOWLIST[0] + "/0.1.0"),
+        ],
+    )
+    assert bootproof_guard.unapproved_rows(journal) == (1, 2)
+
+
+_BOUNDARY_PREFIX = "tos-cp3-live"
+
+
+@pytest.mark.parametrize(
+    ("source_id", "approved"),
+    [
+        ("tos-cp3-live", True),
+        ("tos-cp3-live/1.0", True),
+        ("tos-cp3-live/1.0/extra", True),
+        ("tos-cp3-live-EVIL", False),
+        ("tos-cp3-liveX", False),
+        ("tos-cp3-live.evil/1.0", False),
+        ("tos-cp3-liv", False),
+        ("evil/tos-cp3-live", False),
+    ],
+)
+def test_red_the_allowlist_requires_a_delimiter(
+    tmp_path: Path,
+    state: types.SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    source_id: str,
+    approved: bool,
+) -> None:
+    """**Re-review LOW.** A producer name is a NAMESPACE, not a string prefix."""
+    monkeypatch.setattr(
+        bootproof_guard, "APPROVED_REAL_PRODUCER_PREFIXES", (_BOUNDARY_PREFIX,)
+    )
+    journal = _journal(tmp_path / "j.jsonl", [_row(source_id=source_id)])
+    designated = state.designated / _FIXTURE_INSTRUMENT
+
+    assert bootproof_guard.unapproved_rows(journal) == (() if approved else (1,))
+    if approved:
+        require_scratch_rule(journal, designated)
+    else:
+        with pytest.raises(BootProofGuardRefused):
+            require_scratch_rule(journal, designated)
+
+
+@pytest.mark.parametrize(
+    ("bad_entry", "expected"),
+    [("", "EMPTY entry"), ("tos-cp3-live/", "ends with '/'")],
+)
+def test_red_a_malformed_allowlist_entry_is_refused_at_call_time(
+    tmp_path: Path,
+    state: types.SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_entry: str,
+    expected: str,
+) -> None:
+    """An entry that cannot mean what it looks like is a refusal, not a silent"""
+    monkeypatch.setattr(
+        bootproof_guard, "APPROVED_REAL_PRODUCER_PREFIXES", (bad_entry,)
+    )
+    journal = _journal(tmp_path / "j.jsonl", [_row(source_id="anything")])
+
+    with pytest.raises(BootProofGuardRefused, match=expected):
+        bootproof_guard.unapproved_rows(journal)
+    with pytest.raises(BootProofGuardRefused, match=expected):
+        require_scratch_rule(journal, state.designated / _FIXTURE_INSTRUMENT)
+
+
+@pytest.mark.parametrize("bad_entry", ['""', '"tos-cp3-live/"'])
+def test_red_a_malformed_allowlist_entry_fails_at_import(
+    tmp_path: Path, bad_entry: str
+) -> None:
+    """The same shape check at IMPORT, which is where ③'s PR-2 was standing"""
+    import importlib.util
+
+    assignment = "APPROVED_REAL_PRODUCER_PREFIXES: tuple[str, ...] = "
+    source = (_REPO_ROOT / "tools/tos_cp3/bootproof_guard.py").read_text("utf-8")
+    patched = "\n".join(
+        f"{assignment}({bad_entry},)" if line.startswith(assignment) else line
+        for line in source.splitlines()
+    )
+    assert patched != source, "the literal this test patches has moved"
+    module_path = tmp_path / "patched_guard.py"
+    module_path.write_text(patched, encoding="utf-8")
+
+    spec = importlib.util.spec_from_file_location("patched_guard", module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    with pytest.raises(Exception, match="APPROVED_REAL_PRODUCER_PREFIXES"):
+        spec.loader.exec_module(module)
+
+
+def test_the_real_module_imports_with_its_own_literal() -> None:
+    """The green side of the import check: the shipped tuple is well-formed, so"""
+    assert (
+        bootproof_guard._validated_prefixes(
+            bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES
+        )
+        == bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES
+    )
+    assert bootproof_guard._validated_prefixes(()) == ()
+    assert bootproof_guard._validated_prefixes(("a", "b/c")) == ("a", "b/c")
+
+
+def test_red_h1_an_unmarked_resident_style_journal_cannot_reach_a_designated_dir(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """**The reviewer's measured input (HIGH).**"""
+    journal = _resident_journal(tmp_path / "resident-style.jsonl")
+
+    assert bootproof_guard.synthetic_rows(journal) == ()
+    assert bootproof_guard.unapproved_rows(journal) == (1, 2)
+
+    for data_dir in (state.designated, state.designated / _FIXTURE_INSTRUMENT):
+        with pytest.raises(BootProofGuardRefused) as excinfo:
+            require_scratch_rule(journal, data_dir)
+        assert "not from an approved real producer" in str(excinfo.value)
+
+
+def test_an_allowlisted_journal_may_genesis_a_designated_dir(
+    tmp_path: Path, state: types.SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """③'s path still works once its prefix is added — the inversion is"""
+    _allowlist(monkeypatch)
+    journal = _allowlisted_journal(tmp_path / "third.jsonl")
+
+    assert bootproof_guard.unapproved_rows(journal) == ()
+    require_scratch_rule(journal, state.designated / _FIXTURE_INSTRUMENT)
+
+
+def test_red_h1_the_resident_store_is_refused_even_with_an_allowlisted_journal(
+    tmp_path: Path, state: types.SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The unconditional clause, isolated: the journal is allowlisted, so the"""
+    _allowlist(monkeypatch)
+    journal = _allowlisted_journal(tmp_path / "third.jsonl")
+    assert bootproof_guard.unapproved_rows(journal) == ()
+
+    for data_dir in (state.resident, state.resident / _FIXTURE_INSTRUMENT):
+        with pytest.raises(BootProofGuardRefused) as excinfo:
+            require_scratch_rule(journal, data_dir)
+        assert "RESIDENT paper durable set" in str(excinfo.value)
+
+
+def test_red_c_one_unapproved_row_among_approved_ones_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan §2.5's third red proof, carried across the inversion: **every** row"""
+    _allowlist(monkeypatch)
+    journal = _journal(
+        tmp_path / "mixed.jsonl",
+        [
+            _row(source_id=_TEST_ALLOWLIST[0] + "/0.1.0"),
+            _row(source_id=_TEST_ALLOWLIST[0] + "/0.1.0"),
+            _row(source_id="tos-paper-resident-session"),
+        ],
+    )
+
+    assert bootproof_guard.unapproved_rows(journal) == (3,)
+
+    with pytest.raises(BootProofGuardRefused):
+        require_scratch_rule(journal, state.designated / _FIXTURE_INSTRUMENT)
+
+
+@pytest.mark.parametrize("leaf", ["", _FIXTURE_INSTRUMENT])
+def test_red_a_designated_data_dir_with_a_synthetic_journal_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace, leaf: str
+) -> None:
+    """Plan §2.5 red proof (a) — the H2 input verbatim, now refused because the"""
+    data_dir = state.designated / leaf if leaf else state.designated
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, data_dir)
+    assert "scratch root" in str(excinfo.value)
+
+
+def test_red_containment_a_plain_dir_outside_scratch_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """Containment, isolated."""
+    data_dir = state.tos / "somewhere-else" / _FIXTURE_INSTRUMENT
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    assert bootproof_guard._designated_component(data_dir.resolve()) is None
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, data_dir)
+    assert "which is not" in str(excinfo.value)
+
+
+def test_red_b_a_symlink_inside_scratch_pointing_at_a_designated_dir_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """Plan §2.5 red proof (b) — this one fails without ``Path.resolve()``."""
+    link = state.scratch / "looks-like-scratch"
+    link.symlink_to(state.designated, target_is_directory=True)
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    assert str(link).startswith(str(state.scratch) + os.sep)
+    assert link.resolve() == state.designated.resolve()
+
+    with pytest.raises(BootProofGuardRefused):
+        require_scratch_rule(journal, link)
+
+
+def test_red_m1_a_symlinked_scratch_root_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**Review MEDIUM, isolated.**"""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tos = tmp_path / ".local" / "state" / "tos"
+    (tos / "real-scratch").mkdir(parents=True)
+    (tos / "scratch").symlink_to(tos / "real-scratch", target_is_directory=True)
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, tos / "scratch" / "bp" / _FIXTURE_INSTRUMENT)
+    assert "symlinked scratch root" in str(excinfo.value)
+
+
+def test_red_m1_the_reviewers_symlinked_root_input_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reviewer's own framing of the same finding: the root points at an"""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    tos = tmp_path / ".local" / "state" / "tos"
+    designated = tos / "cp3-setup-d-long-data"
+    designated.mkdir(parents=True)
+    (tos / "scratch").symlink_to(tos, target_is_directory=True)
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    candidate = tos / "scratch" / "cp3-setup-d-long-data" / _FIXTURE_INSTRUMENT
+    assert candidate.resolve() == (designated / _FIXTURE_INSTRUMENT).resolve()
+    with pytest.raises(BootProofGuardRefused):
+        require_scratch_rule(journal, candidate)
+
+
+@pytest.mark.parametrize(
+    "name", ["cp3-setup-d-long-data", "cp3-setup-d-short-data", "paper-data"]
+)
+def test_red_m1_a_durable_set_name_under_scratch_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace, name: str
+) -> None:
+    """The durable-set-name clause, isolated."""
+    data_dir = state.scratch / name / _FIXTURE_INSTRUMENT
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, data_dir)
+    assert "durable-set parent name" in str(excinfo.value)
+
+
+def test_a_non_empty_scratch_dir_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """Emptiness, isolated: under scratch, no durable-set name, real root."""
+    data_dir = state.scratch / "bp" / "data" / _FIXTURE_INSTRUMENT
+    data_dir.mkdir(parents=True)
+    (data_dir / "evidence.sqlite3").write_text("x", encoding="utf-8")
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, data_dir)
+    assert "newly created and empty" in str(excinfo.value)
+
+
+def test_a_file_where_the_data_dir_should_be_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """Same clause's other half — ``iterdir`` would raise instead of refusing."""
+    data_dir = state.scratch / "bp"
+    data_dir.write_text("not a directory", encoding="utf-8")
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, data_dir)
+    assert "not a directory" in str(excinfo.value)
+
+
+def test_the_scratch_root_itself_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    '"Under the scratch root" means strictly under it: the root is the parent'
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+    with pytest.raises(BootProofGuardRefused):
+        require_scratch_rule(journal, state.scratch)
+
+
+def test_a_fresh_scratch_dir_is_accepted(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """The green side: absent is fine — the caller creates it right after — and"""
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+    data_dir = state.scratch / "cp3-bootproof-20261010" / "data" / _FIXTURE_INSTRUMENT
+
+    require_scratch_rule(journal, data_dir)
+    data_dir.mkdir(parents=True)
+    require_scratch_rule(journal, data_dir)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("{not json}\n", "not valid JSON"),
+        ('["a list"]\n', "not a JSON object"),
+        ("\n  \n", "holds no rows"),
+    ],
+)
+def test_an_unreadable_journal_is_refused_not_cleared(
+    tmp_path: Path, state: types.SimpleNamespace, content: str, expected: str
+) -> None:
+    """Fail-closed: a line this guard cannot parse is a line whose ``source_id``"""
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(content, encoding="utf-8")
+
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(journal, state.designated)
+    assert expected in str(excinfo.value)
+
+
+def test_a_missing_journal_is_refused(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        require_scratch_rule(tmp_path / "nope.jsonl", state.designated)
+    assert "does not exist" in str(excinfo.value)
+
+
+def test_a_journal_for_another_contract_month_is_refused(tmp_path: Path) -> None:
+    """Isolated from the data-dir rule on purpose. A mismatch is not an error"""
+    journal = _synthetic_journal(tmp_path / "journal.jsonl", instrument="A05612")
+
+    bootproof_guard.require_journal_instrument(journal, "A05612")
+    with pytest.raises(BootProofGuardRefused) as excinfo:
+        bootproof_guard.require_journal_instrument(journal, _FIXTURE_INSTRUMENT)
+    assert "A05612" in str(excinfo.value)
+
+
+def test_the_guard_cli_refuses_and_says_why(
+    tmp_path: Path, state: types.SimpleNamespace, capsys: Any
+) -> None:
+    """The shell template reaches the rule through this entry point, so the exit"""
+    journal = _synthetic_journal(tmp_path / "journal.jsonl")
+
+    assert (
+        bootproof_guard.main(
+            [
+                "--journal",
+                str(journal),
+                "--data-dir",
+                str(state.scratch / "bp" / _FIXTURE_INSTRUMENT),
+                "--instrument",
+                _FIXTURE_INSTRUMENT,
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "SCRATCH" in out and SYNTHETIC_SOURCE_PREFIX in out
+
+    assert (
+        bootproof_guard.main(
+            [
+                "--journal",
+                str(journal),
+                "--data-dir",
+                str(state.designated / _FIXTURE_INSTRUMENT),
+                "--instrument",
+                _FIXTURE_INSTRUMENT,
+            ]
+        )
+        == 1
+    )
+    assert "REFUSED" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["--scratch-root", "--allow-producer"])
+def test_the_cli_offers_no_root_or_allowlist_override(flag: str) -> None:
+    """Stated directly, because the absence is the point: a template that could"""
+    with pytest.raises(SystemExit) as excinfo:
+        bootproof_guard.main(
+            ["--journal", "j", "--data-dir", "d", "--instrument", "A05611", flag, "x"]
+        )
+    assert excinfo.value.code == 2
+
+
+def _b1a_source(tmp_path: Path, rows: list[dict[str, Any]] | None = None) -> Path:
+    """A miniature B1a ``fields.jsonl`` — same wire shape, two bars."""
+    if rows is None:
+        fixture = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+        rows = [
+            {
+                "raw_event_id": _FIXTURE_RAW_EVENT_ID,
+                "source_id": "tos-cp3-b1a/0.1.0",
+                "instrument": _FIXTURE_SOURCE_INSTRUMENT,
+                "as_of_ms": 1765153200000,
+                "fields": dict(fixture["fields"]),
+            },
+            {
+                "raw_event_id": "101S6000:1m:20251208T092100+0900",
+                "source_id": "tos-cp3-b1a/0.1.0",
+                "instrument": _FIXTURE_SOURCE_INSTRUMENT,
+                "as_of_ms": 1765153260000,
+                "fields": dict(fixture["fields"]),
+            },
+        ]
+    return _journal(tmp_path / "b1a" / "fields.jsonl", rows)
+
+
+def test_the_row_carries_the_fifteen_fields_in_b1a_order(tmp_path: Path) -> None:
+    bar = bootproof_journal.select_bar(_b1a_source(tmp_path), _FIXTURE_RAW_EVENT_ID)
+    row = bootproof_journal.build_row(bar, _FIXTURE_INSTRUMENT, 1791601200000)
+
+    assert set(row) == JOURNAL_REQUIRED_KEYS_MIRROR
+    assert tuple(row["fields"]) == FIELD_ORDER
+    assert len(FIELD_ORDER) == 15
+
+
+def test_the_relabel_is_explicit_in_source_id(tmp_path: Path) -> None:
+    """Plan L1: the borrowed bar is the FULL contract ``101S6000`` and the row"""
+    bar = bootproof_journal.select_bar(_b1a_source(tmp_path), _FIXTURE_RAW_EVENT_ID)
+    row = bootproof_journal.build_row(bar, _FIXTURE_INSTRUMENT, 1791601200000)
+
+    assert row["instrument"] == _FIXTURE_INSTRUMENT
+    assert row["source_id"] == (
+        f"{SYNTHETIC_SOURCE_PREFIX}:{_FIXTURE_SOURCE_INSTRUMENT}:{_FIXTURE_RAW_EVENT_ID}"
+    )
+    journal = _journal(tmp_path / "j.jsonl", [row])
+    assert bootproof_guard.synthetic_rows(journal) == (1,)
+    assert bootproof_guard.unapproved_rows(journal) == (1,)
+
+
+def test_as_of_ms_is_the_write_time_not_the_bar_label(
+    tmp_path: Path, state: types.SimpleNamespace
+) -> None:
+    """The operator's 2026-10-09 decision for ③, applied here: ``max_age_ms`` 800"""
+    source = _b1a_source(tmp_path)
+    label_as_of = json.loads(source.read_text(encoding="utf-8").splitlines()[0])[
+        "as_of_ms"
+    ]
+    out = state.scratch / "bp" / "journal.jsonl"
+
+    before = time.time_ns() // 1_000_000
+    assert (
+        bootproof_journal.main(
+            [
+                "--fields",
+                str(source),
+                "--raw-event-id",
+                _FIXTURE_RAW_EVENT_ID,
+                "--instrument",
+                _FIXTURE_INSTRUMENT,
+                "--out",
+                str(out),
+                "--data-dir",
+                str(state.scratch / "bp" / "data" / _FIXTURE_INSTRUMENT),
+            ]
+        )
+        == 0
+    )
+    after = time.time_ns() // 1_000_000
+
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert before <= written["as_of_ms"] <= after
+    assert written["as_of_ms"] != label_as_of
+    assert written["as_of_ms"] - label_as_of > 60_000
+
+
+def test_the_tool_refuses_a_designated_data_dir(
+    tmp_path: Path, state: types.SimpleNamespace, capsys: Any
+) -> None:
+    """The same refusal as the run template, reached from the OTHER entry point —"""
+    source = _b1a_source(tmp_path)
+    out = state.scratch / "bp" / "journal.jsonl"
+
+    rc = bootproof_journal.main(
+        [
+            "--fields",
+            str(source),
+            "--raw-event-id",
+            _FIXTURE_RAW_EVENT_ID,
+            "--instrument",
+            _FIXTURE_INSTRUMENT,
+            "--out",
+            str(out),
+            "--data-dir",
+            str(state.designated / _FIXTURE_INSTRUMENT),
+        ]
+    )
+    assert rc == 1
+    assert "REFUSED" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_red_l1_the_tool_refuses_an_out_path_outside_scratch(
+    tmp_path: Path, state: types.SimpleNamespace, capsys: Any
+) -> None:
+    """**Review LOW.** ``--out`` was unconstrained, and this tool replaces its"""
+    source = _b1a_source(tmp_path)
+    live = state.home / ".config" / "tos" / "paper-config" / "bootproof_journal.jsonl"
+    live.parent.mkdir(parents=True)
+    live.write_text('{"the": "live resident journal"}\n', encoding="utf-8")
+
+    rc = bootproof_journal.main(
+        [
+            "--fields",
+            str(source),
+            "--raw-event-id",
+            _FIXTURE_RAW_EVENT_ID,
+            "--instrument",
+            _FIXTURE_INSTRUMENT,
+            "--out",
+            str(live),
+            "--data-dir",
+            str(state.scratch / "bp" / "data" / _FIXTURE_INSTRUMENT),
+        ]
+    )
+    assert rc == 1
+    assert "REFUSED" in capsys.readouterr().err
+    assert live.read_text(encoding="utf-8") == '{"the": "live resident journal"}\n'
+
+
+def test_the_tool_refuses_an_unknown_or_ambiguous_bar(tmp_path: Path) -> None:
+    """No "pick a bar for me" mode: the chosen bar is this row's whole provenance,"""
+    fixture = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    duplicate = {
+        "raw_event_id": _FIXTURE_RAW_EVENT_ID,
+        "source_id": "tos-cp3-b1a/0.1.0",
+        "instrument": _FIXTURE_SOURCE_INSTRUMENT,
+        "as_of_ms": 1765153200000,
+        "fields": dict(fixture["fields"]),
+    }
+    with pytest.raises(bootproof_journal.BootProofJournalError, match="no row with"):
+        bootproof_journal.select_bar(_b1a_source(tmp_path), "nope")
+    with pytest.raises(bootproof_journal.BootProofJournalError, match="2 rows"):
+        bootproof_journal.select_bar(
+            _b1a_source(tmp_path, [duplicate, dict(duplicate)]), _FIXTURE_RAW_EVENT_ID
+        )
+
+
+def test_the_tool_refuses_a_bar_that_is_not_the_fifteen_fields(tmp_path: Path) -> None:
+    """The tenant tree declares exactly fifteen; a row short of them would boot"""
+    fixture = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    short = dict(fixture["fields"])
+    short.pop("eod")
+    row = {
+        "raw_event_id": _FIXTURE_RAW_EVENT_ID,
+        "source_id": "tos-cp3-b1a/0.1.0",
+        "instrument": _FIXTURE_SOURCE_INSTRUMENT,
+        "as_of_ms": 1765153200000,
+        "fields": short,
+    }
+    with pytest.raises(bootproof_journal.BootProofJournalError, match="FIELD_ORDER"):
+        bootproof_journal.select_bar(
+            _b1a_source(tmp_path, [row]), _FIXTURE_RAW_EVENT_ID
+        )
+
+
+def test_the_tool_refuses_a_non_scalar_field(tmp_path: Path) -> None:
+    """``tos.dsl.ScalarValue`` is ``bool|int|float|str``; the runtime journal"""
+    fixture = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    bad = dict(fixture["fields"])
+    bad["close_x100"] = None
+    row = {
+        "raw_event_id": _FIXTURE_RAW_EVENT_ID,
+        "source_id": "tos-cp3-b1a/0.1.0",
+        "instrument": _FIXTURE_SOURCE_INSTRUMENT,
+        "as_of_ms": 1765153200000,
+        "fields": bad,
+    }
+    with pytest.raises(bootproof_journal.BootProofJournalError, match="NoneType"):
+        bootproof_journal.select_bar(
+            _b1a_source(tmp_path, [row]), _FIXTURE_RAW_EVENT_ID
+        )
+
+
+def test_the_tool_reproduces_the_committed_fixture(tmp_path: Path) -> None:
+    """The other half of the reader proof."""
+    expected = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    bar = bootproof_journal.select_bar(_b1a_source(tmp_path), _FIXTURE_RAW_EVENT_ID)
+    produced = bootproof_journal.build_row(
+        bar, _FIXTURE_INSTRUMENT, expected["as_of_ms"]
+    )
+    assert produced == expected
+
+    bootproof_journal.write_journal(tmp_path / "again.jsonl", produced)
+    assert (tmp_path / "again.jsonl").read_bytes() == _FIXTURE.read_bytes()
+
+
+def test_the_journal_is_replaced_atomically(tmp_path: Path) -> None:
+    """Whole-file replacement, not an append: the runtime reader deliberately has"""
+    out = tmp_path / "journal.jsonl"
+    bar = bootproof_journal.select_bar(_b1a_source(tmp_path), _FIXTURE_RAW_EVENT_ID)
+    bootproof_journal.write_journal(
+        out, bootproof_journal.build_row(bar, _FIXTURE_INSTRUMENT, 1)
+    )
+    bootproof_journal.write_journal(
+        out, bootproof_journal.build_row(bar, _FIXTURE_INSTRUMENT, 2)
+    )
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["as_of_ms"] == 2
+    assert [p.name for p in out.parent.glob("*.partial")] == []
+
+
+def test_runner_template_is_tracked_and_executable() -> None:
+    assert _RUNNER.is_file(), _RUNNER
+    assert os.access(_RUNNER, os.X_OK), f"{_RUNNER} is not executable"
+
+
+def test_runner_template_parses() -> None:
+    result = subprocess.run(
+        ["bash", "-n", str(_RUNNER)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_runner_template_passes_shellcheck() -> None:
+    """On CI a missing shellcheck is a FAILURE, not a skip, and the file is"""
+    shellcheck = shutil.which("shellcheck")
+    if shellcheck is None:
+        if os.environ.get("CI"):
+            pytest.fail(
+                "shellcheck is missing on CI, where this gate is meant to run; "
+                "add it to the workflow rather than letting the check vanish"
+            )
+        pytest.skip("shellcheck is not installed locally — CI runs this gate")
+    for argv in ([_RUNNER], [_RUNNER, _RUNNER_COMMON]):
+        result = subprocess.run(
+            [shellcheck, "--severity=warning", *(str(f) for f in argv)],
+            capture_output=True,
+            text=True,
+        )
+        assert (
+            result.returncode == 0
+        ), f"{[f.name for f in argv]}: {result.stdout}{result.stderr}"
+
+
+def test_runner_template_carries_no_instance_defaults() -> None:
+    """Every ``TENANT_*`` value is read WITHOUT a non-empty ``:-`` default. The"""
+    pairs = set(
+        re.findall(r"\$\{(TENANT_[A-Z_]+):-([^}]*)\}", _RUNNER.read_text("utf-8"))
+    )
+    assert {name for name, default in pairs if default not in ("", "0")} == set(), pairs
+    assert {name for name, _default in pairs} <= {
+        "TENANT_LOG",
+        "TENANT_ALLOW_SHARED_CHECKOUT",
+    }, pairs
+    helpers = _RUNNER_COMMON.read_text("utf-8")
+    assert not re.findall(r"\bTENANT_[A-Z_]+\b", helpers), helpers
+
+
+def test_runner_template_never_removes_itself() -> None:
+    """2026-09-30: a runner that self-deleted after its first run left the review"""
+    text = _RUNNER.read_text("utf-8")
+    destructive = re.search(
+        r"(?<![\w-])(rm|unlink|mv|shred|truncate)(?![\w-])|:\s*>[^>]", text
+    )
+    assert destructive is None, f"the runner runs a destructive command: {destructive}"
+    self_references = [
+        line for line in text.splitlines() if "$0" in line and "awk" not in line
+    ]
+    assert len(self_references) == 1, self_references
+    assert "SCRIPT_DIR=" in self_references[0], self_references
+
+
+def test_runner_template_touches_no_crontab() -> None:
+    """The first real tenant session is an operator decision after ③ (plan §2.6:"""
+    code = [
+        line
+        for line in _RUNNER.read_text("utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+    assert [line for line in code if "crontab" in line] == []
+
+
+def test_runner_boots_the_way_the_resident_session_does() -> None:
+    """The boot invocation is REUSED, not invented: the one-liner is the resident"""
+    text = _RUNNER.read_text("utf-8")
+    assert (
+        'CLI="import sys;from tos_runtime.compose.cli import main;'
+        'sys.exit(main(sys.argv[1:]))"' in text
+    )
+    assert 'PYTHONPATH="$REPO/tos/src:$REPO/tos/runtime/src"' in text
+    assert '"$PY" -c "$CLI" run' in text
+    for flag in ("--config-dir", "--data-dir", "--custody-root", "--environment-label"):
+        assert flag in text, flag
+
+
+def test_runner_pins_the_guard_generation_it_was_written_for() -> None:
+    """A template copied out of another tree drives refusals that are not the"""
+    assert (
+        f"EXPECT_POLICY_VERSION={bootproof_guard.POLICY_VERSION}"
+        in _RUNNER.read_text("utf-8")
+    )
+
+
+def test_runner_forwards_signals_to_the_child() -> None:
+    """Source-level companion to the live test below: the traps exist and all"""
+    text = _RUNNER.read_text("utf-8")
+    for sig in ("TERM", "INT", "HUP"):
+        assert f"trap 'on_signal {sig}" in text, sig
+    assert "stop_run()" in text
+
+
+def test_runner_arms_the_traps_before_launching_either_child() -> None:
+    """**Re-review LOW, and plan §3.5's M1.** A signal arriving between a"""
+    text = _RUNNER.read_text("utf-8")
+    lines = text.splitlines()
+    first_trap = next(i for i, line in enumerate(lines) if line.startswith("trap "))
+    for launch in ("PRODUCER_PID=$!", "RUN_PID=$!"):
+        at = next(i for i, line in enumerate(lines) if line.startswith(launch))
+        assert first_trap < at, (launch, first_trap, at)
+    assert "trap 'on_exit' EXIT" in text
+    assert 'RUN_PID=""' in text
+    assert 'PRODUCER_PID=""' in text
+    assert lines.index('RUN_PID=""') < first_trap
+    assert lines.index('PRODUCER_PID=""') < first_trap
+
+
+def test_runner_gives_the_producer_a_ceiling_and_the_guards_order() -> None:
+    """Source-level companion to the live tests: the producer runs under its"""
+    text = _RUNNER.read_text("utf-8")
+    assert "PRODUCER_CEILING_S=$((RUN_S + PRODUCER_SIGKILL_AFTER_S))" in text
+    assert (
+        'timeout --kill-after="${PRODUCER_SIGKILL_AFTER_S}s" "${PRODUCER_CEILING_S}s"'
+        in text
+    )
+    order = [
+        "PRODUCER_PID=$!",
+        "BOOT_SNAPSHOT=",
+        "GUARD_OUT=",
+        "RENDER_LOG=",
+        "RUN_PID=$!",
+    ]
+    positions = [text.index(marker) for marker in order]
+    assert positions == sorted(positions), list(zip(order, positions))
+
+
+def test_the_kill_escalation_targets_the_process_group() -> None:
+    """**#892 re-review L2, source level.** The pid the runner holds is"""
+    helpers = _RUNNER_COMMON.read_text("utf-8")
+    assert 'kill -KILL -- "-$_pid"' in helpers
+    assert 'kill -TERM -- "-$_pid"' in helpers
+    runner = _RUNNER.read_text("utf-8")
+    assert "kill -KILL" not in runner
+    assert "stop_supervised" in runner
+
+
+def test_runner_gives_the_child_a_ceiling_of_its_own() -> None:
+    """Source-level companion: the child runs under ``timeout``, whose duration"""
+    text = _RUNNER.read_text("utf-8")
+    assert "CHILD_CEILING_S=$((RUN_S + SIGKILL_AFTER_S))" in text
+    assert 'timeout --kill-after="${SIGKILL_AFTER_S}s" "${CHILD_CEILING_S}s"' in text
+
+
+_FRONT_MONTH = _FIXTURE_INSTRUMENT
+
+_RUN_PIDFILE_ENV = "STUB_RUN_PIDFILE"
+_RUN_ENVFILE_ENV = "STUB_RUN_ENVFILE"
+_RUN_ARGVFILE_ENV = "STUB_RUN_ARGVFILE"
+_RUN_EXIT_ENV = "STUB_RUN_EXIT_CODE"
+_RUN_STOP_EXIT_ENV = "STUB_RUN_STOP_EXIT_CODE"
+_TREE_ENV = "STUB_TREE_ENVIRONMENT"
+_PRODUCER_PIDFILE_ENV = "STUB_PRODUCER_PIDFILE"
+_PRODUCER_ENVFILE_ENV = "STUB_PRODUCER_ENVFILE"
+_PRODUCER_SOURCE_IDS_ENV = "STUB_PRODUCER_SOURCE_IDS"
+_PRODUCER_INSTRUMENT_ENV = "STUB_PRODUCER_INSTRUMENT"
+_PRODUCER_ROWS_ENV = "STUB_PRODUCER_ROWS"
+_PRODUCER_EXIT_ENV = "STUB_PRODUCER_EXIT_AFTER_WRITE"
+_PRODUCER_SECOND_ROW_WHEN_ENV = "STUB_PRODUCER_SECOND_ROW_WHEN"
+_BAND_PLAN_ENV = "STUB_BAND_PLAN"
+
+_PRODUCER_BAND_ENV = "STUB_PRODUCER_BAND"
+_PRODUCER_BAND_OPEN_ENV = "STUB_PRODUCER_BAND_OPEN"
+_STUB_CALENDAR_START_ENV = "STUB_CALENDAR_START"
+_STUB_MARKET_ENV = "STUB_PRODUCER_MARKET"
+_STOCK_TREE = "cp3-setup-d-stock-005930"
+
+_BAND_PRESENT_LINE = "band line present before the boot"
+_BAND_ABSENT_LINE = "BAND ABSENT — 이 세션 전체 band UNKNOWN(송신 0)"
+
+_APPROVED_SOURCE_ID = f"{bootproof_guard.APPROVED_REAL_PRODUCER_PREFIXES[0]}/0.1.0"
+
+_PRODUCER_FAKE_KEY = "PSfake-app-key-0ac1dd"
+_PRODUCER_FAKE_SECRET = "fake-app-secret-77b31e"
+
+
+def _runner_repo(
+    tmp_path: Path,
+    *,
+    detached: bool = True,
+    policy: str | None = None,
+    bootable: bool = False,
+) -> Path:
+    """A throwaway checkout holding the template, the helpers it sources, the"""
+    repo = tmp_path / "repo"
+    (repo / "tools" / "tos_cp3" / "runners").mkdir(parents=True)
+    (repo / "tools" / "tos_cp3" / "live_producer").mkdir(parents=True)
+    (repo / "tools" / "broker_probes" / "runners").mkdir(parents=True)
+    (repo / "shared" / "instruments").mkdir(parents=True)
+    (repo / "config" / "tos_runtime" / "cp3-setup-d-long").mkdir(parents=True)
+    (repo / "scripts" / "tos").mkdir(parents=True)
+    (repo / "config/tos_runtime/cp3-setup-d-long/RENDER.yaml").write_text(
+        'tree_id: "cp3-setup-d-long"\nmarket: "futures"\n', encoding="utf-8"
+    )
+    (repo / "config/tos_runtime" / _STOCK_TREE).mkdir(parents=True)
+    (repo / "config/tos_runtime" / _STOCK_TREE / "RENDER.yaml").write_text(
+        f'tree_id: "{_STOCK_TREE}"\nmarket: "stock"\n'
+        'instrument:\n  pattern: "005930"\n',
+        encoding="utf-8",
+    )
+    for _tree, _open in (
+        ("cp3-setup-d-long", "8, open_minute: 45"),
+        (_STOCK_TREE, "9, open_minute: 0"),
+    ):
+        (repo / "config/tos_runtime" / _tree / "fields.yaml").write_text(
+            "schema: tos-fields/1\ncatalog: tos-field-catalog/1\nfields:\n"
+            f"  - {{name: mso, op: session.minutes_since_open, params: {{open_hour: {_open}}}}}\n",
+            encoding="utf-8",
+        )
+
+    (repo / "tools/tos_cp3/live_producer/__init__.py").write_text("", encoding="utf-8")
+    (repo / "tools/tos_cp3/live_producer/producer.py").write_text(
+        "import json, os, signal, sys, time\n"
+        "from pathlib import Path\n"
+        "argv = sys.argv[1:]\n"
+        "def opt(name):\n"
+        "    return argv[argv.index(name) + 1]\n"
+        "journal = Path(opt('--journal'))\n"
+        "session = Path(opt('--session-dir'))\n"
+        "session.mkdir(parents=True, exist_ok=True)\n"
+        "config = Path(opt('--config')).read_text(encoding='utf-8')\n"
+        "env_file = [l.split(':', 1)[1].strip() for l in config.splitlines()\n"
+        "            if l.startswith('env_file:')]\n"
+        "if env_file and Path(env_file[0]).is_file():\n"
+        "    for line in Path(env_file[0]).read_text(encoding='utf-8').splitlines():\n"
+        "        if '=' in line:\n"
+        "            key, _, value = line.partition('=')\n"
+        "            os.environ[key.strip()] = value.strip()\n"
+        f"envfile = os.environ.get({_PRODUCER_ENVFILE_ENV!r})\n"
+        "if envfile:\n"
+        "    Path(envfile).write_text(json.dumps(dict(os.environ)))\n"
+        f"instrument = os.environ.get({_PRODUCER_INSTRUMENT_ENV!r}) or opt('--instrument')\n"
+        f"source_ids = os.environ.get({_PRODUCER_SOURCE_IDS_ENV!r}, {_APPROVED_SOURCE_ID!r})\n"
+        f"mode = os.environ.get({_PRODUCER_ROWS_ENV!r}, '1')\n"
+        f"pidfile = os.environ.get({_PRODUCER_PIDFILE_ENV!r})\n"
+        "if pidfile:\n"
+        "    Path(pidfile).write_text(str(os.getpid()))\n"
+        "if mode == '0':\n"
+        "    print('stub producer: refused, writing nothing')\n"
+        "    raise SystemExit(1)\n"
+        "journal.parent.mkdir(parents=True, exist_ok=True)\n"
+        "ids = source_ids.split(',')\n"
+        "def publish(count):\n"
+        "    # Whole-file replacement, like the real writer (sinks.py).\n"
+        "    journal.write_text(''.join(json.dumps({\n"
+        "        'raw_event_id': '%s:1m:2026101909%02d00+0900' % (instrument, index),\n"
+        "        'source_id': ids[min(index, len(ids) - 1)],\n"
+        "        'instrument': instrument,\n"
+        "        'as_of_ms': 1791601200000 + index,\n"
+        "        'fields': {'close_x100': 57950},\n"
+        "    }) + '\\n' for index in range(count)))\n"
+        "if mode == 'never':\n"
+        "    pass  # alive, publishing nothing — the wait runs its bound\n"
+        "elif mode == '1+1':\n"
+        "    # One bar now, a second the moment the render lands: the window\n"
+        "    # between the first-row wait and the boot, where a real producer\n"
+        "    # keeps publishing. Keyed to the render rather than to a sleep so\n"
+        "    # the test is not a race against stub timings.\n"
+        "    publish(1)\n"
+        f"    watch = Path(os.environ[{_PRODUCER_SECOND_ROW_WHEN_ENV!r}])\n"
+        "    deadline = time.monotonic() + 60\n"
+        "    while not watch.exists() and time.monotonic() < deadline:\n"
+        "        time.sleep(0.02)\n"
+        "    publish(2)\n"
+        "else:\n"
+        "    publish(max(len(ids), 1))\n"
+        "(session / 'producer-summary.json').write_text(\n"
+        "    json.dumps({'stage': 'finish', 'counters': {'published': 1}}) + '\\n')\n"
+        f"leave_with = os.environ.get({_PRODUCER_EXIT_ENV!r})\n"
+        "if leave_with == 'killed':\n"
+        "    print('stub producer: killing itself after writing')\n"
+        "    os.kill(os.getpid(), signal.SIGKILL)\n"
+        "if leave_with is not None:\n"
+        "    print('stub producer: leaving with %s after writing' % leave_with)\n"
+        "    raise SystemExit(int(leave_with))\n"
+        "while True:\n"
+        "    time.sleep(0.2)\n",
+        encoding="utf-8",
+    )
+
+    shutil.copy2(_RUNNER, repo / "tools/tos_cp3/runners/run_tenant_session.sh")
+    shutil.copy2(_RUNNER_COMMON, repo / "tools/broker_probes/runners/_common.sh")
+    shutil.copy2(
+        _REPO_ROOT / "tools/tos_cp3/bootproof_guard.py",
+        repo / "tools/tos_cp3/bootproof_guard.py",
+    )
+    shutil.copy2(
+        _REPO_ROOT / "tools/tos_cp3/live_producer/band_line.py",
+        repo / "tools/tos_cp3/live_producer/band_line.py",
+    )
+    shutil.copy2(
+        _REPO_ROOT / "tools/tos_cp3/session_day.py",
+        repo / "tools/tos_cp3/session_day.py",
+    )
+    (repo / "tools/tos_cp3/live_producer/band_probe.py").write_text(
+        "import datetime, json, os, sys, time, zoneinfo\n"
+        "from pathlib import Path\n"
+        "argv = sys.argv[1:]\n"
+        "def opt(name):\n"
+        "    return argv[argv.index(name) + 1]\n"
+        "session = Path(opt('--session-dir'))\n"
+        "session.mkdir(parents=True, exist_ok=True)\n"
+        "instrument = opt('--instrument')\n"
+        f"plan = os.environ.get({_BAND_PLAN_ENV!r}, 'ok').split(',')\n"
+        "counter = session / '.stub-band-runs'\n"
+        "runs = int(counter.read_text()) if counter.exists() else 0\n"
+        "counter.write_text(str(runs + 1))\n"
+        "what = plan[min(runs, len(plan) - 1)]\n"
+        "(session / 'band-log.jsonl').open('a').write(json.dumps({\n"
+        "    'stage': 'band_fetch', 'method': 'GET',\n"
+        "    'tr_id': 'FHMIF10000000',\n"
+        "    'path': '/uapi/domestic-futureoption/v1/quotations/inquire-price',\n"
+        "    'run': runs + 1, 'plan': what}) + '\\n')\n"
+        "if what == 'hang':\n"
+        "    time.sleep(600)\n"
+        "if what == 'gate':\n"
+        "    print('SafetyViolation: not on the read-only allowlist',"
+        " file=sys.stderr)\n"
+        "    raise SystemExit(1)\n"
+        "if what == 'soft':\n"
+        "    raise SystemExit(3)\n"
+        "kst = zoneinfo.ZoneInfo('Asia/Seoul')\n"
+        "today = datetime.datetime.now(kst).date()\n"
+        f"_open = os.environ.get({_PRODUCER_BAND_OPEN_ENV!r}, '08:45')\n"
+        "_oh, _om = (int(part) for part in _open.split(':'))\n"
+        "opened = datetime.datetime.combine(\n"
+        "    today, datetime.time(_oh, _om), tzinfo=kst)\n"
+        "open_ms = int(opened.timestamp() * 1000)\n"
+        "band_date = today.strftime('%Y%m%d')\n"
+        "band_instrument = instrument\n"
+        "band_as_of = open_ms + 1000\n"
+        f"mode = os.environ.get({_PRODUCER_BAND_ENV!r}, 'ok')\n"
+        "if mode == 'stale':\n"
+        "    band_date = (today - datetime.timedelta(days=1)).strftime('%Y%m%d')\n"
+        "elif mode == 'other-instrument':\n"
+        "    band_instrument = 'A05610'\n"
+        "elif mode == 'pre-open':\n"
+        "    band_as_of = open_ms - 1\n"
+        "elif mode == 'at-0900':\n"
+        "    band_as_of = int(datetime.datetime.combine(\n"
+        "        today, datetime.time(9, 0), tzinfo=kst).timestamp() * 1000)\n"
+        "(session / 'band.jsonl').write_text(json.dumps({\n"
+        "    'kind': 'cp3-band/1',\n"
+        f"    'source_id': {_APPROVED_SOURCE_ID!r},\n"
+        "    'instrument': band_instrument,\n"
+        "    'trading_date': band_date,\n"
+        "    'tr_id': 'FHMIF10000000',\n"
+        "    'upper': '1162.72',\n"
+        "    'lower': '990.48',\n"
+        "    'basis': '1076.60',\n"
+        "    'raw_payload_digest': 'f' * 64,\n"
+        "    'producer_continuity_id': 'c' * 32,\n"
+        "    'as_of_ms': band_as_of,\n"
+        "}) + '\\n')\n",
+        encoding="utf-8",
+    )
+    (repo / "tools/tos_cp3/__init__.py").write_text("", encoding="utf-8")
+    if policy is not None:
+        guard = repo / "tools/tos_cp3/bootproof_guard.py"
+        guard.write_text(
+            guard.read_text("utf-8").replace(
+                f'POLICY_VERSION = "{bootproof_guard.POLICY_VERSION}"',
+                f'POLICY_VERSION = "{policy}"',
+            ),
+            encoding="utf-8",
+        )
+    (repo / "shared/__init__.py").write_text("", encoding="utf-8")
+    (repo / "shared/instruments/__init__.py").write_text("", encoding="utf-8")
+    (repo / "shared/instruments/futures.py").write_text(
+        "def get_front_month_code(product='kospi200', **_kw):\n"
+        f"    return {_FRONT_MONTH!r}\n",
+        encoding="utf-8",
+    )
+
+    if bootable:
+        (repo / "scripts/tos/render_paper_config.py").write_text(
+            "import os, sys\n"
+            "from pathlib import Path\n"
+            "argv = sys.argv[1:]\n"
+            "out = Path(argv[argv.index('--out') + 1])\n"
+            "out.mkdir(parents=True, exist_ok=True)\n"
+            f"env = os.environ.get({_TREE_ENV!r}, 'paper')\n"
+            "if env != '__omit__':\n"
+            "    (out / 'critical_input_policy.yaml').write_text(\n"
+            "        'environment: \"%s\"\\n' % env, encoding='utf-8')\n"
+            "print('stub render ok')\n",
+            encoding="utf-8",
+        )
+        cli_dir = repo / "tos/runtime/src/tos_runtime/compose"
+        cli_dir.mkdir(parents=True)
+        (repo / "tos/runtime/src/tos_runtime/__init__.py").write_text(
+            "", encoding="utf-8"
+        )
+        (cli_dir / "__init__.py").write_text("", encoding="utf-8")
+        (cli_dir / "cli.py").write_text(
+            "import json, os, signal, time\n"
+            "from pathlib import Path\n"
+            "def main(argv):\n"
+            f"    stop_code = os.environ.get({_RUN_STOP_EXIT_ENV!r})\n"
+            "    if stop_code:\n"
+            "        signal.signal(\n"
+            "            signal.SIGTERM,\n"
+            "            lambda _signo, _frame: os._exit(int(stop_code)),\n"
+            "        )\n"
+            f"    envfile = os.environ.get({_RUN_ENVFILE_ENV!r})\n"
+            "    if envfile:\n"
+            "        Path(envfile).write_text(json.dumps(dict(os.environ)))\n"
+            f"    argvfile = os.environ.get({_RUN_ARGVFILE_ENV!r})\n"
+            "    if argvfile:\n"
+            "        Path(argvfile).write_text(json.dumps(list(argv)))\n"
+            f"    Path(os.environ[{_RUN_PIDFILE_ENV!r}]).write_text(str(os.getpid()))\n"
+            f"    exit_code = os.environ.get({_RUN_EXIT_ENV!r})\n"
+            "    if exit_code:\n"
+            "        time.sleep(1.0)\n"
+            "        os._exit(int(exit_code))\n"
+            "    while True:\n"
+            "        time.sleep(0.2)\n",
+            encoding="utf-8",
+        )
+    else:
+        (repo / "scripts/tos/render_paper_config.py").write_text(
+            "raise SystemExit('the guard tests never reach the renderer')\n",
+            encoding="utf-8",
+        )
+
+    def git(*argv: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(repo), *argv], check=True, capture_output=True, text=True
+        )
+
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(repo)], check=True, capture_output=True
+    )
+    git("config", "user.email", "tenant@example.invalid")
+    git("config", "user.name", "tenant")
+    git("add", "-A")
+    git("commit", "-q", "-m", "tenant runner")
+    sha = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    git("update-ref", "refs/remotes/origin/main", sha)
+    if detached:
+        git("checkout", "-q", "--detach", "HEAD")
+    return repo
+
+
+def _runner_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
+    """A complete, valid environment for the template."""
+    scratch = tmp_path / ".local" / "state" / "tos" / "scratch" / "bp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    env_file = tmp_path / ".env.mock"
+    env_file.write_text("KIS_FUTURES_ACCOUNT_NO=00000000-03\n", encoding="utf-8")
+    custody = tmp_path / "custody"
+    custody.mkdir(exist_ok=True)
+    real_env = tmp_path / ".env.real"
+    real_env.write_text(
+        f"KIS_FUTURES_APP_KEY={_PRODUCER_FAKE_KEY}\n"
+        f"KIS_FUTURES_APP_SECRET={_PRODUCER_FAKE_SECRET}\n",
+        encoding="utf-8",
+    )
+    calendar = tmp_path / "producer-calendar.yaml"
+    calendar_start = overrides.get(_STUB_CALENDAR_START_ENV, "08:45")
+    calendar.write_text(
+        "calendar_version: stub-for-the-runner-tests\n"
+        "tz_id: Asia/Seoul\n"
+        "holidays:\n  - '2026-01-01'\n"
+        "sessions:\n"
+        "  krx-index-futures:\n"
+        "    - phase: CONTINUOUS\n"
+        f"      start: '{calendar_start}'\n"
+        "      end: '15:45'\n",
+        encoding="utf-8",
+    )
+    producer_config = tmp_path / "cp3-live-producer.yaml"
+    market = overrides.get(_STUB_MARKET_ENV, "futures")
+    producer_config.write_text(
+        ("" if market == "<absent>" else f"market: {market}\n")
+        + f"env_file: {real_env}\n"
+        f"calendar_yaml: {calendar}\n"
+        "calendar_session_id: krx-index-futures\n"
+        "calendar_session_phase: CONTINUOUS\n",
+        encoding="utf-8",
+    )
+
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(tmp_path),
+        "TENANT_LOG": str(tmp_path / "session.log"),
+        "TENANT_PYTHON": sys.executable,
+        "TENANT_TREE": "cp3-setup-d-long",
+        "TENANT_DIRECTION": "LONG",
+        "TENANT_RENDER_OUT": str(tmp_path / "render-out"),
+        "TENANT_DATA_PARENT": str(scratch / "data"),
+        "TENANT_JOURNAL": str(tmp_path / "journal.jsonl"),
+        "TENANT_STOP_AT": "+10 minutes",
+        "TENANT_ENV_FILE": str(env_file),
+        "TENANT_CUSTODY_ROOT": str(custody),
+        "TENANT_ENVIRONMENT_LABEL": "paper",
+        "TENANT_PRODUCER_CONFIG": str(producer_config),
+        "TENANT_PRODUCER_SESSION_DIR": str(tmp_path / "producer-session"),
+        _PRODUCER_PIDFILE_ENV: str(tmp_path / "producer.pid"),
+        "CP3_BAND_LINE_EXTRA_WAIT_S": "5",
+        "CP3_BAND_LAUNCH_MAX_WAIT_S": "0",
+        "CP3_BAND_PROCESS_TIMEOUT_S": "4",
+    }
+    for name, value in overrides.items():
+        if value == "":
+            env.pop(name, None)
+        else:
+            env[name] = value
+    return env
+
+
+_PROPAGATING_TIMEOUT = """\
+import os, signal, subprocess, sys
+args = sys.argv[1:]
+kill_after = None
+while args[0].startswith("--"):
+    flag = args.pop(0)
+    if flag.startswith("--kill-after="):
+        kill_after = float(flag.split("=", 1)[1].rstrip("s"))
+duration = float(args.pop(0).rstrip("s"))
+try:
+    os.setpgid(0, 0)
+except PermissionError:
+    pass  # already a session leader (`setsid timeout ...`)
+child = subprocess.Popen(args)
+received = []
+def forward(signo, _frame):
+    received.append(signo)
+    try:
+        child.send_signal(signo)
+    except ProcessLookupError:
+        pass
+signal.signal(signal.SIGTERM, forward)
+try:
+    rc = child.wait(timeout=duration)
+except subprocess.TimeoutExpired:
+    child.terminate()
+    try:
+        child.wait(timeout=kill_after)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+        sys.exit(137)
+    sys.exit(124)
+if received:
+    sys.exit(124)
+sys.exit(rc if rc >= 0 else 128 - rc)
+"""
+
+
+def _propagating_timeout_path(tmp_path: Path) -> str:
+    """A ``PATH`` whose first ``timeout`` is :data:`_PROPAGATING_TIMEOUT`."""
+    bin_dir = tmp_path / "coreutils-9.10-bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "timeout"
+    stub.write_text(f"#!{sys.executable}\n" + _PROPAGATING_TIMEOUT, encoding="utf-8")
+    stub.chmod(0o755)
+    return f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+
+
+@pytest.fixture(params=["host-timeout", "timeout-reports-124"])
+def timeout_flavour(request: pytest.FixtureRequest, tmp_path: Path) -> dict[str, str]:
+    """#967: run a stop-path test under BOTH `timeout` behaviours."""
+    if request.param == "host-timeout":
+        return {}
+    return {"PATH": _propagating_timeout_path(tmp_path)}
+
+
+def test_the_propagating_timeout_stub_reports_124_for_a_forwarded_term(
+    tmp_path: Path,
+) -> None:
+    """The stub is only evidence if it reproduces the 9.10 shape: a TERM to"""
+    path = _propagating_timeout_path(tmp_path)
+    proc = subprocess.Popen(
+        ["timeout", "--kill-after=5s", "60s", "sleep", "60"],
+        env={**os.environ, "PATH": path},
+    )
+    time.sleep(1.0)
+    proc.send_signal(signal.SIGTERM)
+    assert proc.wait(timeout=20) == 124
+
+
+def _producer_outlived_the_runner(tmp_path: Path) -> bool:
+    """Is the stub producer still alive after the runner returned?"""
+    pidfile = tmp_path / "producer.pid"
+    if not pidfile.is_file():
+        return False
+    pid = int(pidfile.read_text().strip())
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and _pid_alive(pid):
+        time.sleep(0.2)
+    alive = _pid_alive(pid)
+    if alive:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+    return alive
+
+
+def _run_runner(repo: Path, tmp_path: Path, **overrides: str) -> Any:
+    result = subprocess.run(
+        ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+        capture_output=True,
+        text=True,
+        env=_runner_env(tmp_path, **overrides),
+        cwd=str(tmp_path),
+        timeout=180,
+    )
+    result.producer_outlived_the_runner = _producer_outlived_the_runner(tmp_path)
+    return result
+
+
+def test_runner_aborts_on_a_checkout_that_is_not_detached(tmp_path: Path) -> None:
+    """#793 — a shared checkout lets a parallel lane move the branch under a"""
+    result = _run_runner(_runner_repo(tmp_path, detached=False), tmp_path)
+    assert result.returncode != 0
+    assert "not a detached worktree" in result.stdout + result.stderr
+
+
+def test_runner_aborts_on_a_dirty_checkout(tmp_path: Path) -> None:
+    repo = _runner_repo(tmp_path)
+    (repo / "untracked.txt").write_text("x", encoding="utf-8")
+    result = _run_runner(repo, tmp_path)
+    assert result.returncode != 0
+    assert "is dirty" in result.stdout + result.stderr
+
+
+def test_runner_aborts_when_head_is_not_an_ancestor_of_origin_main(
+    tmp_path: Path,
+) -> None:
+    repo = _runner_repo(tmp_path)
+    (repo / "extra.txt").write_text("x", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "ahead"],
+        check=True,
+        capture_output=True,
+    )
+    result = _run_runner(repo, tmp_path)
+    assert result.returncode != 0
+    assert "not an ancestor of origin/main" in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "TENANT_LOG",
+        "TENANT_PYTHON",
+        "TENANT_TREE",
+        "TENANT_DIRECTION",
+        "TENANT_RENDER_OUT",
+        "TENANT_DATA_PARENT",
+        "TENANT_JOURNAL",
+        "TENANT_STOP_AT",
+        "TENANT_ENV_FILE",
+        "TENANT_CUSTODY_ROOT",
+        "TENANT_ENVIRONMENT_LABEL",
+        "TENANT_PRODUCER_CONFIG",
+        "TENANT_PRODUCER_SESSION_DIR",
+    ],
+)
+def test_runner_aborts_when_any_instance_value_is_unset(
+    tmp_path: Path, name: str
+) -> None:
+    """Each name separately: "this template ships no instance defaults" is only"""
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, **{name: ""})
+    assert result.returncode != 0
+    assert f"required env {name} is unset" in result.stdout + result.stderr
+
+
+def test_runner_refuses_an_env_file_that_is_not_env_mock(tmp_path: Path) -> None:
+    """Mirrors ``render_paper_config.py``'s ENV_FILE_NAME guard, one step"""
+    other = tmp_path / ".env.real"
+    other.write_text("KIS_FUTURES_ACCOUNT_NO=11111111-03\n", encoding="utf-8")
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, TENANT_ENV_FILE=str(other))
+    assert result.returncode != 0
+    assert ".env.mock" in result.stdout + result.stderr
+
+
+def test_runner_refuses_an_unknown_direction(tmp_path: Path) -> None:
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, TENANT_DIRECTION="BOTH")
+    assert result.returncode != 0
+    assert "TENANT_DIRECTION must be" in result.stdout + result.stderr
+
+
+def test_runner_refuses_an_unknown_tree(tmp_path: Path) -> None:
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, TENANT_TREE="no-such-tree")
+    assert result.returncode != 0
+    assert "names no config tree" in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("stop_at", "expected"),
+    [
+        ("not a time at all", "is not a time this shell can parse"),
+        ("-10 minutes", "already past"),
+        ("+20 hours", "ceiling"),
+    ],
+)
+def test_runner_refuses_a_stop_time_it_cannot_honour(
+    tmp_path: Path, stop_at: str, expected: str
+) -> None:
+    """Three separate failing inputs, because "the stop time is checked" covers"""
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, TENANT_STOP_AT=stop_at)
+    assert result.returncode != 0
+    assert expected in result.stdout + result.stderr
+
+
+def test_runner_refuses_a_guard_module_of_a_different_generation(
+    tmp_path: Path,
+) -> None:
+    repo = _runner_repo(tmp_path, policy="cp3-tenant-bootproof/99")
+    result = _run_runner(repo, tmp_path)
+    assert result.returncode != 0
+    assert "policy version mismatch" in result.stdout + result.stderr
+
+
+def test_red_h1_the_runner_refuses_the_reviewers_resident_journal_rows(
+    tmp_path: Path,
+) -> None:
+    """**The reviewer's HIGH input, end to end at the run template.**"""
+    designated = tmp_path / ".local" / "state" / "tos" / "cp3-setup-d-long-data"
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        TENANT_DATA_PARENT=str(designated),
+        **{_PRODUCER_SOURCE_IDS_ENV: ",".join(_RESIDENT_SOURCE_IDS)},
+    )
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "not an approved real producer" in output
+    assert not (designated / _FRONT_MONTH).exists()
+    assert not (tmp_path / "render-out").exists()
+    assert not result.producer_outlived_the_runner
+
+
+def test_red_h1_runner_refuses_the_resident_durable_set(tmp_path: Path) -> None:
+    """The LIVE resident parent, with an APPROVED journal — the clause that"""
+    resident = tmp_path / ".local" / "state" / "tos" / "paper-data"
+    resident.mkdir(parents=True)
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, TENANT_DATA_PARENT=str(resident)
+    )
+    assert result.returncode != 0
+    assert "RESIDENT paper durable set" in result.stdout + result.stderr
+    assert not (resident / _FRONT_MONTH).exists()
+    assert not result.producer_outlived_the_runner
+
+
+def test_an_approved_producer_row_opens_the_designated_tenant_set(
+    tmp_path: Path,
+) -> None:
+    """The other half of the allowlist, and what ③ exists to unlock."""
+    designated = tmp_path / ".local" / "state" / "tos" / "cp3-setup-d-long-data"
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, TENANT_DATA_PARENT=str(designated)
+    )
+    output = result.stdout + result.stderr
+    assert "boot-proof guard refused" not in output
+    assert (designated / _FRONT_MONTH).is_dir()
+    assert "render refused" in output
+    assert not result.producer_outlived_the_runner
+
+
+def test_runner_waits_for_the_band_line_and_says_it_saw_one(tmp_path: Path) -> None:
+    """The happy path: a line for today, this contract, stamped past the open."""
+    result = _run_runner(_runner_repo(tmp_path), tmp_path)
+    output = result.stdout + result.stderr
+    assert _BAND_PRESENT_LINE in output
+    assert _BAND_ABSENT_LINE not in output
+    assert "band line ok · trading_date=" in output
+    assert "render refused" in output
+    assert not result.producer_outlived_the_runner
+
+
+@pytest.mark.parametrize(
+    "band_mode,fragment",
+    [
+        ("stale", "trading_date"),
+        ("other-instrument", "instrument"),
+        ("pre-open", "before the open"),
+    ],
+)
+def test_red_the_runner_rejects_a_band_line_clause_by_clause(
+    tmp_path: Path, band_mode: str, fragment: str
+) -> None:
+    """**A LINE, not the file** (v2 re-review LOW), one clause at a time."""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_PRODUCER_BAND_ENV: band_mode, _PRODUCER_EXIT_ENV: "0"},
+    )
+    output = result.stdout + result.stderr
+    assert _BAND_ABSENT_LINE in output
+    assert _BAND_PRESENT_LINE not in output
+    assert "the last line is not usable" in output
+    assert fragment in output
+    assert "render refused" in output
+
+
+@pytest.mark.parametrize(
+    "band_mode,expected_present",
+    [
+        ("ok", False),
+        ("at-0900", True),
+    ],
+)
+def test_red_the_runners_open_really_comes_from_the_calendar(
+    tmp_path: Path, band_mode: str, expected_present: bool
+) -> None:
+    """**Review round 1 LOW-2.** Behavioural, not a grep for the absence of 08:45."""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _STUB_CALENDAR_START_ENV: "08:50",
+            _PRODUCER_BAND_ENV: band_mode,
+            _PRODUCER_EXIT_ENV: "0",
+        },
+    )
+    output = result.stdout + result.stderr
+    if expected_present:
+        assert _BAND_PRESENT_LINE in output
+        assert _BAND_ABSENT_LINE not in output
+    else:
+        assert _BAND_ABSENT_LINE in output
+        assert _BAND_PRESENT_LINE not in output
+        assert "before the open" in output
+    assert "render refused" in output
+
+
+def test_runner_band_wait_still_runs_no_mode_repair(tmp_path: Path) -> None:
+    """PR-A touched neither the credential separation nor the xtrace defence."""
+    text = _RUNNER.read_text("utf-8")
+    assert "set +x +v" in text
+    assert '[ -z "${!_real_key+x}" ]' in text
+    assert "umask 077" in text
+    code = "\n".join(
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    for forbidden in ("chmod", "chown"):
+        assert forbidden not in code, forbidden
+    assert '$BAND_JOURNAL"' in code or '"$BAND_JOURNAL"' in code
+    assert ">$BAND_JOURNAL" not in code and '>"$BAND_JOURNAL"' not in code
+
+
+def test_runner_launches_the_band_process_and_sees_its_line(tmp_path: Path) -> None:
+    """The v3 happy path: the band PROCESS writes the line, the runner sees it."""
+    result = _run_runner(_runner_repo(tmp_path), tmp_path)
+    output = result.stdout + result.stderr
+    assert "=== BAND PROCESS #1" in output
+    assert "band process #1 rc=0" in output
+    assert _BAND_PRESENT_LINE in output
+    assert _BAND_ABSENT_LINE not in output
+    assert "band line ok · trading_date=" in output
+    assert "=== BAND PROCESS #2" not in output
+    assert (tmp_path / "producer-session" / "band.jsonl").is_file()
+    assert "render refused" in output
+    assert not result.producer_outlived_the_runner
+
+
+def test_red_a_hanging_band_process_is_killed_and_the_session_continues(
+    tmp_path: Path,
+) -> None:
+    """A band process that hangs must not hold the session (band plan v3)."""
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, **{_BAND_PLAN_ENV: "hang,ok"}
+    )
+    output = result.stdout + result.stderr
+    assert "band process #1 rc=124" in output or "band process #1 rc=137" in output
+    assert "one retry at the next boundary" in output
+    assert "band process #2 rc=0" in output
+    assert _BAND_PRESENT_LINE in output
+    assert "render refused" in output
+
+
+def test_red_the_band_retry_runs_exactly_once(tmp_path: Path) -> None:
+    """One extra attempt, never two (band plan v3)."""
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, **{_BAND_PLAN_ENV: "soft,soft,soft"}
+    )
+    output = result.stdout + result.stderr
+    assert "=== BAND PROCESS #1" in output
+    assert "=== BAND PROCESS #2" in output
+    assert "=== BAND PROCESS #3" not in output
+    assert "no further attempts" in output
+    assert _BAND_ABSENT_LINE in output
+    assert "render refused" in output
+
+
+def test_red_a_band_process_rc_1_aborts_before_the_boot(tmp_path: Path) -> None:
+    """rc 1 is a defect HERE, so the session must not boot (band plan v3)."""
+    repo = _runner_repo(tmp_path, bootable=True)
+    env = _runner_env(tmp_path, **{_BAND_PLAN_ENV: "gate"})
+    env[_RUN_PIDFILE_ENV] = str(tmp_path / "run.pid")
+    env["TENANT_STOP_AT"] = "+1 minutes"
+    try:
+        result = subprocess.run(
+            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(tmp_path),
+            timeout=120,
+        )
+    finally:
+        pidfile = tmp_path / "run.pid"
+        if pidfile.is_file():
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "band process exited rc 1" in output
+    assert not (tmp_path / "run.pid").exists()
+    assert "=== BAND PROCESS #2" not in output
+    assert _BAND_ABSENT_LINE not in output
+
+
+_BAND_LAUNCH_MIN_SLACK_S = 120
+
+
+def _a_future_open(now: datetime.datetime) -> tuple[str, float]:
+    """``(HH:MM for the stub calendar, seconds until ``open + one boundary``)``."""
+    opens_at = now + datetime.timedelta(hours=1)
+    if opens_at.date() != now.date():
+        opens_at = now.replace(hour=23, minute=59, second=0, microsecond=0)
+    start = opens_at.strftime("%H:%M")
+    anchored = datetime.datetime.combine(
+        now.date(), datetime.time.fromisoformat(start), tzinfo=now.tzinfo
+    ) + datetime.timedelta(seconds=60)
+    return start, anchored.timestamp() - now.timestamp()
+
+
+def test_the_future_open_helper_has_no_blind_window_but_the_last_seconds() -> None:
+    """⛔ The de-fragilising itself, proved over a whole simulated day."""
+    kst = zoneinfo.ZoneInfo("Asia/Seoul")
+    day = datetime.date(2026, 10, 16)
+    moments = [
+        datetime.datetime.combine(day, datetime.time(hour, minute), tzinfo=kst)
+        for hour in range(24)
+        for minute in range(60)
+    ]
+    moments += [
+        datetime.datetime.combine(day, datetime.time(23, 59, second), tzinfo=kst)
+        for second in range(60)
+    ]
+    for moment in moments:
+        start, anchored_in_s = _a_future_open(moment)
+        assert re.fullmatch(r"\d{2}:\d{2}", start), (moment, start)
+        as_the_runner_reads_it = (
+            datetime.datetime.combine(
+                moment.date(), datetime.time.fromisoformat(start), tzinfo=kst
+            )
+            + datetime.timedelta(seconds=60)
+        ).timestamp() - moment.timestamp()
+        assert abs(as_the_runner_reads_it - anchored_in_s) < 1, (
+            moment.isoformat(),
+            anchored_in_s,
+            as_the_runner_reads_it,
+        )
+        seconds_left = 86400 - (moment.hour * 3600 + moment.minute * 60 + moment.second)
+        if seconds_left > _BAND_LAUNCH_MIN_SLACK_S:
+            assert as_the_runner_reads_it > 0, (moment.isoformat(), anchored_in_s)
+        assert anchored_in_s <= 3660, (moment.isoformat(), anchored_in_s)
+
+
+_BAND_NO_TIME_LINE = "left before the session stop — NO attempt started"
+_BAND_CEILING_CAPPED = "capped to"
+
+
+def _band_runs_recorded(tmp_path: Path) -> int:
+    """How many times the stub band probe actually started."""
+    counter = tmp_path / "producer-session" / ".stub-band-runs"
+    return int(counter.read_text().strip()) if counter.is_file() else 0
+
+
+def test_red_no_band_attempt_starts_after_the_stop_passes_in_the_open_wait(
+    tmp_path: Path,
+) -> None:
+    """⛔ **Codex round 6, MEDIUM.** The stop ends the band, mid-wait."""
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
+    start, anchored_in_s = _a_future_open(now)
+    if anchored_in_s < _BAND_LAUNCH_MIN_SLACK_S:
+        pytest.skip(
+            f"within {_BAND_LAUNCH_MIN_SLACK_S}s of midnight KST there is no "
+            f"future open to wait for; the anchored instant is "
+            f"{anchored_in_s:.1f}s away"
+        )
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _STUB_CALENDAR_START_ENV: start,
+            _PRODUCER_BAND_OPEN_ENV: start,
+            "CP3_BAND_LAUNCH_MAX_WAIT_S": "120",
+            "TENANT_STOP_AT": "+15 seconds",
+        },
+    )
+    output = result.stdout + result.stderr
+
+    assert "=== BAND PROCESS" not in output, output[-3000:]
+    assert _band_runs_recorded(tmp_path) == 0
+    assert _BAND_NO_TIME_LINE in output
+    assert "no room for a first attempt" in output
+    assert _BAND_ABSENT_LINE in output
+
+
+def test_red_a_stop_inside_the_margin_skips_the_attempt(tmp_path: Path) -> None:
+    """⛔ **Codex round 7, MEDIUM.** Time left is not the same as time enough."""
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, **{"TENANT_STOP_AT": "+11 seconds"}
+    )
+    output = result.stdout + result.stderr
+
+    assert "=== BAND PROCESS" not in output, output[-3000:]
+    assert _band_runs_recorded(tmp_path) == 0
+    refusal = re.search(r"band: (\d+)s left before the session stop", output)
+    assert refusal is not None, output[-3000:]
+    left = int(refusal.group(1))
+    assert 0 <= left <= 11, refusal.group(0)
+    assert _BAND_ABSENT_LINE in output
+
+
+def test_red_the_logged_ceiling_and_grace_end_before_the_stop_margin(
+    tmp_path: Path,
+) -> None:
+    """⛔ **Codex round 7, MEDIUM.** The four numbers on one line must add up."""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _BAND_PLAN_ENV: "hang",
+            "CP3_BAND_PROCESS_TIMEOUT_S": "30",
+            "TENANT_STOP_AT": "+25 seconds",
+        },
+    )
+    output = result.stdout + result.stderr
+
+    banner = re.search(
+        r"=== BAND PROCESS #1 .* ceiling (\d+)s grace (\d+)s margin (\d+)s "
+        r"stop_in (\d+)s",
+        output,
+    )
+    assert banner is not None, output[-3000:]
+    ceiling, grace, margin, stop_in = (int(value) for value in banner.groups())
+    assert margin > 0, "the margin is what this test is about"
+    assert ceiling + grace <= stop_in - margin, (
+        ceiling,
+        grace,
+        margin,
+        stop_in,
+        output[-2000:],
+    )
+    assert re.search(r"band process #1 rc=(124|137)", output), output[-2000:]
+
+
+def test_red_the_stop_shortens_a_band_attempt_and_cancels_the_retry(
+    tmp_path: Path,
+) -> None:
+    """⛔ **Codex round 6, MEDIUM.** The attempt's ceiling fits in the window."""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _BAND_PLAN_ENV: "hang",
+            "CP3_BAND_PROCESS_TIMEOUT_S": "30",
+            "TENANT_STOP_AT": "+25 seconds",
+        },
+    )
+    output = result.stdout + result.stderr
+
+    ceilings = re.findall(r"=== BAND PROCESS #\d+ .* ceiling (\d+)s", output)
+    assert len(ceilings) == 1, (ceilings, output[-3000:])
+    assert int(ceilings[0]) < 30, ceilings
+    assert int(ceilings[0]) <= 25 - 5, ceilings
+    assert f"{_BAND_CEILING_CAPPED} {ceilings[0]}s by the session stop" in output
+    assert _band_runs_recorded(tmp_path) == 1
+    assert "=== BAND PROCESS #2" not in output
+    assert _BAND_ABSENT_LINE in output
+
+
+def test_red_the_retry_wait_is_capped_by_the_stop(tmp_path: Path) -> None:
+    """⛔ **Codex round 6, MEDIUM.** A 60 s retry wait inside a 20 s session."""
+    started = time.monotonic()
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_BAND_PLAN_ENV: "soft", "TENANT_STOP_AT": "+20 seconds"},
+    )
+    elapsed = time.monotonic() - started
+    output = result.stdout + result.stderr
+
+    assert "band retry: wait 60s capped to" in output, output[-3000:]
+    assert _band_runs_recorded(tmp_path) == 1
+    assert "=== BAND PROCESS #2" not in output
+    assert "no room for the retry" in output
+    assert _BAND_ABSENT_LINE in output
+    assert elapsed < 45, f"{elapsed:.1f}s elapsed — the retry wait was not capped"
+
+
+def test_red_the_band_process_is_not_launched_before_the_open(tmp_path: Path) -> None:
+    """⛔ Not before ``open + one boundary`` (band plan §3.1)."""
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
+    start, anchored_in_s = _a_future_open(now)
+    if anchored_in_s < _BAND_LAUNCH_MIN_SLACK_S:
+        pytest.skip(
+            f"within {_BAND_LAUNCH_MIN_SLACK_S}s of midnight KST no future open "
+            "is left with room for the runner to reach step 8c; the anchored "
+            f"instant is {anchored_in_s:.1f}s away"
+        )
+
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{
+            _STUB_CALENDAR_START_ENV: start,
+            _PRODUCER_BAND_OPEN_ENV: start,
+            "TENANT_STOP_AT": "+3 hours",
+        },
+    )
+    output = result.stdout + result.stderr
+    computed = re.search(
+        r"band launch: computed (\d+)s until open \+ one boundary", output
+    )
+    assert computed is not None, output[-3000:]
+    waited = int(computed.group(1))
+    assert 0 < waited <= math.ceil(anchored_in_s), (
+        waited,
+        anchored_in_s,
+        output[-2000:],
+    )
+    assert waited >= max(1, anchored_in_s - 120), (waited, anchored_in_s)
+    assert "band launch: capped to 0s" in output
+
+
+def test_runner_refuses_a_journal_for_another_contract_month(tmp_path: Path) -> None:
+    """The contract month is derived ONCE and given to the leaf, the render and"""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_PRODUCER_INSTRUMENT_ENV: "A05612", _PRODUCER_EXIT_ENV: "0"},
+    )
+    assert result.returncode != 0
+    assert "A05612" in result.stdout + result.stderr
+    assert not result.producer_outlived_the_runner
+
+
+def test_runner_aborts_at_once_when_the_producer_writes_no_row(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.5's bounded wait.** A producer that refused at boot (a seed"""
+    started = time.monotonic()
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, **{_PRODUCER_ROWS_ENV: "0"})
+    elapsed = time.monotonic() - started
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "producer never produced a usable first row" in output
+    assert "exited before writing a usable journal row" in output
+    assert elapsed < 120, elapsed
+    assert not (tmp_path / "render-out").exists()
+
+
+@pytest.mark.parametrize(
+    ("tree_env", "expected"),
+    [
+        ("non-live-test", "the rendered tree declares environment 'non-live-test'"),
+        ("__omit__", "cannot read environment"),
+    ],
+)
+def test_red_l3_runner_refuses_a_label_the_rendered_tree_does_not_declare(
+    tmp_path: Path, tree_env: str, expected: str
+) -> None:
+    """**Review LOW.** ``--environment-label`` is free-form and the critical-input"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    env = _runner_env(tmp_path)
+    env[_TREE_ENV] = tree_env
+    env[_RUN_PIDFILE_ENV] = str(tmp_path / "run.pid")
+    env["TENANT_STOP_AT"] = "+1 minutes"
+    try:
+        result = subprocess.run(
+            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(tmp_path),
+            timeout=120,
+        )
+    finally:
+        pidfile = tmp_path / "run.pid"
+        if pidfile.is_file():
+            with contextlib.suppress(OSError, ValueError):
+                os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+    assert result.returncode != 0
+    assert expected in result.stdout + result.stderr
+    assert not (tmp_path / "run.pid").exists()
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def test_red_m2_a_signal_to_the_runner_stops_the_child(tmp_path: Path) -> None:
+    """**Review MEDIUM.** Without a trap, SIGTERM to the runner leaves ``run``"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    pidfile = tmp_path / "run.pid"
+    env = _runner_env(tmp_path, TENANT_STOP_AT="+2 hours")
+    env[_RUN_PIDFILE_ENV] = str(pidfile)
+
+    runner = subprocess.Popen(
+        ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+    child_pid = -1
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not pidfile.is_file():
+            assert runner.poll() is None, runner.communicate()[0]
+            time.sleep(0.2)
+        assert pidfile.is_file(), (
+            "the stub `run` never started; runner output:\n"
+            + (tmp_path / "session.log").read_text("utf-8", errors="replace")[-3000:]
+        )
+        child_pid = int(pidfile.read_text().strip())
+        assert _pid_alive(child_pid)
+
+        runner.send_signal(signal.SIGTERM)
+        out = runner.communicate(timeout=60)[0]
+
+        gone = time.monotonic() + 30
+        while time.monotonic() < gone and _pid_alive(child_pid):
+            time.sleep(0.2)
+        assert not _pid_alive(child_pid), (
+            f"the stub `run` (pid {child_pid}) survived a SIGTERM to the runner — "
+            "it is orphaned with no deadline"
+        )
+        assert runner.returncode == 143, out
+        assert "SIGNAL TERM received by the runner" in out
+        assert not _producer_outlived_the_runner(tmp_path)
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+        if child_pid > 0 and _pid_alive(child_pid):
+            os.kill(child_pid, signal.SIGKILL)
+
+
+def _start_bootable_runner(
+    tmp_path: Path, pidfile: Path, *, stop_at: str
+) -> tuple[Any, int]:
+    """Start the template against the stubs and return ``(runner, child pid)``."""
+    repo = _runner_repo(tmp_path, bootable=True)
+    env = _runner_env(tmp_path, TENANT_STOP_AT=stop_at)
+    env[_RUN_PIDFILE_ENV] = str(pidfile)
+    runner = subprocess.Popen(
+        ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not pidfile.is_file():
+        assert runner.poll() is None, runner.communicate()[0]
+        time.sleep(0.2)
+    assert pidfile.is_file(), (
+        "the stub `run` never started; session log:\n"
+        + (tmp_path / "session.log").read_text("utf-8", errors="replace")[-3000:]
+    )
+    return runner, int(pidfile.read_text().strip())
+
+
+def test_red_a_sigkilled_runner_still_leaves_the_child_a_deadline(
+    tmp_path: Path,
+) -> None:
+    """**Re-review LOW.** The traps only cover signals the runner lives to see."""
+    pidfile = tmp_path / "run.pid"
+    stop_window_s = 15
+    runner, child_pid = _start_bootable_runner(
+        tmp_path, pidfile, stop_at=f"+{stop_window_s} seconds"
+    )
+    ceiling_s = stop_window_s + 120
+    try:
+        assert _pid_alive(child_pid)
+        runner.kill()
+        runner.wait(timeout=30)
+        assert runner.returncode == -signal.SIGKILL
+
+        time.sleep(2)
+        assert _pid_alive(child_pid), (
+            "the child was already gone right after the runner was SIGKILLed, so "
+            "this test is not exercising the external ceiling"
+        )
+
+        gone_by = time.monotonic() + ceiling_s + 60
+        while time.monotonic() < gone_by and _pid_alive(child_pid):
+            time.sleep(1)
+        assert not _pid_alive(child_pid), (
+            f"the stub `run` (pid {child_pid}) outlived its {ceiling_s}s ceiling after "
+            "the runner was SIGKILLed — it is an orphan with no deadline"
+        )
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+        if _pid_alive(child_pid):
+            os.kill(child_pid, signal.SIGKILL)
+
+
+def test_red_the_runner_refuses_a_real_query_key_in_its_own_environment(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.4.** The concrete input: a shell that exported"""
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, KIS_FUTURES_APP_KEY="PS-not-a-real-key"
+    )
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "KIS_FUTURES_APP_KEY is set in this shell" in output
+    assert "PS-not-a-real-key" not in output
+    assert not (tmp_path / "producer.pid").exists()
+    assert not (tmp_path / "render-out").exists()
+
+
+def test_red_the_same_refusal_for_the_secret(tmp_path: Path) -> None:
+    """The second key, separately: a guard that only names the first one lets"""
+    result = _run_runner(
+        _runner_repo(tmp_path), tmp_path, KIS_FUTURES_APP_SECRET="not-a-real-secret"
+    )
+    assert result.returncode != 0
+    assert "KIS_FUTURES_APP_SECRET is set in this shell" in result.stdout + (
+        result.stderr
+    )
+    assert "not-a-real-secret" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("market", "variable"),
+    [
+        ("stock", "KIS_STOCK_APP_KEY"),
+        ("stock", "KIS_STOCK_APP_SECRET"),
+        ("stock", "KIS_FUTURES_APP_KEY"),
+        ("futures", "KIS_STOCK_APP_KEY"),
+    ],
+)
+def test_red_low3_the_real_key_guard_follows_the_market(
+    tmp_path: Path, market: str, variable: str
+) -> None:
+    """**PR #922 review LOW-3.** The first cut named ``KIS_FUTURES_APP_KEY``/``SECRET``"""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_STUB_MARKET_ENV: market, variable: "not-a-real-value-91c2"},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert f"{variable} is set in this shell" in output
+    assert "not-a-real-value-91c2" not in output
+    assert not (tmp_path / "producer.pid").exists()
+
+
+@pytest.mark.parametrize("market", ["<absent>", "bond"])
+def test_red_low3_an_unknown_or_absent_market_is_refused(
+    tmp_path: Path, market: str
+) -> None:
+    """Fail closed: a config whose market step 5b cannot read is refused before the"""
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, **{_STUB_MARKET_ENV: market})
+    assert result.returncode != 0
+    assert "TENANT_PRODUCER_CONFIG declares market=" in result.stdout + result.stderr
+    assert not (tmp_path / "producer.pid").exists()
+
+
+@pytest.mark.parametrize(
+    ("tree", "market"),
+    [("cp3-setup-d-long", "stock"), (_STOCK_TREE, "futures")],
+)
+def test_red_936_low1_a_tree_and_producer_market_mismatch_refuses_before_the_producer(
+    tmp_path: Path, tree: str, market: str
+) -> None:
+    """#936 review LOW-1: a futures tree with the stock producer config (or the reverse) used"""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{"TENANT_TREE": tree, _STUB_MARKET_ENV: market},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "refused before the producer starts" in output
+    assert not (tmp_path / "producer.pid").exists()
+
+
+def test_red_936_low3_a_duplicate_market_key_reads_as_the_loader_reads_it(
+    tmp_path: Path,
+) -> None:
+    """#936 review LOW-3: ``market: futures`` then ``market: stock``. The producer's loader"""
+    result = _run_runner(
+        _runner_repo(tmp_path),
+        tmp_path,
+        **{_STUB_MARKET_ENV: "futures\nmarket: stock"},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "reads market='stock'" in output
+    assert not (tmp_path / "producer.pid").exists()
+
+
+def test_the_runner_key_table_is_the_producers_own_credential_keys() -> None:
+    """The shell table may not drift from ``config.MARKETS[*].credential_keys`` — the"""
+    from tools.tos_cp3.live_producer.config import MARKETS
+
+    text = _RUNNER.read_text("utf-8")
+    table = {
+        match.group(1).lower(): tuple(match.group(2).split())
+        for match in re.finditer(r'^_REAL_KEYS_([A-Z]+)="([^"]*)"$', text, re.M)
+    }
+    assert table == {
+        market: profile.credential_keys for market, profile in MARKETS.items()
+    }
+
+
+def _stock_overrides(tmp_path: Path, **extra: str) -> dict[str, str]:
+    transport = tmp_path / "kis_mock_transport.yaml"
+    transport.write_text("# stub — the stub run never reads it\n", encoding="utf-8")
+    return {
+        "TENANT_TREE": _STOCK_TREE,
+        _STUB_MARKET_ENV: "stock",
+        "TENANT_INSTRUMENT": "005930",
+        "TENANT_KIS_MOCK_TRANSPORT_CONFIG": str(transport),
+        "TENANT_BOOT_DELAY_S": "0",
+        **extra,
+    }
+
+
+def test_a_stock_session_boots_kis_mock_with_the_transport_config_installed(
+    tmp_path: Path, timeout_flavour: dict[str, str]
+) -> None:
+    """The stock tree is the MOCK order tree (PR-3a): ``run`` gets ``--transport kis-mock``,"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    argvfile = tmp_path / "run-argv.json"
+    result = _run_runner(
+        repo,
+        tmp_path,
+        **_stock_overrides(
+            tmp_path,
+            TENANT_STOP_AT="+15 seconds",
+            **{
+                _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+                _RUN_ARGVFILE_ENV: str(argvfile),
+                **timeout_flavour,
+            },
+        ),
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode in (0, 143), output
+    argv = json.loads(argvfile.read_text("utf-8"))
+    assert argv[argv.index("--transport") + 1] == "kis-mock"
+    installed = tmp_path / "render-out" / "kis_mock_transport.yaml"
+    assert installed.is_file()
+    assert stat.S_IMODE(installed.stat().st_mode) == 0o600
+    assert "instrument=005930" in output
+    assert "market=stock (tree and producer agree) · transport=kis-mock" in output
+
+
+def test_a_futures_session_still_boots_synthetic(
+    tmp_path: Path, timeout_flavour: dict[str, str]
+) -> None:
+    repo = _runner_repo(tmp_path, bootable=True)
+    argvfile = tmp_path / "run-argv.json"
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_ARGVFILE_ENV: str(argvfile),
+            **timeout_flavour,
+        },
+    )
+    assert result.returncode in (0, 143), result.stdout + result.stderr
+    argv = json.loads(argvfile.read_text("utf-8"))
+    assert argv[argv.index("--transport") + 1] == "synthetic"
+    assert not (tmp_path / "render-out" / "kis_mock_transport.yaml").exists()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "why"),
+    [
+        (
+            {"TENANT_INSTRUMENT": "005930"},
+            "TENANT_INSTRUMENT is set for a futures session",
+        ),
+        (
+            {"TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/nonexistent"},
+            "TENANT_KIS_MOCK_TRANSPORT_CONFIG is set for a futures session",
+        ),
+        (
+            {"TENANT_BOOT_DELAY_S": "70"},
+            "TENANT_BOOT_DELAY_S is set for a futures session",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "0",
+            },
+            "required env TENANT_INSTRUMENT is unset",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+                "TENANT_BOOT_DELAY_S": "0",
+            },
+            "required env TENANT_KIS_MOCK_TRANSPORT_CONFIG is unset",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+            },
+            "required env TENANT_BOOT_DELAY_S is unset",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "70s",
+            },
+            "is not a whole number of seconds",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "3600",
+            },
+            "exceeds the 600s ceiling",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "A05612",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "0",
+            },
+            "does not fully match",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "000660",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/x",
+                "TENANT_BOOT_DELAY_S": "0",
+            },
+            "does not fully match",
+        ),
+        (
+            {
+                "TENANT_TREE": _STOCK_TREE,
+                _STUB_MARKET_ENV: "stock",
+                "TENANT_INSTRUMENT": "005930",
+                "TENANT_KIS_MOCK_TRANSPORT_CONFIG": "/nonexistent/kis_mock_transport.yaml",
+                "TENANT_BOOT_DELAY_S": "0",
+            },
+            "TENANT_KIS_MOCK_TRANSPORT_CONFIG names no file",
+        ),
+    ],
+)
+def test_red_the_market_settings_refuse_before_anything_is_launched(
+    tmp_path: Path, overrides: dict[str, str], why: str
+) -> None:
+    result = _run_runner(_runner_repo(tmp_path), tmp_path, **overrides)
+    assert result.returncode != 0
+    assert why in result.stdout + result.stderr
+    assert not (tmp_path / "producer.pid").exists()
+
+
+_ENV_TEMPLATE = _REPO_ROOT / "tools/tos_cp3/runners/stock-mock-session.env.example"
+_TEMPLATE_LITERALS = {
+    "TENANT_DIRECTION": "LONG",
+    "TENANT_ENVIRONMENT_LABEL": "paper",
+}
+
+_SYMBOL_REF = "${TOS_STOCK_SYMBOL:?TOS_STOCK_SYMBOL unset}"
+_TEMPLATE_SYMBOL_DERIVED = {
+    "TENANT_TREE": f"cp3-setup-d-stock-{_SYMBOL_REF}",
+    "TENANT_INSTRUMENT": _SYMBOL_REF,
+    "TENANT_PRODUCER_CONFIG": (
+        f"${{TOS_REPO}}/config/tos_probes/cp3-live-producer-stock-{_SYMBOL_REF}.yaml"
+    ),
+}
+
+
+def _template_values() -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in _ENV_TEMPLATE.read_text("utf-8").splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    return values
+
+
+def test_the_stock_env_template_names_every_value_the_runner_requires() -> None:
+    text = _RUNNER.read_text("utf-8")
+    block = text[text.index("require_env \\\n") : text.index("ensure_log_file")]
+    required = set(re.findall(r"TENANT_[A-Z_]+", block)) | {
+        "TENANT_INSTRUMENT",
+        "TENANT_KIS_MOCK_TRANSPORT_CONFIG",
+        "TENANT_BOOT_DELAY_S",
+    }
+    assert set(_template_values()) == required
+
+
+def test_the_stock_env_template_carries_no_secret_and_no_host_path() -> None:
+    """Every value is a ``${VAR}`` reference (optionally with a relative suffix), one of the"""
+    for key, value in _template_values().items():
+        if key in _TEMPLATE_LITERALS:
+            assert value == _TEMPLATE_LITERALS[key], key
+            continue
+        if key in _TEMPLATE_SYMBOL_DERIVED:
+            assert value == _TEMPLATE_SYMBOL_DERIVED[key], key
+            continue
+        assert re.fullmatch(r"\$\{[A-Z_]+(:\?[^}]+)?\}(/[A-Za-z0-9_./-]+)?", value), (
+            key,
+            value,
+        )
+    text = _ENV_TEMPLATE.read_text("utf-8")
+    for forbidden in ("APP_KEY=", "APP_SECRET=", "ACCOUNT_NO=", "/home/"):
+        assert forbidden not in text
+
+
+def test_the_stock_env_template_names_no_symbol_anywhere() -> None:
+    """One template, every stock tenant: no six-digit KRX symbol in it at all."""
+    text = _ENV_TEMPLATE.read_text("utf-8")
+    assert re.search(r"(?<![0-9])[0-9]{6}(?![0-9])", text) is None, text
+
+
+def test_a_die_after_the_producer_starts_does_not_leave_it_running(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.5, v2 re-review M1 — the EXIT trap's red proof.**"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+2 minutes",
+        **{_TREE_ENV: "non-live-test", _RUN_PIDFILE_ENV: str(tmp_path / "run.pid")},
+    )
+    assert result.returncode != 0
+    assert "the rendered tree declares environment 'non-live-test'" in (
+        result.stdout + result.stderr
+    )
+    assert (tmp_path / "producer.pid").is_file()
+    assert not result.producer_outlived_the_runner
+    assert not (tmp_path / "run.pid").exists()
+
+
+def test_the_boot_order_is_producer_then_first_row_then_guard_then_boot(
+    tmp_path: Path,
+) -> None:
+    """**Plan §3.5 end to end**, in one short session."""
+    repo = _runner_repo(tmp_path, bootable=True)
+    envfile = tmp_path / "runtime-env.json"
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_ENVFILE_ENV: str(envfile),
+        },
+    )
+    output = result.stdout + result.stderr
+
+    journal = tmp_path / "journal.jsonl"
+    assert journal.is_file()
+    rows = [json.loads(line) for line in journal.read_text("utf-8").splitlines()]
+    assert [row["source_id"] for row in rows] == [_APPROVED_SOURCE_ID]
+    assert "first real row seen · consumed_stale_at_boot=1" in output
+    snapshot = json.loads(
+        (tmp_path / "producer-session" / "boot-journal-snapshot.json").read_text(
+            "utf-8"
+        )
+    )
+    assert snapshot["consumed_stale_at_boot"] == 1
+    assert snapshot["pre_boot_raw_event_ids"] == [rows[0]["raw_event_id"]]
+    for earlier, later in zip(
+        ["=== PRODUCER", "first real row seen", "=== RENDER", "=== BOOT"],
+        ["first real row seen", "=== RENDER", "=== BOOT", "=== END run"],
+    ):
+        assert output.index(earlier) < output.index(later), (earlier, later)
+    runtime_env = json.loads(envfile.read_text("utf-8"))
+    assert "KIS_FUTURES_APP_KEY" not in runtime_env
+    assert "KIS_FUTURES_APP_SECRET" not in runtime_env
+    assert "=== END producer" in output
+    assert not result.producer_outlived_the_runner
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "expected_rc"),
+    [
+        pytest.param("1", "1", id="refused-rc1"),
+        pytest.param("killed", "137", id="sigkilled-rc137"),
+    ],
+)
+def test_a_producer_that_stops_mid_session_is_reported_as_an_abort(
+    tmp_path: Path, exit_code: str, expected_rc: str, timeout_flavour: dict[str, str]
+) -> None:
+    """**Plan §3.5's last sentence: 「멈춘 생산자는 러너가 ABORT 로 보고한다」.**"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _PRODUCER_EXIT_ENV: exit_code,
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            **timeout_flavour,
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output
+    assert "=== END run rc=143" in output
+    assert f"producer end: rc={expected_rc} (self-stopped=1" in output
+    assert result.returncode == 5, output[-2000:]
+    assert "ABORT: the producer halted in the session" in output
+
+
+def test_nothing_the_session_creates_is_readable_by_another_user(
+    tmp_path: Path,
+) -> None:
+    """**0600 inside 0700, for every path this template brings into being.**"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    runner = repo / "tools/tos_cp3/runners/run_tenant_session.sh"
+    result = subprocess.run(
+        ["bash", "-c", 'umask 022; exec bash "$1"', "_", str(runner)],
+        capture_output=True,
+        text=True,
+        env=_runner_env(
+            tmp_path,
+            TENANT_STOP_AT="+10 seconds",
+            **{
+                _PRODUCER_EXIT_ENV: "0",
+                _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            },
+        ),
+        cwd=str(tmp_path),
+        timeout=180,
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output, output[-2000:]
+    _producer_outlived_the_runner(tmp_path)
+
+    producer_session = tmp_path / "producer-session"
+    data_leaf = tmp_path / ".local/state/tos/scratch/bp/data" / _FRONT_MONTH
+    directories = [producer_session, data_leaf, tmp_path / "render-out"]
+    files = [
+        tmp_path / "session.log",
+        tmp_path / "session.log.run-rc",
+        tmp_path / "journal.jsonl",
+        producer_session / "boot-journal-snapshot.json",
+        producer_session / "first-row-wait.log",
+        producer_session / "producer-summary.json",
+        tmp_path / "render-out/critical_input_policy.yaml",
+    ]
+    modes = {
+        str(path): oct(path.stat().st_mode & 0o777)
+        for path in (*directories, *files)
+        if path.exists()
+    }
+    assert len(modes) == len(directories) + len(files), (modes, output[-2000:])
+    assert all(
+        mode == oct(0o700) for path, mode in modes.items() if Path(path).is_dir()
+    ), modes
+    assert all(
+        mode == oct(0o600) for path, mode in modes.items() if Path(path).is_file()
+    ), modes
+
+
+@pytest.mark.parametrize("which", ["TENANT_PRODUCER_SESSION_DIR", "TENANT_DATA_PARENT"])
+def test_red_a_session_path_that_is_a_symlink_is_refused(
+    tmp_path: Path, which: str
+) -> None:
+    """**PR #904 review round 1 item B — the repair must not reach outside.**"""
+    repo = _runner_repo(tmp_path)
+    outside = tmp_path / "somewhere-else"
+    outside.mkdir()
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    linked = scratch / "linked"
+    linked.symlink_to(outside, target_is_directory=True)
+
+    result = _run_runner(repo, tmp_path, **{which: str(linked)})
+
+    output = result.stdout + result.stderr
+    assert "is a symlink" in output, output[-2000:]
+    assert "a session path is not the path it names" in output
+    assert result.returncode == 3, output[-2000:]
+    assert not result.producer_outlived_the_runner
+
+
+def test_red_a_session_path_under_a_symlinked_ancestor_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**The same hole one level up — the clause a leaf-only check would miss.**"""
+    repo = _runner_repo(tmp_path)
+    real = tmp_path / ".local/state/tos/scratch/bp/real"
+    real.mkdir(parents=True)
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    (scratch / "via").symlink_to(real, target_is_directory=True)
+
+    result = _run_runner(
+        repo, tmp_path, TENANT_DATA_PARENT=str(scratch / "via" / "data")
+    )
+
+    output = result.stdout + result.stderr
+    assert "a session path is not the path it names" in output, output[-2000:]
+    assert result.returncode == 3, output[-2000:]
+
+
+def test_red_a_session_path_that_resolves_elsewhere_is_refused(
+    tmp_path: Path,
+) -> None:
+    """**Review round 2 LOW 2 — the clause no other input exercises.**"""
+    repo = _runner_repo(tmp_path)
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    (scratch / "x").mkdir(parents=True, exist_ok=True)
+    (scratch / "elsewhere/sub").mkdir(parents=True, exist_ok=True)
+    (scratch / "x/link").symlink_to(scratch / "elsewhere/sub", True)
+
+    result = _run_runner(
+        repo, tmp_path, TENANT_DATA_PARENT=str(scratch / "x/link/../data")
+    )
+
+    output = result.stdout + result.stderr
+    assert "a session path is not the path it names" in output, output[-2000:]
+    assert "resolves to" in output, output[-2000:]
+    assert "is a symlink" not in output, "the OTHER clause must not be what fired"
+    assert result.returncode == 3, output[-2000:]
+    assert not result.producer_outlived_the_runner
+
+
+@pytest.mark.parametrize(
+    ("mode", "refused"),
+    [
+        pytest.param(0o755, True, id="0755-refused"),
+        pytest.param(0o750, True, id="0750-refused"),
+        pytest.param(0o700, False, id="0700-runs"),
+    ],
+)
+def test_red_a_pre_existing_data_parent_that_is_not_700_is_refused(
+    tmp_path: Path, mode: int, refused: bool
+) -> None:
+    """**Codex round 3 — read the mode, never write it.**"""
+    repo = _runner_repo(tmp_path)
+    parent = tmp_path / ".local/state/tos/scratch/bp/preexisting"
+    parent.mkdir(parents=True)
+    parent.chmod(mode)
+    assert oct(parent.stat().st_mode & 0o777) == oct(mode), "the test's own premise"
+
+    result = _run_runner(repo, tmp_path, TENANT_DATA_PARENT=str(parent))
+
+    output = result.stdout + result.stderr
+    if refused:
+        assert f"is mode {mode & 0o777:o}, not 700" in output, output[-2000:]
+        assert "narrow it to 700 yourself" in output
+        assert result.returncode == 3, output[-2000:]
+        assert oct(parent.stat().st_mode & 0o777) == oct(mode)
+        assert not (parent / _FRONT_MONTH).exists()
+    else:
+        assert "data parent mode 700" in output, output[-2000:]
+        assert "render refused" in output, output[-2000:]
+        assert (parent / _FRONT_MONTH).is_dir()
+    assert not result.producer_outlived_the_runner
+
+
+def test_the_runner_runs_no_mode_repair_sweep_after_the_stop(tmp_path: Path) -> None:
+    """**Codex re-review MEDIUM at ``ccf1f0d0``: the repair is REFUSED.**"""
+    text = _RUNNER.read_text("utf-8")
+    assert "repair_modes" not in text
+    code = "\n".join(
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    for forbidden in ("chmod", "chown"):
+        assert forbidden not in code, f"{forbidden} in executable code:\n{code}"
+    after_stop = code[code.index("PRODUCER_ENDED_THE_SESSION=0") :]
+    assert "find " not in after_stop, after_stop[:1500]
+    assert "there is NO mode repair here, deliberately" in text
+    assert "is READ, never written" in text
+
+
+def test_session_paths_with_spaces_still_work(
+    tmp_path: Path, timeout_flavour: dict[str, str]
+) -> None:
+    """**Item B's last requirement: quoting survives the hardening.**"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    scratch = tmp_path / ".local/state/tos/scratch/bp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+10 seconds",
+        TENANT_DATA_PARENT=str(scratch / "a data dir"),
+        TENANT_PRODUCER_SESSION_DIR=str(tmp_path / "a producer session"),
+        TENANT_RENDER_OUT=str(tmp_path / "a render out"),
+        **{_RUN_PIDFILE_ENV: str(tmp_path / "run.pid"), **timeout_flavour},
+    )
+    output = result.stdout + result.stderr
+    assert "session paths are literal" in output, output[-2000:]
+    assert "=== BOOT" in output, output[-2000:]
+    assert result.returncode == 143, output[-2000:]
+    _producer_outlived_the_runner(tmp_path)
+
+    leaf = scratch / "a data dir" / _FRONT_MONTH
+    assert oct(leaf.stat().st_mode & 0o777) == oct(0o700)
+    assert oct((tmp_path / "a producer session").stat().st_mode & 0o777) == oct(0o700)
+    assert oct(
+        (tmp_path / "a producer session/producer-summary.json").stat().st_mode & 0o777
+    ) == oct(0o600)
+
+
+def test_a_producer_that_ends_with_the_session_is_not_an_abort(
+    tmp_path: Path, timeout_flavour: dict[str, str]
+) -> None:
+    """**The 2026-10-15 false ABORT: every full-day session exited 5.**"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _PRODUCER_EXIT_ENV: "0",
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            **timeout_flavour,
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output
+    assert "=== END run rc=143" in output, output[-2000:]
+    if timeout_flavour:
+        assert "timeout reported rc=124 for the SIGTERM this runner" in output
+    assert "=== END producer rc=0" in output
+    assert "producer end: rc=0 (self-stopped=1" in output
+    assert "ended-the-session=1" in output
+    assert "ABORT" not in output, output[-2000:]
+    assert result.returncode == 143, output[-2000:]
+
+
+def test_a_timeout_124_the_runner_did_not_cause_stays_a_failure(
+    tmp_path: Path,
+) -> None:
+    """#967's other half: 124 is only an ordinary stop WITH the stop marker."""
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+30 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_EXIT_ENV: "124",
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output, output[-2000:]
+    assert "run exited on its own before the stop time" in output
+    assert "=== END run rc=124" in output, output[-2000:]
+    assert "the runtime itself ended" not in output
+    assert result.returncode == 124, output[-2000:]
+
+
+def test_a_runtime_that_fails_while_stopping_is_not_recorded_as_a_normal_stop(
+    tmp_path: Path, timeout_flavour: dict[str, str]
+) -> None:
+    """**#987's failing input, and it fails identically on both `timeout`s.**"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+10 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_STOP_EXIT_ENV: "1",
+            **timeout_flavour,
+        },
+    )
+    output = result.stdout + result.stderr
+    assert "=== BOOT" in output, output[-2000:]
+    assert "=== STOP SIGTERM -> run" in output, output[-2000:]
+    assert "=== END run rc=1" in output, output[-2000:]
+    assert "=== END run rc=143" not in output, output[-2000:]
+    assert result.returncode == 1, output[-2000:]
+    record = (tmp_path / "session.log.run-rc").read_text("utf-8")
+    assert re.fullmatch(r"\d+/\d+ 1\n", record), record
+    if timeout_flavour:
+        assert "timeout reported rc=124 for the SIGTERM this runner" in output
+        assert "but the runtime itself ended rc=1" in output
+    _producer_outlived_the_runner(tmp_path)
+
+
+def test_red_stop_supervised_reaps_the_worker_behind_its_supervisor(
+    tmp_path: Path,
+) -> None:
+    """**#892 re-review L2 — the group kill's red proof.**"""
+    marker = tmp_path / "worker.pid"
+    script = tmp_path / "ignore-term.py"
+    script.write_text(
+        "import os, signal, time\n"
+        "from pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+        "while True:\n"
+        "    time.sleep(0.2)\n",
+        encoding="utf-8",
+    )
+    driver = tmp_path / "drive.sh"
+    driver.write_text(
+        "set -u\n"
+        f". {_RUNNER_COMMON}\n"
+        'set_log_file ""\n'
+        f"timeout --kill-after=300s 600s {sys.executable} {script} "
+        f">{tmp_path / 'worker.out'} 2>&1 &\n"
+        "PID=$!\n"
+        "while [ ! -s %s ]; do sleep 0.1; done\n" % marker
+        + 'stop_supervised "$PID" 2 worker\n',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["bash", str(driver)], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    worker_pid = int(marker.read_text().strip())
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and _pid_alive(worker_pid):
+        time.sleep(0.2)
+    try:
+        assert not _pid_alive(worker_pid), (
+            f"the worker (pid {worker_pid}) outlived the SIGKILL its supervisor "
+            "received — the escalation did not reach the process group"
+        )
+    finally:
+        if _pid_alive(worker_pid):
+            os.kill(worker_pid, signal.SIGKILL)
+    assert "SIGKILL to the process group" in result.stdout
+
+
+def test_stop_supervised_returns_at_once_for_a_child_that_already_exited(
+    tmp_path: Path,
+) -> None:
+    """A producer that reached its own session end is already gone."""
+    driver = tmp_path / "already-gone.sh"
+    driver.write_text(
+        "set -u\n"
+        f". {_RUNNER_COMMON}\n"
+        'set_log_file ""\n'
+        "bash -c 'exit 0' &\n"
+        "PID=$!\n"
+        'wait "$PID"\n'
+        'stop_supervised "$PID" 30 worker\n'
+        "echo returned\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    result = subprocess.run(
+        ["bash", str(driver)], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "returned" in result.stdout
+    assert "STOP SIGTERM" not in result.stdout
+    assert time.monotonic() - started < 10
+
+
+def _extract_waiter(tmp_path: Path) -> Path:
+    """The shipped first-row waiter, lifted out of the template verbatim."""
+    lines = _RUNNER.read_text("utf-8").splitlines()
+    body_start = next(i for i, line in enumerate(lines) if line.endswith("<<'PY' &"))
+    end = next(i for i in range(body_start + 1, len(lines)) if lines[i] == "PY")
+    path = tmp_path / "waiter.py"
+    path.write_text("\n".join(lines[body_start + 1 : end]) + "\n", encoding="utf-8")
+    return path
+
+
+def _run_waiter(
+    tmp_path: Path, journal: Path, timeout_s: str, pid: int
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(_extract_waiter(tmp_path)),
+            str(journal),
+            timeout_s,
+            str(pid),
+            str(tmp_path / "snapshot.json"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
+    )
+
+
+def test_red_the_waiter_gives_up_at_its_bound(tmp_path: Path) -> None:
+    """**Plan §3.5's bounded wait, with the bound exercised.**"""
+    alive = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        result = _run_waiter(tmp_path, tmp_path / "never.jsonl", "2", alive.pid)
+    finally:
+        alive.kill()
+    assert result.returncode != 0
+    assert "within 2s" in result.stderr
+    assert not (tmp_path / "snapshot.json").exists()
+
+
+def test_red_the_waiter_stops_as_soon_as_the_producer_is_gone(
+    tmp_path: Path,
+) -> None:
+    """A producer that refused at boot has already exited. Waiting out the"""
+    dead = subprocess.Popen([sys.executable, "-c", ""])
+    dead.wait()
+    started = time.monotonic()
+    result = _run_waiter(tmp_path, tmp_path / "never.jsonl", "600", dead.pid)
+    assert result.returncode != 0
+    assert "exited before writing a usable journal row" in result.stderr
+    assert time.monotonic() - started < 30
+
+
+def test_red_the_waiter_refuses_an_unapproved_row_rather_than_waiting(
+    tmp_path: Path,
+) -> None:
+    """The producer wrote, but not as an approved producer. The guard would"""
+    journal = _journal(
+        tmp_path / "journal.jsonl", [_row(source_id="tos-cp3-live-EVIL/0.1.0")]
+    )
+    alive = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        result = _run_waiter(tmp_path, journal, "600", alive.pid)
+    finally:
+        alive.kill()
+    assert result.returncode != 0
+    assert "not an approved real producer" in result.stderr
+    assert not (tmp_path / "snapshot.json").exists()
+
+
+def test_the_waiter_records_every_row_present_at_boot(tmp_path: Path) -> None:
+    """``consumed_stale_at_boot`` is the rows present when the boot begins —"""
+    journal = _journal(
+        tmp_path / "journal.jsonl",
+        [_row(source_id=_APPROVED_SOURCE_ID) for _ in range(2)],
+    )
+    alive = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        result = _run_waiter(tmp_path, journal, "600", alive.pid)
+    finally:
+        alive.kill()
+    assert result.returncode == 0, result.stderr
+    snapshot = json.loads((tmp_path / "snapshot.json").read_text("utf-8"))
+    assert snapshot["consumed_stale_at_boot"] == 2
+    assert len(snapshot["pre_boot_raw_event_ids"]) == 2
+    assert "consumed_stale_at_boot=2" in result.stdout
+
+
+def _run_runner_traced(repo: Path, tmp_path: Path, **overrides: str) -> Any:
+    """The runner under a TRACE, the way an operator debugging it would."""
+    env = _runner_env(tmp_path, **overrides)
+    result = subprocess.run(
+        ["bash", "-x", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+        timeout=180,
+    )
+    result.producer_outlived_the_runner = _producer_outlived_the_runner(tmp_path)
+    return result
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("KIS_FUTURES_APP_KEY", _PRODUCER_FAKE_KEY),
+        ("KIS_FUTURES_APP_SECRET", _PRODUCER_FAKE_SECRET),
+        ("KIS_STOCK_APP_KEY", _PRODUCER_FAKE_KEY),
+        ("KIS_STOCK_APP_SECRET", _PRODUCER_FAKE_SECRET),
+    ],
+)
+def test_red_codex_high_no_credential_value_survives_bash_x(
+    tmp_path: Path, variable: str, value: str
+) -> None:
+    """**Codex review HIGH.** The guard against the key reaching the runtime"""
+    repo = _runner_repo(tmp_path)
+    result = _run_runner_traced(repo, tmp_path, **{variable: value})
+    stream = (
+        result.stdout
+        + result.stderr
+        + (tmp_path / "session.log").read_text("utf-8", errors="replace")
+    )
+    assert result.returncode != 0
+    assert f"{variable} is set in this shell" in stream
+    assert value not in stream, "the credential value reached the trace"
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("KIS_FUTURES_APP_KEY", _PRODUCER_FAKE_KEY),
+        ("KIS_FUTURES_APP_SECRET", _PRODUCER_FAKE_SECRET),
+    ],
+)
+def test_red_codex_high_no_credential_value_survives_inherited_shellopts(
+    tmp_path: Path, variable: str, value: str
+) -> None:
+    """The same leak through the other door: ``SHELLOPTS=xtrace`` exported by"""
+    repo = _runner_repo(tmp_path)
+    result = _run_runner(repo, tmp_path, SHELLOPTS="xtrace", **{variable: value})
+    stream = (
+        result.stdout
+        + result.stderr
+        + (tmp_path / "session.log").read_text("utf-8", errors="replace")
+    )
+    assert result.returncode != 0
+    assert value not in stream, "the credential value reached the inherited trace"
+
+
+def test_the_producer_holds_the_keys_and_the_runtime_does_not(
+    tmp_path: Path,
+) -> None:
+    """**Codex review LOW — the separation stated as a comparison.**"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    runtime_env = tmp_path / "runtime-env.json"
+    producer_env = tmp_path / "producer-env.json"
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _RUN_ENVFILE_ENV: str(runtime_env),
+            _PRODUCER_ENVFILE_ENV: str(producer_env),
+        },
+    )
+    assert "=== BOOT" in result.stdout + result.stderr
+    producer = json.loads(producer_env.read_text("utf-8"))
+    runtime = json.loads(runtime_env.read_text("utf-8"))
+    assert producer["KIS_FUTURES_APP_KEY"] == _PRODUCER_FAKE_KEY
+    assert producer["KIS_FUTURES_APP_SECRET"] == _PRODUCER_FAKE_SECRET
+    assert "KIS_FUTURES_APP_KEY" not in runtime
+    assert "KIS_FUTURES_APP_SECRET" not in runtime
+    assert _PRODUCER_FAKE_KEY not in (tmp_path / "session.log").read_text("utf-8")
+
+
+def test_red_codex_medium_the_worker_dies_when_its_supervisor_was_reaped_first(
+    tmp_path: Path,
+) -> None:
+    """**Codex review MEDIUM.** Liveness is a question about the GROUP."""
+    marker = tmp_path / "worker.pid"
+    script = tmp_path / "ignore-term.py"
+    script.write_text(
+        "import os, signal, time\n"
+        "from pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+        "while True:\n"
+        "    time.sleep(0.2)\n",
+        encoding="utf-8",
+    )
+    driver = tmp_path / "reaped-leader.sh"
+    driver.write_text(
+        "set -u\n"
+        f". {_RUNNER_COMMON}\n"
+        'set_log_file ""\n'
+        f"timeout --kill-after=300s 600s {sys.executable} {script} "
+        f">{tmp_path / 'worker.out'} 2>&1 &\n"
+        "PID=$!\n"
+        "while [ ! -s %s ]; do sleep 0.1; done\n" % marker + 'kill -KILL "$PID"\n'
+        'wait "$PID" 2>/dev/null || true\n'
+        'stop_supervised "$PID" 2 worker\n'
+        "echo returned\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["bash", str(driver)], capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "returned" in result.stdout
+    worker_pid = int(marker.read_text().strip())
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and _pid_alive(worker_pid):
+        time.sleep(0.2)
+    try:
+        assert not _pid_alive(worker_pid), (
+            f"the worker (pid {worker_pid}) outlived a stop whose supervisor had "
+            "already been reaped — the liveness test asked about the leader, not "
+            "the group"
+        )
+    finally:
+        if _pid_alive(worker_pid):
+            os.kill(worker_pid, signal.SIGKILL)
+    assert "STOP SIGTERM" in result.stdout
+
+
+def test_red_m2_a_signal_during_the_first_row_wait_is_not_deferred(
+    tmp_path: Path,
+) -> None:
+    """**Claude-lane MEDIUM M2.** Bash runs a trap only BETWEEN commands."""
+    repo = _runner_repo(tmp_path)
+    env = _runner_env(tmp_path, **{_PRODUCER_ROWS_ENV: "never"})
+    runner = subprocess.Popen(
+        ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+    try:
+        pidfile = tmp_path / "producer.pid"
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not pidfile.is_file():
+            assert runner.poll() is None, runner.communicate()[0]
+            time.sleep(0.2)
+        assert pidfile.is_file(), "the stub producer never started"
+        time.sleep(1.0)
+
+        sent_at = time.monotonic()
+        runner.send_signal(signal.SIGTERM)
+        out = runner.communicate(timeout=60)[0]
+        elapsed = time.monotonic() - sent_at
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+    assert runner.returncode == 143, out
+    assert "SIGNAL TERM received by the runner" in out
+    assert elapsed < 30, f"the signal was deferred for {elapsed:.1f}s"
+    assert not _producer_outlived_the_runner(tmp_path)
+
+
+def test_l2_the_boot_snapshot_is_taken_at_the_boot_not_at_the_first_row(
+    tmp_path: Path,
+) -> None:
+    """**Claude-lane LOW L2.** A bar published during guard/render/boot is"""
+    repo = _runner_repo(tmp_path, bootable=True)
+    result = _run_runner(
+        repo,
+        tmp_path,
+        TENANT_STOP_AT="+15 seconds",
+        **{
+            _RUN_PIDFILE_ENV: str(tmp_path / "run.pid"),
+            _PRODUCER_ROWS_ENV: "1+1",
+            _PRODUCER_SECOND_ROW_WHEN_ENV: str(
+                tmp_path / "render-out" / "critical_input_policy.yaml"
+            ),
+        },
+    )
+    assert "=== BOOT" in result.stdout + result.stderr
+    journal_ids = [
+        json.loads(line)["raw_event_id"]
+        for line in (tmp_path / "journal.jsonl").read_text("utf-8").splitlines()
+        if line.strip()
+    ]
+    snapshot = json.loads(
+        (tmp_path / "producer-session" / "boot-journal-snapshot.json").read_text(
+            "utf-8"
+        )
+    )
+    assert len(journal_ids) == 2, journal_ids
+    assert snapshot["consumed_stale_at_boot"] == 2
+    assert snapshot["pre_boot_raw_event_ids"] == journal_ids
+
+
+def test_red_codex_high_no_credential_value_reaches_a_redirected_trace(
+    tmp_path: Path,
+) -> None:
+    """**Codex review HIGH, the third door: ``BASH_XTRACEFD``.**"""
+    repo = _runner_repo(tmp_path)
+    trace = tmp_path / "trace.log"
+    with trace.open("w", encoding="utf-8") as handle:
+        env = _runner_env(tmp_path, KIS_FUTURES_APP_KEY=_PRODUCER_FAKE_KEY)
+        env["SHELLOPTS"] = "xtrace"
+        env["BASH_XTRACEFD"] = str(handle.fileno())
+        result = subprocess.run(
+            ["bash", str(repo / "tools/tos_cp3/runners/run_tenant_session.sh")],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(tmp_path),
+            timeout=180,
+            pass_fds=(handle.fileno(),),
+        )
+    assert result.returncode != 0
+    assert "KIS_FUTURES_APP_KEY is set in this shell" in result.stdout + result.stderr
+    written = trace.read_text("utf-8", errors="replace")
+    assert _PRODUCER_FAKE_KEY not in written, "the value reached the redirected trace"
+    assert _PRODUCER_FAKE_KEY not in (tmp_path / "session.log").read_text(
+        "utf-8", errors="replace"
+    )

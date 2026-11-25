@@ -1,0 +1,29 @@
+{
+  "comment": "The reason prefixes GET /api/tos/sessions/{id}/bars may emit, and the UI state each maps to. Shared by services/dashboard/routes/tos_bars.py's tests and strategy-builder-ui/src/lib/dashboard/tosBars.ts's tests. Both sides assert this file and both run in CI: the Python side in .github/workflows/test.yml, the TS side in the job named \"UI suite (lint + build + tsc + vitest)\" in .github/workflows/ui.yml, which is path-gated on strategy-builder-ui/** and tests/fixtures/** and so runs whenever this file changes. Adding a prefix here without a matching barsState branch therefore fails that job instead of landing in the UI as 'unknown'. Kept separate from projection-reasons.json because the two read models fail for different reasons and map to different UI states: this one has a caller-supplied path segment and so can also refuse an id. No reason ever carries a value read from the document, and none carries the rejected session id.",
+  "reasons": [
+    {
+      "prefix": "bars document absent",
+      "ui_state": "missing"
+    },
+    {
+      "prefix": "cannot read bars document",
+      "ui_state": "unreadable"
+    },
+    {
+      "prefix": "invalid json",
+      "ui_state": "invalid"
+    },
+    {
+      "prefix": "schema mismatch",
+      "ui_state": "invalid"
+    },
+    {
+      "prefix": "unsupported schema_version",
+      "ui_state": "unsupported"
+    },
+    {
+      "prefix": "invalid session id",
+      "ui_state": "bad-request"
+    }
+  ]
+}

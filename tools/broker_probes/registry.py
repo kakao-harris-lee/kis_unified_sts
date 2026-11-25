@@ -1,0 +1,1002 @@
+"""Machine-readable probe register — the single source for the runbook table."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from tools.broker_probes.common import ENV_MOCK, ENV_NONE, ENV_REAL
+
+_VP = "tos-spec/src/part-1-foundation/verification/VERIFICATION-PROFILE-002.yaml"
+
+
+@dataclass(frozen=True)
+class BoundKey:
+    """A Verification-Profile bound key a probe can supply evidence for."""
+
+    key: str
+    vp_line: int
+    current_value: str
+    semantics: str
+    failure_response: str
+    measurement_source: str
+    owned_by_broker_profile: bool
+    note: str = ""
+
+
+BOUND_KEYS: dict[str, BoundKey] = {
+    "B_external_activity_detect": BoundKey(
+        "B_external_activity_detect",
+        221,
+        "null",
+        "hard_maximum",
+        "CONTAIN",
+        "broker_capability_profile",
+        True,
+        "MEASURE. Poll-only broker => bounded by poll cadence (VP-002:222,225).",
+    ),
+    "B_external_activity_contain": BoundKey(
+        "B_external_activity_contain",
+        230,
+        "1000",
+        "hard_maximum",
+        "CONTAIN",
+        "reconciliation_log",
+        False,
+        "Our-side containment; already APPROVED. A probe can only falsify "
+        "feasibility (detect+contain must fit inside the envelope), not set it.",
+    ),
+    "B_broker_query_consistency": BoundKey(
+        "B_broker_query_consistency",
+        752,
+        "null",
+        "broker_specific",
+        "CONSERVATIVE_UNKNOWN",
+        "broker_capability_profile",
+        True,
+        "'absence within it is not proof of non-existence' (VP-002:756).",
+    ),
+    "B_final_quantity_proof": BoundKey(
+        "B_final_quantity_proof",
+        716,
+        "null",
+        "broker_specific",
+        "QUARANTINE_UNKNOWN",
+        "broker_capability_profile",
+        True,
+        "Drives how long capacity stays RELEASE_PENDING_PROOF (VP-002:720).",
+    ),
+    "B_late_fill_observation": BoundKey(
+        "B_late_fill_observation",
+        725,
+        "null",
+        "broker_specific",
+        "PROFILE_CONTRADICTORY",
+        "broker_capability_profile",
+        True,
+        "Max credible interval for a late fill after a claimed terminal state "
+        "(VP-002:729).",
+    ),
+    "B_rate_limit_recovery": BoundKey(
+        "B_rate_limit_recovery",
+        761,
+        "null",
+        "broker_specific",
+        "RESTRICT_OR_CONTAIN",
+        "broker_capability_profile",
+        True,
+        "Per broker, account, session and endpoint class (VP-002:762,765).",
+    ),
+    "B_protective_request_complete": BoundKey(
+        "B_protective_request_complete",
+        743,
+        "null",
+        "broker_specific",
+        "CONTAIN",
+        "broker_capability_profile",
+        True,
+        "Broker-dependent completion time for a protective action (VP-002:747).",
+    ),
+    "B_startup_reconciliation": BoundKey(
+        "B_startup_reconciliation",
+        239,
+        "60000",
+        "operational_target_and_hard_gate",
+        "REMAIN_HALTED",
+        "recovery_coordinator_log",
+        False,
+        "Our-side target, already APPROVED. Probes inform feasibility only.",
+    ),
+    "B_capability_claim_to_send": BoundKey(
+        "B_capability_claim_to_send",
+        194,
+        "500",
+        "hard_maximum",
+        "QUARANTINE_UNKNOWN",
+        "egress_journal_and_broker_transport_trace",
+        False,
+        "Egress-owned; not measurable from a broker probe.",
+    ),
+    "B_egress_hard_fence": BoundKey(
+        "B_egress_hard_fence",
+        203,
+        "1000",
+        "hard_maximum",
+        "HALT",
+        "egress_identity_route_session_and_broker_denial_log",
+        False,
+        "Egress-owned. A credential/session probe supplies only the broker-denial "
+        "half of the evidence.",
+    ),
+    "B_venue_constraint_loss_detect": BoundKey(
+        "B_venue_constraint_loss_detect",
+        293,
+        "2000",
+        "source_specific_hard_maximum",
+        "STOP_NEW_RISK",
+        "venue_constraint_source_and_generation_trace",
+        False,
+        "Already APPROVED; broker-capability loss is one of its sources.",
+    ),
+}
+
+ADJACENT_BOUND_KEYS: dict[str, BoundKey] = {
+    "B_protection_gap": BoundKey(
+        "B_protection_gap",
+        788,
+        "null",
+        "broker_specific",
+        "CONTAIN",
+        "protective_replacement_and_broker_log",
+        False,
+        "ADR-002-011 replacement; partially informed by P-8.",
+    ),
+    "B_protection_overlap": BoundKey(
+        "B_protection_overlap",
+        797,
+        "null",
+        "broker_specific",
+        "CONTAIN",
+        "protective_replacement_and_broker_log",
+        False,
+        "ADR-002-011 replacement; partially informed by P-8.",
+    ),
+    "B_non_trade_event_detect": BoundKey(
+        "B_non_trade_event_detect",
+        922,
+        "null",
+        "source_and_broker_specific",
+        "CONTAIN",
+        "reference_source_and_broker_capability_profile",
+        True,
+        "ADR-002-010. Dominated by broker reflection delay (clock c: effective->"
+        "broker-reflect, per event_class x leg over the 7 separate times in "
+        "tos/nontrade/records.py:359-366), NOT poll cadence — semantics is "
+        "source_and_broker_specific, not hard_maximum. Probes: N-19 (spec) + P-CA "
+        "(opportunistic, GET-only, N-19-gated). Bound stays NOT_ESTABLISHED; safety "
+        "carried by effective_window_blocks_new_risk (predicates.py:873-919, no-numeric) "
+        "and BC-AC-019 EV-L3.",
+    ),
+    "B_non_trade_reconcile": BoundKey(
+        "B_non_trade_reconcile",
+        940,
+        "null",
+        "source_and_broker_specific",
+        "QUARANTINE_UNKNOWN",
+        "reconciliation_and_broker_capability_profile",
+        True,
+        "ADR-002-010. Permitted unreconciled budget, bounded by broker field-level "
+        "reconciliation evidence + finality timing. Probes: N-19 + P-CA. NOT_ESTABLISHED.",
+    ),
+    "B_post_trade_effect_to_obligation_commit": BoundKey(
+        "B_post_trade_effect_to_obligation_commit",
+        662,
+        "500",
+        "hard_maximum",
+        "STOP_NEW_RISK_AND_QUARANTINE_CAPACITY",
+        "broker_effect_ptol_commit_and_rcl_capacity_trace",
+        False,
+        "Already APPROVED; our-side commit path.",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class ProbeSpec:
+    """Everything the runbook table and the CLI need to know about one probe."""
+
+    probe_id: str
+    title: str
+    source: str
+    kind: str
+    environment: str
+    dimension: str
+    bounds_keys: tuple[str, ...]
+    instance_fields: tuple[str, ...]
+    statistic: str
+    risk: str
+    duration: str
+    emits_orders: bool = False
+    requires_confirm: bool = False
+    supported: bool = True
+    skip_reason: str = ""
+    prerequisites: tuple[str, ...] = field(default_factory=tuple)
+    entrypoint: str = ""
+
+    @property
+    def command(self) -> str:
+        flag = " --confirm" if self.requires_confirm else ""
+        return f"python -m tools.broker_probes.run {self.probe_id}{flag}"
+
+
+_S = ProbeSpec
+
+PROBES: dict[str, ProbeSpec] = {
+    "P-1": _S(
+        probe_id="P-1",
+        title="ORDER_IDENTITY — client-supplied order id field存否",
+        source="draft §5:228",
+        kind="SPEC_CROSSCHECK",
+        environment=ENV_NONE,
+        dimension="ORDER_IDENTITY",
+        bounds_keys=(),
+        instance_fields=("capabilities.client_generated_order_id.status",),
+        statistic="categorical (UNSUPPORTED vs VERIFIED); no numeric bound",
+        risk="LOW",
+        duration="~0 (offline)",
+        prerequisites=(
+            "none — records code-observed request shape; authority is N-17",
+        ),
+        entrypoint="tools.broker_probes.probes_query:probe_p1",
+    ),
+    "P-2": _S(
+        probe_id="P-2",
+        title="SUBMISSION_IDEMPOTENCY — duplicate-body dedup window",
+        source="draft §5:227",
+        kind="ORDER",
+        environment=ENV_MOCK,
+        dimension="SUBMISSION_IDEMPOTENCY",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.submission_idempotency.status",
+            "capabilities.submission_idempotency.deduplication_window_ms",
+        ),
+        statistic=(
+            "2 ODNOs => no dedup (UNSUPPORTED, window undefined). 1 ODNO => "
+            "bisect the send gap; report the LARGEST gap that still deduped as a "
+            "lower bound and the smallest that did not as an upper bound."
+        ),
+        risk="HIGH",
+        duration="~5 min",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "모의투자 session open",
+            "non-marketable limit price (--price-offset-pct) so nothing fills",
+        ),
+        entrypoint="tools.broker_probes.probes_order:probe_p2",
+    ),
+    "P-5": _S(
+        probe_id="P-5",
+        title="OPEN_ORDER_QUERY — accept→visible convergence latency",
+        source="draft §5:229",
+        kind="ORDER",
+        environment=ENV_MOCK,
+        dimension="OPEN_ORDER_QUERY",
+        bounds_keys=("B_broker_query_consistency",),
+        instance_fields=(
+            "capabilities.open_order_query.eventual_consistency_bound_ms",
+            "capabilities.open_order_query.status",
+        ),
+        statistic="hard maximum: ceil(max(t1-t0) x (1+margin)); N>=100 recommended",
+        risk="HIGH",
+        duration="~20 min at N=100",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "모의투자 session open",
+            "futures account (inquire-ccnl is futures-only)",
+        ),
+        entrypoint="tools.broker_probes.probes_order:probe_p5",
+    ),
+    "P-5b": _S(
+        probe_id="P-5b",
+        title="OPEN_ORDER_QUERY — continuation-key pagination behaviour",
+        source="draft §5:230",
+        kind="QUERY",
+        environment=ENV_MOCK,
+        dimension="OPEN_ORDER_QUERY",
+        bounds_keys=("B_broker_query_consistency",),
+        instance_fields=(
+            "capabilities.open_order_query.completeness",
+            "capabilities.open_order_query.pagination",
+        ),
+        statistic="categorical: page size, whether tr_cont/NK200 advances,完全性",
+        risk="LOW",
+        duration="~2 min",
+        requires_confirm=True,
+        prerequisites=(
+            "enough historical orders in the query window to exceed one page "
+            "(run after P-5); read-only otherwise",
+            "--confirm gates broker contact for every networked probe, including "
+            "read-only ones",
+        ),
+        entrypoint="tools.broker_probes.probes_order:probe_p5b",
+    ),
+    "P-8": _S(
+        probe_id="P-8",
+        title="REPLACE_OR_AMEND — RVSE_CNCL_DVSN_CD=01 semantics",
+        source="draft §5:231",
+        kind="ORDER",
+        environment=ENV_MOCK,
+        dimension="REPLACE_OR_AMEND",
+        bounds_keys=("B_protective_request_complete",),
+        instance_fields=(
+            "capabilities.replace_semantics.mode",
+            "capabilities.replace_semantics.status",
+        ),
+        statistic=(
+            "categorical (ReplaceSemantics 5-value) + hard maximum on the "
+            "old/new coexistence interval"
+        ),
+        risk="HIGH",
+        duration="~10 min",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "모의투자 session open",
+            "P-5 first (needs a working inquire path to observe the ODNO pair)",
+        ),
+        entrypoint="tools.broker_probes.probes_order:probe_p8",
+    ),
+    "P-11": _S(
+        probe_id="P-11",
+        title="POSITIONS_BALANCES_MARGIN — fill→balance reflection lag",
+        source="draft §5:236",
+        kind="ORDER",
+        environment=ENV_MOCK,
+        dimension="POSITIONS_BALANCES_MARGIN",
+        bounds_keys=("B_broker_query_consistency", "B_startup_reconciliation"),
+        instance_fields=("capabilities.position_balance_margin.consistency_model",),
+        statistic="hard maximum of (balance reflects fill) - (fill observed)",
+        risk="HIGH",
+        duration="~15 min",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "an intentional FILL is required — pass --allow-fill explicitly",
+            "STOCK asset only on mock: futures balance is unsupported on 모의 "
+            "(shared/kis/client.py:1030-1032 — module removed 2026-11-13, "
+            "read it in git history)",
+        ),
+        entrypoint="tools.broker_probes.probes_order:probe_p11",
+    ),
+    "P-13": _S(
+        probe_id="P-13",
+        title="RATE_LIMITS — stepwise ramp to first throttle + recovery time",
+        source="draft §5:232",
+        kind="QUERY",
+        environment=ENV_MOCK,
+        dimension="RATE_LIMITS",
+        bounds_keys=("B_rate_limit_recovery",),
+        instance_fields=(
+            "capabilities.rate_limits.hard_limits",
+            "capabilities.rate_limits.scope",
+            "capabilities.rate_limits.sustained_and_burst_semantics",
+        ),
+        statistic=(
+            "first-throttle rate = HIGHEST step sustained without a limit signal "
+            "(a lower bound on the broker limit, never an exact quota). Recovery "
+            "= max over repeats of (first success after throttle) - (throttle), "
+            "then + margin."
+        ),
+        risk="MEDIUM",
+        duration="~10 min",
+        requires_confirm=True,
+        prerequisites=(
+            "paper trading stopped (the probe consumes the shared account quota)",
+            "read-only endpoint class by default; submit/cancel classes need --confirm and are HIGH risk",
+        ),
+        entrypoint="tools.broker_probes.probes_auth:probe_p13",
+    ),
+    "P-14": _S(
+        probe_id="P-14",
+        title="SESSION_CONNECTION_MODEL — concurrent sessions + subscription cap",
+        source="draft §5:233",
+        kind="SESSION",
+        environment=ENV_MOCK,
+        dimension="SESSION_CONNECTION_MODEL",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.sessions.concurrent_sessions",
+            "capabilities.sessions.subscription_limit",
+        ),
+        statistic=(
+            "integer cap = highest count accepted; report the first rejected "
+            "count and whether the rejection displaced an existing session"
+        ),
+        risk="HIGH",
+        duration="~10 min",
+        requires_confirm=True,
+        prerequisites=(
+            "all streaming workers stopped — the probe can displace live WS sessions",
+            "Q-SESS-3 (draft §5:177): repeated reconnects can trigger a KIS account block; "
+            "the probe stops at the first rejection and does not retry",
+        ),
+        entrypoint="tools.broker_probes.probes_auth:probe_p14",
+    ),
+    "P-15": _S(
+        probe_id="P-15",
+        title="CREDENTIALS_AUTHORIZATION — token reissue inside the 1-minute limit",
+        source="draft §5:234",
+        kind="AUTH",
+        environment=ENV_MOCK,
+        dimension="CREDENTIALS_AUTHORIZATION",
+        bounds_keys=("B_egress_hard_fence",),
+        instance_fields=(
+            "capabilities.credentials_and_revocation.reissue_rejection_semantics",
+        ),
+        statistic="categorical: rejection HTTP status + msg_cd + msg1, verbatim",
+        risk="HIGH",
+        duration="~3 min",
+        requires_confirm=True,
+        prerequisites=(
+            "paper trading stopped — a reissue can invalidate the token in use",
+            "probe-private token cache (default) so the runtime cache file survives",
+        ),
+        entrypoint="tools.broker_probes.probes_auth:probe_p15",
+    ),
+    "P-16": _S(
+        probe_id="P-16",
+        title="BROKER_TIME — broker clock vs local KST skew",
+        source="draft §5:235",
+        kind="QUERY",
+        environment=ENV_MOCK,
+        dimension="BROKER_TIME",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.broker_time.timezone",
+            "capabilities.broker_time.precision",
+            "capabilities.broker_time.skew_bound_ms",
+        ),
+        statistic=(
+            "signed skew: report max |skew| + margin as the bound and keep the "
+            "sign distribution (a one-sided skew is a different hazard)"
+        ),
+        risk="LOW",
+        duration="~5 min",
+        requires_confirm=True,
+        prerequisites=(
+            "read-only quotations calls only",
+            "--confirm gates broker contact for every networked probe, including "
+            "read-only ones",
+        ),
+        entrypoint="tools.broker_probes.probes_query:probe_p16",
+    ),
+    "P-EXT": _S(
+        probe_id="P-EXT",
+        title="external_activity — manual HTS/MTS order detection latency",
+        source="draft §5:237",
+        kind="MANUAL",
+        environment=ENV_MOCK,
+        dimension="POSITIONS_BALANCES_MARGIN",
+        bounds_keys=("B_external_activity_detect", "B_external_activity_contain"),
+        instance_fields=(
+            "external_activity.detection_bound_ms",
+            "external_activity.containment_bound_ms",
+        ),
+        statistic=(
+            "hard maximum of (first poll that observes the manual order) - "
+            "(operator-recorded submit time). Bound is dominated by the poll "
+            "interval, so record the interval alongside the value."
+        ),
+        risk="MEDIUM",
+        duration="~15 min per trial, operator in the loop",
+        requires_confirm=True,
+        prerequisites=(
+            "operator manually submits an order on HTS/MTS for the SAME 모의 account",
+            "operator records the submit timestamp when the probe prompts",
+        ),
+        entrypoint="tools.broker_probes.probes_order:probe_pext",
+    ),
+    "P-FQP": _S(
+        probe_id="P-FQP",
+        title="final_quantity_proof — post-cancel late-event window",
+        source="draft §5:238",
+        kind="ORDER",
+        environment=ENV_MOCK,
+        dimension="CANCELLATION",
+        bounds_keys=("B_final_quantity_proof", "B_late_fill_observation"),
+        instance_fields=(
+            "final_quantity_proof.recipes[]",
+            "final_quantity_proof.late_event_window_ms",
+        ),
+        statistic=(
+            "B_final_quantity_proof = hard maximum time to reach "
+            "(final filled qty + zero remaining). B_late_fill_observation = hard "
+            "maximum of any post-terminal quantity change observed across trials; "
+            "if zero changes are observed the value is NOT 0 — it is 'not "
+            "established', because absence is not proof (VP-002:756)."
+        ),
+        risk="HIGH",
+        duration="~20 min",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=("모의투자 session open", "run after P-5"),
+        entrypoint="tools.broker_probes.probes_order:probe_pfqp",
+    ),
+    "N-15": _S(
+        probe_id="N-15",
+        title="Token 1-minute reissue limit x invalidate→retry token blackout",
+        source="plan §1 T2:35",
+        kind="AUTH",
+        environment=ENV_MOCK,
+        dimension="CREDENTIALS_AUTHORIZATION",
+        bounds_keys=("B_egress_hard_fence",),
+        instance_fields=(
+            "capabilities.credentials_and_revocation.token_blackout_window_ms",
+            "capabilities.credentials_and_revocation.reissue_rejection_semantics",
+        ),
+        statistic=(
+            "hard maximum blackout = max over trials of (first successful "
+            "reissue) - (invalidate). Report the observed rejection code verbatim; "
+            "a blackout shorter than the 1-minute documented limit means the "
+            "limiter is not the binding constraint."
+        ),
+        risk="HIGH",
+        duration="~5 min per trial (each trial burns a >=60s wait)",
+        requires_confirm=True,
+        prerequisites=(
+            "ALL workers using this app key stopped — the app key is shared and "
+            "the reissue limit is per app key",
+            "combines with P-15; run them back to back",
+        ),
+        entrypoint="tools.broker_probes.probes_auth:probe_n15",
+    ),
+    "N-16": _S(
+        probe_id="N-16",
+        title="CTFN6118R night futures balance — response schema capture",
+        source="plan §1 T2:36",
+        kind="REAL_READ_ONLY",
+        environment=ENV_REAL,
+        dimension="POSITIONS_BALANCES_MARGIN",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.position_balance_margin.evidence_refs",
+            "capabilities.position_balance_margin.status",
+        ),
+        statistic="schema only: sorted key list of output1/output2 + rt_cd/msg_cd",
+        risk="MEDIUM",
+        duration="1 call",
+        requires_confirm=True,
+        prerequisites=(
+            "REAL token (mock has no futures balance at all — "
+            "shared/kis/client.py:1030-1032, module removed 2026-11-13, "
+            "read it in git history)",
+            "night session window 18:00-05:00 KST (config/market_schedule.yaml:29-33)",
+            "operator approval for a real-credential call; READ-ONLY, no order",
+            "the follow-on config/kis/tr_ids.yaml edit is a SEPARATE commit",
+        ),
+        entrypoint="tools.broker_probes.probes_real:probe_n16",
+    ),
+    "N-17": _S(
+        probe_id="N-17",
+        title="Spec cross-check — order request fields / TIF values / RVSE_CNCL_DVSN_CD set",
+        source="plan §1 T2:37",
+        kind="SPEC_CROSSCHECK",
+        environment=ENV_NONE,
+        dimension="MARKET_INSTRUMENT_CONSTRAINTS",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.client_generated_order_id.status",
+            "capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics",
+            "capabilities.command_construction_and_wire_semantics.duplicate_unknown_and_omitted_field_behavior",
+            "capabilities.command_construction_and_wire_semantics.unit_multiplier_currency_and_numeric_encoding",
+            "live_scope.time_in_force_values",
+            "capabilities.replace_semantics.value_set",
+        ),
+        statistic="categorical; documentary cross-check, no measurement",
+        risk="LOW",
+        duration="~1 h desk work",
+        supported=False,
+        skip_reason=(
+            "N-17 is a documentary cross-check, not a script. The instrument "
+            "question (kis-code-assistant-mcp vs manual official-doc reading) "
+            "is RESOLVED, not open: the operator reported the MCP back online "
+            "on 2026-07-29 -- a conversation-level act with no copy in this "
+            "repo -- which discharged the plan §1 T3 D6 conditional, and the "
+            "cross-check then ran on that instrument, producing "
+            "docs/plans/2026-07-29-tos-p02-n17-spec-collation.md (5 confirmed / "
+            "6 partial / 5 unknown). Disposition record: "
+            "docs/plans/2026-08-07-tos-p02-d5-d6-decision-record.md §2. Use the "
+            "checklist in docs/runbooks/kis-capability-probes.md §7."
+        ),
+        entrypoint="",
+    ),
+    "N-18": _S(
+        probe_id="N-18",
+        title="REAL-token read-only trio (program-trade row cap / SOX notation / night code)",
+        source="plan §1 T2:38",
+        kind="REAL_READ_ONLY",
+        environment=ENV_REAL,
+        dimension="MARKET_INSTRUMENT_CONSTRAINTS",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.market_and_instrument_constraints.instrument_coverage",
+        ),
+        statistic="categorical: per-call row cap (integer), symbol notation, error text verbatim",
+        risk="MEDIUM",
+        duration="3 calls",
+        requires_confirm=True,
+        prerequisites=(
+            "REAL futures token (these TRs are real-only — roadmap :340-341)",
+            "READ-ONLY, enforced by allowlist; no order path exists in the module",
+            "prior art: scripts/analysis/phase0_kis_probes.py (same 3 calls, no "
+            "JSON evidence artifact) — left untouched",
+        ),
+        entrypoint="tools.broker_probes.probes_real:probe_n18",
+    ),
+    "P-NMPR": _S(
+        probe_id="P-NMPR",
+        title="Required quote fields — blank vs explicit NMPR_TYPE_CD/KRX_NMPR_CNDT_CD (A/B)",
+        source="N-17 §2 소견 2 (spec collation, 2026-07-29)",
+        kind="ORDER",
+        environment=ENV_MOCK,
+        dimension="MARKET_INSTRUMENT_CONSTRAINTS",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.command_construction_and_wire_semantics.required_and_default_field_semantics",
+            "capabilities.command_construction_and_wire_semantics.duplicate_unknown_and_omitted_field_behavior",
+        ),
+        statistic=(
+            "categorical per arm: accepted / rejected, plus whether the query "
+            "surface echoes NMPR_TYPE_CD / KRX_NMPR_CNDT_CD. Acceptance parity "
+            "alone does NOT establish that a blank equals 01/0 — only an echoed "
+            "value does. Absent an echo the answer stays UNKNOWN."
+        ),
+        risk="HIGH",
+        duration="~2 min",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "모의투자 session open, futures day session (--asset futures)",
+            "non-marketable limit price (--price-offset-pct) so nothing fills",
+            "arms differ in exactly the two fields under test; the probe aborts "
+            "otherwise so a difference is always attributable",
+            "N-17 #13: mock has no night write path — do not extrapolate to REAL night",
+        ),
+        entrypoint="tools.broker_probes.probes_order:probe_nmpr_ab",
+    ),
+    "P-BAL": _S(
+        probe_id="P-BAL",
+        title="BALANCE_PAGINATION — balance-query page size / continuation walk (GET-only)",
+        source="wave-3b runtime trace H4 (stock-balance pagination, 2026-07-31)",
+        kind="REAL_READ_ONLY",
+        environment=ENV_REAL,
+        dimension="POSITIONS_BALANCES_MARGIN",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.position_balance_margin.evidence_refs",
+            "capabilities.position_balance_margin.status",
+        ),
+        statistic=(
+            "categorical, three-valued: TRUNCATION_RISK_DEMONSTRATED / "
+            "NOT_DEMONSTRATED / UNESTABLISHED, plus an integer page size ONLY when "
+            "a second page was returned. One page of k rows establishes "
+            "page_size_lower_bound=k, never page_size=k. A total row count is "
+            "reported only when the BROKER signalled end-of-set — never when our "
+            "own --max-pages cap ended the walk."
+        ),
+        risk="LOW",
+        duration="~1 min (<= --max-pages GETs)",
+        requires_confirm=True,
+        prerequisites=(
+            "READ-ONLY, enforced by GET + allowlist; no order path exists in "
+            "tools/broker_probes/probes_balance.py and it imports none",
+            "operator approval for --env real (consumes a real credential)",
+            "an account that actually HOLDS positions — zero rows establishes "
+            "nothing about pagination",
+            "--asset futures --env mock SKIPS: the broker serves no futures "
+            "balance on 모의 (shared/kis/client.py:1026 NOTE, guard :1031-1033 "
+            "— module removed 2026-11-13, read it in git history)",
+            "never cross-route stock/futures credentials "
+            "(common.py::resolve_credentials docstring)",
+        ),
+        entrypoint="tools.broker_probes.probes_balance:probe_pbal",
+    ),
+    "P-R5-PRE": _S(
+        probe_id="P-R5-PRE",
+        title="REAL preflight for P-R5 — GET-only account/market/instrument gate",
+        source=(
+            "real-environment calibration of P-5 — wave-3b D-2 NOT-IN-SCOPE "
+            "(config/execution.yaml::futures_fill_check_timeout_seconds must be "
+            "calibrated against a REAL measurement, not fitted to the mock p50 "
+            "of 2632.9ms)"
+        ),
+        kind="REAL_READ_ONLY",
+        environment=ENV_REAL,
+        dimension="OPEN_ORDER_QUERY",
+        bounds_keys=(),
+        instance_fields=(),
+        statistic=(
+            "categorical verdict: READY_FOR_STAGE_2, or exactly one named "
+            "ABORT_* reason. No numeric bound. An abort is a result and still "
+            "writes an artifact."
+        ),
+        risk="MEDIUM",
+        duration="5 GET calls (~10 s at --pace-s)",
+        requires_confirm=True,
+        prerequisites=(
+            "REAL futures credential exported in a dedicated shell (§2.2)",
+            "--expect-account-fingerprint — the probe will not infer which "
+            "account it is allowed to trade",
+            "READ-ONLY by construction: the only transport is a GET gated on "
+            "probes_real_order.PREFLIGHT_ALLOWLIST, which contains no order "
+            "path and no order TR",
+            "futures day session, and deliberately no override flag",
+        ),
+        entrypoint="tools.broker_probes.probes_real_order:probe_real_preflight",
+    ),
+    "P-R5": _S(
+        probe_id="P-R5",
+        title="⚠ REAL-MONEY accept→visible latency (+ submit-class pacing, real page size)",
+        source=(
+            "real-environment calibration of P-5 — wave-3b D-2 NOT-IN-SCOPE "
+            "(a mock p50 of 2632.9ms against a 1.0s runtime fill-check timeout "
+            "cannot be resolved without a real-environment measurement)"
+        ),
+        kind="ORDER",
+        environment=ENV_REAL,
+        dimension="OPEN_ORDER_QUERY",
+        bounds_keys=("B_broker_query_consistency",),
+        instance_fields=(
+            "capabilities.open_order_query.eventual_consistency_bound_ms",
+            "capabilities.open_order_query.status",
+            "capabilities.open_order_query.pagination",
+            "capabilities.rate_limits.hard_limits",
+        ),
+        statistic=(
+            "hard maximum: ceil(max(t1-t0) x (1+margin)), measured exactly as "
+            "mock P-5 so the two are comparable — but on a SMALL n by design, "
+            "because every sample costs real exposure. The candidate is "
+            "therefore a small-sample one and the Bounds-Approver judges "
+            "adequacy. The submit-class pacing result is a BRACKET, never a "
+            "point estimate, and says nothing about the cancel class. REAL_PROD "
+            "values do not transfer to MOCK_VTS, nor MOCK_VTS values here."
+        ),
+        risk="HIGH",
+        duration="~5 min at --samples 3",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "⚠ REAL CAPITAL AT RISK — the only such probe in this register. "
+            "Runbook §5.7 is mandatory reading before it is run.",
+            "a fresh P-R5-PRE artifact whose preflight_verdict is "
+            "READY_FOR_STAGE_2, passed via --stage1-artifact; stage 2 re-takes "
+            "its assertions live rather than trusting the file",
+            "--i-understand-this-places-real-orders (no abbreviation accepted) "
+            "AND --confirm AND --expect-account-fingerprint AND "
+            "--max-notional-krw",
+            "live futures trading DISARMED — this probe sits outside the trading "
+            "runtime and therefore bypasses config/futures_live.yaml::enabled "
+            "and the Redis futures:live:suspended flag, so running it while live "
+            "is armed would put two order sources on one account",
+            "smallest registered contract only, asserted from "
+            "config/execution.yaml::futures_contract_spec and never assumed",
+        ),
+        entrypoint="tools.broker_probes.probes_real_order:probe_real_order",
+    ),
+    "N-19": _S(
+        probe_id="N-19",
+        title=(
+            "Spec cross-check — corporate-action reflection model "
+            "(CA-schedule API 존부 / 7-시각별 반영 시점 / reconciliation 증거 / 독립 참조원)"
+        ),
+        source="non_trade 2키 프로브 정의 설계 (2026-08-07)",
+        kind="SPEC_CROSSCHECK",
+        environment=ENV_NONE,
+        dimension="CORPORATE_ADMINISTRATIVE_EVENTS",
+        bounds_keys=("B_non_trade_event_detect", "B_non_trade_reconcile"),
+        instance_fields=(
+            "capabilities.corporate_actions.fallback_reference",
+            "capabilities.corporate_actions.status",
+            "capabilities.corporate_actions.evidence_refs",
+        ),
+        statistic="categorical; documentary cross-check, no measurement (N-17 형).",
+        risk="LOW",
+        duration="~2-3 h desk work",
+        supported=False,
+        skip_reason=(
+            "N-19 is a documentary cross-check, not a script (N-17 형). 수단"
+            "(kis-code-assistant-mcp 조회 전용)은 이미 결정됨 -- plan §1 T3 D6 조건문은 "
+            "2026-07-29 운영자 MCP 재가동 보고(대화 수준·리포 외 행위)로 해소됐고 N-17이 "
+            "그 수단으로 실제 대조를 수행했다 (registry.py N-17 skip_reason·런북 §7이 반영). "
+            "따라서 N-19는 동일 MCP 경로로 즉시 착수 가능 -- 차단 선행조건 없음. 첫 질문: "
+            "KIS가 CA 조회/통지 API를 노출하는가. 체크리스트는 런북 §7-CA."
+        ),
+        entrypoint="",
+    ),
+    "P-CA": _S(
+        probe_id="P-CA",
+        title=(
+            "corporate_action reflection -- 7-time x leg (effective->broker-reflect->"
+            "detect) latency (기회주의·GET-only·operator t0)"
+        ),
+        source="non_trade 2키 프로브 정의 설계 (2026-08-07)",
+        kind="MANUAL",
+        environment=ENV_MOCK,
+        dimension="CORPORATE_ADMINISTRATIVE_EVENTS",
+        bounds_keys=("B_non_trade_event_detect", "B_non_trade_reconcile"),
+        instance_fields=(
+            "capabilities.corporate_actions.evidence_refs",
+            "capabilities.corporate_actions.status",
+        ),
+        statistic=(
+            "per (event_class x leg) — single t0_effective 폐기 (ADR §8:171 no-collapse; "
+            "records.py:359-366). 배당 기준가-조정 leg: t0=ex_time; 배당 현금 leg: "
+            "t0=payable_time; 분할/병합 수량 leg: t0=effective_time; (선물 결제 leg: "
+            "t0=settlement_time — 관측 제외). 셀 후보 = candidate max(t1_leg - t0_leg). "
+            "aggregate B_non_trade_* 는 스칼라 아닌 class x leg 표 (source_and_broker_specific "
+            "추정량은 런북 §8 미정의). Rare event => tiny n => candidate_only; 단발로 "
+            "hard_maximum 주장 금지. 늦은 반영 0관측 != 0 (VP-002:772). 1차 산출 = N-19 "
+            "모델/후보 봉쇄창 대비 FALSIFICATION."
+        ),
+        risk="LOW",
+        duration="이벤트 창 전후 폴링, operator in the loop",
+        emits_orders=False,
+        requires_confirm=True,
+        supported=True,
+        skip_reason="",
+        prerequisites=(
+            "N-19 선착지 완료 — docs/plans/2026-09-10-tos-p02-n19-ca-spec-collation.md "
+            "(CA-API 존부 VERIFIED/E1, 모의 CA 처리 여부 UNKNOWN → --reference-check로 "
+            "1차 관측, 독립 참조원 §13.13 미확정 — P-CA t0는 operator 공급 유지)",
+            "operator가 관련 7-시각(ex/effective/payable/settlement)을 프롬프트 시 축자 기록 (P-EXT 문형)",
+            "대상 종목 선행 보유 — 모의=KIS 모의투자 주문 산물 / 실전=기존 실주식 보유; 보유 0이면 확립 불가 (P-BAL 문형)",
+            "선물 제외 — 모의 선물잔고 미지원(shared/kis/client.py:1031 NOTE·가드 :1047 — 2026-11-13 삭제, git 이력) + 실선물 무증거금·무보유",
+            "READ-ONLY: GET 폴링만, 모듈에 주문 경로 없음 (P-BAL 문형)",
+            "--env real 시 운영자 승인 (실 자격증명); MOCK 아티팩트는 REAL_PROD 문서 인용 불가(§6.2·ADR-002-004 §13.14)",
+        ),
+        entrypoint="tools.broker_probes.probes_ca:probe_pca",
+    ),
+    "P-VL": _S(
+        probe_id="P-VL",
+        title=(
+            "venue limits — 가격제한폭 의미론 대조 + 모의 주문가능수량 보강 "
+            "(GET-only · MOCK_VTS)"
+        ),
+        source=(
+            "docs/plans/2026-10-08-tos-cp3-venue-limit-source-and-probe-design.md "
+            "v2 (PR #879 head de3c7e98) §2.0·§4 (CP-3 결정 9 (a) 보강 프로브)"
+        ),
+        kind="QUERY",
+        environment=ENV_MOCK,
+        dimension="MARKET_INSTRUMENT_CONSTRAINTS",
+        bounds_keys=(),
+        instance_fields=(
+            "capabilities.market_and_instrument_constraints."
+            "price_band_tick_lot_and_quantity_semantics",
+        ),
+        statistic=(
+            "categorical per leg, no numeric bound. L1 = 다섯 시세 필드 존재·양수·"
+            "틱 정합(_tick_math.corroborate_tick). L2 = 관측 band 와 시행세칙 "
+            "제56조 산식(기준가격×비율, 상한가 내림/하한가 올림)의 일치 여부 — "
+            "비율 {8,15,20}%(별표 14 제1호) 중 어느 단계가 재현하는지만 기록하고 "
+            "해석하지 않는다. 틱은 --symbol 의 **등록 호가가격단위**"
+            "(config/execution.yaml::futures_contract_spec — 미니 0.02 / 전체 "
+            "0.05)이고 리터럴도 paper 정책값도 아니다. L3 = ord_psbl_qty >= 1 "
+            "(예수금 파생값 — 구조 상한 아님). L4·L5 = 관측 전용, PASS/FAIL 없음. "
+            "호가수량한도(별표 17의2 제1호: 미니 정규 10,000 / 전체 정규 2,000)는 "
+            "GET 으로 관측 불가 — 아티팩트에 맥락으로만 적고 1차 출처는 규정 "
+            "문서다"
+        ),
+        risk="LOW",
+        duration="~10 s (GET 4 + 토큰 1, 1.1 s 페이싱)",
+        emits_orders=False,
+        requires_confirm=True,
+        supported=True,
+        skip_reason="",
+        prerequisites=(
+            "--symbol 필수 — 상주 paper 세션이 실제로 돌고 있는 결제월(호스트 "
+            "~/.local/state/tos/paper-data/<종목>). 리터럴 기본값 없음. 허용 "
+            "접두는 KOSPI200 지수선물뿐(A05 미니 / 101·A01 전체), 그 밖은 거부",
+            "--confirm gates broker contact for every networked probe, including "
+            "read-only ones (P-16 문형)",
+            "거래일 CONTINUOUS 08:45-15:45 KST (config/tos_runtime/paper/"
+            "calendar.yaml:56). 설계 §4.2: 08:50±3분(확대 불가 창 — L2 기대값이 "
+            "정해진다)과 09:20 이후 각 1회, 별도 아티팩트",
+            ".env.mock 의 앱키가 상주 paper 세션의 키와 다른지 지문으로 확인 — "
+            "같으면 토큰 1분 재발급 한도(N-15)를 피해 09:20 샘플만 찍는다",
+            "분리 워크트리에서 실행 (origin/main detached) — 공유 체크아웃은 병렬 "
+            "레인이 브랜치를 바꿔 repo_commit 이 비-main 으로 찍힌다(#793 HIGH)",
+            "READ-ONLY: GET 전용, 모듈에 주문 경로 없음. 주문 가능 모듈"
+            "(probes_order·probes_real_order)을 임포트하지 않는다 — 순수 함수는 "
+            "stdlib 전용 _tick_math 에서 온다. 실전 자격증명·실주문 없음",
+        ),
+        entrypoint="tools.broker_probes.probes_venue_limits:probe_pvl",
+    ),
+    "P-SC": _S(
+        probe_id="P-SC",
+        title=(
+            "주식 취소 행 모양 + 취소 후 늦은 체결 관측 (MOCK 주식 전용 · 실주문 0)"
+        ),
+        source=(
+            "issue #948 순서 1 (주식 MOCK 취소 → non-execution 증명 → 해제) · "
+            "차단 사유 = #939 Codex r2 HIGH 1 + 브로커 프로파일 "
+            "capabilities.replace_semantics._kis.replace_probe_2026_07_31"
+            ".orgn_odno_wire_form.reading 「확인하지 않았다 — 추정 금지」. "
+            "소비자 2건: #948 순서 2·3, #980(진입 부분체결 뒤 취소된 잔량)"
+        ),
+        kind="ORDER",
+        environment=ENV_MOCK,
+        dimension="CANCELLATION",
+        bounds_keys=("B_final_quantity_proof", "B_late_fill_observation"),
+        instance_fields=(
+            "capabilities.replace_semantics._kis.replace_probe_2026_07_31"
+            ".orgn_odno_wire_form",
+            "final_quantity_proof.late_event_window_ms",
+        ),
+        statistic=(
+            "categorical per trial, no numeric bound. cancel_shape ∈ "
+            "{ORIGINAL_ROW_FLAGGED, SEPARATE_ROW_WITH_ORGN_ODNO, BOTH, "
+            "NEITHER_OBSERVED, UNDETERMINED} — the last two are distinct and the "
+            "difference is the point: #948 must not be built on «we did not see "
+            "it» read as «it does not happen». late_fill_after_cancel_ack is an "
+            "OBSERVATION of one 60 s window, never a bound candidate: zero "
+            "observed late fills is NOT 0 ms, it is 미확립 (VP-002:756, same rule "
+            "P-FQP carries)"
+        ),
+        risk="HIGH",
+        duration="~5 min (주문 2 + 취소 2 + 되팔기 ≤1 + GET 폴링 60 s×2, 2 s 페이싱)",
+        emits_orders=True,
+        requires_confirm=True,
+        prerequisites=(
+            "--asset stock --symbol 005930 — 선물 거부(취소 TR·조회면 모두 국내주식)",
+            "모의투자 **주식** 자격증명. KIS_STOCK_MARKET 이 mock 이 아니거나 "
+            "KIS_REAL_TRADING 이 참이면 첫 소켓 전에 거부 — paper 스택은 실제로 "
+            "KIS_STOCK_MARKET=real 로 돌므로(memory stock-needs-real-kis-key) "
+            "paper .env 를 소싱한 실수가 실주문 자격증명으로 이어진다",
+            "계좌가 비어 있어야 한다 — 대상 종목 보유 0 + 미결 주문 0 을 GET 으로 "
+            "**증명**해야 시작한다. 읽기가 답하지 못하면(페이지 캡·거부·스로틀) "
+            "그것도 거부다",
+            "거래일 09:00-15:20 KST (config/broker_probes/stock_cancel_probe.yaml "
+            "session.window · 휴장일은 config/tos_runtime/paper/calendar.yaml). "
+            "15:20 이후 종가 단일가 구간은 측정 대상이 아니다",
+            "모든 한도(페이싱·주문 호출 예산·수량 상한·창·관측 길이)는 "
+            "config/broker_probes/stock_cancel_probe.yaml 에서 오고 코드 기본값이 "
+            "**없다** — 키가 빠지면 거부",
+            "분리 워크트리에서 실행 (origin/main detached) — 공유 체크아웃은 병렬 "
+            "레인이 브랜치를 바꿔 repo_commit 이 비-main 으로 찍힌다(#793 HIGH)",
+            "정리는 모든 종료 경로에서 돌고(finally) 자기 결과를 기록한다 — "
+            "남은 주문 취소 → 체결분 시장가 되팔기 → 잔고 GET 으로 flat 확인",
+        ),
+        entrypoint="tools.broker_probes.probes_stock_cancel:probe_psc",
+    ),
+}
+
+
+def get(probe_id: str) -> ProbeSpec:
+    key = probe_id.strip().upper().replace("_", "-")
+    for candidate, spec in PROBES.items():
+        if candidate.upper() == key:
+            return spec
+    raise KeyError(f"unknown probe {probe_id!r}. Known: {', '.join(sorted(PROBES))}")
+
+
+def coverage_report() -> dict[str, object]:
+    """Prove the 12 canonical + 4 census probes are all represented."""
+    canonical = [p for p in PROBES.values() if p.source.startswith("draft")]
+    census = [p for p in PROBES.values() if p.source.startswith("plan")]
+    covered = {key for spec in PROBES.values() for key in spec.bounds_keys}
+    return {
+        "canonical_12": sorted(p.probe_id for p in canonical),
+        "canonical_count": len(canonical),
+        "census_4": sorted(p.probe_id for p in census),
+        "census_count": len(census),
+        "total": len(PROBES),
+        "bound_keys_touched": sorted(covered),
+        "bound_keys_not_touched": sorted(set(BOUND_KEYS) - covered),
+        "order_emitting": sorted(p.probe_id for p in PROBES.values() if p.emits_orders),
+        "unsupported": {
+            p.probe_id: p.skip_reason for p in PROBES.values() if not p.supported
+        },
+    }

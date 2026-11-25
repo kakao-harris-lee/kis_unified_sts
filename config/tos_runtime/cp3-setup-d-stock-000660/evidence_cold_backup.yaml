@@ -1,0 +1,9 @@
+# evidence_cold_backup.yaml — TOS paper 콜드 백업 (증거 증가 대응 계획 §2 A3)
+
+backup_root: null
+
+archive_dir: null
+
+verify_root: null
+
+minimum_free_bytes: null

@@ -1,0 +1,102 @@
+"""Required-covered fail-open suite for the DSL digest-bound artifacts (★1; design §2/§6)."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+from tos.canonical import DigestBoundArtifact
+from tos.dsl import (
+    AdmissibilityResult,
+    AuthoredStrategy,
+    BoundOutcome,
+    CapabilityManifest,
+    NoActionOutcome,
+    PortfolioVector,
+    Proposal,
+)
+
+from .._required_covered import (
+    assert_required_covered_non_vacuous,
+    null_path,
+    required_covered_cases,
+)
+from ._dsl_strategies import (
+    SCHEME,
+    admissibility_result_required_kwargs,
+    bound_outcome_required_kwargs,
+    capability_manifest_required_kwargs,
+    issue_admissibility_result,
+    issue_bound_outcome,
+    issue_capability_manifest,
+    issue_no_action,
+    issue_proposal,
+    issue_strategy,
+    issue_vector,
+    no_action_required_kwargs,
+    proposal_required_kwargs,
+    strategy_required_kwargs,
+    vector_required_kwargs,
+)
+
+_ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]] = [
+    (AuthoredStrategy, strategy_required_kwargs),
+    (Proposal, proposal_required_kwargs),
+    (NoActionOutcome, no_action_required_kwargs),
+    (PortfolioVector, vector_required_kwargs),
+    (AdmissibilityResult, admissibility_result_required_kwargs),
+    (CapabilityManifest, capability_manifest_required_kwargs),
+    (BoundOutcome, bound_outcome_required_kwargs),
+]
+
+
+@pytest.mark.parametrize("cls,kwargs_fn,path", required_covered_cases(_ARTIFACTS))
+def test_missing_required_covered_rejects_issuance(
+    cls: type[DigestBoundArtifact], kwargs_fn: Callable[..., dict[str, Any]], path: str
+) -> None:
+    """Dropping any required covered path makes an ISSUED artifact unconstructable (★1; design §2)."""
+    kwargs = null_path(kwargs_fn(), path)
+    with pytest.raises(ValidationError):
+        cls.issue(scheme=SCHEME, **kwargs)
+
+
+def test_every_digest_bound_artifact_has_non_vacuous_required_covered() -> None:
+    """No DSL digest-bound artifact has an empty _REQUIRED_COVERED (the fail-open itself)."""
+    assert_required_covered_non_vacuous(_ARTIFACTS)
+
+
+@pytest.mark.parametrize("cls", [cls for cls, _ in _ARTIFACTS])
+def test_bare_issue_is_rejected(cls: type[DigestBoundArtifact]) -> None:
+    """Issuing an artifact with no covered content is rejected (no empty artifact reaches ISSUED)."""
+    with pytest.raises(ValidationError):
+        cls.issue(scheme=SCHEME)
+
+
+def test_issue_fixtures_are_genuinely_complete() -> None:
+    """Every issued fixture fills its required covered set (not an all-null coverage illusion)."""
+    for artifact in (
+        issue_strategy(),
+        issue_proposal(),
+        issue_no_action(),
+        issue_vector(),
+        issue_admissibility_result(),
+        issue_capability_manifest(),
+        issue_bound_outcome(),
+    ):
+        assert artifact.missing_required_fields() == []
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_no_action_rejects_empty_rationale(blank: str) -> None:
+    """A No-Action with a blank rationale is unconstructable (vacuous satisfaction)."""
+    with pytest.raises(ValidationError):
+        issue_no_action(rationale=blank)
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_proposal_rejects_empty_rationale(blank: str) -> None:
+    """A Proposal with a blank rationale is unconstructable (vacuous satisfaction)."""
+    with pytest.raises(ValidationError):
+        issue_proposal(rationale=blank)

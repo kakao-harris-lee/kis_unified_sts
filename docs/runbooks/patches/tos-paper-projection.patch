@@ -1,0 +1,49 @@
+--- a/tos-paper-session.sh
++++ b/tos-paper-session.sh
+@@ -53,6 +53,7 @@
+ # 못 뜬다(#856 리뷰 1·2 재현). 잎을 가르면 롤 당일 부팅은 그냥 genesis 이고, 지난 달 잎은
+ # 제 계약월로 그대로 열린다. 커밋된 재현: tos/runtime/tests/compose/test_contract_roll_replay.py.
+ DATA_BASE=${TOS_PAPER_DATA_DIR:-/home/deploy/.local/state/tos/paper-data}
++PROJECTION_PATH=${TOS_PAPER_PROJECTION_PATH:-/home/deploy/.local/state/tos/paper-projection/operator_projection.json}
+ CONFIG=/home/deploy/.config/tos/paper-config
+ CUSTODY=/home/deploy/.local/state/tos/paper-custody
+ ENVFILE=$MAIN/.env.mock
+@@ -344,6 +345,11 @@
+ log "safety deadline: ${MAXMIN} min (stop cron 는 $STOP_HHMM KST · 마감은 그보다 뒤)"
+ 
+ SESSION_DIR=$SESSIONS/$TODAY-$(TZ=Asia/Seoul date '+%H%M%S')-$DIRECTION
++# Test/override sessions must never replace the published operational snapshot.
++if [ "$SELFTEST" = "1" ] || [ -n "${TOS_PAPER_DATA_DIR:-}${TOS_PAPER_INSTRUMENT_OVERRIDE:-}${TOS_PAPER_FAKE_DATE:-}${TOS_PAPER_WT:-}" ] || [ "${TOS_PAPER_IGNORE_CALENDAR:-0}" = "1" ]; then
++  PROJECTION_PATH=$SESSION_DIR/operator_projection.json
++fi
++case "$PROJECTION_PATH" in /*) ;; *) abort "projection path must be absolute" ;; esac
+ GENESIS=no; [ -e "$DATA/evidence.sqlite3" ] || GENESIS=yes
+ log "data dir $DATA (genesis=$GENESIS) · session dir $SESSION_DIR · append_every_s=$APPEND_EVERY_S"
+ 
+@@ -358,6 +364,7 @@
+   --label "$LABEL" --direction "$DIRECTION" --instrument "$INSTRUMENT" \
+   --max-minutes "$MAXMIN" --append-every-s "$APPEND_EVERY_S" \
+   --boot-proof-timeout-s "$BOOTPROOF_CEILING_S" \
++  --projection-path "$PROJECTION_PATH" \
+   --pidfile "$PIDFILE" ) >>"$LOG" 2>&1 &
+ DRV=$!
+ echo "$DRV" > "$DRIVER_PIDFILE"
+--- a/tos_paper_session.py
++++ b/tos_paper_session.py
+@@ -257,6 +257,7 @@
+         # 2026-10-03 genesis 실측은 2.0 s 다. 이 값에 가까워지는 날이 오면 그것은 조이거나
+         # 늘릴 값이 아니라 **보고할 소견**이다 (런북 §7.8 2 의 boot_seconds 추이).
+     )
++    ap.add_argument("--projection-path", type=Path, default=None)
+     ap.add_argument("--pidfile", type=Path, required=True)
+     args = ap.parse_args()
+ 
+@@ -382,6 +383,8 @@
+             "--data-dir", str(data),
+             "--custody-root", str(args.custody_root),
+             "--environment-label", args.label,
++            *(["--projection-path", str(args.projection_path)]
++              if args.projection_path is not None else []),
+         ],
+         cwd=wt, env=env, stdout=log, stderr=subprocess.STDOUT,
+     )

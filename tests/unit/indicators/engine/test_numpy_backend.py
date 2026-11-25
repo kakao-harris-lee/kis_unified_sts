@@ -1,0 +1,118 @@
+"""Unit tests for the NumPy backend + multi-backend routing."""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from shared.indicators.engine.numpy_backend import NumpyBackend
+from shared.indicators.engine.registry import default_engine
+from shared.indicators.engine.spec import IndicatorSpec, OHLCVWindow
+
+
+@pytest.fixture
+def backend() -> NumpyBackend:
+    return NumpyBackend()
+
+
+def test_supported_ids(backend: NumpyBackend) -> None:
+    assert backend.supported_ids() == {
+        "vwap",
+        "rvol",
+        "volume_acceleration",
+        "ichimoku",
+        "donchian",
+        "keltner",
+        "vwma",
+        "hma",
+    }
+
+
+def test_volume_acceleration_second_difference(backend: NumpyBackend) -> None:
+    window = OHLCVWindow.from_sequences(
+        open=[1, 1, 1, 1],
+        high=[1, 1, 1, 1],
+        low=[1, 1, 1, 1],
+        close=[1, 1, 1, 1],
+        volume=[1, 2, 4, 7],
+    )
+    flat = backend.compute(
+        IndicatorSpec.create("volume_acceleration"), window
+    ).flat_latest()
+    assert flat["volume_acceleration"] == pytest.approx(1.0)
+
+
+def test_ichimoku_multi_output_and_cloud_bounds(backend: NumpyBackend) -> None:
+    rng = np.random.default_rng(3)
+    n = 80
+    close = 100.0 + np.cumsum(rng.normal(0, 1, n))
+    window = OHLCVWindow.from_sequences(
+        open=close,
+        high=close + rng.uniform(0, 1, n),
+        low=close - rng.uniform(0, 1, n),
+        close=close,
+        volume=np.full(n, 1000.0),
+    )
+    result = backend.compute(IndicatorSpec.create("ichimoku"), window)
+    assert set(result.series) == {"span_a", "span_b", "cloud_top", "cloud_bottom"}
+    flat = result.flat_latest()
+    assert flat["ichimoku_cloud_top"] >= flat["ichimoku_cloud_bottom"]
+
+
+def test_vwap_cumulative(backend: NumpyBackend) -> None:
+    window = OHLCVWindow.from_sequences(
+        open=[10, 20, 30],
+        high=[10, 20, 30],
+        low=[10, 20, 30],
+        close=[10, 20, 30],
+        volume=[1, 1, 1],
+    )
+    flat = backend.compute(IndicatorSpec.create("vwap"), window).flat_latest()
+    assert flat["vwap"] == pytest.approx(20.0)
+
+
+def test_vwap_handles_zero_leading_volume(backend: NumpyBackend) -> None:
+    window = OHLCVWindow.from_sequences(
+        open=[10, 20],
+        high=[10, 20],
+        low=[10, 20],
+        close=[10, 20],
+        volume=[0, 2],
+    )
+    flat = backend.compute(IndicatorSpec.create("vwap"), window).flat_latest()
+    assert flat["vwap"] == pytest.approx(20.0)
+
+
+def test_rvol_ratio(backend: NumpyBackend) -> None:
+    window = OHLCVWindow.from_sequences(
+        open=[1, 1, 1, 1, 2],
+        high=[1, 1, 1, 1, 2],
+        low=[1, 1, 1, 1, 2],
+        close=[1, 1, 1, 1, 2],
+        volume=[1, 1, 1, 1, 2],
+    )
+    spec = IndicatorSpec.create("rvol", {"short_window": 2, "long_window": 4})
+    flat = backend.compute(spec, window).flat_latest()
+    assert flat["rvol"] == pytest.approx(1.2)
+
+
+def test_rvol_short_window_yields_no_value(backend: NumpyBackend) -> None:
+    window = OHLCVWindow.from_sequences(
+        open=[1, 1], high=[1, 1], low=[1, 1], close=[1, 1], volume=[1, 1]
+    )
+    spec = IndicatorSpec.create("rvol", {"short_window": 2, "long_window": 20})
+    assert backend.compute(spec, window).flat_latest() == {}
+
+
+def test_default_engine_routes_across_backends() -> None:
+    engine = default_engine()
+    assert engine.resolve("vwap").name == "numpy"
+    assert "vwap" in engine.supported_ids()
+    assert "rvol" in engine.supported_ids()
+
+
+def test_default_engine_prefers_talib_for_standard_ids() -> None:
+    pytest.importorskip("talib")
+    engine = default_engine()
+    assert engine.resolve("rsi").name == "talib"
+    assert engine.resolve("atr").name == "talib"

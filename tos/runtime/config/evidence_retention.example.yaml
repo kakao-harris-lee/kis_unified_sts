@@ -1,0 +1,20 @@
+# tos_runtime evidence retention policy (design #40 D3, §2 item 5).
+#
+# `minimum_days_by_class` is REQUIRED as a key (RetentionPolicy.load refuses
+# to load if the key itself is absent — fail-closed). An individual class's
+# VALUE may be `null` (named-TBD, pending operator approval) — the kernel
+# predicate `tos.evidence.retention_deletable` already treats a null minimum
+# as "no configured minimum for this class", refusing it, never admitting it
+# vacuously. Do not invent a numeric placeholder for an unapproved class —
+# leave it `null` until an operator approves a concrete value (CLAUDE.md
+# "configuration-driven only" — thresholds belong here, not in code, and a
+# fabricated default would silently misstate an unapproved bound as decided).
+#
+# Record-class names are caller vocabulary (this slice registers no closed
+# enum of classes); each row below is illustrative, not exhaustive.
+minimum_days_by_class:
+  # Example only — replace with the operator-approved retention floor for
+  # this record class, or leave null until approved.
+  TOMBSTONE: null
+  RESTORE_COMPARISON: null
+  KEY_ROTATION: null

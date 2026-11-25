@@ -1,0 +1,67 @@
+# Futures margin / liquidation-buffer / stress-loss read-model (shadow).
+#
+# Source: docs/plans/2026-07-05-futures-market-context-hedge-risk-hardening.md
+# §4.2 / §6. Published by services/futures_margin_risk/main.py as
+# futures:risk:latest (hash) + stream:futures.risk. Read-only: no order path is
+# touched. Consumed by FuturesMarketContextV2 (Phase C) and HedgeAdvisorV2
+# (Phase D) so new-entry sizing and hedge feasibility can see account margin.
+#
+# Margin rates are CONSERVATIVE config defaults used when the broker margin
+# rate cannot be read (plan §10 risk row 3). Multiplier/tick come from the
+# single source of contract constants, config/execution.yaml::
+# futures_contract_spec (never duplicated here).
+#
+# fail policy (plan §2.5): live fail-closed, paper fail-open.
+#   live  + account snapshot missing/stale -> risk_level=critical
+#   paper + account snapshot missing/stale -> degraded=true, trace only
+
+futures_margin:
+  enabled: true
+
+  # Freshness bounds for injected inputs (seconds). The publisher marks the
+  # account snapshot stale past this age; a stale live snapshot is critical.
+  account_snapshot_max_age_seconds: 300
+  price_max_age_seconds: 30
+
+  # Config equity fallback when the broker account snapshot is unavailable
+  # (paper degraded path). Env-overridable to match the paper account size.
+  fallback_account_equity_krw: ${FUTURES_MARGIN_FALLBACK_EQUITY:50000000}
+
+  # Product whose contract spec is the buffer/sizing reference. mini ->
+  # kospi200_mini, kospi200 -> kospi200_full (execution spec keys below).
+  product: "${FUTURES_TRADING_PRODUCT:mini}"
+
+  # Per-product margin rates + overnight gap shock (index points). Keys match
+  # config/execution.yaml::futures_contract_spec; multiplier/tick are read from
+  # there, only the rates + stress gap live here.
+  product_defaults:
+    kospi200_mini:
+      initial_margin_rate: 0.08
+      maintenance_margin_rate: 0.06
+      stress_gap_points: 5.0
+      symbol_prefixes: ["A05", "105"]
+    kospi200_full:
+      initial_margin_rate: 0.08
+      maintenance_margin_rate: 0.06
+      stress_gap_points: 5.0
+      symbol_prefixes: ["A01", "101"]
+
+  thresholds:
+    watch_margin_usage_pct: 0.45
+    reduce_only_margin_usage_pct: 0.65
+    block_new_entries_margin_usage_pct: 0.80
+    critical_margin_usage_pct: 0.90
+    watch_liquidation_buffer_ticks: 80
+    critical_liquidation_buffer_ticks: 40
+
+  redis:
+    latest_key: "futures:risk:latest"
+    latest_ttl_seconds: 900              # 15m — account state is kept short
+    stream_key: "stream:futures.risk"
+    stream_maxlen: 5000
+    stream_ttl_seconds: 900
+
+  # Telegram advisory on risk-level escalation (reduce_only and above).
+  alerts:
+    enabled: true
+    domain: "briefing"

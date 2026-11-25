@@ -1,0 +1,177 @@
+# Redis Streams Configuration
+
+redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  password: ${REDIS_PASSWORD:}
+  db: ${REDIS_DB:1}
+
+streams:
+  # 원시 데이터 스트림
+  raw_data:
+    name: RAW_DATA_STREAM
+    maxlen: 10000
+
+  # 피처 스트림 (기술적 지표 포함)
+  feature:
+    name: FEATURE_STREAM
+    maxlen: 10000
+
+  # 예측 스트림 (CNN-LSTM 결과)
+  prediction:
+    name: PREDICTION_STREAM
+    maxlen: 10000
+
+  # 주문 명령 스트림
+  order_command:
+    name: ORDER_COMMAND_STREAM
+    maxlen: 5000
+
+# 공용 소비 루프(StreamStage / MultiStreamStage) 설정이었다. 루프 구현
+# (shared/streaming/stage.py)과 그것을 쓰던 서비스(risk_filter · order_router ·
+# stock_order_router · stock_risk_filter · news_scorer · stock_monitor ·
+# futures_monitor)는 레거시 제거 L2/L6 으로 사라졌다 — 남은 값은 기록이다.
+# env 로도 덮을 수 있다: CONSUMER_STAGE_HEARTBEAT_INTERVAL_SECONDS.
+consumer_stage:
+  # 소비 루프가 살아 있다는 것을 증명하는 INFO 한 줄
+  # (event=stream_consumer_alive) 의 발화 간격(초).
+  #
+  # 유휴 경로는 원래 어떤 레벨에서도 아무것도 남기지 않아서 "건강하지만 트래픽이
+  # 없다" 와 "소비 루프가 죽었다" 가 로그상 동일했다(2026-09-17~18 이틀 실명).
+  #
+  # ⚠ 상한은 **liveness 한계**다, staleness 한계가 아니라.
+  # 지운 config/f9_observation.yaml 의 liveness_expected_interval_seconds
+  #   * (1 + liveness_missed_beats_allowed) = 60 × 3 = **180초** 였다.
+  #
+  # 2026-09-23 이전에는 이 주석이 observation_max_gap_seconds(1800) 를 상한으로
+  # 적었고 코드도 거기서 유도했다. 수집기가 하트비트를 «별도의 liveness 패턴군»
+  # 으로 채점하기 시작하면서 그 숫자는 다른 측정(소비 증명 사이의 간격)의 것이
+  # 됐는데 발화 측 상한만 1800 에 남아 있었다 — 즉
+  # `heartbeat_interval_seconds: 300` 이 코드·주석이 명시한 모든 가드를 통과하면서
+  # 건강한 날 전부를 stale_observation 으로 떨어뜨릴 수 있었다. 상한을 옮겼다.
+  #
+  # ⚠ 그리고 이 값은 수집기의 liveness_expected_interval_seconds 와 **같아야**
+  # 한다. 수집기는 그 설정값으로 «몇 줄이 나와야 하는가» 를 예측하므로, 여기만
+  # 바꾸면 밀도가 어긋난다. 두 파일의 동일성은
+  # tests/unit/streaming/test_stream_stage_heartbeat.py 의
+  # test_the_shipped_interval_is_what_the_observation_config_predicts 가 두
+  # shipped 파일에서 직접 읽어 단언한다(레거시 제거 L3 전에는 수집기 시험이
+  # 그 자리였다).
+  #
+  # 수집기가 재는 것은 «설정한 간격»이 아니라 «실제로 찍힌 두 줄 사이»다.
+  # 하트비트는 폴링 중에 만기가 되고 «다음 폴링이 반환될 때» 나오므로
+  # 측정 간격 = 이 값 + xread_block_ms(현재 2초) + 타임스탬프 초단위 절삭 오차
+  # 1초. 따라서 실효 상한은 180 - 2 - 1 = 177 이고, 코드가 그렇게 «유도»해서
+  # 강제했다 (지운 shared/streaming/stage.py::max_heartbeat_interval_seconds).
+  # 그 관계를 네 출처에서 읽어 고정하던 시험
+  # (tests/unit/streaming/test_stream_stage_heartbeat.py)과 수집기 YAML
+  # (config/f9_observation.yaml)도 같이 사라졌다.
+  #
+  # 상한을 넘겨도 데몬은 죽지 않는다: WARNING(event=heartbeat_interval_clamped)
+  # 후 상한으로 clamp 된다. 관측용 줄 하나 때문에 라이브 소비자가 기동 실패하는
+  # 것이 더 나쁘기 때문이다. (코드에서 직접 넘긴 값은 프로그래밍 오류라 예외다.)
+  #
+  # 비용(실측): 이 일곱 서비스에는 세션 게이트가 없어 24시간 폴링한다. 60초면
+  # 하루 1,440줄/서비스, 줄당 191~215B(로그 프리픽스 52B 포함) → 약 285KB/일,
+  # 7개 합쳐 ~2MB/일. json-file max-size 10m × max-file 3 기준 파일 하나가
+  # 차는 데 ~35일이라 무시 가능하다.
+  heartbeat_interval_seconds: 60
+
+consumer:
+  # 메시지 읽기 설정
+  read_count: 10
+  block_ms: 1000
+
+  # Consumer Group 이름
+  groups:
+    processor: processor_group
+    prediction: prediction_group
+    strategy: strategy_group
+    order: order_group
+
+# Indicator Engine 설정
+indicator_engine:
+  staleness_seconds: 180         # 마지막 tick 이후 N초 경과 시 지표를 stale 처리 (3분)
+  mtf_timeframes: [5, 15, 'daily']  # Multi-timeframe support: 5분, 15분, 일봉
+  mtf_maxlen: 250                # MTF 캔들 저장 최대 개수 (일봉 1년 = 250 거래일)
+
+# KIS WebSocket Stock Price Feed (H0STCNT0) 설정
+stock_feed:
+  max_symbols: 40               # KIS 제한: 41, 안전 마진으로 40
+  queue_maxsize: 10000           # 내부 메시지 큐 최대 크기
+  ping_interval: 0              # 0=client WS ping 비활성. KIS는 표준 WS ping에 PONG하지 않고 자체 PINGPONG(echo)을 쓰므로 client ping은 ping_timeout으로 정상 연결을 끊음. KIS 가이드: KeepAlive off. (반쪽 연결은 OS TCP keepalive + staleness로 감지)
+  ping_timeout: 10               # ping_interval=0이면 미사용
+  connection_timeout: 10.0       # 초기 연결 타임아웃 (초)
+  subscription_delay: 0.05       # 구독 간 딜레이 (초)
+  approval_key_timeout: 10       # 인증키 요청 타임아웃 (초)
+  reconnect_initial_delay: 1.0   # 재접속 초기 대기 (초)
+  reconnect_max_delay: 60.0      # 재접속 최대 대기 (초)
+  reconnect_breaker_threshold: 6        # 연속 실패 N회 후 circuit breaker open (무한 재연결→KIS 계정 차단 방지)
+  reconnect_breaker_cooldown_seconds: 300.0  # breaker open 시 재시도 간격 (REST fallback이 데이터 커버)
+  reconnect_rate_max: 4          # rate_window 내 재연결 N회 초과 시 breaker open (연결 성공→끊김 반복 flapping 차단; 연속실패 카운트와 무관)
+  reconnect_rate_window_seconds: 600.0  # 재연결 빈도 측정 rolling window (초). 105s 주기 flap이면 window에 ~6회 상주 → rate_max(4) 초과로 차단
+  stale_threshold_seconds: 30.0   # 종목별 tick stale 판단 기준 (DataProvider failover 기준과 정렬)
+
+# KIS WebSocket Futures Price Feed (H0IFCNT0) 설정
+futures_feed:
+  max_symbols: 10               # 선물 동시 구독 심볼 수
+  subscription_delay: 0.05      # 구독 간 딜레이 (초)
+  connection_timeout: 10.0      # 초기 연결 타임아웃 (초)
+  shutdown_timeout: 5.0         # 종료 대기 타임아웃 (초)
+  orderbook_stale_threshold_seconds: 3.0    # trade-only 지속 시 호가 stale 판단 임계값
+  orderbook_missing_warn_interval_seconds: 30.0  # 호가 누락 경고 최소 간격
+  reconnect_initial_delay: 1.0   # 재접속 초기 대기 (초)
+  reconnect_max_delay: 60.0      # 재접속 최대 대기 (초)
+  reconnect_breaker_threshold: 6        # 연속 실패 N회 후 circuit breaker open (무한 재연결→KIS 계정 차단 방지)
+  reconnect_breaker_cooldown_seconds: 300.0  # breaker open 시 재시도 간격 (REST polling이 데이터 커버)
+  reconnect_rate_max: 4          # rate_window 내 재연결 N회 초과 시 breaker open (연결 성공→끊김 반복 flapping 차단; 연속실패 카운트와 무관)
+  reconnect_rate_window_seconds: 600.0  # 재연결 빈도 측정 rolling window (초)
+  connect_max_attempts: 3        # 초기 connect 재시도 횟수 (KIS approval 직후 일시적 reset 흡수)
+
+# Feed observability thresholds
+feed_observability:
+  # Emit WARNING when tick drops increase by at least this delta since last check.
+  # Set to 0 to warn on every single drop (noisy); 1 means any new drop triggers a warning.
+  drop_warn_threshold: 1
+  # Emit WARNING when last_message_age_s (futures adapter) or staleness_seconds (stock)
+  # exceeds this value.  Use a value larger than the failover.staleness_threshold_seconds
+  # (30s) so warning fires before failover, but after transient quiet periods.
+  stale_warn_threshold_seconds: 60.0
+  # Emit WARNING when warmup returns fewer bars than this minimum for any symbol.
+  # 0 means warn only when warmup returns 0 bars.
+  warmup_min_candles: 20
+
+# KIS REST API Rate Limiter 설정
+rate_limiter:
+  default_rate: ${KIS_API_RATE_LIMIT:5}   # 초당 최대 요청 수
+  penalty_seconds: 1.0                     # 429 에러 시 패널티 대기 (초)
+  request_timeout: 10.0                    # REST API 요청 타임아웃 (초)
+
+# Data Provider Cache TTL 설정
+data_provider:
+  cache_ttl_websocket: 2.0       # WebSocket 사용 시 (push 기반, 짧은 TTL OK)
+  cache_ttl_stock: 30.0          # 주식 REST polling 시 TTL (초)
+  cache_ttl_futures: 5.0         # 선물 REST polling 시 TTL (초)
+  stagger_delay: 0.25            # 배치 내 요청 간 딜레이 (초, KIS 5req/s 제한 보호)
+  batch_size: 20                 # 배치 당 최대 심볼 수
+  fetch_timeout_seconds: 5.0     # 데이터 조회 타임아웃 (초)
+
+# KIS REST API Error Rate Tracker 설정 (§10.3-A, kill-switch feed for PR #164)
+kis_api_error_rate:
+  enabled: true                                         # opt-in switch — set false to disable Redis writes
+  window_seconds: 300                                   # 5-minute rolling window
+  publish_interval_seconds: 10                          # how often to write to Redis (seconds)
+  redis_key: "kill_switch:metrics:api_error_rate_5min"  # target key (DB 1)
+
+# WebSocket Failover with REST Fallback 설정
+failover:
+  enabled: true                  # WebSocket 실패 시 REST API로 자동 전환 활성화
+  health_check_interval_seconds: 10.0  # WebSocket 연결 상태 확인 간격 (초)
+  staleness_threshold_seconds: 30.0   # 데이터 stale 판단 임계값 (초, 이 시간 동안 데이터 없으면 failover)
+  min_fresh_ratio: 0.25                # 저유동 종목의 정상 tick 공백을 감안한 fresh 비율
+  startup_grace_seconds: 120.0         # 장 시작/재구독 직후 종목별 첫 tick 분산 구간에는 fresh 비율 판정 유예
+  failover_unhealthy_threshold: 3      # 연속 N회 unhealthy일 때만 REST fallback 진입
+  recovery_healthy_threshold: 3        # 연속 N회 healthy일 때만 WebSocket 복구
+  rest_poll_interval_seconds: 15.0    # REST fallback 시 polling 간격 (초)
+  rest_fallback_max_symbols: 5        # REST fallback 1회 polling 최대 심볼 수
+  send_telegram_alerts: false    # Failover/복구 Telegram 알림 제거(로그로만 기록)

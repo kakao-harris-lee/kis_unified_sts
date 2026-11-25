@@ -1,0 +1,555 @@
+"""tos.position pure predicates — ported from tos_runtime.riskstate.position (kernel round #4"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+import pytest
+from tos.position import (
+    ConsumedResult,
+    PositionObservation,
+    SealedSend,
+    classify_sealed_sends,
+    conservative_current_usage,
+    in_flight_overlap_effect,
+    sign_of,
+    worst_credible_directional_usage,
+)
+
+_BUY = "BUY"
+_SELL = "SELL"
+_TERMINAL = frozenset({"FULL_FILL", "REJECT", "CANCEL_ACK", "EXPIRED"})
+
+
+def _obs(**overrides: object) -> PositionObservation:
+    base: dict[str, object] = {
+        "scope_key": "acct-1::K200F",
+        "confirmed_net": Decimal(0),
+        "unknown_buy": Decimal(0),
+        "unknown_sell": Decimal(0),
+        "in_flight_buy": Decimal(0),
+        "in_flight_sell": Decimal(0),
+        "attempts_seen": 0,
+        "sources": (),
+    }
+    base.update(overrides)
+    return PositionObservation(**base)  # type: ignore[arg-type]
+
+
+def test_worst_credible_usage_pushes_unknowns_to_the_larger_direction() -> None:
+    """(plan §2.2) UNKNOWN consumes conservative capacity — never assumed safe."""
+    obs = _obs(
+        confirmed_net=Decimal(5),
+        unknown_buy=Decimal(3),
+        unknown_sell=Decimal(1),
+        in_flight_buy=Decimal(2),
+        in_flight_sell=Decimal(0),
+    )
+    assert worst_credible_directional_usage(obs) == Decimal(10)
+
+
+def test_conservative_current_usage_excludes_in_flight() -> None:
+    obs = _obs(
+        confirmed_net=Decimal(5),
+        unknown_buy=Decimal(3),
+        unknown_sell=Decimal(1),
+        in_flight_buy=Decimal(100),
+        in_flight_sell=Decimal(100),
+    )
+    assert conservative_current_usage(obs) == Decimal(8)
+
+
+def test_in_flight_overlap_effect_sums_both_buckets_never_nets() -> None:
+    obs = _obs(in_flight_buy=Decimal(3), in_flight_sell=Decimal(4))
+    assert in_flight_overlap_effect(obs) == Decimal(7)
+
+
+def test_sign_of_unrecognized_side_is_none_fail_closed() -> None:
+    assert sign_of(_BUY, buy_side_token=_BUY, sell_side_token=_SELL) == 1
+    assert sign_of(_SELL, buy_side_token=_BUY, sell_side_token=_SELL) == -1
+    assert sign_of("SHORT", buy_side_token=_BUY, sell_side_token=_SELL) is None
+    assert sign_of(None, buy_side_token=_BUY, sell_side_token=_SELL) is None
+
+
+def test_classify_confirmed_fill_signed_by_side() -> None:
+    sealed = (SealedSend(attempt_id="a1", side=_BUY, quantity=Decimal(10)),)
+    result = classify_sealed_sends(
+        sealed,
+        consumed_by_attempt={
+            "a1": ConsumedResult(
+                result_kind="CANCEL_ACK",
+                filled_quantity=Decimal(7),
+                remaining_quantity=Decimal(3),
+            )
+        },
+        unmatched_attempts=frozenset(),
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+    )
+    confirmed_net, unknown_buy, unknown_sell, in_flight_buy, in_flight_sell, seen = (
+        result
+    )
+    assert confirmed_net == Decimal(7)
+    assert (unknown_buy, unknown_sell, in_flight_buy, in_flight_sell) == (
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+    )
+    assert seen == 1
+
+
+def test_classify_unmatched_result_counts_full_sealed_quantity_as_in_flight() -> None:
+    sealed = (SealedSend(attempt_id="a1", side=_SELL, quantity=Decimal(10)),)
+    result = classify_sealed_sends(
+        sealed,
+        consumed_by_attempt={},
+        unmatched_attempts=frozenset({"a1"}),
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+    )
+    confirmed_net, unknown_buy, unknown_sell, in_flight_buy, in_flight_sell, seen = (
+        result
+    )
+    assert confirmed_net == Decimal(0)
+    assert (unknown_buy, unknown_sell) == (Decimal(0), Decimal(0))
+    assert in_flight_sell == Decimal(10)
+    assert in_flight_buy == Decimal(0)
+
+
+def test_classify_unmatched_result_with_unrecognized_side_is_in_flight_both_ways() -> (
+    None
+):
+    result = classify_sealed_sends(
+        (SealedSend(attempt_id="a1", side="???", quantity=Decimal(10)),),
+        consumed_by_attempt={},
+        unmatched_attempts=frozenset({"a1"}),
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+    )
+    assert result[1:5] == (Decimal(0), Decimal(0), Decimal(10), Decimal(10))
+
+
+def test_classify_no_terminal_result_is_in_flight() -> None:
+    sealed = (SealedSend(attempt_id="a1", side=_BUY, quantity=Decimal(5)),)
+    result = classify_sealed_sends(
+        sealed,
+        consumed_by_attempt={},
+        unmatched_attempts=frozenset(),
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+    )
+    _, unknown_buy, unknown_sell, in_flight_buy, in_flight_sell, _ = result
+    assert in_flight_buy == Decimal(5)
+    assert (unknown_buy, unknown_sell, in_flight_sell) == (
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+    )
+
+
+def test_classify_unrecognized_side_on_confirmed_fill_is_unknown_both_directions() -> (
+    None
+):
+    """An unrecognized side token on a CONFIRMED fill must not silently drop the confirmed"""
+    sealed = (SealedSend(attempt_id="a1", side="MYSTERY", quantity=Decimal(9)),)
+    result = classify_sealed_sends(
+        sealed,
+        consumed_by_attempt={
+            "a1": ConsumedResult(result_kind="FULL_FILL", filled_quantity=Decimal(9))
+        },
+        unmatched_attempts=frozenset(),
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+    )
+    confirmed_net, unknown_buy, unknown_sell, _, _, _ = result
+    assert confirmed_net == Decimal(0)
+    assert unknown_buy == Decimal(9)
+    assert unknown_sell == Decimal(9)
+
+
+def test_classify_missing_quantity_treated_as_zero_never_guessed() -> None:
+    sealed = (SealedSend(attempt_id="a1", side=_BUY, quantity=None),)
+    result = classify_sealed_sends(
+        sealed,
+        consumed_by_attempt={},
+        unmatched_attempts=frozenset(),
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+    )
+    _, _, _, in_flight_buy, in_flight_sell, _ = result
+    assert in_flight_buy == Decimal(0)
+    assert in_flight_sell == Decimal(0)
+
+
+_SIDES = ((_BUY, 1), (_SELL, -1))
+
+
+def _classify_one(
+    side: str, consumed: ConsumedResult
+) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int]:
+    return classify_sealed_sends(
+        (SealedSend(attempt_id="a1", side=side, quantity=Decimal(10)),),
+        consumed_by_attempt={"a1": consumed},
+        unmatched_attempts=frozenset(),
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+    )
+
+
+def _as_obs(
+    result: tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int],
+) -> PositionObservation:
+    confirmed_net, unknown_buy, unknown_sell, in_flight_buy, in_flight_sell, seen = (
+        result
+    )
+    return _obs(
+        confirmed_net=confirmed_net,
+        unknown_buy=unknown_buy,
+        unknown_sell=unknown_sell,
+        in_flight_buy=in_flight_buy,
+        in_flight_sell=in_flight_sell,
+        attempts_seen=seen,
+    )
+
+
+def _toward(obs: PositionObservation, sign: int) -> Decimal:
+    return obs.in_flight_buy if sign > 0 else obs.in_flight_sell
+
+
+def _against(obs: PositionObservation, sign: int) -> Decimal:
+    return obs.in_flight_sell if sign > 0 else obs.in_flight_buy
+
+
+def _partial(kind: str = "PARTIAL_FILL", remaining: int = 3) -> ConsumedResult:
+    return ConsumedResult(
+        result_kind=kind,
+        filled_quantity=Decimal(7),
+        remaining_quantity=Decimal(remaining),
+    )
+
+
+def test_terminal_tokens_match_the_engine_vocabulary() -> None:
+    """The literal this suite injects is the kernel's own terminal set, not a second copy."""
+    from tos.engine import TERMINAL_RESULT_KINDS
+
+    assert {kind.value for kind in TERMINAL_RESULT_KINDS} == _TERMINAL
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDES)
+@pytest.mark.parametrize("kind", ["ACK", "TIMEOUT", "UNKNOWN"])
+def test_nonterminal_zero_fill_keeps_full_sealed_quantity_outstanding(
+    kind: str, side: str, sign: int
+) -> None:
+    """The reproduced defect: a sealed 10-lot with one consumed ACK / TIMEOUT / UNKNOWN result"""
+    obs = _as_obs(_classify_one(side, ConsumedResult(result_kind=kind)))
+    assert obs.confirmed_net == Decimal(0)
+    assert _toward(obs, sign) == Decimal(10)
+    assert _against(obs, sign) == Decimal(0)
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+    assert worst_credible_directional_usage(obs) == Decimal(10)
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDES)
+def test_partial_fill_confirms_filled_and_keeps_remainder_outstanding(
+    side: str, sign: int
+) -> None:
+    """The reproduced defect: PARTIAL 7 filled / 3 remaining gave worst-credible 7, not 10."""
+    obs = _as_obs(_classify_one(side, _partial()))
+    assert obs.confirmed_net == Decimal(7 * sign)
+    assert _toward(obs, sign) == Decimal(3)
+    assert _against(obs, sign) == Decimal(0)
+    assert worst_credible_directional_usage(obs) == Decimal(10)
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDES)
+def test_terminal_full_fill_leaves_nothing_outstanding(side: str, sign: int) -> None:
+    obs = _as_obs(
+        _classify_one(
+            side,
+            ConsumedResult(
+                result_kind="FULL_FILL",
+                filled_quantity=Decimal(10),
+                remaining_quantity=Decimal(0),
+            ),
+        )
+    )
+    assert obs.confirmed_net == Decimal(10 * sign)
+    assert in_flight_overlap_effect(obs) == Decimal(0)
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+
+
+@pytest.mark.parametrize(("side", "sign"), _SIDES)
+@pytest.mark.parametrize("kind", ["REJECT", "CANCEL_ACK", "EXPIRED"])
+def test_terminal_zero_or_partial_fill_releases_the_unfilled_remainder(
+    kind: str, side: str, sign: int
+) -> None:
+    """DR-0003 §2.2 counts in full only attempts with NO terminal result; a terminal"""
+    zero = _as_obs(_classify_one(side, ConsumedResult(result_kind=kind)))
+    assert zero.confirmed_net == Decimal(0)
+    assert in_flight_overlap_effect(zero) == Decimal(0)
+    after_partial = _as_obs(_classify_one(side, _partial(kind)))
+    assert after_partial.confirmed_net == Decimal(7 * sign)
+    assert in_flight_overlap_effect(after_partial) == Decimal(0)
+
+
+@pytest.mark.parametrize("kind", [None, "", "FILLED_MAYBE", "full_fill"])
+def test_unrecognized_result_kind_is_not_terminal(kind: str | None) -> None:
+    """A missing / unrecognized kind proves no terminality — fail-closed, 10 outstanding."""
+    obs = _as_obs(_classify_one(_BUY, ConsumedResult(result_kind=kind)))
+    assert obs.in_flight_buy == Decimal(10)
+
+
+def test_outstanding_is_never_below_sealed_minus_filled() -> None:
+    """A non-terminal row whose ``remaining_quantity`` under-reports (or omits) the unfilled"""
+    under = _as_obs(_classify_one(_BUY, _partial(remaining=1)))
+    assert under.in_flight_buy == Decimal(3)
+    omitted = _as_obs(
+        _classify_one(
+            _BUY, ConsumedResult(result_kind="ACK", filled_quantity=Decimal(4))
+        )
+    )
+    assert omitted.in_flight_buy == Decimal(6)
+    over = _as_obs(_classify_one(_BUY, _partial(remaining=5)))
+    assert over.in_flight_buy == Decimal(5)
+
+
+def test_unrecognized_side_on_nonterminal_result_is_both_directions() -> None:
+    obs = _as_obs(_classify_one("MYSTERY", _partial()))
+    assert obs.confirmed_net == Decimal(0)
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(7), Decimal(7))
+    assert (obs.in_flight_buy, obs.in_flight_sell) == (Decimal(3), Decimal(3))
+    assert worst_credible_directional_usage(obs) == Decimal(10)
+
+
+@pytest.mark.parametrize("kind", ["ACK", "TIMEOUT", "UNKNOWN"])
+@pytest.mark.parametrize("side", [_BUY, _SELL])
+@pytest.mark.parametrize("prior_net", [-10, 0, 10])
+def test_zero_fill_nonterminal_result_never_lowers_the_decision_sum(
+    kind: str, side: str, prior_net: int
+) -> None:
+    """The bucket choice's own justification, made mechanical. ARE grants iff"""
+    prior_side = _BUY if prior_net >= 0 else _SELL
+    sealed = (
+        SealedSend(
+            attempt_id="prior", side=prior_side, quantity=Decimal(abs(prior_net))
+        ),
+        SealedSend(attempt_id="a1", side=side, quantity=Decimal(10)),
+    )
+    prior = ConsumedResult(
+        result_kind="FULL_FILL",
+        filled_quantity=Decimal(abs(prior_net)),
+        remaining_quantity=Decimal(0),
+    )
+
+    def decision_sum(consumed_by_attempt: dict[str, ConsumedResult]) -> Decimal:
+        obs = _as_obs(
+            classify_sealed_sends(
+                sealed,
+                consumed_by_attempt=consumed_by_attempt,
+                unmatched_attempts=frozenset(),
+                buy_side_token=_BUY,
+                sell_side_token=_SELL,
+                terminal_result_kinds=_TERMINAL,
+            )
+        )
+        return conservative_current_usage(obs) + in_flight_overlap_effect(obs)
+
+    no_result = decision_sum({"prior": prior})
+    with_result = decision_sum({"prior": prior, "a1": ConsumedResult(result_kind=kind)})
+    assert with_result == no_result
+
+
+@pytest.mark.parametrize("side", [_BUY, _SELL])
+@pytest.mark.parametrize("prior_net", [-10, 0, 10])
+def test_unmatched_result_never_lowers_the_decision_sum(
+    side: str, prior_net: int
+) -> None:
+    prior_side = _BUY if prior_net >= 0 else _SELL
+    sealed = (
+        SealedSend(
+            attempt_id="prior", side=prior_side, quantity=Decimal(abs(prior_net))
+        ),
+        SealedSend(attempt_id="a1", side=side, quantity=Decimal(10)),
+    )
+    prior = ConsumedResult(
+        result_kind="FULL_FILL",
+        filled_quantity=Decimal(abs(prior_net)),
+        remaining_quantity=Decimal(0),
+    )
+
+    def decision_sum(unmatched: frozenset[str]) -> Decimal:
+        obs = _as_obs(
+            classify_sealed_sends(
+                sealed,
+                consumed_by_attempt={"prior": prior},
+                unmatched_attempts=unmatched,
+                buy_side_token=_BUY,
+                sell_side_token=_SELL,
+                terminal_result_kinds=_TERMINAL,
+            )
+        )
+        return conservative_current_usage(obs) + in_flight_overlap_effect(obs)
+
+    assert decision_sum(frozenset({"a1"})) >= decision_sum(frozenset())
+
+
+@pytest.mark.parametrize("side,sign", _SIDES)
+@pytest.mark.parametrize(
+    "consumed,outstanding,confirmed",
+    [
+        (
+            ConsumedResult(
+                result_kind="CANCEL_ACK",
+                filled_quantity=Decimal(0),
+                remaining_quantity=Decimal(0),
+            ),
+            10,
+            0,
+        ),
+        (
+            ConsumedResult(
+                result_kind="CANCEL_ACK",
+                filled_quantity=Decimal(4),
+                remaining_quantity=Decimal(0),
+            ),
+            6,
+            4,
+        ),
+        (
+            ConsumedResult(
+                result_kind="FULL_FILL",
+                filled_quantity=Decimal(10),
+                remaining_quantity=Decimal(0),
+            ),
+            0,
+            10,
+        ),
+    ],
+)
+def test_unmatched_result_after_terminal_consumed_reopens_the_unfilled_remainder(
+    side: str,
+    sign: int,
+    consumed: ConsumedResult,
+    outstanding: int,
+    confirmed: int,
+) -> None:
+    obs = _as_obs(
+        classify_sealed_sends(
+            (SealedSend(attempt_id="a1", side=side, quantity=Decimal(10)),),
+            consumed_by_attempt={"a1": consumed},
+            unmatched_attempts=frozenset({"a1"}),
+            buy_side_token=_BUY,
+            sell_side_token=_SELL,
+            terminal_result_kinds=_TERMINAL,
+        )
+    )
+    assert obs.confirmed_net == sign * confirmed
+    assert _toward(obs, sign) == Decimal(outstanding)
+    assert _against(obs, sign) == Decimal(0)
+    assert (obs.unknown_buy, obs.unknown_sell) == (Decimal(0), Decimal(0))
+
+
+def _classify_never_accepted(
+    consumed: ConsumedResult | None,
+    *,
+    never_accepted: frozenset[str],
+    unmatched: frozenset[str] = frozenset(),
+) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal, int]:
+    """One sealed BUY 1, classified with ``never_accepted`` as the proven-unsent set."""
+    return classify_sealed_sends(
+        (SealedSend(attempt_id="a1", side=_BUY, quantity=Decimal(1)),),
+        consumed_by_attempt={} if consumed is None else {"a1": consumed},
+        unmatched_attempts=unmatched,
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        terminal_result_kinds=_TERMINAL,
+        never_accepted_attempts=never_accepted,
+    )
+
+
+def test_never_accepted_retires_an_unknown_sealed_send() -> None:
+    """2026-11-23 005930: an UNKNOWN consumed plus a never_accepted verdict is not in flight."""
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(result_kind="UNKNOWN"), never_accepted=frozenset({"a1"})
+        )
+    )
+    assert obs.in_flight_buy == Decimal(0)
+    assert obs.in_flight_sell == Decimal(0)
+    assert obs.confirmed_net == Decimal(0)
+    assert obs.attempts_seen == 1
+
+
+def test_unknown_without_a_verdict_stays_in_flight() -> None:
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(result_kind="UNKNOWN"), never_accepted=frozenset()
+        )
+    )
+    assert obs.in_flight_buy == Decimal(1)
+
+
+def test_a_verdict_for_another_attempt_does_not_retire_this_one() -> None:
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(result_kind="UNKNOWN"), never_accepted=frozenset({"a2"})
+        )
+    )
+    assert obs.in_flight_buy == Decimal(1)
+
+
+def test_never_accepted_retires_a_sealed_send_with_no_consumed_result() -> None:
+    obs = _as_obs(_classify_never_accepted(None, never_accepted=frozenset({"a1"})))
+    assert obs.in_flight_buy == Decimal(0)
+    assert obs.attempts_seen == 1
+
+
+def test_an_unmatched_row_reopens_a_never_accepted_attempt() -> None:
+    """A RESULT_UNMATCHED row outranks the verdict — the quantity goes back in flight."""
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(result_kind="UNKNOWN"),
+            never_accepted=frozenset({"a1"}),
+            unmatched=frozenset({"a1"}),
+        )
+    )
+    assert obs.in_flight_buy == Decimal(1)
+
+
+def test_a_never_accepted_attempt_still_counts_any_recorded_fill() -> None:
+    """The verdict retires only the OUTSTANDING quantity; a recorded fill stays confirmed."""
+    obs = _as_obs(
+        _classify_never_accepted(
+            ConsumedResult(
+                result_kind="PARTIAL_FILL",
+                filled_quantity=Decimal(1),
+                remaining_quantity=Decimal(0),
+            ),
+            never_accepted=frozenset({"a1"}),
+        )
+    )
+    assert obs.confirmed_net == Decimal(1)
+    assert obs.in_flight_buy == Decimal(0)
+
+
+def test_omitting_the_never_accepted_set_keeps_everything_in_flight() -> None:
+    """The default is conservative — a caller that forgets it over-counts, never under."""
+    obs = _as_obs(
+        classify_sealed_sends(
+            (SealedSend(attempt_id="a1", side=_BUY, quantity=Decimal(1)),),
+            consumed_by_attempt={"a1": ConsumedResult(result_kind="UNKNOWN")},
+            unmatched_attempts=frozenset(),
+            buy_side_token=_BUY,
+            sell_side_token=_SELL,
+            terminal_result_kinds=_TERMINAL,
+        )
+    )
+    assert obs.in_flight_buy == Decimal(1)

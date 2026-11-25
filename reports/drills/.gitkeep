@@ -1,0 +1,3 @@
+# Rollback drill outputs land here (Phase 5 Task 8).
+# scripts/drills/rollback_drill.sh writes rollback_YYYYMMDD.txt per run.
+# Cadence: twice yearly (per spec §6.3).

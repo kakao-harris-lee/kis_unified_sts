@@ -1,0 +1,87 @@
+2026-10-15 10:02:05 checkout ok: repo={STATE_DIR}/measure/wt-cp3-genesis-20261015 repo_commit=0325293e5801ca828d7bd51cdc50b1d8214c67a8
+2026-10-15 10:02:05 credential separation ok: no real futures query key in this environment
+2026-10-15 10:02:05 probe module resolves inside the checkout: {STATE_DIR}/measure/wt-cp3-genesis-20261015/tools/tos_cp3/bootproof_guard.py
+2026-10-15 10:02:05 probe policy version cp3-tenant-bootproof/2 matches this runner
+2026-10-15 10:02:05 instrument=A05611 · data leaf {STATE_DIR}/cp3-setup-d-long-data/A05611
+2026-10-15 10:02:05 === PRODUCER instrument=A05611 config={STATE_DIR}/measure/wt-cp3-genesis-20261015/config/tos_probes/cp3-live-producer.yaml session-dir={STATE_DIR}/cp3-sessions/long-20261015/producer journal={STATE_DIR}/cp3-sessions/long-20261015/journal.jsonl ceiling 20885s
+2026-10-15 10:02:05 producer pid=2667331 (supervised by timeout, ceiling 20885s)
+2026-10-15 10:02:05 first-row wait: pid=2667335 (bound 600s, log {STATE_DIR}/cp3-sessions/long-20261015/producer/first-row-wait.log)
+2026-10-15 10:02:46   first real row seen · consumed_stale_at_boot=1 · last=A05611:1m:20261015T100100+0900 · snapshot {STATE_DIR}/cp3-sessions/long-20261015/producer/boot-journal-snapshot.json
+2026-10-15 10:02:46 bootproof_guard: ok — journal {STATE_DIR}/cp3-sessions/long-20261015/journal.jsonl took the APPROVED REAL PRODUCER (every row's source_id is allowlisted) branch; data dir {STATE_DIR}/cp3-setup-d-long-data/A05611 accepted for instrument A05611
+2026-10-15 10:02:46 === RENDER tree=cp3-setup-d-long direction=LONG out=/home/operator/.config/tos/cp3-setup-d-long-config
+rendered: /home/operator/.config/tos/cp3-setup-d-long-config
+  tree_id:         cp3-setup-d-long
+  source_revision: 0325293e5801ca828d7bd51cdc50b1d8214c67a8
+  direction:       LONG
+  instrument:      A05611
+  account:         <withheld> fingerprint=46c39c54d3bb
+  journal:         {STATE_DIR}/cp3-sessions/long-20261015/journal.jsonl (external)
+  activation:      ACTIVATED 5 (re-derived in a fresh process)
+  digest:          VENUE_CONSTRAINT_POLICY vcp-paper-cp3-setup-d-long-krx-index-futures 1 2284291e6350effc4f1d624ab17943d34fcc7c8c3c02e4c4216d868a470498e2
+  digest:          ORDER_CONSTRUCTION_POLICY ocp-paper-krx-index-futures 3 c90444b90034fbc1b8b66ac1e8899a62c4d673cb0b81602e2b74af71cb70f313
+  digest:          AGGREGATE_RISK_POLICY arp-paper-krx-index-futures 1 9025232059c863915d873c63fcf3307fcdf3357ca9662f73e25d129698d4ff09
+  digest:          ACTION_FLOW_POLICY afp-paper-krx-index-futures 1 9fac88fcc0862315d0a6703c50d096ab173e17b81b03fef30d4e25ed9d836319
+  digest:          CRITICAL_INPUT_POLICY tos-paper-cp3-setup-d-long-critical-input-g1 1 f3b0a74d626c7211bbbb1c632b3d7d8f9f4f032d5d4b9803c2ced59015b18abf
+2026-10-15 10:02:49 render ok -> /home/operator/.config/tos/cp3-setup-d-long-config
+2026-10-15 10:02:49 environment label paper matches the rendered tree
+2026-10-15 10:02:49 boot-moment snapshot: pid=2669946 (bound 1s, log {STATE_DIR}/cp3-sessions/long-20261015/producer/first-row-wait.log)
+2026-10-15 10:02:49   first real row seen · consumed_stale_at_boot=1 · last=A05611:1m:20261015T100100+0900 · snapshot {STATE_DIR}/cp3-sessions/long-20261015/producer/boot-journal-snapshot.json
+2026-10-15 10:02:49 === BOOT label=paper custody={STATE_DIR}/paper-custody stop in 20875s (15:50) · child ceiling 20995s
+2026-10-15 10:02:49 run pid=2669966 (supervised by timeout, ceiling 20995s)
+2026-10-15 15:50:00 === STOP SIGTERM -> run pid 2669966 (process group)
+run: stopped (signal received).
+2026-10-15 15:50:01 === END run rc=0
+2026-10-15 15:50:01 === END producer rc=0
+2026-10-15 15:50:01 producer summary {STATE_DIR}/cp3-sessions/long-20261015/producer/producer-summary.json:
+2026-10-15 15:50:01   {
+2026-10-15 15:50:01     "counters": {
+2026-10-15 15:50:01       "already_published": 0,
+2026-10-15 15:50:01       "clock_regression": 0,
+2026-10-15 15:50:01       "fetch_error": 0,
+2026-10-15 15:50:01       "late_completed": 2,
+2026-10-15 15:50:01       "max_stamp_to_replace_s": 0.03485652300878428,
+2026-10-15 15:50:01       "missing_no_successor": 2,
+2026-10-15 15:50:01       "no_raw_row_for_minute": 39,
+2026-10-15 15:50:01       "omitted_unusable": 0,
+2026-10-15 15:50:01       "pre_boot_lines": 1,
+2026-10-15 15:50:01       "produce_error": 0,
+2026-10-15 15:50:01       "published": 304,
+2026-10-15 15:50:01       "skipped_behind": 76
+2026-10-15 15:50:01     },
+2026-10-15 15:50:01     "date": "2026-10-15",
+2026-10-15 15:50:01     "frozen_bars_today": 382,
+2026-10-15 15:50:01     "instrument": "A05611",
+2026-10-15 15:50:01     "market_sha256": {
+2026-10-15 15:50:02     },
+2026-10-15 15:50:02     "source_id": "tos-cp3-live/0.1.0",
+2026-10-15 15:50:02     "stage": "finish",
+2026-10-15 15:50:02     "stitch_manifest_sha256": "9f04a3e9bca44d01bfbfbede70a3df5cf35305dfc514b2ec511f2d7476ec664b"
+2026-10-15 15:50:02   }
+2026-10-15 15:50:02 post-stop durable set {STATE_DIR}/cp3-setup-d-long-data/A05611:
+2026-10-15 15:50:02   snapshots: [(303,)]
+2026-10-15 15:50:02   entries: [(51085,)]
+2026-10-15 15:50:02     TIME_HEALTH_SNAPSHOT: 50122
+2026-10-15 15:50:02     EVENT_CONSUMED: 303
+2026-10-15 15:50:02     EVENT_HANDLING_STARTED: 303
+2026-10-15 15:50:02     DECISION_OUTCOME_EMITTED: 302
+2026-10-15 15:50:02     FLOW_HALTED: 25
+2026-10-15 15:50:02     FLOW_STEP_ADMITTED: 6
+2026-10-15 15:50:02     ORDER_ADMISSIBILITY_DECISION_ISSUED: 6
+2026-10-15 15:50:02     SESSION_FACTS_OBSERVED: 2
+2026-10-15 15:50:02     ACTION_FLOW_POLICY_BOUND: 1
+2026-10-15 15:50:02     AGGREGATE_RISK_POLICY_BOUND: 1
+2026-10-15 15:50:02     AUTHORITY_EPOCH_TRANSITION: 1
+2026-10-15 15:50:02     DECISION_WITHHELD: 1
+2026-10-15 15:50:02     EGRESS_IDENTITY_OBSERVATION: 1
+2026-10-15 15:50:02     OPERATOR_ATTESTED_INPUTS: 1
+2026-10-15 15:50:02     ORDER_CONSTRUCTION_POLICY_BOUND: 1
+2026-10-15 15:50:02     RCL_APPEND: 1
+2026-10-15 15:50:02     RECOVERY_BARRIER: 1
+2026-10-15 15:50:02     REPLAY_VERDICT_IDENTICAL: 1
+2026-10-15 15:50:02     SESSION_CALENDAR_BOUND: 1
+2026-10-15 15:50:02     STM_ALERT: 1
+2026-10-15 15:50:02     TIME_SERVICE_STARTUP: 1
+2026-10-15 15:50:02     TIME_WALL_CLOCK_EXPOSED: 1
+2026-10-15 15:50:02     VENUE_POLICY_BOUND: 1
+2026-10-15 15:50:02     VENUE_SNAPSHOT_ISSUED: 1
+2026-10-15 15:50:02 ABORT: the producer stopped before the session did (producer rc=0, run rc=0) — every pass after that read a journal that was no longer growing, so this session is not a clean one

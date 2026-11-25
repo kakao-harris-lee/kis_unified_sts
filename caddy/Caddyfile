@@ -1,0 +1,55 @@
+# KIS Unified STS — Single external entry through DASHBOARD_HOST_PORT.
+#
+# Routing (2026-11-08, legacy removal L4/L5):
+#   /api/tos/*          → dashboard:8001 (read-only tos_runtime operator
+#                         projection, see docs/plans/2026-09-12-tos-phase5-w4-
+#                         operations-plan.md §2 decision 9)
+#   /health, /docs,
+#   /openapi.json,
+#   /redoc              → dashboard:8001
+#   everything else     → strategy-builder-ui:3100 (Next.js). `/` redirects to
+#                         /tos, the only page the UI serves.
+#
+# What used to be listed here and is gone: /api/kis-builder/*, /api/strategies*,
+# /api/signals*, /api/trades*, /api/health/*, /api/strategy-lab*,
+# /api/strategy-builder*, /api/metrics*, /api/trading*, /metrics and /ws. L4
+# deleted every one of those handlers from services/dashboard, and L5 deleted
+# the pages that called them. They now fall through to the Next app, which
+# answers 404 from its catch-all proxy — the same verdict dashboard would give,
+# one hop earlier.
+#
+# The Next catch-all proxy at /api/[...path]/route.ts still resolves
+# /api/tos/projection, so `npm run dev` (no Caddy) reaches the dashboard too.
+# Keep the two lists in step rather than copying one into the other:
+# strategy-builder-ui/src/app/api/caddyRouting.ts READS this file and
+# uiCallSiteRoots.test.ts asserts every UI call site resolves through the
+# proxy's table. The proxy attaches the server key to what it forwards, so it
+# authenticates the caller itself first (#861 review note f).
+#
+# HTTP-only on container :5080; Docker maps DASHBOARD_HOST_PORT to this port.
+
+:5080 {
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+
+	# 1) The dashboard's whole surviving surface: the TOS projection plus the
+	#    container healthcheck and the OpenAPI docs. Listed individually rather
+	#    than via /api/* so an /api path the dashboard does not serve stays with
+	#    the Next app instead of leaking to dashboard as a 404.
+	@to_dashboard {
+		path /api/tos /api/tos/*
+		path /health /docs /openapi.json /redoc
+	}
+	handle @to_dashboard {
+		reverse_proxy dashboard:8001
+	}
+
+	# 2) Everything else → Next.js: the /tos page, the / redirect, /_next/*
+	#    assets, and the catch-all /api proxy.
+	handle {
+		reverse_proxy strategy-builder-ui:3100
+	}
+}

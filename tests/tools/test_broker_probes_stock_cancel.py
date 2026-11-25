@@ -1,0 +1,1993 @@
+"""Unit tests for P-SC — the stock MOCK cancel-shape probe (#948 step 1)."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import time
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+from tests.support.probe_auth import StubAuth, install_stub_auth
+from tools.broker_probes import probes_order, probes_stock_cancel
+from tools.broker_probes.common import (
+    MOCK_HOST,
+    ProbeCredentials,
+    ProbeError,
+    ProbeRun,
+    SafetyViolation,
+    assert_mock_trading_tr,
+    redact,
+)
+from tools.broker_probes.probes_order import (
+    _STOCK_CANCEL_TR_MOCK,
+    Placed,
+    build_stock_cancel_body,
+    odno_key,
+)
+from tools.broker_probes.probes_stock_cancel import (
+    _CLEAN_FLAT,
+    _CLEAN_STILL_LIVE,
+    _PARTIAL_FILLED_FULLY,
+    _READ_OK,
+    _READ_TRANSIENT,
+    _READ_TRUNCATED,
+    _SHAPE_BOTH,
+    _SHAPE_NONE,
+    _SHAPE_ORIGINAL_FLAGGED,
+    _SHAPE_SEPARATE_ROW,
+    _SHAPE_UNDETERMINED,
+    _STOP_NONE,
+    OrderBudget,
+    assert_mock_only_env,
+    assert_session_window,
+    classify_cancel_shape,
+    classify_late_fill,
+    load_config,
+    probe_psc,
+)
+from tools.tos_cp3.ops import market_open, shared_pace
+from tools.tos_cp3.ops.mock_flat_check import cancel_parent_odnos
+
+_ACCOUNT = "1234567890"
+_PRODUCER_CONFIG = "config/tos_probes/cp3-live-producer.yaml"
+_SYMBOL = "005930"
+_LAST_PRICE = "70200"
+_ASPR_UNIT = "100"
+_ORG_NO = "06010"
+
+_IN_WINDOW = datetime(2026, 11, 2, 10, 30, tzinfo=probes_stock_cancel.KST)
+
+
+class _Broker:
+    """A stateful fake of the five surfaces P-SC touches."""
+
+    def __init__(
+        self,
+        *,
+        cancel_shape: str = "separate_row",
+        fills: bool = False,
+        partial_fill: int | None = None,
+        late_fill: bool = False,
+        aspr_unit: str | None = _ASPR_UNIT,
+        holding: int = 0,
+        balance_pages: int = 1,
+        ccld_page_rows: int | None = None,
+        balance_rt_cd: str = "0",
+        balance_http: int = 200,
+        cancel_rt_cd: str = "0",
+        org_no: str = _ORG_NO,
+        drop_aspr_unit_after: int | None = None,
+        fill_qty_override: int | None = None,
+    ) -> None:
+        self.cancel_shape = cancel_shape
+        self.fills = fills
+        self.partial_fill = partial_fill
+        self.late_fill = late_fill
+        self.aspr_unit = aspr_unit
+        self.holding = holding
+        self.balance_pages = balance_pages
+        self.ccld_page_rows = ccld_page_rows
+        self.balance_rt_cd = balance_rt_cd
+        self.balance_http = balance_http
+        self.cancel_rt_cd = cancel_rt_cd
+        self.org_no = org_no
+        self.drop_aspr_unit_after = drop_aspr_unit_after
+        self.fill_qty_override = fill_qty_override
+        self.quotes_served = 0
+        self.rows: list[dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
+        self._next_odno = 8686
+
+    def _odno(self) -> str:
+        self._next_odno += 1
+        return f"{self._next_odno:010d}"
+
+    def _row(self, *, odno: str, qty: int, filled: int, price: str, side: str) -> dict:
+        return {
+            "ord_dt": "20261102",
+            "odno": odno,
+            "orgn_odno": "         0",
+            "ord_dvsn_name": "지정가",
+            "sll_buy_dvsn_cd": "02" if side == "BUY" else "01",
+            "pdno": _SYMBOL,
+            "prdt_name": "삼성전자",
+            "ord_qty": str(qty),
+            "ord_unpr": price,
+            "ord_tmd": "103000",
+            "tot_ccld_qty": str(filled),
+            "tot_ccld_amt": str(filled * int(price or 0)),
+            "avg_prvs": price,
+            "rmn_qty": str(qty - filled),
+            "cncl_yn": "N",
+            "rjct_qty": "0",
+        }
+
+    def _find(self, odno: str) -> dict[str, Any] | None:
+        for row in self.rows:
+            if odno_key(row["odno"]) == odno_key(odno):
+                return row
+        return None
+
+    def _quote(self) -> dict[str, Any]:
+        self.quotes_served += 1
+        out: dict[str, Any] = {"stck_prpr": _LAST_PRICE}
+        dropped = (
+            self.drop_aspr_unit_after is not None
+            and self.quotes_served > self.drop_aspr_unit_after
+        )
+        if self.aspr_unit is not None and not dropped:
+            out["aspr_unit"] = self.aspr_unit
+        return {"rt_cd": "0", "output": out}
+
+    def _submit(self, body: dict[str, Any], tr_id: str) -> dict[str, Any]:
+        qty = int(body["ORD_QTY"])
+        side = "BUY" if tr_id.endswith("0802U") else "SELL"
+        price = body["ORD_UNPR"]
+        if side == "SELL":
+            self.holding = max(0, self.holding - qty)
+            filled = qty
+        elif self.partial_fill is not None:
+            filled = min(self.partial_fill, qty)
+            self.holding += filled
+        elif self.fill_qty_override is not None:
+            filled = self.fill_qty_override
+            self.holding += filled
+        elif self.fills:
+            filled = qty
+            self.holding += filled
+        else:
+            filled = 0
+        odno = self._odno()
+        self.rows.append(
+            self._row(odno=odno, qty=qty, filled=filled, price=price, side=side)
+        )
+        return {
+            "rt_cd": "0",
+            "msg_cd": "APBK0013",
+            "msg1": "주문 전송 완료 되었습니다.",
+            "output": {
+                "KRX_FWDG_ORD_ORGNO": self.org_no,
+                "ODNO": odno,
+                "ORD_TMD": "103000",
+            },
+        }
+
+    def _cancel(self, body: dict[str, Any]) -> dict[str, Any]:
+        original = self._find(body["ORGN_ODNO"])
+        if original is None:
+            return {
+                "rt_cd": "1",
+                "msg_cd": "APBK0918",
+                "msg1": "원주문을 찾을 수 없습니다",
+            }
+        if self.cancel_rt_cd != "0":
+            return {
+                "rt_cd": self.cancel_rt_cd,
+                "msg_cd": "APBK0656",
+                "msg1": "정정/취소할 수량이 없습니다",
+            }
+        cancelled_qty = int(original["rmn_qty"] or 0) or int(original["ord_qty"])
+        if self.cancel_shape in ("flag", "both"):
+            original["cncl_yn"] = "Y"
+            original["rmn_qty"] = "0"
+        if self.cancel_shape in ("separate_row", "both"):
+            original["rmn_qty"] = "0"
+            derived = self._row(
+                odno=self._odno(), qty=cancelled_qty, filled=0, price="0", side="BUY"
+            )
+            derived["rmn_qty"] = "0"
+            derived["ord_dvsn_name"] = "취소"
+            derived["orgn_odno"] = original["odno"]
+            self.rows.append(derived)
+        if self.cancel_shape == "none":
+            pass
+        if self.late_fill:
+            original["tot_ccld_qty"] = str(int(original["tot_ccld_qty"]) + 1)
+        return {
+            "rt_cd": "0",
+            "msg_cd": "APBK0013",
+            "msg1": "주문 전송 완료 되었습니다.",
+            "output": {
+                "KRX_FWDG_ORD_ORGNO": _ORG_NO,
+                "ODNO": self._odno(),
+                "ORD_TMD": "103001",
+            },
+        }
+
+    def _ccld(self, params: dict[str, Any]) -> dict[str, Any]:
+        newest_first = list(reversed(self.rows))
+        if self.ccld_page_rows is None:
+            return {"rt_cd": "0", "msg1": "정상처리", "output1": newest_first}
+        start = int(params.get("CTX_AREA_NK100") or 0)
+        page = newest_first[start : start + self.ccld_page_rows]
+        nxt = start + self.ccld_page_rows
+        more = nxt < len(newest_first)
+        return {
+            "rt_cd": "0",
+            "msg1": "정상처리",
+            "output1": page,
+            "ctx_area_fk100": str(nxt) if more else "",
+            "ctx_area_nk100": str(nxt) if more else "",
+        }
+
+    def _balance(self, params: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        if self.balance_rt_cd != "0" or self.balance_http != 200:
+            return self.balance_http, {
+                "rt_cd": self.balance_rt_cd,
+                "msg_cd": "APBK0919",
+                "msg1": "조회가 되지 않았습니다",
+            }
+        page = int(params.get("CTX_AREA_NK100") or 0)
+        last_page = page >= self.balance_pages - 1
+        rows = (
+            [{"pdno": _SYMBOL, "hldg_qty": str(self.holding)}]
+            if last_page and self.holding >= 0
+            else [{"pdno": "000660", "hldg_qty": "3"}]
+        )
+        if not last_page:
+            return 200, {
+                "rt_cd": "0",
+                "output1": rows,
+                "ctx_area_fk100": str(page + 1),
+                "ctx_area_nk100": str(page + 1),
+            }
+        return 200, {
+            "rt_cd": "0",
+            "output1": rows,
+            "output2": [{"dnca_tot_amt": "1000"}],
+        }
+
+    def __call__(
+        self,
+        _session: Any,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        timeout: float = 15.0,
+    ) -> tuple[int, dict[str, Any], float, str]:
+        self.calls.append(
+            {
+                "method": method,
+                "url": url,
+                "tr_id": headers.get("tr_id", ""),
+                "params": dict(params or {}),
+                "body": dict(json_body or {}),
+            }
+        )
+        if "quotations/inquire-price" in url:
+            payload: dict[str, Any] = self._quote()
+        elif "trading/order-rvsecncl" in url:
+            payload = self._cancel(json_body or {})
+        elif "trading/order-cash" in url:
+            payload = self._submit(json_body or {}, headers.get("tr_id", ""))
+        elif "trading/inquire-daily-ccld" in url:
+            payload = self._ccld(params or {})
+        elif "trading/inquire-balance" in url:
+            status, payload = self._balance(params or {})
+            return status, payload, 1.0, "{}"
+        else:  # pragma: no cover - an unexpected path is a test bug
+            raise AssertionError(f"unexpected probe URL: {url}")
+        return 200, payload, 1.0, "{}"
+
+    def order_posts(self) -> list[dict[str, Any]]:
+        return [c for c in self.calls if "trading/order-cash" in c["url"]]
+
+    def cancel_posts(self) -> list[dict[str, Any]]:
+        return [c for c in self.calls if "trading/order-rvsecncl" in c["url"]]
+
+
+def _client(run: ProbeRun) -> Any:
+    """A paced-off client on mock stock credentials, for direct-call tests."""
+    return probes_order.MockTradingClient(
+        ProbeCredentials(
+            app_key="k",
+            app_secret="s",
+            account_no=_ACCOUNT,
+            is_real=False,
+            asset="stock",
+        ),
+        StubAuth(),
+        run,
+        pace_s=0.0,
+    )
+
+
+class _KisOpen:
+    """Stands in for the day gate's ONE KIS 개장일여부 call, and counts it.
+
+    ``market_open.fetch_opnd_yn`` is the seam on purpose: everything between it
+    and ``assert_session_window`` — the cache, the lock, the fallback, the
+    environment restore — is then the real code under test, and no test can
+    reach the broker.
+    """
+
+    def __init__(self, answer: str | Exception = "Y") -> None:
+        self.answer = answer
+        self.days: list[date] = []
+        self.exports: dict[str, str] = {}
+
+    def __call__(self, day: date, **_kwargs: Any) -> str:
+        self.days.append(day)
+        # A transport that leaks the REAL stock credential pair into this
+        # process's environment. `market_open.fetch_opnd_yn` does NOT do this
+        # (#1151 review removed its `os.environ.update`); this stub plays the
+        # future one that might, which is what the gate's restore is for.
+        os.environ.update(self.exports)
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+
+@pytest.fixture(autouse=True)
+def kis_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _KisOpen:
+    """No test reaches KIS, and the day's answer is cached under ``tmp_path``.
+
+    The default answer is «unreadable», so every test that does not ask for one
+    exercises the calendar fallback — the behaviour P-SC had before #1149.
+    """
+    stub = _KisOpen(market_open.MarketOpenUnreadable("stubbed: no test calls KIS"))
+    monkeypatch.setattr(market_open, "fetch_opnd_yn", stub)
+    monkeypatch.setenv("CP3_DAILY_MARKET_OPEN_CACHE", str(tmp_path / "market-open"))
+    return stub
+
+
+@pytest.fixture
+def mock_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exactly the env vars the stock credential path reads, all mock."""
+    monkeypatch.setenv("KIS_STOCK_APP_KEY", "test-key")
+    monkeypatch.setenv("KIS_STOCK_APP_SECRET", "test-secret")
+    monkeypatch.setenv("KIS_STOCK_ACCOUNT_NO", _ACCOUNT)
+    monkeypatch.setenv("KIS_STOCK_MARKET", "mock")
+    monkeypatch.delenv("KIS_FUTURES_MARKET", raising=False)
+    monkeypatch.delenv("KIS_REAL_TRADING", raising=False)
+    monkeypatch.delenv("KIS_TOKEN_CACHE_DIR", raising=False)
+
+
+def _config_file(tmp_path: Path, **overrides: Any) -> Path:
+    """A P-SC config with the clocks wound down, written to ``tmp_path``."""
+    data: dict[str, Any] = {
+        "schema_version": 1,
+        "session": {
+            "calendar_path": "config/tos_runtime/paper/calendar.yaml",
+            "market_open_producer_config": _PRODUCER_CONFIG,
+            "window": {"start": "09:00", "end": "15:20"},
+        },
+        "limits": {
+            "pace_s": 0.001,
+            "pace_s_floor": 0.001,
+            "max_order_calls": 10,
+            "max_quantity": 2,
+            "cleanup": {"cancel_attempts": 2, "retry_s": 0.001},
+        },
+        "observation": {"cancel_window_s": 0.01, "poll_interval_s": 0.005},
+        "flat_check": {"balance_max_pages": 5, "ccld_page_row_cap": 15},
+        "trials": {
+            "a": {"quantity": 1, "price_offset_pct": 25.0},
+            "b": {"enabled": True, "quantity": 2, "price_offset_pct": 5.0},
+        },
+    }
+    for dotted, value in overrides.items():
+        node: Any = data
+        parts = dotted.split(".")
+        for part in parts[:-1]:
+            node = node[part]
+        if value is _DELETE:
+            del node[parts[-1]]
+        else:
+            node[parts[-1]] = value
+    path = tmp_path / "p-sc.yaml"
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    return path
+
+
+class _Delete:
+    """Sentinel: remove this key from the generated config."""
+
+
+_DELETE = _Delete()
+
+
+def _args(config: Path, tmp_path: Path, **overrides: Any) -> argparse.Namespace:
+    base: dict[str, Any] = {
+        "probe_id": "P-SC",
+        "symbol": _SYMBOL,
+        "asset": "stock",
+        "confirm": True,
+        "quantity": 1,
+        "price_offset_pct": 10.0,
+        "samples": 1,
+        "margin_pct": 50.0,
+        "token_cache_dir": str(tmp_path / "tc"),
+        "out_dir": str(tmp_path / "out"),
+        "note": "test",
+        "config": str(config),
+        "trial": "both",
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+@pytest.fixture
+def install(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """Install a broker as the transport and freeze the clock inside the window."""
+
+    def _install(broker: _Broker, *, now: datetime = _IN_WINDOW) -> _Broker:
+        monkeypatch.setattr(probes_order, "http_json", broker)
+        install_stub_auth(monkeypatch)
+        monkeypatch.setattr(probes_stock_cancel, "_now", lambda: now)
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+        return broker
+
+    return _install
+
+
+def test_the_cancel_tr_is_a_mock_tr() -> None:
+    """``VTTC0013U`` — 모의. The 실전 twin would be refused by the seal."""
+    assert _STOCK_CANCEL_TR_MOCK == "VTTC0013U"
+    assert_mock_trading_tr(_STOCK_CANCEL_TR_MOCK)
+    with pytest.raises(SafetyViolation):
+        assert_mock_trading_tr("TTTC0013U")
+
+
+def test_cancel_body_carries_every_required_field_verbatim() -> None:
+    """Source: ``examples_llm/domestic_stock/order_rvsecncl`` ``[v1_국내주식-003]``."""
+    body = build_stock_cancel_body(
+        "12345678",
+        "90",
+        orgn_odno="0000008687",
+        krx_fwdg_ord_orgno=_ORG_NO,
+        remaining_qty=1,
+    )
+    assert body == {
+        "CANO": "12345678",
+        "ACNT_PRDT_CD": "90",
+        "KRX_FWDG_ORD_ORGNO": _ORG_NO,
+        "ORGN_ODNO": "0000008687",
+        "ORD_DVSN": "00",
+        "RVSE_CNCL_DVSN_CD": "02",
+        "ORD_QTY": "1",
+        "ORD_UNPR": "0",
+        "QTY_ALL_ORD_YN": "Y",
+        "EXCG_ID_DVSN_CD": "KRX",
+    }
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "needle"),
+    [
+        (
+            {"orgn_odno": "", "krx_fwdg_ord_orgno": _ORG_NO, "remaining_qty": 1},
+            "ORGN_ODNO",
+        ),
+        (
+            {"orgn_odno": "1", "krx_fwdg_ord_orgno": "", "remaining_qty": 1},
+            "KRX_FWDG_ORD_ORGNO",
+        ),
+        (
+            {"orgn_odno": "1", "krx_fwdg_ord_orgno": _ORG_NO, "remaining_qty": 0},
+            "잔여수량",
+        ),
+    ],
+)
+def test_cancel_body_refuses_locally_rather_than_sending(
+    kwargs: dict[str, Any], needle: str
+) -> None:
+    """Each of these is a ``[필수]`` field the wrapper refuses as empty."""
+    with pytest.raises(ProbeError, match=needle):
+        build_stock_cancel_body("12345678", "90", **kwargs)
+
+
+def test_mock_env_passes(mock_env: None) -> None:
+    record = assert_mock_only_env()
+    assert record["verdict"] == "MOCK_ONLY"
+    assert record["observed"]["KIS_STOCK_MARKET"] == "mock"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("KIS_STOCK_MARKET", "real"),
+        ("KIS_FUTURES_MARKET", "real"),
+        ("KIS_REAL_TRADING", "true"),
+        ("KIS_REAL_TRADING", "1"),
+    ],
+)
+def test_refuses_a_real_environment(
+    mock_env: None, monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    """The failing input the host seal cannot catch: a REAL CREDENTIAL."""
+    monkeypatch.setenv(name, value)
+    with pytest.raises(SafetyViolation, match=name):
+        assert_mock_only_env()
+
+
+def test_a_real_environment_sends_nothing(
+    mock_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    install: Any,
+    tmp_path: Path,
+) -> None:
+    broker = install(_Broker())
+    monkeypatch.setenv("KIS_STOCK_MARKET", "real")
+    with pytest.raises(SafetyViolation):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.calls == [], "a refused run must not have touched the broker"
+
+
+def test_refuses_futures_asset(mock_env: None, tmp_path: Path) -> None:
+    with pytest.raises(ProbeError, match="STOCK probe"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path, asset="futures"))
+
+
+def test_refuses_without_a_symbol(mock_env: None, tmp_path: Path) -> None:
+    with pytest.raises(ProbeError, match="--symbol"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path, symbol=""))
+
+
+def test_window_accepts_an_instant_inside_it(tmp_path: Path) -> None:
+    record = assert_session_window(load_config(_config_file(tmp_path)), _IN_WINDOW)
+    assert record["trading_day"] is True
+    assert record["window_kst"] == "09:00-15:20"
+
+
+@pytest.mark.parametrize(
+    "when",
+    [
+        datetime(2026, 11, 2, 8, 59, tzinfo=probes_stock_cancel.KST),
+        datetime(2026, 11, 2, 15, 21, tzinfo=probes_stock_cancel.KST),
+    ],
+)
+def test_refuses_outside_the_window(tmp_path: Path, when: datetime) -> None:
+    with pytest.raises(ProbeError, match="outside the configured window"):
+        assert_session_window(load_config(_config_file(tmp_path)), when)
+
+
+def test_refuses_a_weekend(tmp_path: Path) -> None:
+    saturday = datetime(2026, 11, 7, 10, 0, tzinfo=probes_stock_cancel.KST)
+    with pytest.raises(ProbeError, match="not a KRX trading day"):
+        assert_session_window(load_config(_config_file(tmp_path)), saturday)
+
+
+def test_refuses_a_declared_holiday(tmp_path: Path) -> None:
+    """2026-12-25 is in the tenant calendar's ``holidays`` (크리스마스)."""
+    christmas = datetime(2026, 12, 25, 10, 0, tzinfo=probes_stock_cancel.KST)
+    with pytest.raises(ProbeError, match="not a KRX trading day"):
+        assert_session_window(load_config(_config_file(tmp_path)), christmas)
+
+
+def test_a_weekday_in_a_year_without_listed_holidays_is_admitted(
+    tmp_path: Path,
+) -> None:
+    """The 2027 cliff, gone (operator directive 2026-11-20).
+
+    Before this change the probe refused every date whose year the config did
+    not declare, and the tenant calendar lists 2026 holidays only — so from
+    2027-01-01 P-SC could not run at all. The calendar is known-holidays-only
+    now: an unlisted weekday is a trading day whatever its year.
+    """
+    later = datetime(2027, 11, 2, 10, 0, tzinfo=probes_stock_cancel.KST)  # Tuesday
+    record = assert_session_window(load_config(_config_file(tmp_path)), later)
+    assert record["trading_day"] is True
+
+
+def test_a_listed_holiday_in_a_later_year_is_still_refused(tmp_path: Path) -> None:
+    """What still blocks an order: a weekend, and a day the calendar lists closed.
+
+    The refusal is the probe's precondition for sending MOCK orders, so it is
+    checked against a calendar that DOES list the day — 2027-11-19 written into
+    a copy of the tenant file — not only against 2026 dates.
+    """
+    calendar = tmp_path / "calendar.yaml"
+    source = probes_stock_cancel._REPO_ROOT / "config/tos_runtime/paper/calendar.yaml"
+    calendar.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "holidays:\n", 'holidays:\n  - "2027-11-19"\n', 1
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(
+        _config_file(tmp_path, **{"session.calendar_path": str(calendar)})
+    )
+    listed = datetime(2027, 11, 19, 10, 0, tzinfo=probes_stock_cancel.KST)  # Friday
+    with pytest.raises(ProbeError, match="not a KRX trading day"):
+        assert_session_window(cfg, listed)
+    saturday = datetime(2027, 11, 20, 10, 0, tzinfo=probes_stock_cancel.KST)
+    with pytest.raises(ProbeError, match="not a KRX trading day"):
+        assert_session_window(cfg, saturday)
+
+
+def test_refuses_a_day_kis_says_is_closed(tmp_path: Path, kis_open: _KisOpen) -> None:
+    """#1149's failing input: an unlisted holiday — the calendar admits, KIS does not.
+
+    2027-01-01 (신정, a Friday) is in no tenant calendar, so before this gate the
+    probe would have POSTed MOCK orders into a closed market.
+    """
+    kis_open.answer = "N"
+    newyear = datetime(2027, 1, 1, 10, 0, tzinfo=probes_stock_cancel.KST)
+    with pytest.raises(ProbeError, match="opnd_yn=N"):
+        assert_session_window(load_config(_config_file(tmp_path)), newyear)
+    assert kis_open.days == [date(2027, 1, 1)]
+
+
+def test_admits_a_day_kis_says_is_open(tmp_path: Path, kis_open: _KisOpen) -> None:
+    kis_open.answer = "Y"
+    record = assert_session_window(load_config(_config_file(tmp_path)), _IN_WINDOW)
+    assert record["trading_day"] is True
+    assert record["market_open"]["opnd_yn"] == "Y"
+    assert record["market_open"]["verdict"] == "KIS_ANSWERED"
+    assert record["market_open"]["tr_id"] == market_open.HOLIDAY_TR
+    assert kis_open.days == [_IN_WINDOW.date()]
+
+
+def test_falls_back_to_the_calendar_when_kis_is_unreadable(
+    tmp_path: Path, kis_open: _KisOpen
+) -> None:
+    """The fixture's default: KIS unreadable — the pre-#1149 rule decides alone."""
+    record = assert_session_window(load_config(_config_file(tmp_path)), _IN_WINDOW)
+    assert record["trading_day"] is True
+    assert record["market_open"]["verdict"] == "CALENDAR_FALLBACK"
+    assert record["market_open"]["opnd_yn"] is None
+    assert "KIS unreadable" in record["market_open"]["source"]
+
+
+def test_the_kis_answer_is_cached_for_the_day(
+    tmp_path: Path, kis_open: _KisOpen
+) -> None:
+    """One broker call per host per day, shared with the cron tenant gate."""
+    kis_open.answer = "Y"
+    cfg = load_config(_config_file(tmp_path))
+    assert_session_window(cfg, _IN_WINDOW)
+    assert_session_window(cfg, _IN_WINDOW)
+    assert len(kis_open.days) == 1
+    assert (tmp_path / "market-open" / "20261102.json").is_file()
+
+
+def test_a_refused_day_never_asks_kis(tmp_path: Path, kis_open: _KisOpen) -> None:
+    """A weekend, a listed holiday and the wrong hour cost no credential."""
+    cfg = load_config(_config_file(tmp_path))
+    for when in (
+        datetime(2026, 11, 7, 10, 0, tzinfo=probes_stock_cancel.KST),  # Saturday
+        datetime(2026, 12, 25, 10, 0, tzinfo=probes_stock_cancel.KST),  # listed
+        datetime(2026, 11, 2, 16, 0, tzinfo=probes_stock_cancel.KST),  # after close
+    ):
+        with pytest.raises(ProbeError):
+            assert_session_window(cfg, when)
+    assert kis_open.days == []
+
+
+def test_the_kis_gate_leaves_the_environment_as_it_found_it(
+    mock_env: None, tmp_path: Path, kis_open: _KisOpen
+) -> None:
+    """The REAL key the day gate resolves must not become the ORDER key.
+
+    ``market_open.fetch_opnd_yn`` reads ``KIS_STOCK_APP_KEY`` /
+    ``KIS_STOCK_APP_SECRET`` out of the producer's ``env_file`` and keeps them in
+    a credential object (``test_fetch_leaves_the_process_environment_untouched``
+    pins that). This test is the second lock: the stub plays a transport that
+    does leak them into ``os.environ``, because P-SC then sends 모의투자 orders
+    with whatever the environment names — a leak on this path would put a REAL
+    credential on an order-emitting one.
+    """
+    kis_open.answer = "Y"
+    kis_open.exports = {
+        "KIS_STOCK_APP_KEY": "REAL-key-from-env_file",
+        "KIS_STOCK_APP_SECRET": "REAL-secret-from-env_file",
+    }
+    before = dict(os.environ)
+    assert_session_window(load_config(_config_file(tmp_path)), _IN_WINDOW)
+    assert os.environ["KIS_STOCK_APP_KEY"] == "test-key"
+    assert os.environ["KIS_STOCK_APP_SECRET"] == "test-secret"
+    assert dict(os.environ) == before
+
+
+def test_a_day_kis_says_is_closed_sends_no_order(
+    mock_env: None,
+    install: Any,
+    tmp_path: Path,
+    kis_open: _KisOpen,
+) -> None:
+    """The refusal reaches the run that would place orders, not just the gate."""
+    broker = install(
+        _Broker(), now=datetime(2027, 1, 1, 10, 0, tzinfo=probes_stock_cancel.KST)
+    )
+    kis_open.answer = "N"
+    with pytest.raises(ProbeError, match="opnd_yn=N"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.calls == [], "a refused run must not have touched the broker"
+
+
+def test_the_shipped_config_names_a_producer_config_that_exists() -> None:
+    """The gate's one configuration value, checked against the shipped file."""
+    raw = yaml.safe_load(
+        (
+            probes_stock_cancel._REPO_ROOT
+            / "config/broker_probes/stock_cancel_probe.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    declared = raw["session"]["market_open_producer_config"]
+    assert declared == _PRODUCER_CONFIG
+    assert (probes_stock_cancel._REPO_ROOT / declared).is_file()
+    assert load_config().session.market_open_producer_config.is_file()
+
+
+def test_refuses_a_config_without_a_producer_config(tmp_path: Path) -> None:
+    with pytest.raises(ProbeError, match="market_open_producer_config"):
+        load_config(
+            _config_file(tmp_path, **{"session.market_open_producer_config": _DELETE})
+        )
+
+
+def test_refuses_a_producer_config_that_does_not_exist(tmp_path: Path) -> None:
+    with pytest.raises(ProbeError, match="does not exist"):
+        load_config(
+            _config_file(
+                tmp_path,
+                **{"session.market_open_producer_config": "config/nope.yaml"},
+            )
+        )
+
+
+def test_the_shipped_config_declares_no_covered_years() -> None:
+    """2026-11-20: the key is gone from the file and from the loaded value."""
+    raw = yaml.safe_load(
+        (
+            probes_stock_cancel._REPO_ROOT
+            / "config/broker_probes/stock_cancel_probe.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert "covered_years" not in raw["session"]
+    assert not hasattr(load_config().session, "covered_years")
+
+
+def test_outside_hours_sends_nothing(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    broker = install(
+        _Broker(), now=datetime(2026, 11, 2, 16, 0, tzinfo=probes_stock_cancel.KST)
+    )
+    with pytest.raises(ProbeError, match="outside the configured window"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.calls == []
+
+
+def test_refuses_when_the_symbol_is_already_held(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    broker = install(_Broker(holding=1))
+    with pytest.raises(ProbeError, match="already holds 1 share"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.order_posts() == []
+
+
+def test_refuses_when_an_order_is_already_on_the_book(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    broker = _Broker()
+    broker.rows.append(
+        broker._row(odno="0000001111", qty=1, filled=0, price="60000", side="BUY")
+    )
+    install(broker)
+    with pytest.raises(ProbeError, match="open 005930 order row"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.order_posts() == []
+
+
+def test_refuses_when_the_balance_walk_is_capped(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """A walk that ran out of pages has NOT established "not held"."""
+    broker = install(_Broker(balance_pages=99))
+    with pytest.raises(ProbeError, match="PAGE_CAP"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.order_posts() == []
+
+
+def test_refuses_when_the_balance_read_is_refused(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    broker = install(_Broker(balance_rt_cd="1"))
+    with pytest.raises(ProbeError, match="REFUSED"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.order_posts() == []
+
+
+def test_refuses_when_the_balance_read_is_throttled(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """HTTP 429 is invisible in the parsed body — hence the verbose client call."""
+    broker = install(_Broker(balance_http=429, balance_rt_cd="1"))
+    with pytest.raises(ProbeError, match="RATE_LIMITED"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.order_posts() == []
+
+
+def test_refuses_when_the_order_page_came_back_full(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """A full page may have dropped rows, so "no order is open" is unproven."""
+    broker = _Broker(ccld_page_rows=1)
+    for index in range(9):
+        row = broker._row(
+            odno=f"000000{index:04d}", qty=1, filled=0, price="60000", side="BUY"
+        )
+        row["cncl_yn"] = "Y"
+        row["rmn_qty"] = "0"
+        broker.rows.append(row)
+    install(broker)
+    with pytest.raises(ProbeError, match="PAGE_CAP"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.order_posts() == []
+
+
+def test_cleanup_runs_and_cancels_when_a_trial_raises(
+    mock_env: None, install: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The observation window blows up AFTER the order is resting."""
+    broker = install(_Broker(cancel_shape="flag"))
+
+    def _boom(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("observation exploded")
+
+    monkeypatch.setattr(probes_stock_cancel, "_snapshot", _boom)
+    with pytest.raises(RuntimeError, match="observation exploded"):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.cancel_posts(), "the cleanup must have cancelled the resting order"
+    assert all(not probes_stock_cancel._row_is_live(r) for r in broker.rows)
+
+
+def _confirmed(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """``classify_cancel_confirmed`` over one answered snapshot carrying ``rows``."""
+    snapshot = {
+        "read_status": "OK",
+        "t_offset_ms": 1.0,
+        "original_row": {"raw": rows[0]},
+    }
+    return probes_stock_cancel.classify_cancel_confirmed([snapshot], "4470")
+
+
+@pytest.mark.parametrize(
+    "row,confirmed",
+    [
+        ({"ord_qty": "1", "tot_ccld_qty": "0", "rmn_qty": "0", "cncl_yn": "Y"}, True),
+        ({"ord_qty": "1", "tot_ccld_qty": "1", "rmn_qty": "0", "cncl_yn": "N"}, True),
+        (
+            {
+                "ord_qty": "2",
+                "tot_ccld_qty": "0",
+                "rmn_qty": "2",
+                "cncl_yn": "Y",
+                "cncl_cfrm_qty": "2",
+            },
+            True,
+        ),
+        ({"ord_qty": "2", "tot_ccld_qty": "0", "rmn_qty": "2", "cncl_yn": "Y"}, False),
+        (
+            {
+                "ord_qty": "2",
+                "tot_ccld_qty": "0",
+                "rmn_qty": "2",
+                "cncl_yn": "Y",
+                "cncl_cfrm_qty": "1",
+            },
+            False,
+        ),
+    ],
+    ids=[
+        "withdrawn-to-zero",
+        "filled",
+        "confirmed-covers-remainder",
+        "accepted-only",
+        "confirmed-short",
+    ],
+)
+def test_cancel_confirmation_reads_the_shared_working_quantity_rule(
+    row: dict[str, Any], confirmed: bool
+) -> None:
+    """#1158 리뷰: ``cncl_yn=Y`` alone never closes a row with a remainder — the probe and
+
+    ``mock_flat_check`` now answer that through one reader, so a row cannot be «confirmed»
+    here and «held» there.
+    """
+    verdict = _confirmed([row])
+    assert verdict["confirmed"] is confirmed
+    assert probes_stock_cancel._row_is_live(row) is not confirmed
+
+
+# P-SC-20261124T005122Z 시행 A, snapshot t+2290 ms and every poll after it (#1169).
+_MEASURED_ORIGINAL: dict[str, Any] = {
+    "ord_dt": "20261124",
+    "odno": "0000011558",
+    "orgn_odno": "0000000000",
+    "sll_buy_dvsn_cd": "02",
+    "sll_buy_dvsn_cd_name": "매수",
+    "pdno": "035420",
+    "ord_qty": "1",
+    "ord_tmd": "095130",
+    "tot_ccld_qty": "0",
+    "cncl_yn": "N",
+    "cncl_cfrm_qty": "1",
+    "rmn_qty": "0",
+    "rjct_qty": "0",
+}
+
+_MEASURED_CANCEL: dict[str, Any] = {
+    "ord_dt": "20261124",
+    "odno": "0000011561",
+    "orgn_odno": "0000011558",
+    "sll_buy_dvsn_cd": "02",
+    "sll_buy_dvsn_cd_name": "매수취소",
+    "pdno": "035420",
+    "ord_qty": "1",
+    "ord_tmd": "095134",
+    "tot_ccld_qty": "0",
+    "cncl_yn": "Y",
+    "cncl_cfrm_qty": "0",
+    "rmn_qty": "0",
+    "rjct_qty": "0",
+}
+
+
+def test_the_measured_rows_are_both_read_as_no_longer_working() -> None:
+    """#1169: the probe's own readers over the exact rows the 2026-11-24 run captured."""
+    parents = cancel_parent_odnos([_MEASURED_CANCEL, _MEASURED_ORIGINAL])
+    assert parents == frozenset({"11558"})
+    assert not probes_stock_cancel._row_is_live(
+        _MEASURED_ORIGINAL, cancel_parents=parents
+    )
+    assert not probes_stock_cancel._row_is_live(
+        _MEASURED_CANCEL, cancel_parents=parents
+    )
+
+    verdict = probes_stock_cancel.classify_cancel_confirmed(
+        [
+            {
+                "read_status": "OK",
+                "t_offset_ms": 2290.4,
+                "original_row": {"raw": _MEASURED_ORIGINAL},
+                "cancel_parent_odnos": sorted(parents),
+            }
+        ],
+        "11558",
+    )
+    assert verdict["confirmed"] is True
+    assert verdict["at_t_offset_ms"] == 2290.4
+
+
+def test_the_measured_original_without_its_cancel_row_is_not_confirmed() -> None:
+    """The parent set is what tells the measured shape from an unaccounted quantity."""
+    assert probes_stock_cancel._row_is_live(_MEASURED_ORIGINAL) is True
+
+
+def test_the_cleanup_never_sells_a_holding_this_run_did_not_buy(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """The failing input: the flat-start proof REFUSED, and shares are held."""
+    broker = install(_Broker(holding=7))
+    run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
+    client = probes_order.MockTradingClient(
+        ProbeCredentials(
+            app_key="k",
+            app_secret="s",
+            account_no=_ACCOUNT,
+            is_real=False,
+            asset="stock",
+        ),
+        StubAuth(),
+        run,
+        pace_s=0.0,
+    )
+    record = probes_stock_cancel._cleanup(
+        client,
+        run,
+        OrderBudget(10),
+        load_config(_config_file(tmp_path)),
+        symbol=_SYMBOL,
+        placed=[],
+    )
+    assert record["status"] == probes_stock_cancel._CLEAN_NOTHING_TO_DO
+    assert "placed no accepted order" in record["reason"]
+    assert broker.calls == [], "not even a read, let alone a sell"
+
+
+def test_cleanup_reports_still_live_when_the_broker_ignores_the_cancel(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """The broker accepts every cancel and changes nothing. Say so, do not pass."""
+    install(_Broker(cancel_shape="none"))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert run.measurements["cleanup"]["status"] == _CLEAN_STILL_LIVE
+    assert run.measurements["cleanup"]["orders_final_live"] >= 1
+
+
+def test_the_account_ends_flat_after_a_full_fill(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """Trial B fills fully: record that, sell it back, prove flat."""
+    broker = install(_Broker(cancel_shape="flag", fills=True))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path, trial="b"))
+    assert (
+        run.measurements["trial_b"]["partial_fill"]["outcome"] == _PARTIAL_FILLED_FULLY
+    )
+    assert run.measurements["cleanup"]["status"] == _CLEAN_FLAT
+    assert broker.holding == 0
+    sells = [c for c in broker.order_posts() if c["tr_id"].endswith("0801U")]
+    assert len(sells) == 1, "exactly one flatten sell"
+    assert sells[0]["body"]["ORD_DVSN"] == "01", "시장가, so the flatten does not rest"
+
+
+def test_a_partial_fill_is_reported_when_the_broker_produces_one(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """#980's input: 2 ordered, 1 filled, remainder cancelled."""
+    broker = install(_Broker(cancel_shape="separate_row", partial_fill=1))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path, trial="b"))
+    partial = run.measurements["trial_b"]["partial_fill"]
+    assert partial["outcome"] == probes_stock_cancel._PARTIAL_OBSERVED
+    assert partial["filled_qty_before_cancel"] == 1
+    assert run.measurements["cleanup"]["status"] == _CLEAN_FLAT
+    assert broker.holding == 0
+
+
+@pytest.mark.parametrize(
+    ("shape", "expected"),
+    [
+        ("flag", _SHAPE_ORIGINAL_FLAGGED),
+        ("separate_row", _SHAPE_SEPARATE_ROW),
+        ("both", _SHAPE_BOTH),
+        ("none", _SHAPE_NONE),
+    ],
+)
+def test_each_cancel_shape_comes_out_as_its_own_verdict(
+    mock_env: None, install: Any, tmp_path: Path, shape: str, expected: str
+) -> None:
+    install(_Broker(cancel_shape=shape))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path, trial="a"))
+    assert run.measurements["trial_a"]["cancel_shape"]["shape"] == expected
+
+
+def test_a_separate_row_records_the_unverified_profile_field(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """``orgn_odno`` on a row a cancel produced — the thing #948 is blocked on."""
+    install(_Broker(cancel_shape="separate_row"))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path, trial="a"))
+    record = run.measurements["trial_a"]["cancel_shape"]
+    assert record["shape"] == _SHAPE_SEPARATE_ROW
+    forms = record["derived_row_orgn_odno_forms"]
+    assert forms, "the measured wire form must be recorded, not just the verdict"
+    assert forms[0]["canonical_key"] == record["original_odno_key"]
+    assert forms[0]["verbatim"].startswith("0"), "zero-padded, verbatim"
+
+
+def test_an_unanswered_surface_is_undetermined_not_neither_observed() -> None:
+    """The distinction #948 step 2 would go fail-open on."""
+    answered = [{"read_status": _READ_OK, "t_offset_ms": 0.0, "original_row": None}]
+    unanswered = [
+        {"read_status": _READ_TRANSIENT, "t_offset_ms": 0.0, "original_row": None}
+    ]
+    assert classify_cancel_shape(answered, "8687")["shape"] == _SHAPE_NONE
+    assert classify_cancel_shape(unanswered, "8687")["shape"] == _SHAPE_UNDETERMINED
+    assert classify_cancel_shape([], "8687")["shape"] == _SHAPE_UNDETERMINED
+
+
+def test_a_truncated_page_cannot_establish_neither_observed() -> None:
+    """A full page may have dropped the rows the negative verdict is about."""
+    truncated = [
+        {"read_status": _READ_TRUNCATED, "t_offset_ms": 0.0, "original_row": None}
+    ]
+    assert classify_cancel_shape(truncated, "8687")["shape"] == _SHAPE_UNDETERMINED
+
+
+def test_a_truncated_page_still_counts_a_positive_observation() -> None:
+    """A row that IS there is there, whatever else the page dropped."""
+    seen = [
+        {
+            "read_status": _READ_TRUNCATED,
+            "t_offset_ms": 12.0,
+            "original_row": {"raw": {"cncl_yn": "Y"}},
+            "derived_rows": [],
+        }
+    ]
+    assert classify_cancel_shape(seen, "8687")["shape"] == _SHAPE_ORIGINAL_FLAGGED
+
+
+def test_late_fill_after_the_cancel_ack_is_reported(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """A fill that lands after the cancel is acknowledged — the #980 race."""
+    install(_Broker(cancel_shape="flag", partial_fill=1, late_fill=True))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path, trial="b"))
+    late = run.measurements["trial_b"]["late_fill"]
+    assert late["verdict"] == "LATE_FILL_OBSERVED_AFTER_CANCEL_ACK"
+    assert late["filled_qty_before_cancel"] == 1
+    assert late["peak_filled_qty_after_cancel"] == 2
+
+
+def test_zero_observed_late_fills_is_not_zero_milliseconds() -> None:
+    """P-FQP's rule: absence inside the window is 미확립, not a measured 0."""
+    snapshots = [
+        {
+            "t_offset_ms": 0.0,
+            "original_tot_ccld_qty": 0,
+            "original_rmn_qty": 1,
+            "original_cncl_yn": "Y",
+            "read_status": _READ_OK,
+        }
+    ]
+    record = classify_late_fill(
+        filled_before_cancel=0, snapshots=snapshots, cancel_ack_rt_cd="0"
+    )
+    assert record["verdict"] == "NO_LATE_FILL_OBSERVED"
+    assert record["first_growth_t_offset_ms"] is None
+    assert "nothing here is a bound candidate" in record["feeds"]
+
+
+def test_no_fill_quantity_read_is_undetermined() -> None:
+    """An unread 총체결수량 is an unanswered question, not an answered 'no'."""
+    snapshots = [
+        {
+            "t_offset_ms": 0.0,
+            "original_tot_ccld_qty": None,
+            "original_rmn_qty": None,
+            "original_cncl_yn": None,
+            "read_status": _READ_TRANSIENT,
+        }
+    ]
+    record = classify_late_fill(
+        filled_before_cancel=None, snapshots=snapshots, cancel_ack_rt_cd="0"
+    )
+    assert record["verdict"] == "UNDETERMINED_NO_FILL_QUANTITY_READ"
+
+
+def test_the_budget_refuses_rather_than_counting() -> None:
+    budget = OrderBudget(2)
+    budget.spend("a")
+    budget.spend("b")
+    assert budget.remaining == 0
+    with pytest.raises(SafetyViolation, match="budget exhausted"):
+        budget.spend("c")
+    assert budget.describe() == {
+        "limit": 2,
+        "reserved_for_flatten": 0,
+        "used": 2,
+        "general_used": 2,
+        "reserve_used": 0,
+        "calls": ["a", "b"],
+    }
+
+
+def test_the_reserve_is_one_directional() -> None:
+    """L3. An ordinary call can never reach the flatten's pool."""
+    budget = OrderBudget(3, reserved_for_flatten=1)
+    assert budget.remaining == 2 and budget.reserve_remaining == 1
+    budget.spend("cancel-1")
+    budget.spend("cancel-2")
+    assert budget.remaining == 0, "the general pool is spent"
+    assert not budget.can_spend(), "and an ordinary call is refused"
+    with pytest.raises(SafetyViolation, match="budget exhausted"):
+        budget.spend("cancel-3")
+    assert budget.can_spend(from_reserve=True), "the flatten still has its call"
+    budget.spend("flatten-sell-1", from_reserve=True)
+    assert budget.describe()["reserve_used"] == 1
+    assert budget.describe()["used"] == 3
+
+
+def test_a_budget_too_small_for_the_reserve_and_the_trials_is_refused(
+    tmp_path: Path,
+) -> None:
+    """L3. The floor is derived from the trials, not written down twice."""
+    path = _config_file(tmp_path, **{"limits.max_order_calls": 5})
+    with pytest.raises(ProbeError, match="below the minimum 6"):
+        load_config(path)
+    assert load_config(_config_file(tmp_path, **{"limits.max_order_calls": 6}))
+
+
+def test_the_shipped_config_loads() -> None:
+    """The file the 11-02 run will actually read."""
+    cfg = load_config()
+    assert cfg.limits.pace_s >= cfg.limits.pace_s_floor >= 2.0
+    assert cfg.trial_a.quantity <= cfg.limits.max_quantity
+    assert cfg.session.start.strftime("%H:%M") == "09:00"
+    assert cfg.session.end.strftime("%H:%M") == "15:20"
+    assert (
+        cfg.describe()["config_path"] == "config/broker_probes/stock_cancel_probe.yaml"
+    )
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "limits.pace_s",
+        "limits.max_order_calls",
+        "limits.max_quantity",
+        "limits.cleanup.cancel_attempts",
+        "observation.cancel_window_s",
+        "observation.poll_interval_s",
+        "flat_check.balance_max_pages",
+        "trials.a.quantity",
+        "trials.b.enabled",
+        "session.window.start",
+    ],
+)
+def test_a_missing_limit_is_refused_not_defaulted(tmp_path: Path, key: str) -> None:
+    path = _config_file(tmp_path, **{key: _DELETE})
+    with pytest.raises(ProbeError, match="missing"):
+        load_config(path)
+
+
+@pytest.mark.parametrize(
+    ("override", "match"),
+    [
+        ({"limits.pace_s": 0.0005}, "below limits.pace_s_floor"),
+        ({"trials.b.quantity": 99}, "exceeds"),
+        ({"session.window.end": "09:00"}, "not before end"),
+    ],
+)
+def test_an_out_of_bound_value_is_refused(
+    tmp_path: Path, override: dict[str, object], match: str
+) -> None:
+    path = _config_file(tmp_path, **override)
+    with pytest.raises(ProbeError, match=match):
+        load_config(path)
+
+
+def test_another_schema_version_is_refused(tmp_path: Path) -> None:
+    path = _config_file(tmp_path, **{"schema_version": 2})
+    with pytest.raises(ProbeError, match="schema_version"):
+        load_config(path)
+
+
+def test_artifact_shape(mock_env: None, install: Any, tmp_path: Path) -> None:
+    broker = install(_Broker(cancel_shape="both"))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path))
+    payload = run.to_dict()
+
+    assert payload["environment"] == "MOCK_VTS"
+    assert payload["provenance_class"] == "MEASURED"
+    assert payload["approval_status"] == "UNAPPROVED_CANDIDATE"
+    for key in (
+        "config",
+        "mock_only_env_gate",
+        "session_gate",
+        "account",
+        "flat_start",
+        "trial_a",
+        "trial_b",
+        "cleanup",
+        "order_call_budget",
+    ):
+        assert key in payload["measurements"], key
+
+    trial = payload["measurements"]["trial_a"]
+    assert trial["cancel_shape"]["shape"] == _SHAPE_BOTH
+    assert trial["pre_cancel"]["original_row"]["raw"]["pdno"] == _SYMBOL
+    assert trial["post_cancel_snapshots"], "every snapshot's rows are kept verbatim"
+    assert trial["cancel"]["request_body"]["RVSE_CNCL_DVSN_CD"] == "02"
+    assert payload["measurements"]["cleanup"]["status"] == _CLEAN_FLAT
+    assert payload["measurements"]["order_call_budget"]["used"] == len(
+        broker.order_posts()
+    ) + len(broker.cancel_posts())
+
+    written = Path(run.write(out_dir=tmp_path / "out"))
+    assert written.exists()
+
+
+def test_the_artifact_masks_the_account(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """No account number, no key: ``redact`` masks CANO/ACNT_PRDT_CD everywhere."""
+    install(_Broker(cancel_shape="flag"))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path, trial="a"))
+    blob = str(run.to_dict())
+    assert _ACCOUNT not in blob
+    assert _ACCOUNT[:8] not in blob
+    assert "test-secret" not in blob
+    assert run.measurements["account"]["fingerprint"]
+
+
+def test_every_call_went_to_the_mock_host_with_a_mock_trading_tr(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """The structural claim, asserted on the wire rather than on a docstring."""
+    broker = install(_Broker(cancel_shape="both"))
+    probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert broker.calls
+    for call in broker.calls:
+        assert MOCK_HOST in call["url"], call["url"]
+        if "/trading/" in call["url"]:
+            assert_mock_trading_tr(call["tr_id"])
+
+
+def test_a_stopped_trial_a_does_not_start_trial_b(
+    mock_env: None, install: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rejected submit stops the run: no order goes on top of an unknown state."""
+    broker = _Broker(cancel_shape="flag")
+
+    def _reject(body: dict[str, Any], tr_id: str) -> dict[str, Any]:
+        return {
+            "rt_cd": "1",
+            "msg_cd": "APBK0919",
+            "msg1": "모의투자 주문이 불가한 계좌입니다",
+        }
+
+    monkeypatch.setattr(broker, "_submit", _reject)
+    install(broker)
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert run.measurements["trial_a"]["stopped_at"] == "submit"
+    assert "trial_b" not in run.measurements
+    assert any("trial A stopped" in skip["reason"] for skip in run.skips)
+
+
+def test_trial_b_is_skipped_with_a_reason_when_disabled(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    install(_Broker(cancel_shape="flag"))
+    run = probe_psc(
+        _args(_config_file(tmp_path, **{"trials.b.enabled": False}), tmp_path)
+    )
+    assert "trial_b" not in run.measurements
+    assert any("trials.b.enabled is false" in skip["reason"] for skip in run.skips)
+
+
+def test_the_dry_run_sends_nothing_and_prints_the_cancel_body(
+    mock_env: None, install: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = install(_Broker())
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path, confirm=False))
+    assert broker.calls == []
+    assert run.mode == "dry-run"
+    body = run.observations[0]["dry_run_cancel_body"]
+    assert body["RVSE_CNCL_DVSN_CD"] == "02"
+    out = capsys.readouterr().out
+    assert "PSC_STOP=dry_run" in out
+
+
+def test_the_three_anchored_lines_are_printed_exactly_once(
+    mock_env: None, install: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The runner template reads only these, on every path the probe leaves by."""
+    install(_Broker(cancel_shape="flag"))
+    probe_psc(_args(_config_file(tmp_path), tmp_path))
+    out = capsys.readouterr().out.splitlines()
+    for prefix in ("PSC_STOP=", "PSC_CANCEL_SHAPE=", "PSC_FLAT_AT_END="):
+        assert len([line for line in out if line.startswith(prefix)]) == 1, prefix
+    assert f"PSC_STOP={_STOP_NONE}" in out
+    assert "PSC_FLAT_AT_END=yes" in out
+
+
+_RUNNERS_DIR = (
+    Path(__file__).resolve().parents[2] / "tools" / "broker_probes" / "runners"
+)
+_RUNNER = _RUNNERS_DIR / "run_p_sc.sh"
+_RUNNER_COMMON = _RUNNERS_DIR / "_common.sh"
+
+
+def test_the_runner_exists_and_is_executable() -> None:
+    import os
+
+    assert _RUNNER.is_file(), _RUNNER
+    assert os.access(_RUNNER, os.X_OK), f"{_RUNNER} is not executable"
+
+
+def test_the_policy_version_is_the_one_the_runner_expects() -> None:
+    """The handshake constant. A runner copied out of another tree aborts."""
+    assert probes_stock_cancel.POLICY_VERSION == "p-sc-cancel-shape/1"
+    assert (
+        f"EXPECT_POLICY_VERSION={probes_stock_cancel.POLICY_VERSION}"
+        in _RUNNER.read_text(encoding="utf-8")
+    )
+
+
+def test_the_runner_shellchecks_alone_and_with_the_shared_helpers() -> None:
+    """Both ways, because a verdict that depends on the input set is not a gate."""
+    import os
+    import shutil
+    import subprocess
+
+    shellcheck = shutil.which("shellcheck")
+    if shellcheck is None:
+        if os.environ.get("CI"):
+            pytest.fail(
+                "shellcheck is missing on CI, where this gate is meant to run; "
+                "add it to the workflow rather than letting the check vanish"
+            )
+        pytest.skip("shellcheck is not installed locally — CI runs this gate")
+    for argv in ([_RUNNER], [_RUNNER, _RUNNER_COMMON]):
+        result = subprocess.run(
+            [shellcheck, "--severity=warning", *(str(f) for f in argv)],
+            capture_output=True,
+            text=True,
+        )
+        assert (
+            result.returncode == 0
+        ), f"{[f.name for f in argv]}: {result.stdout}{result.stderr}"
+
+
+def test_the_runner_carries_no_non_empty_instance_default() -> None:
+    """A default is how one slot's symbol or fingerprint becomes the next one's."""
+    import re
+
+    pairs = set(
+        re.findall(r"\$\{(PSC_[A-Z_]+):-([^}]*)\}", _RUNNER.read_text(encoding="utf-8"))
+    )
+    assert not re.findall(r"\bPSC_[A-Z_]+", _RUNNER_COMMON.read_text(encoding="utf-8"))
+    assert {name for name, default in pairs if default not in ("", "0")} == set(), pairs
+    assert {name for name, _d in pairs} <= {
+        "PSC_LOG",
+        "PSC_ALLOW_SHARED_CHECKOUT",
+        "PSC_CRON_MARK",
+        "PSC_CONFIG",
+    }, pairs
+
+
+def test_the_runner_never_deletes_itself() -> None:
+    """The 2026-09-28 defect: the only record of what ran was one wrong line."""
+    import re
+
+    text = _RUNNER.read_text(encoding="utf-8")
+    destructive = re.search(
+        r"(?<![\w-])(rm|unlink|mv|shred|truncate)(?![\w-])|:\s*>[^>]", text
+    )
+    assert destructive is None, f"the runner runs a destructive command: {destructive}"
+    self_references = [
+        line for line in text.splitlines() if "$0" in line and "awk" not in line
+    ]
+    assert len(self_references) == 1, self_references
+    assert "SCRIPT_DIR=" in self_references[0], self_references
+
+
+def test_the_runner_carries_no_limit_of_its_own() -> None:
+    """Pacing, quantities and windows live in the YAML, not in two places."""
+    import re
+
+    text = _RUNNER.read_text(encoding="utf-8")
+    forbidden = re.findall(
+        r"\bPSC_(PACE_S|QUANTITY|PRICE_OFFSET_PCT|MAX_ORDER_CALLS|POLL_MS"
+        r"|WINDOW_S|CANCEL_WINDOW_S|MAX_QUANTITY)\b",
+        text,
+    )
+    assert not forbidden, (
+        "these are limits the P-SC config owns; a runner variable for one is a "
+        f"second source for it: {sorted(set(forbidden))}"
+    )
+
+
+def test_a_run_whose_probe_raises_still_leaves_a_salvageable_run(
+    mock_env: None, install: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``run.py`` salvages the partially populated run; it must carry the gates."""
+    ProbeRun.reset_salvage()
+    install(_Broker(holding=1))
+    with pytest.raises(ProbeError):
+        probe_psc(_args(_config_file(tmp_path), tmp_path))
+    salvaged = ProbeRun.salvage("P-SC")
+    assert salvaged is not None
+    assert salvaged.measurements["mock_only_env_gate"]["verdict"] == "MOCK_ONLY"
+    assert salvaged.measurements["config"]["limits"]["max_order_calls"] == 10
+
+
+def test_a_rejected_trial_a_cancel_does_not_start_trial_b(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """M1. The broker refuses the cancel, so trial A's order is still resting."""
+    broker = install(_Broker(cancel_rt_cd="1"))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert run.measurements["trial_a"]["cancel"]["outcome"] == "rejected"
+    assert run.measurements["trial_a"]["stopped_at"] == "cancel"
+    assert "trial_b" not in run.measurements
+    assert len([c for c in broker.order_posts() if c["tr_id"].endswith("0802U")]) == 1
+
+
+def test_an_unconfirmed_cancel_does_not_start_trial_b(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """M1. The cancel was ACCEPTED (rt_cd=0) and the row kept working."""
+    install(_Broker(cancel_shape="none"))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path))
+    trial = run.measurements["trial_a"]
+    assert trial["cancel"]["outcome"] == _STOP_NONE, "the broker accepted it"
+    assert trial["cancel_shape"]["shape"] == _SHAPE_NONE, "the finding is kept"
+    assert trial["cancel_confirmed"]["confirmed"] is False
+    assert "trial_b" not in run.measurements
+    assert any("cancel" in skip["reason"] for skip in run.skips)
+
+
+def test_a_probe_error_after_an_accepted_order_still_yields_an_artifact(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """M2. Trial B's quote cannot establish a 호가단위."""
+    broker = install(_Broker(cancel_shape="flag", drop_aspr_unit_after=1))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path))
+    assert (
+        run.measurements["trial_a"]["cancel_shape"]["shape"] == _SHAPE_ORIGINAL_FLAGGED
+    )
+    assert run.errors, "the error has to be ON the artifact, not instead of it"
+    assert any("호가단위" in e or "aspr_unit" in e for e in run.errors)
+    assert run.measurements["cleanup"]["status"] == _CLEAN_FLAT
+    assert broker.holding == 0
+
+
+def test_an_empty_krx_fwdg_ord_orgno_is_a_finding_not_a_crash(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """M2. The accept response omits the 거래소코드 the cancel TR needs."""
+    install(_Broker(org_no=""))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path))
+    trial = run.measurements["trial_a"]
+    assert trial["stopped_at"] == "cancel_not_sendable"
+    assert "KRX_FWDG_ORD_ORGNO" in str(trial["krx_fwdg_ord_orgno_absent"])
+    assert "holding_after_cancels" in run.measurements["cleanup"]
+    assert run.measurements["cleanup"]["status"] == _CLEAN_STILL_LIVE
+    assert "trial_b" not in run.measurements
+
+
+def test_cleanup_reaches_the_holding_read_past_a_cancel_it_cannot_send(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """M2. A cancel that cannot even be built must not skip the sell-back."""
+    broker = install(_Broker(org_no=""))
+    run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
+    client = _client(run)
+    cfg = load_config(_config_file(tmp_path))
+    broker.rows.append(
+        broker._row(odno="0000008687", qty=2, filled=1, price="70200", side="BUY")
+    )
+    broker.holding = 1
+    placed = Placed(
+        odno="0000008687",
+        sent_at_monotonic=time.monotonic(),
+        body={},
+        krx_fwdg_ord_orgno="",
+    )
+    record = probes_stock_cancel._cleanup(
+        client,
+        run,
+        OrderBudget(10, reserved_for_flatten=2),
+        cfg,
+        symbol=_SYMBOL,
+        placed=[placed],
+    )
+    assert record["cancels"], "the failed cancel is recorded"
+    assert any(
+        c.get("outcome") == probes_stock_cancel._STOP_CANCEL_NOT_SENDABLE
+        for c in record["cancels"]
+    )
+    assert "holding_after_cancels" in record, "the next phase ran anyway"
+    assert record["own_filled_qty"]["qty"] == 1
+    assert record["sell_back"] is not None and record["sell_back"]["qty"] == 1
+    assert broker.holding == 0
+
+
+def test_the_send_point_refuses_a_quantity_above_the_cap(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """L1. ``max_quantity`` validated in the config is not enforced on the wire."""
+    install(_Broker())
+    run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
+    client = _client(run)
+    body = client.stock_order_body(_SYMBOL, 99, order_type="market")
+    with pytest.raises(SafetyViolation, match="max_quantity"):
+        probes_stock_cancel._submit(
+            client,
+            run,
+            OrderBudget(10),
+            body,
+            side="SELL",
+            label="oversize",
+            max_quantity=2,
+        )
+
+
+def test_a_sell_back_above_the_cap_is_split_into_capped_orders(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """L1. 3 shares to flatten with a cap of 2 → two orders, 2 then 1."""
+    broker = install(_Broker())
+    run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
+    client = _client(run)
+    cfg = load_config(_config_file(tmp_path))
+    broker.rows.append(
+        broker._row(odno="0000008687", qty=3, filled=3, price="70200", side="BUY")
+    )
+    broker.holding = 3
+    placed = Placed(
+        odno="0000008687",
+        sent_at_monotonic=time.monotonic(),
+        body={},
+        krx_fwdg_ord_orgno=_ORG_NO,
+    )
+    record = probes_stock_cancel._cleanup(
+        client,
+        run,
+        OrderBudget(10, reserved_for_flatten=2),
+        cfg,
+        symbol=_SYMBOL,
+        placed=[placed],
+    )
+    sells = [c for c in broker.order_posts() if c["tr_id"].endswith("0801U")]
+    assert [int(c["body"]["ORD_QTY"]) for c in sells] == [2, 1]
+    assert all(int(c["body"]["ORD_QTY"]) <= cfg.limits.max_quantity for c in sells)
+    assert record["status"] == _CLEAN_FLAT
+    assert broker.holding == 0
+
+
+def test_the_flatten_reserve_survives_a_starved_cancel_budget(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """L3. Cleanup cancels eat the general budget; the sell-back must still go."""
+    broker = install(_Broker(cancel_shape="none", partial_fill=1))
+    config = _config_file(
+        tmp_path,
+        **{"limits.max_order_calls": 6, "limits.cleanup.cancel_attempts": 4},
+    )
+    run = probe_psc(_args(config, tmp_path, trial="b"))
+    cleanup = run.measurements["cleanup"]
+    assert any(
+        c.get("outcome") == probes_stock_cancel._CLEAN_BUDGET_SPENT
+        for c in cleanup["cancels"]
+    ), "the general budget really did run out on the cancels"
+    assert cleanup["sell_back"] is not None
+    assert cleanup["sell_back"]["outcome"] == _STOP_NONE
+    assert broker.holding == 0, "the share this run bought was sold back"
+    assert run.measurements["order_call_budget"]["reserve_used"] >= 1
+
+
+# --- the KIS mock app key's shared window (#1169) ---------------------------
+#
+# The arithmetic of the window is tests/tools/test_cp3_ops_shared_pace.py's.
+# What is asserted here is the WIRING: that this probe's calls go through it,
+# that unreadable terms refuse before the first socket, and that a slot lost
+# mid-run sends nothing more.
+
+
+def _transport_yaml(tmp_path: Path, **overrides: Any) -> Path:
+    """A tenant transport file whose rate is wound up so no test waits on it."""
+    data: dict[str, Any] = {
+        "shared_pacer_path": str(tmp_path / "stock-mock.pace"),
+        "shared_max_rps": 1000.0,
+        "shared_window_margin_s": 0.0,
+        "app_key_request_wait_budget_ms": 60000,
+    }
+    data.update(overrides)
+    path = tmp_path / "kis_mock_transport.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return path
+
+
+def test_the_transport_yaml_flag_is_on_the_probe_parser() -> None:
+    parser = argparse.ArgumentParser()
+    probes_stock_cancel.add_stock_cancel_args(parser)
+    assert parser.parse_args([]).transport_yaml is None
+    parsed = parser.parse_args(["--transport-yaml", "/tenant/kis_mock_transport.yaml"])
+    assert parsed.transport_yaml == "/tenant/kis_mock_transport.yaml"
+
+
+def test_every_broker_call_takes_a_shared_slot(
+    mock_env: None, install: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Slot, call, slot, call — the k-th slot found exactly k calls already sent."""
+    broker = install(_Broker(cancel_shape="both"))
+    acquired_at: list[int] = []
+    real_acquire = shared_pace.SharedAppKeyPace.acquire
+
+    def _spy(self: Any, **kwargs: Any) -> None:
+        acquired_at.append(len(broker.calls))
+        real_acquire(self, **kwargs)
+
+    monkeypatch.setattr(shared_pace.SharedAppKeyPace, "acquire", _spy)
+    pace_file = tmp_path / "stock-mock.pace"
+    run = probe_psc(
+        _args(
+            _config_file(tmp_path),
+            tmp_path,
+            transport_yaml=str(_transport_yaml(tmp_path)),
+        )
+    )
+
+    assert len(broker.calls) > 5, "the run really did send the whole series"
+    # The leading 0 is the slot taken for the token header pull, which the auth
+    # manager issues through its own socket rather than this client's; after it,
+    # the k-th slot was taken when exactly k calls had been sent.
+    assert acquired_at == [0, *range(len(broker.calls))]
+    record = run.measurements["shared_app_key_pace"]
+    assert record["shared"] is True
+    assert record["pace_file"] == str(pace_file)
+    assert (
+        record["credential_life"]["reissued_in_slot"] is False
+    ), "a fresh token needs no re-issue"
+    assert pace_file.read_text(encoding="utf-8").strip(), "grants were recorded"
+
+
+def test_the_transport_yaml_can_come_from_the_environment(
+    mock_env: None, install: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cron/runner path: no flag, the environment names the tenant's file."""
+    install(_Broker(cancel_shape="flag"))
+    monkeypatch.setenv(shared_pace.TRANSPORT_YAML_ENV, str(_transport_yaml(tmp_path)))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path, trial="a"))
+    assert run.measurements["shared_app_key_pace"]["pace_file"] == str(
+        tmp_path / "stock-mock.pace"
+    )
+
+
+def test_a_run_without_a_transport_yaml_says_it_paced_only_itself(
+    mock_env: None,
+    install: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Absence is a loud WARNING — and the artifact carries which way it ran."""
+    monkeypatch.delenv(shared_pace.TRANSPORT_YAML_ENV, raising=False)
+    install(_Broker(cancel_shape="flag"))
+    run = probe_psc(_args(_config_file(tmp_path), tmp_path, trial="a"))
+    record = run.measurements["shared_app_key_pace"]
+    assert record["shared"] is False
+    assert record["pace_file"] is None
+    assert "does NOT share" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "terms, expected",
+    [
+        ({"shared_max_rps": 2.0}, "shared_pacer_path is missing"),
+        ({"shared_pacer_path": "state/stock-mock.pace"}, "is relative"),
+        ({"shared_pacer_path": "/t/p.pace", "shared_max_rps": 0}, "must be positive"),
+    ],
+)
+def test_unreadable_pace_terms_refuse_before_anything_is_sent(
+    mock_env: None,
+    install: Any,
+    tmp_path: Path,
+    terms: dict[str, Any],
+    expected: str,
+) -> None:
+    broker = install(_Broker())
+    bad = tmp_path / "kis_mock_transport.yaml"
+    bad.write_text(yaml.safe_dump(terms), encoding="utf-8")
+    with pytest.raises(ProbeError, match=expected):
+        probe_psc(_args(_config_file(tmp_path), tmp_path, transport_yaml=str(bad)))
+    assert broker.calls == [], "the refusal came before the first socket"
+
+
+def test_a_slot_lost_before_the_first_call_refuses(
+    mock_env: None, install: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window is already full when the probe starts: refuse, do not run beside it."""
+    broker = install(_Broker())
+
+    def _never(self: Any, **_kwargs: Any) -> None:
+        raise shared_pace.SharedPaceUnavailable(
+            "this app key's next shared slot is 1.500s away, past the wait budget"
+        )
+
+    monkeypatch.setattr(shared_pace.SharedAppKeyPace, "acquire", _never)
+    with pytest.raises(ProbeError, match="could not be joined"):
+        probe_psc(
+            _args(
+                _config_file(tmp_path),
+                tmp_path,
+                transport_yaml=str(_transport_yaml(tmp_path)),
+            )
+        )
+    assert broker.calls == [], "not even the first quote GET went out"
+
+
+def test_a_transport_yaml_that_is_not_there_refuses(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    broker = install(_Broker())
+    with pytest.raises(ProbeError, match="cannot be read"):
+        probe_psc(
+            _args(
+                _config_file(tmp_path),
+                tmp_path,
+                transport_yaml=str(tmp_path / "absent.yaml"),
+            )
+        )
+    assert broker.calls == []
+
+
+def test_a_lost_slot_stops_the_run_and_sends_nothing_more(
+    mock_env: None,
+    install: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A slot refused after an order is accepted ends the trials — no cancel, no sell."""
+    broker = install(_Broker(cancel_shape="both"))
+    real_acquire = shared_pace.SharedAppKeyPace.acquire
+
+    def _spy(self: Any, **kwargs: Any) -> None:
+        if broker.order_posts():
+            raise shared_pace.SharedPaceUnavailable(
+                "this app key's next shared slot is past the wait budget"
+            )
+        real_acquire(self, **kwargs)
+
+    monkeypatch.setattr(shared_pace.SharedAppKeyPace, "acquire", _spy)
+    run = probe_psc(
+        _args(
+            _config_file(tmp_path),
+            tmp_path,
+            trial="a",
+            transport_yaml=str(_transport_yaml(tmp_path)),
+        )
+    )
+
+    assert len(broker.order_posts()) == 1, "exactly the one order that was accepted"
+    assert broker.cancel_posts() == [], "not even the cleanup cancel was sent"
+    assert broker.calls[-1] == broker.order_posts()[0], "nothing went after it"
+    aborted = run.measurements["aborted_after_first_order"]
+    assert aborted["exception"].startswith("SharedPaceUnavailable")
+    assert aborted["accepted_orders"] == 1
+    cancels = run.measurements["cleanup"]["cancels"]
+    assert len(cancels) == 2, "every configured cleanup attempt was still tried"
+    assert all(
+        c.get("skipped") == probes_stock_cancel._CLEAN_SLOT_UNAVAILABLE for c in cancels
+    ), cancels
+    assert (
+        f"PSC_STOP={probes_stock_cancel._STOP_PROBE_ERROR}" in capsys.readouterr().out
+    )
+
+
+class _SlotLostOnce:
+    """A pacer whose n-th ``wait()`` refuses the shared slot, and only that one."""
+
+    def __init__(self, inner: Any, *, fail_at: int) -> None:
+        self._inner = inner
+        self.fail_at = fail_at
+        self.waits = 0
+
+    @property
+    def interval_s(self) -> float:
+        return float(self._inner.interval_s)
+
+    def wait(self) -> float:
+        self.waits += 1
+        if self.waits == self.fail_at:
+            raise shared_pace.SharedPaceUnavailable(
+                "this app key's next shared slot is past the wait budget"
+            )
+        return float(self._inner.wait())
+
+    def defer(self, seconds: float) -> None:
+        self._inner.defer(seconds)
+
+
+def test_a_slot_lost_in_cleanup_only_skips_that_attempt(
+    mock_env: None, install: Any, tmp_path: Path
+) -> None:
+    """One refused slot must not abandon this run's own resting order."""
+    broker = install(_Broker(cancel_shape="flag"))
+    run = ProbeRun(probe_id="P-SC", title="t", mode="live", environment="MOCK_VTS")
+    client = _client(run)
+    cfg = load_config(_config_file(tmp_path))
+    broker.rows.append(
+        broker._row(odno="0000008687", qty=2, filled=0, price="70200", side="BUY")
+    )
+    placed = Placed(
+        odno="0000008687",
+        sent_at_monotonic=time.monotonic(),
+        body={},
+        krx_fwdg_ord_orgno=_ORG_NO,
+    )
+    budget = OrderBudget(10, reserved_for_flatten=2)
+    # wait 1 is attempt 0's order read; wait 2 would be its cancel POST.
+    client.pacer = _SlotLostOnce(client.pacer, fail_at=2)
+
+    record = probes_stock_cancel._cleanup(
+        client, run, budget, cfg, symbol=_SYMBOL, placed=[placed]
+    )
+
+    assert (
+        record["cancels"][0]["skipped"] == probes_stock_cancel._CLEAN_SLOT_UNAVAILABLE
+    )
+    assert "cancels_exception" not in record, "the loop did not end on that attempt"
+    assert len(broker.cancel_posts()) == 1, "the NEXT attempt sent the cancel"
+    assert record["status"] == _CLEAN_FLAT
+    assert budget.describe()["used"] == 1, "the refused POST was refunded, not charged"
+
+
+def test_a_refunded_charge_goes_back_to_the_pool_it_came_from() -> None:
+    """A POST that never left is not an order call. A lost one still is."""
+    budget = OrderBudget(3, reserved_for_flatten=1)
+    budget.spend("submit")
+    budget.spend("flatten", from_reserve=True)
+    assert budget.refund("flatten") is True
+    assert budget.reserve_remaining == 1
+    assert budget.refund("submit") is True
+    assert budget.remaining == 2
+    assert budget.refund("never-charged") is False
+
+
+def test_the_max_run_duration_is_the_session_window_plus_the_tails(
+    tmp_path: Path,
+) -> None:
+    """The bound the token gate reads: config only, no clock, no estimate."""
+    cfg = load_config(_config_file(tmp_path))
+    tail = cfg.enabled_trials * 0.01 + 2 * 0.001
+    assert cfg.max_run_duration_s == pytest.approx(6 * 3600 + 20 * 60 + tail)
+
+
+def test_a_token_too_short_for_the_run_is_reissued_inside_a_slot(
+    mock_env: None, install: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An aging cached token is replaced BEFORE the first call, holding a slot."""
+    broker = install(_Broker(cancel_shape="flag"))
+    auth = install_stub_auth(monkeypatch)
+    auth._expires_at = time.time() + 1000.0  # a token that would die mid-run
+    acquired_at: list[int] = []
+    real_acquire = shared_pace.SharedAppKeyPace.acquire
+
+    def _spy(self: Any, **kwargs: Any) -> None:
+        acquired_at.append(len(broker.calls))
+        real_acquire(self, **kwargs)
+
+    monkeypatch.setattr(shared_pace.SharedAppKeyPace, "acquire", _spy)
+    run = probe_psc(
+        _args(
+            _config_file(tmp_path),
+            tmp_path,
+            trial="a",
+            transport_yaml=str(_transport_yaml(tmp_path)),
+        )
+    )
+
+    assert auth.issues == 1, "the re-issue happened, and only once"
+    # Two slots before the first call: the look, then the forced issue.
+    assert acquired_at == [0, 0, *range(len(broker.calls))]
+    # SAFETY: 이 키 이름에 "token" 이 들어가면 common.redact 가 블록째 지운다 — 2026-11-24
+    # 측정이 그렇게 ***REDACTED*** 로 남았다 (#1169).
+    life = run.measurements["shared_app_key_pace"]["credential_life"]
+    assert life["reissued_in_slot"] is True
+    assert life["remaining_life_s"] > life["required_life_s"]
+    assert redact(run.measurements)["shared_app_key_pace"]["credential_life"] == life
+
+
+def test_a_token_that_cannot_outlive_the_run_refuses(
+    mock_env: None, install: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Even a FRESH token too short for the run is a refusal — nothing is sent."""
+    broker = install(_Broker())
+    auth = install_stub_auth(monkeypatch, life_s=60.0)
+    with pytest.raises(ProbeError, match="of life left"):
+        probe_psc(
+            _args(
+                _config_file(tmp_path),
+                tmp_path,
+                transport_yaml=str(_transport_yaml(tmp_path)),
+            )
+        )
+    assert broker.calls == [], "the refusal came before the first socket"
+    assert auth.issues == 2, "one issue, one forced re-issue, then the refusal"

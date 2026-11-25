@@ -1,0 +1,97 @@
+"""Safety Authority pure data models + predicates (Phase 1, EV-L1)."""
+
+from __future__ import annotations
+
+from tos.authority._base import (
+    AllFalseAuthority,
+    ArtifactIntegrityError,
+    ArtifactStatus,
+    AuthorityEffect,
+    IndependentIdArtifact,
+)
+from tos.authority.predicates import (
+    authority_epoch_current,
+    authority_epoch_fenced,
+    currentness_admissible,
+    degraded_lease_invalidated,
+    degraded_lease_valid,
+    halt_denies,
+    is_restrictive_dominating_type,
+    lease_scope_exclusive,
+    overlapping_reassignment_forbidden,
+    partition_authority_verdict,
+    permissive_capability_valid,
+    permissive_transition_allowed,
+    rearm_gate,
+    recovery_generation_revives_nothing,
+    restrictive_dominates,
+    restrictive_may_apply_when_stale,
+    safer_transition_allowed,
+)
+from tos.authority.records import (
+    AuthorityEpochTransitionRecord,
+    DegradedLeaseOwnershipRecord,
+    SafetyAuthorityCapability,
+)
+from tos.authority.state import (
+    AuthorityEpochState,
+    CapabilityValidityInputs,
+    CurrentnessWitness,
+    GenerationVector,
+    LeaseReassignmentInputs,
+    PartitionAuthorityVerdict,
+    RearmChecklist,
+    RearmVerdict,
+)
+from tos.authority.vocabulary import (
+    PRECEDENCE_RANK,
+    RESTRICTIVE_DOMINATING_TYPES,
+    AuthorityState,
+    AuthorityTransitionReason,
+    CapabilityType,
+)
+from tos.ordering import Ordering, OrderingEvent, compare_order
+
+__all__ = [
+    "AllFalseAuthority",
+    "ArtifactIntegrityError",
+    "ArtifactStatus",
+    "AuthorityEffect",
+    "IndependentIdArtifact",
+    "Ordering",
+    "OrderingEvent",
+    "compare_order",
+    "AuthorityState",
+    "AuthorityTransitionReason",
+    "CapabilityType",
+    "PRECEDENCE_RANK",
+    "RESTRICTIVE_DOMINATING_TYPES",
+    "AuthorityEpochTransitionRecord",
+    "DegradedLeaseOwnershipRecord",
+    "SafetyAuthorityCapability",
+    "AuthorityEpochState",
+    "CapabilityValidityInputs",
+    "CurrentnessWitness",
+    "GenerationVector",
+    "LeaseReassignmentInputs",
+    "PartitionAuthorityVerdict",
+    "RearmChecklist",
+    "RearmVerdict",
+    "authority_epoch_current",
+    "authority_epoch_fenced",
+    "currentness_admissible",
+    "degraded_lease_invalidated",
+    "degraded_lease_valid",
+    "halt_denies",
+    "is_restrictive_dominating_type",
+    "lease_scope_exclusive",
+    "overlapping_reassignment_forbidden",
+    "partition_authority_verdict",
+    "permissive_capability_valid",
+    "permissive_transition_allowed",
+    "rearm_gate",
+    "recovery_generation_revives_nothing",
+    "restrictive_dominates",
+    "restrictive_may_apply_when_stale",
+    "safer_transition_allowed",
+]

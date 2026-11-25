@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../kospi_mini_sts"
+		},
+		{
+			"path": "../quant_moment_sts"
+		}
+	],
+	"settings": {}
+}

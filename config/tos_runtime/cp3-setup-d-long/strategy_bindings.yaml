@@ -1,0 +1,6 @@
+# CP-3 tenant (Setup D / LONG) — config-sourced 피연산자 바인딩.
+strategies:
+  setup_d_long.strategy:
+    config_binding_version: cp3-b1b-bind-1
+    bindings:
+      z_entry_max_x1000: -1800

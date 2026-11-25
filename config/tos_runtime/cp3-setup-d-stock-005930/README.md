@@ -1,0 +1,121 @@
+# config/tos_runtime/cp3-setup-d-stock-005930/
+
+> **2026-11-13 — S2-a 계획이 아래 문서가 가리키는 파일 다섯 개를 지웠다**
+> (`docs/plans/2026-11-13-tos-code-halving-plan.md`): `safety_envelope.yaml` ·
+> `safety_profile.yaml` · `safety_activation.yaml` · `safety_deviations.yaml` ·
+> `safety_incidents.yaml`. 그들을 읽던 안전망 서비스가 사라졌다 — 판정 입력이 모든
+> 출하 트리에서 정적 YAML 상수였고 한 번도 송신을 거부하지 않았다.
+> `monitor_coverage.yaml` 은 남았지만 축소판 모니터가 실제로 읽는 두 경계값만 남겼다.
+> ARE 상한(`envelope_max`)은 같은 값으로
+> `aggregate_risk_policy.yaml::_runtime.envelope_max` 로 옮겼다.
+> **아래에서 지워진 다섯 파일을 가리키는 문장은 현재 절차가 아니라 이력이다.**
+
+CP-3 **주식 tenant** 설정 트리 — rescope 계획 §3 M2(`docs/plans/2026-10-22-tos-rescope-plan.md`).
+운영자 결정 2026-10-22: **종목 005930(삼성전자) · 규칙 Setup D VWAP 되돌림 LONG 그대로 ·
+수량 1주 고정 · 주식 정규장 09:00~15:30 KST.**
+
+이 트리는 `cp3-setup-d-long/` 에서 파생됐고, 운영 방식(렌더 · 러너 · 증거)은 그 트리의
+README 가 정본이다. 여기에는 **다른 것만** 적는다.
+
+## LONG 트리와 다른 것
+
+| 파일 | 다른 값 | 이유 |
+| --- | --- | --- |
+| `RENDER.yaml` | `tree_id` · `account.env_key: KIS_STOCK_ACCOUNT_NO` · 마지막 슬롯 `broker_scopes.yaml::instance_path` | 계좌 좌표는 **주식** 모의 계좌 (band 슬롯 3개는 LONG 과 같다). `instance_path` 슬롯(B2, 2026-10-24)은 커밋된 `../../../docs/…` 를 `--source` 기준으로 푼 절대 경로로 바꾼다 — 렌더본은 저장소 밖이라 상대 경로로는 INSTANCE 문서를 못 찾아 kis-mock 부팅이 거부됐다. INSTANCE 를 읽는 부팅은 이 트리(kis-mock)뿐이라 이 트리만 슬롯을 갖는다 |
+| `construction.yaml` · `marketfeed.yaml` | `instrument_class: krx-stock` · `unit: SHARES` | 이 트리 `calendar.yaml` 의 `krx-stock` 세션(CONTINUOUS 09:00-15:30)을 쓴다 |
+| `venue_constraint_policy.yaml` | 호가단위 `price_band_ticks` 사다리(`tick_size` null) · `max_quantity` 1 · `KRX_STOCK` · `SHARES` | 파일 헤더 참조(출처·등급·실패 방향). band 원천은 LONG 과 같은 `producer_journal` |
+| `broker_scopes.yaml` · `coordinator_preconditions.yaml` · `egress_coordinates.yaml` | `active_scope: MOCK_STOCK_ORDER` · `profile_evidence_ok: true` · `nonlive_broker_consuming.admitted: true` · MOCK 주문 엔드포인트 | PR-3a(운영자 결정 2026-10-23) — **이 트리만** MOCK 주문 트리다 |
+| `authority.yaml` | `containment_bound_ms: 90000` | B5 — operator approved 2026-10-24: 장 마감 중 60 s 시간 평가 간격 + 1 패스. 증인은 매 패스 재검증(`compose/_authority_heartbeat.py`). paper/LONG/SHORT 는 1000 — heartbeat 는 모든 트리에 붙으므로 그 트리들도 장중 부팅이면 증인이 유지되고(이전: 부팅 ~1 s 뒤 상실), 장전 부팅(cron 08:38/08:40)이면 개장 순간 그대로 상실된다 |
+| `safety_activation.yaml` | `activation_id` · `scope: [MOCK_STOCK_ORDER]` · `approval_ids` · `compatibility_attestation_refs` | B4 — operator approved 2026-10-24, 기록 `docs/plans/2026-10-24-tos-stock-mock-activation-record.md`. 런타임은 비어 있지 않은지만 본다. paper/LONG/SHORT 는 `[]` |
+| `broker_facts.yaml` (이 트리에만 있음) | item 12 의 GET 전용 모의 계좌·거래 가능 사실(VTTC8434R · FHKST01010100) | PR-3a option (a) "K" |
+| `fill_observer.yaml` (이 트리에만 있음) | ACK 뒤 체결 관찰(VTTC0081R) · 주식 KIS witness(VTTC8434R + VTTC0081R) TR·경로 · 폴링 간격 · overdue 한계 | PR-3b |
+| `order_construction_policy.yaml` · `aggregate_risk_policy.yaml` · `safety_envelope.yaml` · `safety_profile.yaml` | 수량 단위 `SHARES` | 주식 |
+| `order_construction_policy.yaml` | `policy_generation: 4` · `_runtime.wire_codec: kis-order-cash-v1`(9 필드) · `approved_by` 4번째 줄 | B3(2026-10-24): kis-mock 부팅은 이 선언을 요구한다. 값은 코덱 모듈에서 옮겼다 — 파일 헤더 PROVENANCE |
+| `action_flow_policy.yaml` · `aggregate_risk_policy.yaml` · `order_construction_policy.yaml` · `critical_input_policy.yaml` | `policy_id` | 내용이 달라졌으니 id 도 다르다(LONG VCP 헤더의 규칙) |
+
+| `strategies/setup_d_long.strategy.yaml` · `strategy_bindings.yaml` | 네 번째 규칙 `R4-M2-PROBE-ENTRY-LONG` + 바인딩 `m2_probe_entry_enabled: true` | **M2 경계 관통 프로브**(운영자 지시 2026-11-11) — 아래 절 |
+
+나머지 파일은 LONG 과 **바이트 동일**이다. 이 분류는
+`tos/runtime/tests/compose/test_tenant_tree_stock.py` 가 파일·키 경로 단위로 고정한다
+(전략 파일은 LONG 의 세 규칙과 default 가 그대로인지 + R4 하나가 뒤에 붙었는지로 고정).
+
+## 브로커 평탄 시 진입 예약 해제 (운영자 결정 2026-11-19, 옵션 B)
+
+`fill_observer.yaml::broker_flat_release` 가 켜져 있다. POSITION_CONSUMED 진입 예약은 보유
+포지션 이중 조회가 이 종목 0 을 **확인**하면(정착 `broker_flat_release_settle_ms` 뒤 첫 평탄
+폴 + `held_position_poll_interval_ms` 이상 뒤 두 번째 평탄 폴, in-flight 전송 없음) 해제된다.
+
+⚠ TOS 가 사지 않은 브로커 보유분(고아, 예: 11-13 dateless-ACK 매수 0000007012)은 «평탄 아님»
+으로 읽혀 이 해제도 막는다. 세션 전에 수동으로 정리한다 — GET 잔고 조회 후 모의 매도.
+
+## M2 경계 관통 프로브 R4 (운영자 지시 2026-11-11)
+
+운영자: 「정확한 시그널을 기다리지 말라; 시그널이 완벽하다는 보장도 없다 — 되게 해라」.
+rescope 계획 §2 문장 2 / 마일스톤 M2(기한 11-20)는 **주식 MOCK 주문이 TOS 경계를 끝까지
+통과하는 것**이고, 주식 잎이 11-06 에 태어난 뒤 Setup D R1 의 진입 제안은 **0건**이다
+(다섯 게이트 동시 성립이 드물다 · FLOW_HALTED 48건은 잎이 flat 인데 들어온 FLAT 제안이
+CANDIDATE_COMMAND_CONSTRUCTION 에서 거부된 것). 그래서 전략 파일에 네 번째 규칙을 뒀다.
+
+- **R4 는 Setup D 시그널이 아니다.** 조건은 `entry_window == true` + 토글뿐이고,
+  rationale 이 그렇게 적는다. 발화하면 R1 과 **같은** target(LONG · OPEN · RISK · 같은
+  계좌/종목 앵커)을 제안한다.
+- **R1·R2·R3 뒤에 있다.** `tos.dsl.vocabulary.evaluate_policy` 는 first-match 라
+  `vwap_reverted`/`eod` 청산이 R4 를 항상 이긴다. 올리지 말 것.
+- **토글은 `strategy_bindings.yaml::m2_probe_entry_enabled`(bool)** 하나다. `false` 면
+  R4 의 두 번째 비교가 거짓이 되어 발화하지 않는다. **키를 지우면 부팅이 거부된다**
+  (resolve.py 규칙 3) — M2 달성 뒤에는 `false` 로 바꾸는 1줄 PR 로 끈다.
+- 토글을 `config.<키> EQ 1` 같은 **config 단독 비교**로 쓸 수는 없다: 커널의 D1↔D4 규칙이
+  비교마다 capsule 피연산자를 요구하므로(`tos.engine.admission.strategy_admissible` 검사 2)
+  전략 전체가 INADMISSIBLE 이 되고 부팅이 `STRATEGY_REFUSED` 로 멈춘다(실측 2026-11-11).
+- **세션당 송신 한도는 R4 가 바꾸지 않는다** — 다만 **거래일당 횟수는 2026-11-18 부터 1 이
+  아니다**: 상시 승인(`write-standing-approval`)의 액션당 사용 횟수를
+  `authority.yaml::standing_approval_max_uses_per_action`(이 트리 390 = 정규장 1분봉 수)이
+  정한다(운영자 지시 2026-11-18 「필요한 만큼 승인이야」). 그래서 LEDGER_VERIFICATION 등에서
+  멎은 시도가 그날의 유일한 기회를 태우지 않고, 청산 뒤 R4 재진입도 승인 슬롯 때문에는 막히지
+  않는다. **동시** 한도는 그대로다 — `aggregate_risk_policy` 1주
+  (`unknown_disposition: DENY_NEW_RISK`) · `action_flow_policy` afg.ORDER 한도 1 ·
+  `engine.yaml::max_unresolved_send_per_scope: 1` · `risk.yaml::max_in_flight: 1` ·
+  OCP `min/max_quantity: 1` 이 겹쳐 있어 한 번에 1주 1건이다.
+- 장후 B3 대조는 `config/tos_cp3_b3.yaml::markets: ["futures"]` 라 주식 세션에서는
+  `verdict: "skipped"` 다 — R4 는 B3 증인(`shared/decision/setups/vwap_reversion.py`)과
+  만나지 않는다. 선물 세 트리(paper · LONG · SHORT)는 바이트 그대로다.
+
+## 무엇을 하고 무엇을 하지 않는가 (PR-3a, 2026-10-23)
+
+- `broker_scopes.yaml::active_scope` 는 **`MOCK_STOCK_ORDER`** — 모든 verify 항목이 충족되면
+  KIS **모의투자** 주문 엔드포인트로 송신한다. 이 scope 의 튜플은 BROKER_SIMULATION × MOCK_ORDER ×
+  BROKER_RESOURCE_ONLY × STOCK 뿐이라 REAL 주문 경로가 없다. LONG/SHORT/상주 paper 트리는
+  `SYNTHETIC_FUTURES_ORDER` 그대로다.
+- 부팅은 `--transport kis-mock` 이어야 한다(브로커 도달 scope 는 합성 전송과 짝이 맞지 않아
+  거부된다). `kis_mock_transport.yaml` 은 배포 시점 파일이고 커밋하지 않는다.
+- band 는 러너가 띄우는 band 프로브가 주식현재가 GET 으로 쓴 줄 하나다. 줄이 없으면
+  (프로브 실패 · 브로커 `aspr_unit` 이 호가 사다리와 다름) 그 세션은 venue 단계 UNKNOWN 이다.
+- item 12 의 계좌·거래 가능·브로커 제약 세대는 `broker_facts.yaml` 의 GET 두 개(모의 호스트)가
+  만든다. 읽기 실패·거래정지·`max_age_ms` 초과는 송신 거부다.
+- 체결·완결(PR-3b): ACK 뒤 `runtime.fill_observer` 가 주식일별주문체결조회(VTTC0081R, 모의 호스트
+  GET)를 ACK 의 ODNO·거래일로 읽어 `PARTIAL_FILL`/`FULL_FILL`/`CANCEL_ACK` 를 엔진 결과 경로로 넣는다.
+  이상한 행(수량 불일치·거부 수량·체결 뒤 취소·같은 ODNO 두 줄·원주문번호로 걸린 줄)은 `UNKNOWN`.
+  모르는 ODNO 의 체결은 `FILL_OBSERVER_UNATTRIBUTED_ORDER` 로 기록만 하고 귀속하지 않는다 — 같은 종목에
+  그런 주문이 있으면 해제 대조가 orphan 으로 보고 해제를 보류한다.
+- 완결 증명은 `BrokerFinalityProducer`(`BROKER_ORDER_FQP`, `broker-fqp-*`) 이고, 해제·부팅 복구 대조는
+  `SyntheticLedgerWitness` 가 아니라 `KisStockBrokerWitness` 다. 둘 다 **이 트리만**(kis-mock +
+  `MOCK_STOCK_ORDER`) — LONG/SHORT/상주 paper 는 합성 그대로다.
+- 해제가 커밋되지 않은 종결 결과(finality 전 크래시 · 대조 일시 불가 · CAS 보류)는 기록된 결과로
+  `finality_retry_interval_ms` 마다 다시 시도한다 — RCL 에 `release-{attempt}` 가 생길 때까지.
+- **ACK 뒤 재기동 사이의 체결은 해제하지 않는다.** 엔진의 예약 투영은 부팅 때 재구성되지 않아서(J3),
+  그 결과를 엔진에 넣으면 다음 부팅 replay 가 갈라진다. 관찰자는 `FILL_OBSERVER_ENGINE_RESERVATION_ABSENT`
+  를 기록하고 예약을 그대로 둔다(운영자 확인 대상). 미결 ACK 는 자기 거래일로 조회한다.
+- **브로커 행이 결론을 주는 취소만 해제한다(issue #948).** 원주문 행이 `cncl_yn=Y` · `tot_ccld_qty=0` 이고
+  잔량이 회수된 것이 그 행으로 증명될 때 — `rmn_qty=0`, 또는 취소확인수량(`cncl_cfrm_qty`)이 잔량을 덮을 때 —
+  만 `CANCEL_ACK` 를 내고 non-execution 증명으로 해제한다. 근거는 **재조회한 주문 행**이지 취소 POST 의 ack 가
+  아니다(Q-CXL-1 — 취소는 자기 ODNO 를 받는 별개 주문이라 원주문의 최종수량을 증명하지 못한다). 나머지 모양은
+  그대로 `FILL_OBSERVER_CANCEL_UNSUPPORTED` 1회 기록 · 예약 유지 · 재시도 없음 — 취소 접수만 되고 잔량이 살아
+  있는 행, 부분체결 뒤 취소(#980), `orgn_odno` 가 우리 주문을 가리키는 별도 행(행 모양 미실측).
+- 전일 미결 ACK 는 자기 거래일로 `prior_day_poll_interval_ms`(10분)마다 다시 읽는다 — overdue 는 경고일 뿐
+  끝이 아니다.
+- 관찰자 호출 주기(`poll_if_due()`)는 러너가 정한다(PR-3c). 이 PR 은 부르지 않는다.
+- LONG 과 바이트 동일한 파일 몇 개(`construction.yaml` · `finality.yaml` · `monitor_coverage.yaml`)의
+  주석은 `SYNTHETIC_FUTURES_ORDER` 를 말한다 — 바이트 동일 고정 때문에 그대로 두었다. 이 트리에서는
+  이 README 와 `broker_scopes.yaml` 이 정본이다.
+- 시세는 `config/tos_probes/cp3-live-producer-stock-005930.yaml` 의 생산자(주식일별분봉조회
+  FHKST03010230, GET 전용)가 만든다.

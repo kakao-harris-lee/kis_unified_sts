@@ -1,0 +1,262 @@
+#!/bin/bash
+# Install / remove the CP-3 tenant daily cron block. DRY-RUN BY DEFAULT.
+#
+#   install_tenant_cron.sh             # dry-run: print the crontab diff and the copy plan
+#   install_tenant_cron.sh --apply     # copy the wrapper from origin/main, write the block
+#   install_tenant_cron.sh --remove    # dry-run of removing the block
+#   install_tenant_cron.sh --remove --apply
+#
+# Runbook docs/runbooks/tos-paper-boot.md §7.2-e. Idempotent: the block is
+# delimited by BEGIN/END markers and replaced whole; lines tagged
+# `# cp3-{long,short,stock,stock-<6 digits>}-tenant-{daily,catchup}` outside the
+# block (the hand-installed 2026-10-22 lines) are dropped so a tenant is never
+# scheduled twice — and `--remove` takes the block, both kinds of line with it. Every
+# other crontab line is kept byte for byte — including a one-off stock line like
+# `# run-stock-mock-<date>`, whose tag is different: if such a line has not fired
+# yet on install day, remove it by hand first or the day gets two sessions
+# (runbook §7.2-e).
+#
+# Provenance: the wrapper copied to $DEST is read with `git show origin/main:…`,
+# never from a working tree, and --apply refuses unless THIS installer's bytes
+# equal origin/main's — an unmerged installer cannot install anything.
+#
+# Time zone: Ubuntu's cron (3.0pl1) does not implement CRON_TZ — the line is kept
+# for the house convention (every block in this crontab declares it), but the
+# KST guarantee is the host zone. --apply refuses unless `date +%z` is +0900.
+#
+# Knobs: CP3_CRON_REPO (default: this script's checkout), CP3_CRON_DEST_DIR
+# (default $HOME/.config/kis-probes), CP3_CRON_STATE (default $HOME/.local/state/tos).
+set -u
+umask 077
+
+APPLY=0
+REMOVE=0
+for a in "$@"; do
+  case "$a" in
+  --apply) APPLY=1 ;;
+  --remove) REMOVE=1 ;;
+  --dry-run) APPLY=0 ;;
+  *) echo "usage: $0 [--remove] [--apply|--dry-run]" >&2; exit 2 ;;
+  esac
+done
+
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
+REPO=${CP3_CRON_REPO:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)} || {
+  echo "ABORT: $SCRIPT_DIR is not in a git checkout" >&2; exit 2; }
+DEST_DIR=${CP3_CRON_DEST_DIR:-$HOME/.config/kis-probes}
+STATE=${CP3_CRON_STATE:-$HOME/.local/state/tos}
+DEST=$DEST_DIR/run-cp3-tenant-daily.sh
+SRC_REL=tools/tos_cp3/runners/cp3_tenant_daily.sh
+SELF_REL=tools/tos_cp3/runners/install_tenant_cron.sh
+
+# Schedule (KST). LONG and SHORT are two minutes apart: both producers share the
+# REAL read key and KIS issues at most one token per minute. Both start before
+# the 08:45 CONTINUOUS open (calendar.yaml krx-index-futures) and before the
+# resident paper session's own 08:45 line.
+#
+# STOCK is 08:53, inside the 08:52-09:05 start window §7.2-f names (the stock
+# CONTINUOUS open is 09:00 and the runner's first-row wait is 600 s from it). It
+# does not need a gap from the two futures lines: the stock producer uses the
+# stock REAL key and the runtime the mock key, different app-key fingerprints, so
+# their once-a-minute token issues never collide with the futures one.
+#
+# The other two stock tenants (operator directive 2026-11-19 — one tenant per symbol)
+# follow at two-minute gaps, 08:55 and 08:57, both still inside that window. Two
+# minutes is the same reason LONG and SHORT keep it, and it protects exactly ONE
+# thing: the ③ PRODUCERS' token. The three stock producers share one REAL stock app
+# key and KIS issues at most one token per minute per key; they also share a
+# `token_cache_dir` on purpose, so the second and third normally reuse the first's
+# token — the gap is what makes that true when the cache is cold (a day's first
+# session), because each producer starts at its own cron minute.
+#
+# ⚠ It does NOT stagger the RUNTIMES' mock-key tokens. Every stock producer's first
+# row arrives at the OPEN, so all three sessions render and boot within seconds of
+# 09:01 no matter which minute they started. That stagger lives where it can work —
+# between each session's render and its boot (`TENANT_BOOT_DELAY_S`, derived by
+# cp3_tenant_daily.sh from the tenant's position in STOCK_SYMBOLS).
+LONG_AT="38 8"
+SHORT_AT="40 8"
+STOCK_AT="53 8"
+STOCK_000660_AT="55 8"
+STOCK_005380_AT="57 8"
+
+# @reboot catch-up (#1038 · the 2026-11-06 reboot at 09:00:53): this cron does not
+# replay a missed line, so a boot after the minute above means that direction never
+# starts. One `@reboot` line per direction calls the wrapper's `--catch-up HH:MM`
+# with the SAME minute as its regular line — derived from the constants above by
+# `hhmm`, never typed a second time — and the wrapper decides whether anything is
+# left to do (trading day · past that minute · before the stop · no session dir).
+#
+# The sleeps: enough for the host to finish booting (clock, network, the git fetch
+# the wrapper does), and ≥ 150 s apart for LONG and SHORT because those two
+# producers share the REAL read key and KIS issues at most one token per minute —
+# the same reason the regular lines are two minutes apart. STOCK keeps the same gap
+# although it does not need one (different app-key fingerprints, §7.2-e).
+#
+# No `%` anywhere in these lines on purpose: Ubuntu's cron (3.0pl1) reads an
+# unescaped `%` in the command field as a newline (the rest becomes stdin), so any
+# future edit that needs one has to write `\%`.
+LONG_SLEEP=90
+SHORT_SLEEP=240
+STOCK_SLEEP=390
+# The two later stock tenants keep the same 150 s spacing, for the producers' shared
+# REAL app key (schedule note above — the runtimes' own stagger is TENANT_BOOT_DELAY_S).
+STOCK_000660_SLEEP=540
+STOCK_005380_SLEEP=690
+BEGIN_MARK="# BEGIN CP3_TENANT_DAILY"
+END_MARK="# END CP3_TENANT_DAILY"
+
+die() { echo "ABORT: $*" >&2; exit 2; }
+
+git -C "$REPO" rev-parse --verify --quiet origin/main >/dev/null ||
+  die "origin/main not found in $REPO — git fetch origin first"
+REF=$(git -C "$REPO" rev-parse --short=12 origin/main)
+SRC=$(mktemp) || exit 2
+CUR=$(mktemp) || exit 2
+NEW=$(mktemp) || exit 2
+ERR=$(mktemp) || exit 2
+trap 'rm -f "$SRC" "$CUR" "$NEW" "$ERR"' EXIT
+git -C "$REPO" show "origin/main:$SRC_REL" >"$SRC" 2>/dev/null ||
+  die "$SRC_REL is not on origin/main ($REF) — merge the PR first"
+SRC_SHA=$(sha256sum "$SRC" | cut -c1-64)
+
+# Current crontab. Only "no crontab for <user>" means empty. Any other failure is
+# an ABORT: treating it as empty would make --apply replace the live crontab
+# (resident paper, cold backups, ~200 lines) with our block alone.
+if ! crontab -l >"$CUR" 2>"$ERR"; then
+  grep -q '^no crontab for ' "$ERR" ||
+    die "crontab -l failed: $(head -c 300 "$ERR") — refusing (would otherwise wipe the crontab)"
+  : >"$CUR"
+fi
+
+line() { # line DIR lc AT
+  printf '%s * * 1-5 /bin/bash %s %s >> %s/cp3-%s-tenant-daily.cron.log 2>&1 # cp3-%s-tenant-daily\n' \
+    "$3" "$DEST" "$1" "$STATE" "$2" "$2"
+}
+
+hhmm() { # hhmm "MINUTE HOUR" -> HH:MM — the one place a schedule constant becomes a time
+  printf '%02d:%02d\n' "$((10#${1#* }))" "$((10#${1% *}))"
+}
+
+# `@reboot` has no day-of-week field: the weekday/holiday decision is the wrapper's
+# calendar step, the same one the regular lines go through. Same log file as the
+# regular line — one file per direction, whichever line started the session.
+reboot_line() { # reboot_line DIR lc AT SLEEP_S
+  printf '@reboot sleep %s; /bin/bash %s %s --catch-up %s >> %s/cp3-%s-tenant-daily.cron.log 2>&1 # cp3-%s-tenant-catchup\n' \
+    "$4" "$DEST" "$1" "$(hhmm "$3")" "$STATE" "$2" "$2"
+}
+
+# Everything except our block and the hand-installed tagged lines.
+# A BEGIN with no END would drop every line after it, so that is an ABORT (rc 3).
+awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
+  index($0, b) == 1 { if (skip) bad = 1; skip = 1; next }
+  skip && index($0, e) == 1 { skip = 0; next }
+  skip { next }
+  /# cp3-(long|short|stock(-[0-9][0-9][0-9][0-9][0-9][0-9])?)-tenant-(daily|catchup)[[:space:]]*$/ { next }
+  { print }
+  END { exit (skip || bad) ? 3 : 0 }
+' "$CUR" >"$NEW" ||
+  die "the current crontab has a '$BEGIN_MARK' without a matching '$END_MARK' (or a nested one) — fix it by hand; refusing"
+
+if [ "$REMOVE" = 0 ]; then
+  {
+    echo "$BEGIN_MARK (tools/tos_cp3/runners/install_tenant_cron.sh · runbook tos-paper-boot.md §7.2-e · wrapper origin/main $REF sha256 ${SRC_SHA:0:12})"
+    echo "CRON_TZ=Asia/Seoul"
+    line LONG long "$LONG_AT"
+    line SHORT short "$SHORT_AT"
+    # `STOCK` (not `STOCK:005930`) for the first stock tenant: the wrapper treats the two
+    # spellings as the same tenant, and keeping the bare one leaves this line byte-identical
+    # to the one installed on 2026-11-05.
+    line STOCK stock "$STOCK_AT"
+    line STOCK:000660 stock-000660 "$STOCK_000660_AT"
+    line STOCK:005380 stock-005380 "$STOCK_005380_AT"
+    reboot_line LONG long "$LONG_AT" "$LONG_SLEEP"
+    reboot_line SHORT short "$SHORT_AT" "$SHORT_SLEEP"
+    reboot_line STOCK stock "$STOCK_AT" "$STOCK_SLEEP"
+    reboot_line STOCK:000660 stock-000660 "$STOCK_000660_AT" "$STOCK_000660_SLEEP"
+    reboot_line STOCK:005380 stock-005380 "$STOCK_005380_AT" "$STOCK_005380_SLEEP"
+    echo "$END_MARK"
+  } >>"$NEW"
+fi
+
+echo "== crontab diff ($([ "$REMOVE" = 1 ] && echo remove || echo install))"
+diff -u --label current --label proposed "$CUR" "$NEW" && echo "(no change)"
+if [ "$REMOVE" = 0 ]; then
+  if [ -f "$DEST" ] && cmp -s "$SRC" "$DEST"; then
+    echo "== wrapper $DEST already equals origin/main $REF:$SRC_REL"
+  else
+    echo "== wrapper copy origin/main $REF:$SRC_REL -> $DEST (sha256 ${SRC_SHA:0:12})$([ -f "$DEST" ] && echo ' — existing file backed up first')"
+  fi
+else
+  echo "== wrapper $DEST is left in place (remove it by hand if wanted)"
+fi
+# #1154: the block itself sets no TOS_OPERATOR_PROJECTION_DIR — the wrapper reads
+# it from $CP3_DAILY_MAIN/.env.paper, the same file compose mounts from. A crontab
+# line outside the block wins over that, so say which one the export would use.
+if [ "$REMOVE" = 0 ]; then
+  proj=$(grep -E '^[[:space:]]*(export )?TOS_OPERATOR_PROJECTION_DIR=' "$NEW" | tail -1)
+  if [ -n "$proj" ]; then
+    echo "== projection dir: the crontab sets it outside this block (${proj#*=}) — kept as is, and it wins over the wrapper's \$CP3_DAILY_MAIN/.env.paper"
+  else
+    echo "== projection dir: not in the crontab — the wrapper reads it from \$CP3_DAILY_MAIN/.env.paper for the session-end bars/symbols export"
+  fi
+fi
+[ "$(date +%z)" = "+0900" ] || echo "WARN host zone is $(date +%z), not +0900 — cron would not fire at KST times (--apply refuses)"
+
+if [ "$APPLY" = 0 ]; then
+  echo "DRY-RUN — nothing written. Re-run with --apply."
+  exit 0
+fi
+
+# ---------------------------------------------------------------- apply ----
+[ "$(date +%z)" = "+0900" ] || die "host zone is $(date +%z); this cron has no working CRON_TZ"
+SELF_HEAD=$(git -C "$REPO" show "origin/main:$SELF_REL" 2>/dev/null | sha256sum | cut -c1-64)
+SELF_NOW=$(sha256sum "$SCRIPT_DIR/install_tenant_cron.sh" | cut -c1-64)
+[ "$SELF_HEAD" = "$SELF_NOW" ] ||
+  die "this installer differs from origin/main:$SELF_REL — run the merged one"
+
+stamp=$(TZ=Asia/Seoul date +%Y%m%dT%H%M%S)
+mkdir -p "$DEST_DIR"
+cp -p "$CUR" "$DEST_DIR/crontab.bak.$stamp" || die "crontab backup failed"
+echo "backed up crontab -> $DEST_DIR/crontab.bak.$stamp"
+
+[ "$REMOVE" = 1 ] || [ -d "$STATE" ] || die "state dir $STATE missing — the cron log would have nowhere to go"
+
+# Crontab FIRST, wrapper second, crontab rolled back if the wrapper step fails.
+# The 2026-10-22 hand lines call the same $DEST under an outer flock; the new
+# wrapper locks a different path (`.wrapper.lock`), so even a half-done install
+# (new wrapper under old lines) cannot self-refuse — but a failed install leaves
+# the crontab and the wrapper as they were.
+CRON_CHANGED=0
+if cmp -s "$CUR" "$NEW"; then
+  echo "crontab unchanged"
+else
+  crontab "$NEW" || die "crontab write failed — nothing changed (backup $DEST_DIR/crontab.bak.$stamp)"
+  CRON_CHANGED=1
+  echo "crontab written"
+fi
+
+old=
+rollback() {
+  if [ -n "$old" ] && [ -f "$DEST.bak.$old" ]; then
+    cp -p "$DEST.bak.$old" "$DEST" && echo "restored wrapper from $DEST.bak.$old" >&2
+  fi
+  if [ "$CRON_CHANGED" = 1 ]; then
+    if crontab "$DEST_DIR/crontab.bak.$stamp"; then
+      echo "rolled back crontab from $DEST_DIR/crontab.bak.$stamp" >&2
+    else
+      echo "ROLLBACK FAILED — restore by hand: crontab $DEST_DIR/crontab.bak.$stamp" >&2
+    fi
+  fi
+  die "$1"
+}
+
+if [ "$REMOVE" = 0 ] && ! { [ -f "$DEST" ] && cmp -s "$SRC" "$DEST"; }; then
+  if [ -f "$DEST" ]; then
+    old=$(sha256sum "$DEST" | cut -c1-12)
+    cp -p "$DEST" "$DEST.bak.$old" || rollback "wrapper backup failed"
+    echo "backed up wrapper -> $DEST.bak.$old"
+  fi
+  install -m 700 "$SRC" "$DEST" || rollback "wrapper copy failed"
+  echo "installed wrapper -> $DEST"
+fi

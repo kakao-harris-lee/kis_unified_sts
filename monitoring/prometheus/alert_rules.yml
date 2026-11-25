@@ -1,0 +1,75 @@
+groups:
+  - name: trading_performance
+    rules:
+      - alert: TradingMarketDataStalenessP95High
+        expr: histogram_quantile(0.95, sum(rate(trading_market_data_staleness_seconds_hist_bucket[5m])) by (le)) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Market data staleness P95 is high"
+          description: "P95 staleness > 1s for 5m. Check data refresh cadence or API latency."
+
+      - alert: TradingMarketDataStalenessP95Critical
+        expr: histogram_quantile(0.95, sum(rate(trading_market_data_staleness_seconds_hist_bucket[5m])) by (le)) > 2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Market data staleness P95 is critical"
+          description: "P95 staleness > 2s for 5m. Trading decisions may be based on stale data."
+
+      - alert: TradingOrderQueueDepthHigh
+        expr: avg_over_time(trading_order_queue_depth[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order queue depth is elevated"
+          description: "Avg order queue depth > 5 for 5m. Consider increasing concurrency or reducing signal burst rate."
+
+  - name: shadow_loggers
+    rules:
+      # Any dropped batch indicates persistent ClickHouse insert failure —
+      # counterfactual data is being silently lost.  Phase 4 evaluation
+      # depends on this stream.
+      - alert: ShadowLoggerBatchesDropped
+        expr: increase(trading_shadow_logger_dropped_batches_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Shadow logger {{ $labels.logger }} dropped a batch"
+          description: "ClickHouse insert failed for the {{ $labels.logger }} logger in the last 10 minutes. Phase 2 counterfactual data is being lost. Check CH connectivity and the orchestrator log."
+
+      # Flush task itself stuck — last_flush_unix gauge stops updating.
+      # Default flush_interval_seconds is 60s so 10 minutes without an
+      # update means the loop is hung or the orchestrator process died.
+      - alert: ShadowLoggerFlushStale
+        expr: time() - trading_shadow_logger_last_flush_unix_seconds > 600
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Shadow logger {{ $labels.logger }} flush is stale"
+          description: "{{ $labels.logger }} flush hasn't fired for >10 minutes. The orchestrator may be down or its flush loop is hung. Pending rows accumulate and will be lost if the buffer overflows (maxlen=10000)."
+
+      # Buffer filling faster than flushes can drain — usually a CH
+      # outage.  Warn at 50%, critical at 90%.
+      - alert: ShadowLoggerBufferFillingUp
+        expr: trading_shadow_logger_pending_rows > 5000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Shadow logger {{ $labels.logger }} buffer >50% full"
+          description: "{{ $labels.logger }} buffer has >5000 pending rows for 5m. Investigate ClickHouse health — buffer cap is 10000 and overflowed rows are silently dropped."
+
+      - alert: ShadowLoggerBufferNearOverflow
+        expr: trading_shadow_logger_pending_rows > 9000
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Shadow logger {{ $labels.logger }} buffer near overflow"
+          description: "{{ $labels.logger }} buffer >9000 rows. Within minutes new shadow predictions will start being silently dropped (maxlen=10000)."

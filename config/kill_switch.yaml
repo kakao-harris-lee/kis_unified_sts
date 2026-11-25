@@ -1,0 +1,93 @@
+# Kill Switch Configuration
+# Historical spec: 2026-04-20 futures-paradigm phase4 §6.1 + 2026-05-03 LLM-primary §4
+# (both plan documents retired 2026-11-13; see `git log --diff-filter=D -- docs/plans/`)
+# Loaded by: services/kill_switch/main.py via KillSwitchConfig.from_yaml()
+#            services/kill_switch/config.py via KillSwitchConsumerConfig.from_yaml()
+#
+# Provider-backed conditions data sources (Phase 0.4):
+#   api_error_rate_5min      → Redis keys: kill_switch:metrics:api_error_rate_5min[:<source>]
+#                              Published by: KISApiErrorRateTracker
+#                              (shared/kis/error_rate.py). Publishers: the
+#                              orchestrator (legacy unsuffixed key), the screener
+#                              (…:screener) and the futures order_router
+#                              (…:order_router), tagged via KIS_ERROR_RATE_SOURCE.
+#                              The provider reads the MAX across all source keys.
+#   news_pipeline_lag_seconds → Redis stream: stream:news.raw (last message timestamp)
+#                               Written by: news collector (services/)
+# When no publisher process runs, that provider's key is absent and it returns
+# 0.0 (never triggers).
+#
+# force_flatten signalling (Phase 0.2):
+#   On trip, writes Redis key: kill_switch:force_flatten:requested (TTL 300s)
+#   and appends to stream: kill_switch:events (TTL 24h).
+#
+# kill_switch_consumer (Phase 0.2-c):
+#   TradingOrchestrator polls the sentinel key every poll_interval_seconds.
+#   On first detection of a new event, calls PositionTracker.close_all() to
+#   market-exit every open position, sends a Telegram alert, then DELs the key.
+#   ignore_pre_startup_events: true (default) means a sentinel written BEFORE
+#   this process started does NOT trigger flatten — prevents stale flags from
+#   prior sessions re-triggering on process restart.
+
+kill_switch:
+  enabled: true
+  check_interval_seconds: 30
+  force_flat_on_trigger: true
+  sentinel_path: "/app/data/runtime/kis_kill_switch.tripped"
+  # LEGACY-007 closure: written by scripts/trading/recover_positions.py when
+  # the live-broker/Redis-ledger reconciliation finds a divergence.
+  # services/order_router/main.py refuses to start or continue while this
+  # file exists (same fail-closed treatment as sentinel_path above, but
+  # reported under a distinct log line/counter so operators can tell which
+  # sentinel tripped). Clear after operator review with
+  # `scripts/kill_switch_clear.sh --recovery` (journals a snapshot, then
+  # removes the file) or by hand with `rm` (see recover_positions.py docstring).
+  #
+  # MUST stay under the shared /app/data/runtime mount (same convention as
+  # sentinel_path above): order_router and recover_positions.py run in
+  # separate containers/processes, so a container-local path such as
+  # /var/run would never be visible to order_router and this interlock
+  # would be dead. docker-compose.yml x-trading-runtime-volumes binds host
+  # ./data/runtime here; recover_positions.py (host-run) derives its
+  # host-side write path from this same value via
+  # shared.config.runtime_defaults.host_path_for_container_runtime_path —
+  # do not hardcode a second literal for the host side.
+  recovery_sentinel_path: "/app/data/runtime/kis_position_recovery.tripped"
+  conditions:
+    daily_loss:
+      enabled: true
+      limit_pct: 0.03            # daily realised+unrealised loss / equity
+    weekly_loss:
+      enabled: true
+      limit_pct: 0.07
+    monthly_loss:
+      enabled: true
+      # 설계서 §4.3: 월간 손실 15% → 당월 완전 중단 (Phase 3C C1).
+      # 래치 semantics: 트립 시 sentinel 파일은 operator가 수동 해제할 때까지
+      # 유지되고, monthly_pnl_krw는 risk:state:{asset}:period 해시(TTL이 항상
+      # 당월 잔여기간 + 7일 grace를 커버)에 저장된다. 월말 전에 sentinel을
+      # 해제해도 상태가 남아 있어 kill_switch 재기동 시 즉시 재트립한다.
+      # KST 월 경계(1일 00:00)에서 monthly 누적이 리셋되어야 조건이 풀리며,
+      # 재개는 §4.3 원인 분석 후 operator의 sentinel 해제로만 가능하다.
+      limit_pct: 0.15
+    consecutive_losses:
+      enabled: true
+      threshold: 6
+    api_error_rate_5min:
+      enabled: true
+      threshold: 0.2             # 20% of recent KIS calls erroring (fraction 0–1)
+    news_pipeline_lag_seconds:
+      enabled: true
+      threshold: 1800            # 30 minutes — conservative default per plan §4 Phase 0.4
+      # Redis stream key inspected for lag computation. It matched the news
+      # collector's output stream; that collector and its
+      # config/news_sources.yaml were deleted in L6.
+      stream_key: "stream:news.raw"
+kill_switch_consumer:
+  poll_interval_seconds: 5.0          # How often TradingOrchestrator polls the sentinel
+  sentinel_key: "kill_switch:force_flatten:requested"
+  events_stream: "kill_switch:events"
+  # When true, the consumer initialises last-seen event id at startup so a
+  # pre-existing sentinel from a prior session does NOT trigger flatten on
+  # process start. Default true for safety.
+  ignore_pre_startup_events: true

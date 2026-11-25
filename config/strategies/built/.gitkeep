@@ -1,0 +1,5 @@
+# Builder→paper registration drop point.
+# Files here are written by POST /api/kis-builder/register-paper and read by
+# the orchestrator (via ConfigLoader.load_all_strategies). YAML files use the
+# `builder_v1` entry + `builder_v1_exit` exit registered in #356.
+# Default `enabled: false`; flip via POST /api/kis-builder/registered/<id>/enable.

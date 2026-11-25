@@ -1,0 +1,199 @@
+# Copilot Instructions - KIS Unified Trading Platform
+
+## Project Overview
+
+Two projects in one repository. The **TOS kernel** (`tos/`, `tools/tos_*`)
+is the live one — read `tos/CLAUDE.md` before
+touching it. The legacy KIS trading runtime it replaced was deleted in
+2026-11 (`docs/plans/2026-11-07-legacy-removal-plan.md`, steps L1–L7); it last
+existed at tag `legacy-final` (`6fc17c0f8d25`). What survives outside `tos/` is
+the CP-3 measurement path, the KIS broker probes, a read-only operator
+dashboard, and the `shared/` modules those import.
+
+## Architecture Principles
+
+### Configuration-Driven Development
+
+**All values must come from YAML config files** — never hardcode numbers or thresholds.
+
+```python
+# ❌ Never do this
+if pnl_pct >= 2.0:
+    state = "BREAKEVEN"
+
+# ✅ Always use config
+if pnl_pct >= self.config.breakeven_threshold_pct:
+    state = PositionState.BREAKEVEN
+```
+
+Config files live in `config/` with this structure:
+
+- `tos_runtime/` — TOS tenant trees (calendar, release, profile). Digest-bound —
+  do not edit as a side effect of other work.
+- `tos_*.yaml` — TOS gates: `tos_size_budget.yaml`, `tos_status_board.yaml`,
+  `tos_named_tbd_guard.yaml`. (The completion gate and the CP-3 B3 gate retired
+  on 2026-11-12 / 2026-11-13.)
+- `tos_probes/`, `broker_probes/` — probe configs.
+- `kis/` — API authentication; `storage.yaml` / `streaming.yaml` /
+  `execution.yaml` — what the surviving `shared/` reads.
+- `strategies/futures/setup_d_vwap_reversion.yaml` — the only strategy YAML
+  left; it is the legacy Setup D witness's input. The live CP-3 producer reads
+  each tenant's declarative `fields.yaml` instead (P2-c, 2026-11-18).
+
+### Strategy Pattern with Registry (retired)
+
+Entry/Exit/Position sizing used to be independent, composable components
+registered through `shared/strategy/registry.py` and assembled by
+`StrategyFactory`. L6 deleted every `shared/strategy/entry/*` module, which left
+the entry roster empty, and L7 deleted the registry, the factory and the
+remaining exits and sizers — all of them outside the surviving import closure
+(`docs/plans/2026-11-07-legacy-removal-plan.md` §3). Execution authority today
+is the TOS kernel, where a strategy is Tenant Content under
+`config/tos_runtime/`. Do not reintroduce the registry here.
+
+### Key Abstractions
+
+| Interface              | Purpose                        | Location                      |
+| ---------------------- | ------------------------------ | ----------------------------- |
+| `EntrySignalGenerator` | Generates entry signals        | `shared/strategy/base.py`     |
+| `ExitSignalGenerator`  | Determines exit conditions     | `shared/strategy/base.py`     |
+| `PositionSizer`        | Calculates position sizes      | `shared/strategy/base.py`     |
+| `TradingStrategy`      | Composes entry/exit/sizing     | `shared/strategy/base.py`     |
+
+Only the base classes survive; the one concrete implementation left is the
+witness's exit (below).
+
+### What is left of `shared/`
+
+| Area | Purpose |
+| --- | --- |
+| `shared/backtest/market_context_replay.py`, `shared/decision/` | the **legacy Setup D witness**, driven by `tools/tos_cp3/legacy_setup_d_driver.py` for the offline dataset producer and the equivalence comparison only. Keep byte-identical until `TOS_PAPER_READY` — `tools/strip_prose.py` refuses the path to enforce it |
+| `shared/indicators/fields/` | the **declarative field catalog** the live CP-3 producer evaluates (P2-c). This is where a strategy's indicators live now |
+| `shared/strategy/exit/setup_target_exit.py` | the witness's exit, and the only exit implementation left — L7 deleted `three_stage`, `momentum_decay`, `trix_golden_exit` and `technical_consensus_exit` with the registry |
+| `shared/{models,indicators,resilience,utils,exceptions,determinism}/` | the six packages the tos import firewall allows; kept whole even where unused, because narrowing that surface is a boundary-design change |
+| `shared/instruments/` | futures contract specs the witness reads |
+| `shared/kis/auth.py` | KIS auth for the CP-3 quote client |
+| `shared/storage/{config,market_data_store}.py` | Parquet/DuckDB market-data store |
+| `shared/llm/{data_classes,market_context}.py` | the two type-hint modules `shared/strategy/base.py` still names; L7 deleted the other 35 |
+| `shared/execution/{tr_ids,contract_spec}.py` | the TR-ID SoT `tools/broker_probes/probes_real_order.py` imports and the contract specs `scripts/analysis/walkforward_setup_d_vwap_reversion.py` re-exports. `executor.py` and `shared/kis/client.py` went on 2026-11-13 with the checker that was their only remaining reason to exist, and `shared/http/`, `shared/observability/` and `services/monitoring/` with them. `shared/streaming/` stays: `.importlinter` names it in the forbidden set |
+
+### No Code Duplication
+
+Shared logic goes in `shared/` modules.
+
+## CLI Commands
+
+All CLI commands are defined in `cli/main.py` (Click-based):
+
+`sts tos` is the only command group left — `backtest`, `optimize`, `mlflow`,
+`collect`, `backfill`, `websocket`, `trade` and `paper` went with the legacy
+runtime (removal plan L3).
+
+```bash
+sts tos status     # one-page operator status board
+```
+
+## Git Worktree Workflow
+
+**모든 작업은 반드시 Git Worktree를 사용해야 합니다.** 메인 브랜치에서 직접 작업하지 마세요.
+
+```bash
+# 새 기능: 워크트리 생성 → 이동 → 작업
+git worktree add ../kis_unified_sts-feature-name -b feature/feature-name
+cd ../kis_unified_sts-feature-name
+
+# 버그 수정
+git worktree add ../kis_unified_sts-fix-issue-123 -b fix/issue-123
+
+# 워크트리 관리
+git worktree list
+git worktree remove ../kis_unified_sts-feature-name
+git worktree prune
+```
+
+### 브랜치 네이밍 규칙
+
+| 접두사      | 용도      | 예시                         |
+| ----------- | --------- | ---------------------------- |
+| `feature/`  | 새 기능   | `feature/cnn-lstm-migration` |
+| `fix/`      | 버그 수정 | `fix/streaming-timeout`      |
+| `refactor/` | 리팩토링  | `refactor/strategy-registry` |
+| `docs/`     | 문서      | `docs/api-reference`         |
+
+### 주의사항
+
+- 워크트리 디렉토리명: `{repo}-{short-description}` 형식
+- PR 머지 후 반드시 워크트리 정리
+- 같은 브랜치를 여러 워크트리에서 체크아웃 불가
+
+## Development Commands
+
+```bash
+# Format & lint
+black . && ruff check --fix .
+
+# Type check
+mypy shared/ --ignore-missing-imports --no-error-summary
+
+# Test
+pytest tests/ -q
+
+# TOS checkers (what CI gates on)
+python tools/tos_firewall_check.py
+# `lint-imports` as CI runs it (.github/workflows/tos-firewall.yml): plain, after
+# an editable install of the root project and tos/runtime. Without that install
+# the contracts' root packages do not resolve; a local shortcut is
+# `PYTHONPATH=.:tos/src:tos/runtime/src lint-imports`, which is NOT what gates.
+lint-imports
+```
+
+## Environment Variables
+
+| Variable                                                                  | Purpose                             |
+| ------------------------------------------------------------------------- | ----------------------------------- |
+| `KIS_STOCK_APP_KEY`, `KIS_STOCK_APP_SECRET`, `KIS_STOCK_ACCOUNT_NO`       | Stock KIS API credentials           |
+| `KIS_FUTURES_APP_KEY`, `KIS_FUTURES_APP_SECRET`, `KIS_FUTURES_ACCOUNT_NO` | Futures KIS API credentials         |
+| `KIS_STOCK_MARKET`, `KIS_FUTURES_MARKET`                                  | Trading mode (`real`/`mock`)        |
+| `KIS_CONFIG_DIR`                                                          | Override config directory path      |
+| `REDIS_*`                                                                 | Infrastructure settings (DB 1)      |
+| `DASHBOARD_API_KEY`, `DASHBOARD_REQUIRE_AUTH`, `DASHBOARD_HOST_PORT`      | Dashboard auth + the one host web port |
+| `TOS_OPERATOR_PROJECTION_DIR` / `_PATH`                                   | Host dir ↔ container path pair for the operator projection (set both or neither) |
+| `KIS_APP_KEY`, `KIS_APP_SECRET`                                           | Legacy single-account compatibility |
+
+`OPENAI_API_KEY`, `KRX_API_KEY`, `DART_API_KEY` and the `TELEGRAM_*` families are
+still declared in `shared/config/secrets.py` but **no surviving code consumes
+them** — the LLM briefing and notification paths went in L7. `PROMETHEUS_PORT` is
+read by nothing.
+
+Config YAML supports `${VAR_NAME}` / `${VAR_NAME:default}` syntax for secrets.
+
+## Comment convention
+
+A «why» that must survive is **one `# SAFETY:` line**. `tools/strip_prose.py`
+strips prose from the tos trees, `tools/` and `tests/`, keeping only each
+docstring's first line; its `KEEP_MARKERS` preserves any comment containing
+`safety:` (#1139). Write the reason a guard, an interlock or a counter-intuitive
+value exists as one `# SAFETY:` line at the line it guards, not as a paragraph
+the next strip pass deletes. The `config/tos_runtime/` tenant YAML uses the same
+one-line form (#1140). `shared/`, `scripts/`, `services/` and `cli/` are refused
+by the tool outright — the frozen Setup D witness lives there.
+
+## Removed in L7 — do not look for these
+
+`shared/strategy/registry.py` · `factory.py` · `market_classifier.py` ·
+`technical_consensus.py` · `builtin_components.py` · `shared/strategy/exit/`
+(all but `setup_target_exit.py`) · `shared/strategy/position/` ·
+`shared/strategy/gates/` · `shared/strategy_builder/` · `shared/strategy_lab/` ·
+`shared/regime/` · `shared/notification/` · `shared/features/` ·
+`shared/llm/` (all but `data_classes.py` and `market_context.py`) ·
+`shared/backtest/` (all but `market_context_replay.py`) ·
+`shared/storage/runtime_ledger*` · `shared/kis/stock_feed.py` ·
+`shared/collector/` (all but `historical/ohlcv_parser.py`).
+
+They were outside the import closure the TOS roots reach
+(`docs/plans/2026-11-07-legacy-removal-plan.md` §3); the code is in git history
+from tag `legacy-final` (`6fc17c0f8d25`) onward. The 3-stage exit state machine,
+the MFI/ADX market classifier and the Korean LLM market-analysis collectors
+documented here until L7 all went with that set — nothing scheduled them, and
+the only cron on the deploy host runs the TOS session wrappers in
+`~/.config/kis-probes/` (`docs/runbooks/tos-paper-boot.md` §7.2).

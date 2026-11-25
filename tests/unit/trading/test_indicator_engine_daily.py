@@ -1,0 +1,1106 @@
+"""Tests for Daily candle functionality in StreamingIndicatorEngine."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
+import pytest
+
+from shared.indicators.daily import calculate_daily_indicators
+from shared.indicators.streaming.engine import StreamingIndicatorEngine
+
+
+class TestDailyCandleSeedingAndRetrieval:
+    """Tests for seed_daily_candles() and get_daily_candles()."""
+
+    def test_seed_daily_candles_basic(self):
+        """seed_daily_candles should populate daily candle buffer."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = [
+            {
+                "open": 100.0,
+                "high": 102.0,
+                "low": 98.0,
+                "close": 101.0,
+                "volume": 10000,
+            },
+            {
+                "open": 101.0,
+                "high": 103.0,
+                "low": 99.0,
+                "close": 102.0,
+                "volume": 11000,
+            },
+            {
+                "open": 102.0,
+                "high": 104.0,
+                "low": 100.0,
+                "close": 103.0,
+                "volume": 12000,
+            },
+        ]
+
+        engine.seed_daily_candles("005930", daily_candles)
+
+        result = engine.get_daily_candles("005930")
+
+        assert len(result) == 3, "Should have 3 daily candles"
+        assert result[0]["open"] == 100.0
+        assert result[0]["close"] == 101.0
+        assert result[0]["volume"] == 10000
+        assert result[2]["close"] == 103.0
+
+    def test_seed_daily_candles_respects_maxlen(self):
+        """Daily candle deque should respect maxlen limit (200)."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = []
+        for i in range(250):
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000 + i * 100,
+                }
+            )
+
+        engine.seed_daily_candles("005930", daily_candles)
+        result = engine.get_daily_candles("005930")
+
+        assert len(result) == 200, "Should keep only 200 candles (maxlen)"
+        assert (
+            result[0]["open"] == 150.0
+        ), "First candle should be from index 50 (250-200)"
+        assert result[-1]["open"] == 349.0, "Last candle should be from index 249"
+
+    def test_seed_daily_candles_multiple_symbols(self):
+        """Daily candles for different symbols should be tracked independently."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        samsung_candles = [
+            {
+                "open": 70000,
+                "high": 71000,
+                "low": 69000,
+                "close": 70500,
+                "volume": 10000000,
+            },
+            {
+                "open": 70500,
+                "high": 71500,
+                "low": 70000,
+                "close": 71000,
+                "volume": 11000000,
+            },
+        ]
+
+        sk_candles = [
+            {
+                "open": 200000,
+                "high": 205000,
+                "low": 195000,
+                "close": 203000,
+                "volume": 5000000,
+            },
+            {
+                "open": 203000,
+                "high": 207000,
+                "low": 201000,
+                "close": 205000,
+                "volume": 5500000,
+            },
+            {
+                "open": 205000,
+                "high": 210000,
+                "low": 203000,
+                "close": 208000,
+                "volume": 6000000,
+            },
+        ]
+
+        engine.seed_daily_candles("005930", samsung_candles)
+        engine.seed_daily_candles("000660", sk_candles)
+
+        samsung_result = engine.get_daily_candles("005930")
+        sk_result = engine.get_daily_candles("000660")
+
+        assert len(samsung_result) == 2
+        assert len(sk_result) == 3
+        assert samsung_result[0]["close"] == 70500
+        assert sk_result[0]["close"] == 203000
+
+    def test_get_daily_candles_limit(self):
+        """get_daily_candles should respect limit parameter."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = []
+        for i in range(50):
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("005930", daily_candles)
+
+        result = engine.get_daily_candles("005930", limit=10)
+
+        assert len(result) == 10, "Should return only last 10 candles"
+        assert result[0]["open"] == 140.0, "First candle should be from index 40"
+        assert result[-1]["open"] == 149.0, "Last candle should be from index 49"
+
+    def test_get_daily_candles_limit_zero(self):
+        """get_daily_candles with limit=0 should return all candles."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = []
+        for i in range(30):
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("005930", daily_candles)
+        result = engine.get_daily_candles("005930", limit=0)
+
+        assert len(result) == 30, "Should return all candles"
+
+    def test_get_daily_candles_nonexistent_symbol(self):
+        """get_daily_candles should return empty list for non-existent symbol."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        result = engine.get_daily_candles("NONEXISTENT")
+
+        assert result == [], "Should return empty list"
+
+    def test_seed_daily_candles_invalid_data(self):
+        """seed_daily_candles should skip invalid candles gracefully."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = [
+            {
+                "open": 100.0,
+                "high": 102.0,
+                "low": 98.0,
+                "close": 101.0,
+                "volume": 10000,
+            },
+            {
+                "open": "invalid",
+                "high": 103.0,
+                "low": 99.0,
+                "close": 102.0,
+                "volume": 11000,
+            },
+            {"close": 103.0},
+            {
+                "open": 103.0,
+                "high": 105.0,
+                "low": 101.0,
+                "close": 104.0,
+                "volume": 12000,
+            },
+        ]
+
+        engine.seed_daily_candles("005930", daily_candles)
+        result = engine.get_daily_candles("005930")
+
+        assert len(result) == 2, "Should skip invalid candles"
+        assert result[0]["close"] == 101.0
+        assert result[1]["close"] == 104.0
+
+    def test_seed_daily_candles_missing_volume(self):
+        """seed_daily_candles should default volume to 0 if missing."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = [
+            {"open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0},
+        ]
+
+        engine.seed_daily_candles("005930", daily_candles)
+        result = engine.get_daily_candles("005930")
+
+        assert len(result) == 1
+        assert result[0]["volume"] == 0, "Missing volume should default to 0"
+
+
+class TestDailyIndicators:
+    """Tests for get_daily_indicators() - SMA, EMA, RSI calculation."""
+
+    def test_calculate_daily_indicators_without_lookahead_guard(self):
+        """Runtime calls should not require optional lookahead guard arguments."""
+        candles = [
+            {
+                "open": 100.0 + i,
+                "high": 102.0 + i,
+                "low": 98.0 + i,
+                "close": 101.0 + i,
+                "volume": 10000,
+            }
+            for i in range(60)
+        ]
+
+        indicators = calculate_daily_indicators(candles)
+
+        assert "sma_20" in indicators
+        assert "rsi_5" in indicators
+
+    def test_calculate_daily_indicators_uses_optional_lookahead_guard(self):
+        """Backtest callers can still pass a guard with timestamped candles."""
+
+        class Guard:
+            calls = []
+
+            def check(self, values, timestamps, context_timestamp, context_info):
+                self.calls.append((values, timestamps, context_timestamp, context_info))
+
+        guard = Guard()
+        candles = [
+            {
+                "timestamp": i,
+                "open": 100.0 + i,
+                "high": 102.0 + i,
+                "low": 98.0 + i,
+                "close": 101.0 + i,
+                "volume": 10000,
+            }
+            for i in range(60)
+        ]
+
+        indicators = calculate_daily_indicators(
+            candles,
+            lookahead_guard=guard,
+            context_timestamp=59,
+            context_info="test:daily",
+        )
+
+        assert "sma_20" in indicators
+        assert guard.calls
+        values, timestamps, context_timestamp, context_info = guard.calls[0]
+        assert values[-1] == 160.0
+        assert timestamps[-1] == 59
+        assert context_timestamp == 59
+        assert context_info == "test:daily"
+
+    def test_daily_indicators_basic(self):
+        """get_daily_indicators should compute SMA, EMA, RSI from daily candles."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = []
+        base_price = 100.0
+        for i in range(250):
+            price = base_price + i * 0.5
+            daily_candles.append(
+                {
+                    "open": price,
+                    "high": price + 1.0,
+                    "low": price - 1.0,
+                    "close": price + 0.5,
+                    "volume": 10000 + i * 100,
+                }
+            )
+
+        engine.seed_daily_candles("005930", daily_candles)
+
+        indicators = engine.get_daily_indicators("005930")
+
+        assert "sma_20" in indicators
+        assert "sma_60" in indicators
+        assert "sma_200" in indicators
+        assert "ema_5" in indicators
+        assert "ema_10" in indicators
+        assert "ema_20" in indicators
+        assert "rsi_5" in indicators
+
+        for key, value in indicators.items():
+            assert isinstance(value, float), f"{key} should be float"
+            assert value > 0, f"{key} should be positive"
+
+    def test_daily_indicators_custom_periods(self):
+        """get_daily_indicators should support custom SMA/EMA periods."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = []
+        for i in range(100):
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("005930", daily_candles)
+
+        indicators = engine.get_daily_indicators(
+            "005930",
+            sma_periods=[10, 30, 50],
+            ema_periods=[8, 21],
+            rsi_period=14,
+        )
+
+        assert "sma_10" in indicators
+        assert "sma_30" in indicators
+        assert "sma_50" in indicators
+        assert "ema_8" in indicators
+        assert "ema_21" in indicators
+        assert "rsi_14" in indicators
+
+        assert "sma_20" not in indicators
+        assert "sma_60" not in indicators
+        assert "ema_5" not in indicators
+
+    def test_daily_indicators_insufficient_data(self):
+        """get_daily_indicators should return empty dict if insufficient candles."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = []
+        for i in range(10):
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("005930", daily_candles)
+
+        indicators = engine.get_daily_indicators("005930")
+
+        assert indicators == {}, "Should return empty dict if insufficient data"
+
+    def test_daily_indicators_min_candles_override(self):
+        """get_daily_indicators should respect min_candles parameter."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = []
+        for i in range(30):
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("005930", daily_candles)
+
+        indicators_default = engine.get_daily_indicators("005930")
+        assert indicators_default == {}
+
+        indicators_custom = engine.get_daily_indicators("005930", min_candles=20)
+        assert len(indicators_custom) > 0
+
+    def test_daily_indicators_nonexistent_symbol(self):
+        """get_daily_indicators should return empty dict for non-existent symbol."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        indicators = engine.get_daily_indicators("NONEXISTENT")
+
+        assert indicators == {}, "Should return empty dict"
+
+    def test_daily_indicators_caching(self):
+        """get_daily_indicators should cache results for same candle count."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_candles = []
+        for i in range(100):
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("005930", daily_candles)
+
+        indicators1 = engine.get_daily_indicators("005930", min_candles=20)
+
+        indicators2 = engine.get_daily_indicators("005930", min_candles=20)
+        cache_hits = engine._momentum_cache_hits
+
+        assert indicators1 == indicators2, "Cached results should match"
+        assert cache_hits > 0, "Second call should hit cache"
+
+    def test_daily_indicators_rsi_edge_cases(self):
+        """get_daily_indicators should handle RSI edge cases (all gains, all losses, flat)."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        all_gains = []
+        for i in range(60):
+            all_gains.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("GAINS", all_gains)
+        ind_gains = engine.get_daily_indicators("GAINS", min_candles=20)
+
+        assert ind_gains["rsi_5"] > 90, "RSI should be very high for all gains"
+
+
+class TestDailySMAWarmup:
+    """SMA must use a full window; under-warmed periods are omitted, not partial."""
+
+    @staticmethod
+    def _candles(closes: list[float]) -> list[dict]:
+        return [
+            {"open": c, "high": c + 1, "low": c - 1, "close": c, "volume": 1000}
+            for c in closes
+        ]
+
+    def test_underwarmed_sma_periods_are_omitted(self):
+        """With 30 candles, sma_20 is present but sma_60 / sma_200 are omitted."""
+        result = calculate_daily_indicators(
+            self._candles([100.0 + i for i in range(30)]),
+            sma_periods=[20, 60, 200],
+            ema_periods=[5],
+            rsi_period=5,
+        )
+        assert "sma_20" in result, "sma_20 has a full 20-window in 30 candles"
+        assert "sma_60" not in result, "sma_60 must not be a partial-window mean"
+        assert "sma_200" not in result, "sma_200 must not be a partial-window mean"
+
+    def test_warmed_sma_uses_full_trailing_window(self):
+        """A warmed SMA equals the mean of exactly the last `period` closes."""
+        closes = [float(i) for i in range(1, 26)]
+        result = calculate_daily_indicators(
+            self._candles(closes),
+            sma_periods=[20],
+            ema_periods=[5],
+            rsi_period=5,
+        )
+        assert result["sma_20"] == pytest.approx(sum(closes[-20:]) / 20.0)
+
+
+class TestDailyHighTracking:
+    """Tests for daily high tracking (_update_daily_high, _calc_high_n)."""
+
+    def test_daily_high_tracking_intraday(self):
+        """Intraday high should be tracked correctly within a single day."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        base_date = datetime(2026, 3, 7, 9, 30, 0)
+
+        for minute in range(10):
+            tick_time = base_date + timedelta(minutes=minute)
+            engine.on_tick(
+                "005930",
+                {
+                    "close": 100.0 + minute,
+                    "high": 101.0 + minute,
+                    "low": 99.0 + minute,
+                    "volume": 1000,
+                },
+                tick_time,
+            )
+
+        assert engine._intraday_high.get("005930") == 109.0
+
+    def test_daily_high_rollover_on_day_change(self):
+        """Previous day's high should be pushed to _daily_highs deque on day change."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        day1 = datetime(2026, 3, 7, 9, 30, 0)
+        for minute in range(5):
+            tick_time = day1 + timedelta(minutes=minute)
+            engine.on_tick(
+                "005930",
+                {
+                    "close": 100.0 + minute,
+                    "high": 101.0 + minute,
+                    "low": 99.0 + minute,
+                    "volume": 1000,
+                },
+                tick_time,
+            )
+
+        assert engine._intraday_high.get("005930") == 104.0
+
+        day2 = datetime(2026, 3, 8, 9, 30, 0)
+        engine.on_tick(
+            "005930",
+            {"close": 110.0, "high": 112.0, "low": 109.0, "volume": 1000},
+            day2,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 111.0, "high": 113.0, "low": 110.0, "volume": 1100},
+            day2 + timedelta(minutes=1),
+        )
+
+        assert len(engine._daily_highs["005930"]) == 1
+        assert engine._daily_highs["005930"][0] == 104.0
+
+        assert (
+            engine._intraday_high.get("005930") >= 112.0
+        ), "Day 2 intraday high should be at least 112.0"
+
+    def test_daily_high_multiple_day_rollovers(self):
+        """Multiple day rollovers should accumulate historical daily highs."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        daily_highs = [105.0, 110.0, 108.0, 112.0, 115.0]
+
+        for day_idx, _expected_high in enumerate(daily_highs):
+            day_date = datetime(2026, 3, 7 + day_idx, 9, 30, 0)
+
+            for minute in range(5):
+                tick_time = day_date + timedelta(minutes=minute)
+                high = 100.0 + day_idx * 5 + minute
+                engine.on_tick(
+                    "005930",
+                    {
+                        "close": high - 1.0,
+                        "high": high,
+                        "low": high - 2.0,
+                        "volume": 1000,
+                    },
+                    tick_time,
+                )
+
+        next_day = datetime(2026, 3, 12, 9, 30, 0)
+        engine.on_tick(
+            "005930",
+            {"close": 120.0, "high": 122.0, "low": 119.0, "volume": 1000},
+            next_day,
+        )
+
+        assert len(engine._daily_highs["005930"]) == 5
+        assert engine._daily_highs["005930"][-1] == 123.0
+
+    def test_daily_high_respects_maxlen(self):
+        """_daily_highs deque should respect maxlen=30."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        for day_idx in range(40):
+            day_date = datetime(2026, 3, 1, 9, 30, 0) + timedelta(days=day_idx)
+            engine.on_tick(
+                "005930",
+                {
+                    "close": 100.0 + day_idx,
+                    "high": 101.0 + day_idx,
+                    "low": 99.0 + day_idx,
+                    "volume": 1000,
+                },
+                day_date,
+            )
+            engine.on_tick(
+                "005930",
+                {
+                    "close": 100.5 + day_idx,
+                    "high": 101.5 + day_idx,
+                    "low": 99.5 + day_idx,
+                    "volume": 1100,
+                },
+                day_date + timedelta(minutes=1),
+            )
+
+        final_day = datetime(2026, 4, 10, 9, 30, 0)
+        engine.on_tick(
+            "005930",
+            {"close": 150.0, "high": 151.0, "low": 149.0, "volume": 1000},
+            final_day,
+        )
+
+        if "005930" in engine._daily_highs:
+            assert (
+                len(engine._daily_highs["005930"]) <= 30
+            ), "Should respect maxlen of 30"
+
+
+class TestDailyCloseTrackingAndEMAAlignment:
+    """Tests for daily close tracking (_update_daily_close, _calc_daily_ema_aligned)."""
+
+    def test_daily_close_tracking_intraday(self):
+        """Intraday last close should be updated continuously within a day."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        base_date = datetime(2026, 3, 7, 9, 30, 0)
+
+        for minute in range(10):
+            tick_time = base_date + timedelta(minutes=minute)
+            engine.on_tick(
+                "005930",
+                {"close": 100.0 + minute, "high": 101.0, "low": 99.0, "volume": 1000},
+                tick_time,
+            )
+
+        assert engine._intraday_last_close.get("005930") == 108.0
+
+    def test_daily_close_rollover_on_day_change(self):
+        """Previous day's close should be pushed to _daily_closes deque on day change."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        day1 = datetime(2026, 3, 7, 9, 30, 0)
+        for minute in range(6):
+            tick_time = day1 + timedelta(minutes=minute)
+            engine.on_tick(
+                "005930",
+                {"close": 100.0 + minute, "high": 101.0, "low": 99.0, "volume": 1000},
+                tick_time,
+            )
+
+        assert engine._intraday_last_close.get("005930") == 104.0
+
+        day2 = datetime(2026, 3, 8, 9, 30, 0)
+        engine.on_tick(
+            "005930",
+            {"close": 110.0, "high": 111.0, "low": 109.0, "volume": 1000},
+            day2,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 111.0, "high": 112.0, "low": 110.0, "volume": 1100},
+            day2 + timedelta(minutes=1),
+        )
+
+        if "005930" in engine._daily_closes:
+            assert (
+                len(engine._daily_closes["005930"]) >= 1
+            ), "Should have at least one daily close"
+            assert (
+                engine._daily_closes["005930"][0] >= 100.0
+            ), "Day 1 close should be tracked"
+
+        assert engine._intraday_last_close.get("005930") >= 110.0
+
+    def test_daily_ema_aligned_uptrend(self):
+        """_calc_daily_ema_aligned should return True for uptrend (EMA5 > EMA10 > EMA20)."""
+        engine = StreamingIndicatorEngine(
+            staleness_seconds=0, daily_ema_periods=[5, 10, 20]
+        )
+
+        for day_idx in range(30):
+            day_date = datetime(2026, 2, 1, 9, 30, 0) + timedelta(days=day_idx)
+            close_price = 100.0 + day_idx * 2.0
+            engine.on_tick(
+                "005930",
+                {
+                    "close": close_price,
+                    "high": close_price + 1,
+                    "low": close_price - 1,
+                    "volume": 10000,
+                },
+                day_date,
+            )
+            engine.on_tick(
+                "005930",
+                {
+                    "close": close_price + 0.5,
+                    "high": close_price + 1.5,
+                    "low": close_price - 0.5,
+                    "volume": 11000,
+                },
+                day_date + timedelta(minutes=1),
+            )
+
+        next_day = datetime(2026, 3, 3, 9, 30, 0)
+        engine.on_tick(
+            "005930",
+            {"close": 165.0, "high": 166.0, "low": 164.0, "volume": 10000},
+            next_day,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 165.5, "high": 166.5, "low": 164.5, "volume": 11000},
+            next_day + timedelta(minutes=1),
+        )
+
+        indicators = engine.get_indicators("005930")
+
+        if indicators:
+            ema_aligned = indicators.get("ema_daily_aligned")
+            assert isinstance(ema_aligned, bool), "ema_daily_aligned should be boolean"
+            assert (
+                "ema_daily_aligned" in indicators
+            ), "Should include ema_daily_aligned indicator"
+        else:
+            assert (
+                len(engine._daily_closes.get("005930", [])) >= 20
+            ), "Should have tracked daily closes"
+
+    def test_daily_ema_aligned_downtrend(self):
+        """_calc_daily_ema_aligned should return False for downtrend."""
+        engine = StreamingIndicatorEngine(
+            staleness_seconds=0, daily_ema_periods=[5, 10, 20]
+        )
+
+        for day_idx in range(30):
+            day_date = datetime(2026, 2, 1, 9, 30, 0) + timedelta(days=day_idx)
+            close_price = 200.0 - day_idx * 2.0
+            engine.on_tick(
+                "005930",
+                {
+                    "close": close_price,
+                    "high": close_price + 1,
+                    "low": close_price - 1,
+                    "volume": 10000,
+                },
+                day_date,
+            )
+            engine.on_tick(
+                "005930",
+                {
+                    "close": close_price - 0.5,
+                    "high": close_price + 0.5,
+                    "low": close_price - 1.5,
+                    "volume": 11000,
+                },
+                day_date + timedelta(minutes=1),
+            )
+
+        next_day = datetime(2026, 3, 3, 9, 30, 0)
+        engine.on_tick(
+            "005930",
+            {"close": 135.0, "high": 136.0, "low": 134.0, "volume": 10000},
+            next_day,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 134.5, "high": 135.5, "low": 133.5, "volume": 11000},
+            next_day + timedelta(minutes=1),
+        )
+
+        indicators = engine.get_indicators("005930")
+
+        if indicators:
+            assert (
+                indicators.get("ema_daily_aligned") is False
+            ), "Should NOT detect uptrend"
+        else:
+            assert (
+                len(engine._daily_closes.get("005930", [])) >= 20
+            ), "Should have tracked daily closes"
+
+    def test_daily_ema_aligned_insufficient_data(self):
+        """_calc_daily_ema_aligned should return False if insufficient daily data."""
+        engine = StreamingIndicatorEngine(
+            staleness_seconds=0, daily_ema_periods=[5, 10, 20]
+        )
+
+        for day_idx in range(10):
+            day_date = datetime(2026, 2, 1, 9, 30, 0) + timedelta(days=day_idx)
+            engine.on_tick(
+                "005930",
+                {"close": 100.0 + day_idx, "high": 101.0, "low": 99.0, "volume": 10000},
+                day_date,
+            )
+            engine.on_tick(
+                "005930",
+                {"close": 100.5 + day_idx, "high": 101.5, "low": 99.5, "volume": 11000},
+                day_date + timedelta(minutes=1),
+            )
+
+        next_day = datetime(2026, 2, 11, 9, 30, 0)
+        engine.on_tick(
+            "005930",
+            {"close": 110.0, "high": 111.0, "low": 109.0, "volume": 10000},
+            next_day,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 110.5, "high": 111.5, "low": 109.5, "volume": 11000},
+            next_day + timedelta(minutes=1),
+        )
+
+        indicators = engine.get_indicators("005930")
+
+        if indicators:
+            assert (
+                indicators.get("ema_daily_aligned") is False
+            ), "Should return False if insufficient data"
+
+    def test_daily_closes_respects_maxlen(self):
+        """_daily_closes deque should respect maxlen=60."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        for day_idx in range(80):
+            day_date = datetime(2026, 1, 1, 9, 30, 0) + timedelta(days=day_idx)
+            engine.on_tick(
+                "005930",
+                {"close": 100.0 + day_idx, "high": 101.0, "low": 99.0, "volume": 10000},
+                day_date,
+            )
+            engine.on_tick(
+                "005930",
+                {"close": 100.5 + day_idx, "high": 101.5, "low": 99.5, "volume": 11000},
+                day_date + timedelta(minutes=1),
+            )
+
+        final_day = datetime(2026, 3, 21, 9, 30, 0)
+        engine.on_tick(
+            "005930",
+            {"close": 180.0, "high": 181.0, "low": 179.0, "volume": 10000},
+            final_day,
+        )
+
+        if "005930" in engine._daily_closes:
+            assert (
+                len(engine._daily_closes["005930"]) <= 60
+            ), "Should respect maxlen of 60"
+
+
+class TestDailyCloseTrackingRegression:
+    """Regression tests: daily closes must roll over exactly like daily highs."""
+
+    def test_daily_closes_roll_over_like_daily_highs(self):
+        """_daily_closes must populate on day change, in parity with _daily_highs."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        for day_idx in range(5):
+            day_date = datetime(2026, 3, 2 + day_idx, 9, 30, 0)
+            base = 100.0 + day_idx * 5
+            engine.on_tick(
+                "005930",
+                {"close": base, "high": base + 1, "low": base - 1, "volume": 1000},
+                day_date,
+            )
+            engine.on_tick(
+                "005930",
+                {
+                    "close": base + 0.5,
+                    "high": base + 1.5,
+                    "low": base - 0.5,
+                    "volume": 1100,
+                },
+                day_date + timedelta(minutes=1),
+            )
+
+        engine.on_tick(
+            "005930",
+            {"close": 130.0, "high": 131.0, "low": 129.0, "volume": 1000},
+            datetime(2026, 3, 8, 9, 30, 0),
+        )
+
+        assert engine._daily_closes.get("005930"), "_daily_closes must be populated"
+        assert len(engine._daily_closes["005930"]) == len(
+            engine._daily_highs["005930"]
+        ), "_daily_closes must roll over in parity with _daily_highs"
+
+    def test_daily_ema_aligned_true_for_strong_uptrend(self):
+        """A strong multi-day uptrend must report ema_daily_aligned True."""
+        engine = StreamingIndicatorEngine(
+            staleness_seconds=0, daily_ema_periods=[5, 10, 20]
+        )
+
+        for day_idx in range(30):
+            day_date = datetime(2026, 2, 1, 9, 30, 0) + timedelta(days=day_idx)
+            close_price = 100.0 + day_idx * 2.0
+            engine.on_tick(
+                "005930",
+                {
+                    "close": close_price,
+                    "high": close_price + 1,
+                    "low": close_price - 1,
+                    "volume": 10000,
+                },
+                day_date,
+            )
+            engine.on_tick(
+                "005930",
+                {
+                    "close": close_price + 0.5,
+                    "high": close_price + 1.5,
+                    "low": close_price - 0.5,
+                    "volume": 11000,
+                },
+                day_date + timedelta(minutes=1),
+            )
+
+        assert engine._calc_daily_ema_aligned("005930") is True
+
+
+class TestDailyEdgeCases:
+    """Edge cases and error conditions for daily candle functionality."""
+
+    def test_seed_daily_candles_empty_list(self):
+        """Seeding empty candle list should not create deque entry."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        engine.seed_daily_candles("005930", [])
+
+        result = engine.get_daily_candles("005930")
+        assert result == [], "Should return empty list"
+
+    def test_daily_indicators_with_mtf_enabled(self):
+        """Daily indicators should work independently of MTF configuration."""
+        engine = StreamingIndicatorEngine(mtf_timeframes=[5, 15], staleness_seconds=0)
+
+        daily_candles = []
+        for i in range(100):
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("005930", daily_candles)
+
+        indicators = engine.get_daily_indicators("005930", min_candles=20)
+
+        assert len(indicators) > 0, "Daily indicators should work with MTF enabled"
+        assert "sma_20" in indicators
+
+    def test_daily_high_and_close_coordination(self):
+        """Daily high and close tracking should coordinate on day boundaries."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        day1 = datetime(2026, 3, 7, 9, 30, 0)
+        engine.on_tick(
+            "005930", {"close": 100.0, "high": 105.0, "low": 99.0, "volume": 1000}, day1
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 102.0, "high": 106.0, "low": 100.0, "volume": 1000},
+            day1 + timedelta(minutes=1),
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 103.0, "high": 107.0, "low": 101.0, "volume": 1000},
+            day1 + timedelta(minutes=2),
+        )
+
+        day2 = datetime(2026, 3, 8, 9, 30, 0)
+        engine.on_tick(
+            "005930",
+            {"close": 110.0, "high": 112.0, "low": 109.0, "volume": 1000},
+            day2,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 111.0, "high": 113.0, "low": 110.0, "volume": 1000},
+            day2 + timedelta(minutes=1),
+        )
+
+        assert (
+            len(engine._daily_highs.get("005930", [])) >= 1
+        ), "Daily highs should be tracked"
+        if len(engine._daily_highs.get("005930", [])) >= 1:
+            assert (
+                engine._daily_highs["005930"][0] >= 105.0
+            ), "Day 1 high should be tracked"
+
+    def test_multiple_symbols_daily_tracking_independent(self):
+        """Daily tracking for different symbols should be independent."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        day1 = datetime(2026, 3, 7, 9, 30, 0)
+        for minute in range(3):
+            tick_time = day1 + timedelta(minutes=minute)
+            engine.on_tick(
+                "005930",
+                {"close": 100.0 + minute, "high": 105.0, "low": 99.0, "volume": 1000},
+                tick_time,
+            )
+            engine.on_tick(
+                "000660",
+                {"close": 200.0 + minute, "high": 205.0, "low": 199.0, "volume": 1000},
+                tick_time,
+            )
+
+        day2 = datetime(2026, 3, 8, 9, 30, 0)
+        for minute in range(2):
+            tick_time = day2 + timedelta(minutes=minute)
+            engine.on_tick(
+                "005930",
+                {"close": 110.0 + minute, "high": 112.0, "low": 109.0, "volume": 1000},
+                tick_time,
+            )
+            engine.on_tick(
+                "000660",
+                {"close": 210.0 + minute, "high": 215.0, "low": 209.0, "volume": 1000},
+                tick_time,
+            )
+
+        if "005930" in engine._daily_highs and "000660" in engine._daily_highs:
+            assert len(engine._daily_highs["005930"]) >= 1
+            assert len(engine._daily_highs["000660"]) >= 1
+            assert engine._daily_highs["005930"][0] != engine._daily_highs["000660"][0]
+
+    def test_seed_daily_then_live_tracking(self):
+        """Seeded daily candles should work alongside live daily tracking."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        historical = []
+        for i in range(50):
+            historical.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("005930", historical)
+
+        live_day = datetime(2026, 3, 7, 9, 30, 0)
+        for minute in range(10):
+            tick_time = live_day + timedelta(minutes=minute)
+            engine.on_tick(
+                "005930",
+                {"close": 200.0 + minute, "high": 201.0, "low": 199.0, "volume": 1000},
+                tick_time,
+            )
+
+        daily = engine.get_daily_candles("005930")
+        assert len(daily) == 50, "Seeded candles should persist"
+
+        last_close = engine._intraday_last_close.get("005930", 0)
+        assert last_close >= 200.0, "Live tracking should be working"
+
+    def test_daily_indicators_calculation_error_handling(self):
+        """get_daily_indicators should handle calculation errors gracefully."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+
+        flat_candles = []
+        for _i in range(100):
+            flat_candles.append(
+                {
+                    "open": 100.0,
+                    "high": 100.0,
+                    "low": 100.0,
+                    "close": 100.0,
+                    "volume": 10000,
+                }
+            )
+
+        engine.seed_daily_candles("FLAT", flat_candles)
+
+        indicators = engine.get_daily_indicators("FLAT", min_candles=20)
+
+        assert len(indicators) > 0, "Should return indicators even for flat prices"
+        assert 40 <= indicators["rsi_5"] <= 60, "RSI should be neutral for flat market"

@@ -1,0 +1,85 @@
+"""Trustworthy Time pure data models + predicates (Phase 1, EV-L1)."""
+
+from __future__ import annotations
+
+from tos.time.domains import (
+    FreshnessVerdict,
+    HealthState,
+    ReasonCode,
+    TimeDomain,
+)
+from tos.time.elements import (
+    AllFalseAuthority,
+    Bounds,
+    ConsumerReceiptAnchor,
+    DiscontinuityStatus,
+    EvaluatedMonotonicAnchor,
+    MonotonicReading,
+    ReferenceSource,
+    SessionContext,
+    SuspensionStatus,
+    TimeAuthorityEffect,
+    TimeContinuityIdentity,
+    UncertaintyInterval,
+)
+from tos.time.ordering import (
+    ordering_event_from_monotonic,
+    ordering_event_from_reference_interval,
+)
+from tos.time.predicates import (
+    anchor_valid,
+    conservative_usable_lifetime,
+    effective_snapshot_age_bound,
+    effective_snapshot_age_bound_from_continuity,
+    elapsed_within_continuity,
+    freshness_verdict,
+    health_transition_allowed,
+    independent_reference_count,
+    recovery_generation_revives_nothing,
+    session_open_positively,
+    snapshot_age_admissible,
+    snapshot_consumer_binding_ok,
+    snapshot_grants_no_authority,
+    source_disagreement_within_bound,
+    state_permits_new_normal_risk,
+    transition_to_trusted_requires_new_generation,
+)
+from tos.time.snapshot import TimeHealthSnapshot
+
+__all__ = [
+    "TimeDomain",
+    "HealthState",
+    "FreshnessVerdict",
+    "ReasonCode",
+    "AllFalseAuthority",
+    "TimeAuthorityEffect",
+    "UncertaintyInterval",
+    "TimeContinuityIdentity",
+    "EvaluatedMonotonicAnchor",
+    "MonotonicReading",
+    "ReferenceSource",
+    "Bounds",
+    "SuspensionStatus",
+    "DiscontinuityStatus",
+    "SessionContext",
+    "ConsumerReceiptAnchor",
+    "TimeHealthSnapshot",
+    "ordering_event_from_monotonic",
+    "ordering_event_from_reference_interval",
+    "elapsed_within_continuity",
+    "anchor_valid",
+    "conservative_usable_lifetime",
+    "effective_snapshot_age_bound",
+    "effective_snapshot_age_bound_from_continuity",
+    "snapshot_age_admissible",
+    "freshness_verdict",
+    "health_transition_allowed",
+    "transition_to_trusted_requires_new_generation",
+    "recovery_generation_revives_nothing",
+    "state_permits_new_normal_risk",
+    "snapshot_grants_no_authority",
+    "session_open_positively",
+    "snapshot_consumer_binding_ok",
+    "independent_reference_count",
+    "source_disagreement_within_bound",
+]

@@ -1,0 +1,43 @@
+# ruff as a merge-blocking check (operator decision 2026-09-06, 2a).
+#
+# Separate workflow on purpose: test.yml is path-gated away from tos/ and
+# docs-only changes, so a required check living there would never report on
+# such PRs and the ruleset would block them forever ("expected" check). This
+# job runs on EVERY pull request and every push to main with NO path gating,
+# exactly like tos-firewall.yml. It is cheap (~30 s) — ruff only. black/mypy
+# stay advisory in test.yml (formatting/typing debt tracked separately).
+#
+# The ruleset entry (required_status_checks context "ruff") is a GitHub
+# setting, not configured here.
+name: ruff
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # Pinned: this job is merge-blocking on every PR, so an upstream ruff
+      # release that enables a new rule must not turn every PR red at once.
+      # Bump deliberately (local .venv is 0.16.5 as of 2026-09-06).
+      - name: Install ruff
+        run: pip install 'ruff==0.16.5'
+
+      - name: Run ruff
+        run: ruff check . --output-format=github

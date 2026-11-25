@@ -1,0 +1,25 @@
+{
+  "comment": "The reason prefixes GET /api/tos/symbols/today may emit, and the UI state each maps to. Shared by services/dashboard/routes/tos_symbols.py's tests and strategy-builder-ui/src/lib/dashboard/tosSymbols.ts's tests. Both sides assert this file and both run in CI: the Python side in .github/workflows/test.yml, the TS side in the job named \"UI suite (lint + build + tsc + vitest)\" in .github/workflows/ui.yml, which is path-gated on strategy-builder-ui/** and tests/fixtures/** and so runs whenever this file changes. Adding a prefix here without a matching symbolsState branch therefore fails that job instead of landing in the UI as 'unknown'. Kept separate from bars-reasons.json because this read model has no caller-supplied path segment — the document's name is fixed — so it can never refuse an id, and its absent/unreadable reasons name a different document. No reason ever carries a value read from the document.",
+  "reasons": [
+    {
+      "prefix": "symbols document absent",
+      "ui_state": "missing"
+    },
+    {
+      "prefix": "cannot read symbols document",
+      "ui_state": "unreadable"
+    },
+    {
+      "prefix": "invalid json",
+      "ui_state": "invalid"
+    },
+    {
+      "prefix": "schema mismatch",
+      "ui_state": "invalid"
+    },
+    {
+      "prefix": "unsupported schema_version",
+      "ui_state": "unsupported"
+    }
+  ]
+}

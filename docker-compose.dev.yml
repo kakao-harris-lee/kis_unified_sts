@@ -1,0 +1,19 @@
+# KIS Unified Trading Platform - Development Override
+# 개발 환경 전용 설정 오버라이드
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+version: '3.8'
+
+services:
+  # The legacy services/api gateway container (app) was removed during the
+  # dashboard-API consolidation. Dashboard hot-reload for dev runs on the host
+  # (uvicorn services.dashboard.app:create_app --factory --reload).
+  prometheus:
+    # 개발 시 더 짧은 보존 기간
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=3d'
+      - '--web.enable-lifecycle'

@@ -1,0 +1,91 @@
+{
+  "artifact_id": "P-BAL-20260923T040630Z",
+  "probe_id": "P-BAL",
+  "title": "BALANCE_PAGINATION — balance-query page size / continuation walk (GET-only)",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-09-23T04:06:30.442792+00:00",
+  "finished_at_utc": "2026-09-23T04:06:51.253750+00:00",
+  "duration_s": 20.811,
+  "repo_commit": "c2b9761f",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-BAL",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "stock",
+    "symbol": "",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": null,
+    "out_dir": null,
+    "note": "2026-09-23 linkage re-check: new mock stock account after 09-15 re-apply; GET-only",
+    "env": "mock",
+    "max_pages": 10,
+    "inter_page_s": 1.1,
+    "known_page_size": 0,
+    "known_page_size_source": "",
+    "record_raw_continuation_keys": false
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "stock",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "50******01",
+    "account_fingerprint": "ee1bdb5f1ca2"
+  },
+  "measurements": {
+    "target_supported": true,
+    "target": {
+      "asset": "stock",
+      "environment": "MOCK_VTS",
+      "tr_id": "VTTC8434R",
+      "path": "/uapi/domestic-stock/v1/trading/inquire-balance",
+      "continuation_key_pair": [
+        "CTX_AREA_FK100",
+        "CTX_AREA_NK100"
+      ],
+      "row_qty_field": "hldg_qty",
+      "tr_id_source": "shared/kis/client.py:919 (stock real/mock split), :1048 (futures)"
+    }
+  },
+  "observations": [
+    {
+      "read_only_attestation": "This probe can issue GET requests only, against the allowlist in tools/broker_probes/probes_balance.py::ALLOWLIST. No order path exists in this module and it does not import one.",
+      "allowlist": [
+        {
+          "tr_id": "TTTC8434R",
+          "path": "/uapi/domestic-stock/v1/trading/inquire-balance"
+        },
+        {
+          "tr_id": "VTTC8434R",
+          "path": "/uapi/domestic-stock/v1/trading/inquire-balance"
+        },
+        {
+          "tr_id": "CTFO6118R",
+          "path": "/uapi/domestic-futureoption/v1/trading/inquire-balance"
+        }
+      ]
+    }
+  ],
+  "skips": [],
+  "errors": [
+    "ReadTimeout: HTTPSConnectionPool(host='openapivts.koreainvestment.com', port=29443): Read timed out. (read timeout=20.0)"
+  ],
+  "provenance_class": "NOT_MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [],
+    "instance_fields": [
+      "capabilities.position_balance_margin.evidence_refs",
+      "capabilities.position_balance_margin.status"
+    ],
+    "capability_dimension": "POSITIONS_BALANCES_MARGIN"
+  }
+}

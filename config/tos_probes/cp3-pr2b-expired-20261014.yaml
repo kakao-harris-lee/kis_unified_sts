@@ -1,0 +1,19 @@
+# CP-3 PR-2b 전제 실측 — 만기 월물(A05610) 과거 분봉 조회 가능 여부.
+# 계획 docs/plans/2026-10-10-tos-cp3-live-field-producer-plan.md §3.2a 「전제 실측」.
+# 종목은 설정에 적지 않는다 — §3.2a 의 front-month 걸음이 junction_day 로부터 정한다.
+junction_day: '2026-10-08'
+# 접합일 이전 시드 거래일(달력 기준 역순). 10-05 는 대체휴일, 10-03 은 토요일이라 없다.
+seed_days: ['2026-10-07', '2026-10-06', '2026-10-02', '2026-10-01']
+# S1a 스프레드 창의 시작. 끝은 접합일의 마지막 공통 파싱 분(실측값)이다.
+spread_window_start: '14:16'
+env_file: /home/deploy/project/kis_unified_sts/.env.real
+calendar_yaml: config/tos_runtime/cp3-setup-d-long/calendar.yaml
+output: /home/deploy/.local/state/tos/measure/cp3-pr2b-expired-20261014
+pace_s: 1.1
+request_timeout_s: 10
+attempts: 3
+retry_pause_s: 2
+max_pages: 20
+parser_env:
+  KIS_FUTURES_HOUR_CLS_CODE: '60'
+  KIS_MINUTE_BAR_MIN_VOLUME: '10'

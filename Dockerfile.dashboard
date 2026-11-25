@@ -1,0 +1,50 @@
+# Dockerfile.dashboard
+# API-only FastAPI service. Its whole surface after legacy removal L4 is
+# /api/tos/*, /health and the OpenAPI docs; the operator UI (the /tos page)
+# lives in the Next.js app at strategy-builder-ui:3100 (see
+# Dockerfile.strategy_builder_ui), routed by Caddy through DASHBOARD_HOST_PORT.
+#
+# Before 2026-05-28 this image bundled a Vite SPA build stage. The Vite
+# SPA was merged into the Next.js app; the build stage is gone.
+
+FROM python:3.11-slim
+
+LABEL maintainer="harris"
+LABEL description="KIS Trading Dashboard API (FastAPI)"
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# The three distribution packages (pyproject `[tool.hatch.build.targets.wheel]
+# packages`) are copied whole: after L6 that is services/dashboard,
+# cli/{main,commands/tos_status} and the shared/ closure those two still need.
+# services/ is just dashboard/ now — services/monitoring went with
+# shared/kis/client.py (2026-11-13 S3), its only lazy importer — and cli/
+# is copied because pyproject installs the
+# `sts` entrypoint from cli.main.
+COPY pyproject.toml README.md ./
+COPY shared/ ./shared/
+COPY services/ ./services/
+COPY cli/ ./cli/
+
+RUN pip install --upgrade pip && pip install .
+
+COPY config/ ./config/
+
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8001/health || exit 1
+
+CMD ["python", "-m", "uvicorn", "services.dashboard.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8001"]

@@ -1,0 +1,18 @@
+# construction.yaml — CP-3 tenant (Setup D / LONG)
+# 부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23
+# 출처: docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §3 선택지 (가)
+#       (운영자 선택 2026-09-23) · 상위 계획 §7.8
+#       (docs/plans/2026-09-18-tos-config-adoption-and-carryover-plan.md)
+
+account: "TBD"
+
+instrument: "TBD"
+
+action_class: "NEW_SHORT"
+
+instrument_class: "krx-index-futures"
+
+outbound_side: "SELL"
+
+price_field_key: "close_x100"
+shape_price_field_key: "close_x100"

@@ -1,0 +1,26 @@
+# Example tos_runtime.authority configuration (design #40 §5 order 4; slice
+# plan §1 item 1). Loaded via tos_runtime.authority.epoch.load_authority_config.
+#
+# containment_bound_ms: the Safety Authority epoch's online-currentness-witness
+# containment bound (ADR-002-003 §12.1). named-TBD: no VER-002 profile key
+# names this specific bound today (grepped 2026-09-08 against
+# tos-spec/src/part-1-foundation/VER-002-001-Safety-Critical-Architecture-Verification-Evidence-Specification.md
+# — that file names B_authority_partition_detect and the egress-currentness
+# bounds MAX_egress_currentness_proof_age_ms / MAX_currentness_vector_age_ms,
+# but no MAX_* bound for the Safety Authority epoch's own witness). A null
+# value here is a deliberate fail-closed refusal to start
+# (tos_runtime.authority.epoch.load_authority_config raises
+# AuthorityConfigError) until a Bounds-Approver assigns a real value.
+containment_bound_ms: null
+
+# trading_approval_policy_generation: the currently-loaded
+# tos.iap.TradingApprovalPolicy's own policy_generation (spec terms = code
+# terms). tos_runtime.authority.iap.IntentRegistry.decision_current compares
+# a decision's own trading_approval_policy_generation against this value
+# (equality of generation identifiers — the only comparison authored there;
+# ADR-002-023 names "current governed policy generations" as a required
+# fact, tos.iap.predicates takes it as an injected bool, no kernel predicate
+# computes it). Not a VER-002 bound (no threshold to approve) — an
+# operational value (which policy generation is active) — but still
+# configuration, not a code constant, and still fail-closed on null.
+trading_approval_policy_generation: null

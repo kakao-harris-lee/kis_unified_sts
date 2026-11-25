@@ -1,0 +1,306 @@
+{
+  "artifact_id": "P-CA-20260930T015946Z",
+  "probe_id": "P-CA",
+  "title": "corporate_action reflection -- 7-time x leg (effective->broker-reflect->detect) latency (기회주의·GET-only·operator t0)",
+  "mode": "live",
+  "environment": "MOCK_VTS",
+  "started_at_utc": "2026-09-30T01:59:46.277945+00:00",
+  "finished_at_utc": "2026-09-30T02:06:27.620791+00:00",
+  "duration_s": 401.343,
+  "repo_commit": "aec37535",
+  "harness": "tools/broker_probes",
+  "args": {
+    "probe_id": "P-CA",
+    "list": false,
+    "coverage": false,
+    "confirm": true,
+    "asset": "stock",
+    "symbol": "000660",
+    "quantity": 1,
+    "price_offset_pct": 10.0,
+    "samples": 30,
+    "margin_pct": 50.0,
+    "token_cache_dir": "/home/deploy/.config/kis-probes/p-ca-20260930-token-cache",
+    "out_dir": null,
+    "note": "t3 P-CA trial 2: SK하이닉스 000660 cash dividend payable 2026-09-30 (375원/주, record 20260831); OLD mock stock account 54e7f8a5d841 with OLD app key (full credential set from 09-15 backup after 09-23 key rotation); account static during window; poll-pacer fix in place",
+    "env": "mock",
+    "event_class": "cash_dividend",
+    "ex_time": "",
+    "effective_time": "",
+    "payable_time": "2026-09-30T00:00:00+09:00",
+    "settlement_time": "",
+    "poll_ms": 30000.0,
+    "window_s": 21018.0,
+    "pace_s": 1.5,
+    "reference_check": true
+  },
+  "credentials": {
+    "environment": "MOCK_VTS",
+    "base_url": "https://openapivts.koreainvestment.com:29443",
+    "asset": "stock",
+    "app_key_present": true,
+    "app_secret_present": true,
+    "account_masked": "50******01",
+    "account_fingerprint": "54e7f8a5d841"
+  },
+  "measurements": {
+    "baseline": {
+      "hldg_qty": 1,
+      "dnca_tot_amt": 6686725.0
+    },
+    "class_leg_table": [
+      {
+        "event_class": "cash_dividend",
+        "leg": "cash",
+        "t0_field": "payable_time",
+        "t0": "2026-09-30T00:00:00+09:00",
+        "status": "ABORTED",
+        "window_s": 21018.0,
+        "polled_elapsed_s": 394.072,
+        "stop_reason": "rejected",
+        "polls_used": 14,
+        "polls_completed": 13
+      }
+    ],
+    "polls_used": 14,
+    "polls_completed": 13,
+    "polled_elapsed_s": 394.072,
+    "poll_interval_ms_effective": 30000.0,
+    "leg_provenance_class": "NOT_MEASURED",
+    "no_aggregate_scalar_note": "B_non_trade_event_detect / B_non_trade_reconcile are never written as a single scalar by this probe — the source_and_broker_specific estimand is undefined (design doc §11 MODERATE-7). measurements.class_leg_table is the only aggregate emitted; both VP-002 keys stay NOT_ESTABLISHED pending a Bounds-Approver."
+  },
+  "observations": [
+    {
+      "read_only_attestation": "This probe can issue GET requests only, against the allowlist in tools/broker_probes/probes_ca.py::ALLOWLIST (2 balance TRs + 12 ksdinfo reference TRs). No order path exists in this module and it does not import one.",
+      "allowlist": [
+        {
+          "tr_id": "TTTC8434R",
+          "path": "/uapi/domestic-stock/v1/trading/inquire-balance"
+        },
+        {
+          "tr_id": "VTTC8434R",
+          "path": "/uapi/domestic-stock/v1/trading/inquire-balance"
+        },
+        {
+          "tr_id": "HHKDB669102C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/dividend"
+        },
+        {
+          "tr_id": "HHKDB669101C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/bonus-issue"
+        },
+        {
+          "tr_id": "HHKDB669100C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/paidin-capin"
+        },
+        {
+          "tr_id": "HHKDB669106C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/cap-dcrs"
+        },
+        {
+          "tr_id": "HHKDB669104C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/merger-split"
+        },
+        {
+          "tr_id": "HHKDB669105C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/rev-split"
+        },
+        {
+          "tr_id": "HHKDB669109C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/forfeit"
+        },
+        {
+          "tr_id": "HHKDB669107C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/list-info"
+        },
+        {
+          "tr_id": "HHKDB669108C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/pub-offer"
+        },
+        {
+          "tr_id": "HHKDB669110C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/mand-deposit"
+        },
+        {
+          "tr_id": "HHKDB669103C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/purreq"
+        },
+        {
+          "tr_id": "HHKDB669111C0",
+          "path": "/uapi/domestic-stock/v1/ksdinfo/sharehld-meet"
+        }
+      ],
+      "event_class": "cash_dividend",
+      "symbol": "000660"
+    },
+    {
+      "t0_offsets": {
+        "payable_time": "+09:00"
+      }
+    },
+    {
+      "baseline_call": {
+        "status_kind": "OK",
+        "http_status": 200,
+        "rt_cd": "0",
+        "msg_cd": "20310000",
+        "msg1": "모의투자 조회가 완료되었습니다.                                                 ",
+        "body_excerpt": ""
+      }
+    },
+    {
+      "reference_dates": [
+        {
+          "record_date": "20260831",
+          "sht_cd": "000660",
+          "isin_name": "에스케이하이닉스",
+          "divi_kind": "분기",
+          "face_val": "5000",
+          "per_sto_divi_amt": "375",
+          "divi_rate": "7.50",
+          "stk_divi_rate": "0.00",
+          "divi_pay_dt": "2026/09/30",
+          "stk_div_pay_dt": "",
+          "odd_pay_dt": "",
+          "stk_kind": "보통",
+          "high_divi_gb": ""
+        }
+      ]
+    },
+    {
+      "mock_reference_support": "SUPPORTED"
+    },
+    {
+      "poll": {
+        "index": 1,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 2,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 3,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 4,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 5,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 6,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 7,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 8,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 9,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 10,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 11,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 12,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll": {
+        "index": 13,
+        "hldg_qty": 1,
+        "dnca_tot_amt": 6686725.0
+      }
+    },
+    {
+      "poll_stop_evidence": {
+        "poll_index": 14,
+        "status_kind": "REJECTED",
+        "http_status": 500,
+        "rt_cd": "1",
+        "msg_cd": "EGW00215",
+        "msg1": "원장에서 허용 가능한 초당 거래건수를 초과하였습니다.",
+        "body_excerpt": "{\"rt_cd\":\"1\",\"msg1\":\"원장에서 허용 가능한 초당 거래건수를 초과하였습니다.\",\"msg_cd\":\"EGW00215\"}"
+      }
+    },
+    {
+      "attribution_caveat": "OBSERVED rows in class_leg_table are UNVERIFIED_ACCOUNT_LEVEL_CHANGE: detected by TIMING ALONE (a balance change during the polling window), not by any broker-side reference to this corporate action on the row — a concurrent order fill, deposit/withdrawal, or unrelated corporate action on the SAME account within the window is indistinguishable from the event being measured (runbook §5.8 prerequisite: operator attests no such activity)."
+    }
+  ],
+  "skips": [
+    {
+      "what": "legs.cash_dividend.ex",
+      "reason": "NOT_OBSERVABLE_ON_BALANCE_SURFACE — 기준가 조정은 잔고 TR로 관측 불가(N-19 §2.3: 주식잔고조회 72필드 중 가격 필드 없음); 현금 leg만 관측 가능."
+    },
+    {
+      "what": "legs.cash_dividend.cash",
+      "reason": "ABORTED — polling stopped early (stop_reason=rejected, polls_used=14 (attempts), polls_completed=13); polling ran 394.072s, so --window-s=21018.0s did NOT elapse. This is not even a censored observation: the window never ran, so nothing at all was observed about this leg. See the poll_stop_evidence observation for the broker's verbatim response."
+    }
+  ],
+  "errors": [
+    "poll #14 rejected: rt_cd='1' msg_cd='EGW00215'"
+  ],
+  "provenance_class": "NOT_MEASURED",
+  "approval_status": "UNAPPROVED_CANDIDATE",
+  "approval_note": "This artifact records observations only. Writing any value into VERIFICATION-PROFILE-002.yaml requires a Bounds-Approver; writing any capability status into the Broker Capability Profile INSTANCE requires the P0-2 approval chain (draft memo §8).",
+  "targets": {
+    "verification_profile_bound_keys": [
+      "B_non_trade_event_detect",
+      "B_non_trade_reconcile"
+    ],
+    "instance_fields": [
+      "capabilities.corporate_actions.evidence_refs",
+      "capabilities.corporate_actions.status"
+    ],
+    "capability_dimension": "CORPORATE_ADMINISTRATIVE_EVENTS"
+  }
+}

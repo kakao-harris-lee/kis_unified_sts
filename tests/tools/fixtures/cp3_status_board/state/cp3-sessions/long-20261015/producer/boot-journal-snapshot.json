@@ -1,0 +1,8 @@
+{
+  "consumed_stale_at_boot": 1,
+  "journal": "{STATE_DIR}/cp3-sessions/long-20261015/journal.jsonl",
+  "note": "the rows the producer had published when the runtime was about to boot; they are STALE by the time it evaluates them (plan \u00a75 M5) and are excluded from the two M5 counts",
+  "pre_boot_raw_event_ids": [
+    "A05611:1m:20261015T100100+0900"
+  ]
+}

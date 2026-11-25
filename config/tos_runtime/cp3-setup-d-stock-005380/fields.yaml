@@ -1,0 +1,95 @@
+# CP-3 STOCK (005380, KIS MOCK) tenant — declarative indicator fields (실험 B).
+#
+# 역할: docs/plans/2026-11-19-tos-usage-plan.md §4.1 표 — 005930 카나리아(R4 프로브) ·
+# 000660 실험 A(Setup D LONG) · **005380 실험 B(RSI / Williams %R 되돌림)**.
+# 운영자 결정 2026-11-19 §8-② 「채택 — R4 는 005930 에만 남긴다」.
+# 연산 `rsi` · `williams_r` 는 카탈로그가 #1119 부터 제공한다(TA-Lib 참조 구현과 비트 동치,
+# `shared/indicators/fields/stateful.py` part 2). 전략 이름이 아니라 `period` 만 받는
+# 일반 지표다 — 이 파일은 그 파라미터와 임계값만 선언한다.
+#
+# ⚠ 임계값이 `strategy_bindings.yaml` 이 아니라 여기 `const` 인 이유.
+#   공개 필드는 **모든 바에서 값이 있어야** 한다(`tos_runtime/marketfeed/journal.py` 는 키가
+#   하나만 비어도 그 폴 전체를 거부한다). `rsi` · `williams_r` 는 웜업 동안 값이 없고
+#   (`shared/indicators/fields/catalog.py::WARMUP_MISSING_OPS`), 값 없음을 해소하는
+#   `permissive` 는 **bool 전용**이다. 그래서 RSI 수치 자체는 공개할 수 없고 비교가 선언
+#   쪽에서 끝나야 한다 — 전략 DSL 은 그 결과 bool 관문만 읽는다. 바인딩으로 옮기려면 커널
+#   쪽 변경이 필요하므로 지금의 선언형 약속(코드 diff 0) 안에서는 이 모양이 유일하다.
+
+schema: tos-fields/1
+catalog: tos-field-catalog/1
+
+fields:
+  - {name: bar_open, op: bar.open}
+  - {name: bar_high, op: bar.high}
+  - {name: bar_low, op: bar.low}
+  - {name: close, op: bar.close}
+  - {name: bar_volume, op: bar.volume}
+  - {name: token, op: session.token}
+
+  - {name: vwap, op: session.vwap_typical}
+  - {name: atr, op: atr, params: {period: 14}}
+  - {name: mso, op: session.minutes_since_open, params: {open_hour: 9, open_minute: 0}}
+
+  # 진입창 09:15~14:45 — 005930 트리와 같은 값(그 트리 fields.yaml). 그 둘의 원천은 레거시
+  # Setup D YAML 의 `valid_minutes_min: 15`(「skip the open auction」)과
+  # `no_entry_after_minutes_since_open: 345`(「force-close avoidance」)이고, 주식은 개장이
+  # 09:00 이라 같은 숫자가 09:15~14:45 로 읽힌다.
+  - {name: entry_window, op: between, inputs: [mso], params: {lo: 15, hi: 345}}
+
+  - {name: atr_pos, op: gt, inputs: [atr], params: {const: 0}}
+  - {name: close_pos, op: gt, inputs: [close], params: {const: 0}}
+  - {name: usable, op: all, inputs: [entry_window, atr_pos, close_pos]}
+
+  # 이 전략은 변동성 관문을 쓰지 않지만 `vol_ref` 선언 자체는 남는다: 생산자가 시드 길이를
+  # 이 창으로 검증한다(`tools/tos_cp3/produce_fields.py::assert_declaration_binds_to_the_run`
+  # — 전략 YAML 의 vol_window_bars/vol_warmup_bars/vol_percentile 과 같아야 기동한다).
+  # 값은 005930 트리와 같다(config/strategies/futures/setup_d_vwap_reversion.yaml).
+  - name: vol_ref
+    op: gated_percentile
+    inputs: [atr]
+    params: {q: 90.0, window: 780, warmup: 120, sample_when: usable}
+
+  # 근거: J. W. Wilder Jr., *New Concepts in Technical Trading Systems*(1978) — RSI 기본 창
+  # 14봉. TA-Lib `TA_RSI` 기본값도 14다. 카탈로그 상한 20 이하(`RSI_MAX_PERIOD`: 시드 780봉이
+  # 실을 수 있는 Wilder 기억이 780/35 ≈ 22 이므로 14 는 생산·리플레이가 같은 값을 낸다).
+  - {name: rsi14, op: rsi, params: {period: 14}}
+  # 근거: Larry Williams %R 기본 창 14봉 — TA-Lib `TA_WILLR` 기본값과 같다.
+  - {name: wr14, op: williams_r, params: {period: 14}}
+
+  # 근거: Wilder(1978)의 RSI 과매도선 30. 되돌림 진입의 관례값이다.
+  - {name: rsi_oversold_raw, op: le, inputs: [rsi14], params: {const: 30.0}}
+  - {name: rsi_oversold, op: permissive, inputs: [rsi_oversold_raw], params: {when_missing: false}}
+  # 근거: Williams %R 과매도선 −80(−20/−80 밴드가 이 지표의 관례값). %R 은 창이 평평하면
+  # (상·하한가 잠김) 값이 없고, 그때 `when_missing: false` 가 진입을 막는다 — TA-Lib 의
+  # 0.0(「종가가 창 고점」)을 진입 신호로 읽지 않기 위한 카탈로그 결정(stateful.py 결정 2).
+  - {name: wr_oversold_raw, op: le, inputs: [wr14], params: {const: -80.0}}
+  - {name: wr_oversold, op: permissive, inputs: [wr_oversold_raw], params: {when_missing: false}}
+  # 근거: RSI 50 = 평균 상승폭과 평균 하락폭이 같아지는 중앙선(Wilder 정의상). 되돌림이
+  # 끝났다는 뜻이므로 청산선으로 쓴다. 30 < 50 이라 진입 규칙과 동시에 참이 될 수 없다.
+  # ⚠ **교차가 아니라 수준**이다 — 「RSI 가 50 을 위로 통과한 그 한 바」가 아니라 「RSI 가
+  # 50 이상인 모든 바」에서 참이다(Setup D 의 `vwap_reverted` 와 같은 모양). 그래서 청산
+  # 제안이 잦고(실측: 005380 2026-09-01~10-08 기록 봉의 42.5 %, Setup D 는 6.2 %), 포지션이
+  # 없는 바에서는 아무것도 보내지 않고 끝난다. 그 대가로 **청산 송신이 한 번 실패해도 다음
+  # 바에서 다시 제안한다** — 교차로 만들면 그 한 번을 놓친 포지션은 EOD 까지 남는다.
+  - {name: rsi_recovered_raw, op: ge, inputs: [rsi14], params: {const: 50.0}}
+  - {name: rsi_recovered, op: permissive, inputs: [rsi_recovered_raw], params: {when_missing: false}}
+
+  # 005930 트리와 같은 EOD 청산 시각(그 트리 fields.yaml) — 달력의 krx-stock CONTINUOUS
+  # 종료 15:30 전이고, 종가 단일가(15:20~15:30, `config/tos_probes/
+  # cp3-live-producer-stock-005380.yaml::min_bars_per_day` 주석) 전이다.
+  - {name: eod, op: time_ge, params: {at: "15:15"}}
+
+publish:
+  - {field: bar_open, as: open_x100, scale: {mult: 100, round: half_up}}
+  - {field: bar_high, as: high_x100, scale: {mult: 100, round: half_up}}
+  - {field: bar_low, as: low_x100, scale: {mult: 100, round: half_up}}
+  - {field: close, as: close_x100, scale: {mult: 100, round: half_up}}
+  - {field: bar_volume, as: volume, scale: {mult: 1, round: half_up}}
+  - {field: token, as: session_token}
+  - {field: vwap, as: vwap_x100, scale: {mult: 100, round: half_up}}
+  - {field: atr, as: atr14_x100, scale: {mult: 100, round: half_up}}
+  - {field: entry_window, as: entry_window}
+  - {field: rsi_oversold, as: rsi_oversold}
+  - {field: wr_oversold, as: wr_oversold}
+  - {field: rsi_recovered, as: rsi_recovered}
+  - {field: eod, as: eod}

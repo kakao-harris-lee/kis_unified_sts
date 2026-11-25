@@ -1,0 +1,21 @@
+date: '2026-10-12'
+env_file: /home/deploy/project/kis_unified_sts/.env.real
+data_root: /home/deploy/project/kis_unified_sts/data/market
+output: /home/deploy/.local/state/tos/measure/cp3-pr1-20261012
+strategy_yaml: config/strategies/futures/setup_d_vwap_reversion.yaml
+calendar_yaml: config/tos_runtime/cp3-setup-d-long/calendar.yaml
+sample_start: '08:46:00'
+closing_start: '15:30:00'
+sample_end: '15:46:00'
+sample_offsets_s: [1, 5, 15]
+late_tolerance_s: 2
+pace_s: 1.1
+request_timeout_s: 10
+attempts: 3
+retry_pause_s: 2
+max_pages: 20
+max_seed_calendar_days: 90
+benchmark_rounds: 3
+parser_env:
+  KIS_FUTURES_HOUR_CLS_CODE: '60'
+  KIS_MINUTE_BAR_MIN_VOLUME: '10'

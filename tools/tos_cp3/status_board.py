@@ -1,0 +1,1816 @@
+#!/usr/bin/env python3
+"""TOS 한 장 상태판 — «오늘 무엇이 돌았고 무엇이 막혔나» (읽기 전용).
+
+계획 ``docs/plans/2026-10-22-tos-rescope-plan.md`` §2 문장 5 · §3 M4. 운영자가 한 명령
+(``sts tos status``)으로 하루를 본다. 보여 주는 것:
+
+* CP-3 tenant 세션(``cp3-sessions/<label>-YYYYMMDD``) 마다 부팅·종료·rc·ABORT 줄, 렌더
+  digest(source_revision · activation) 와 런타임 ``code_digest`` 대 ``release.yaml``
+  ``expected_code_digest``.
+* 그 세션 날짜로 한정한 틱 수, 결정 종류, 보류(DECISION_WITHHELD 등) 사유와 흐름 정지 사유
+  분포(선물 트리의 4단계 UNKNOWN 은 따로 떼어 이름을 붙인다 — :func:`_fmt_flow_halts`),
+  M5 첫 수(값을 쥐고도 UNKNOWN 으로 거절된 post-boot 봉), ``MARKETFEED_FIELD_REFUSED``
+  행, ``VENUE_BAND_OBSERVED`` 행, ``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(#949).
+* 생산자 지연(journal ``as_of_ms`` − 분 마감) p50/p90 과 생산자 카운터.
+* 상주 paper 세션(``paper-sessions`` · ``paper-ops`` pid) 상태와 그 세션의
+  ``MARKETFEED_PASS_OVERRUN`` · 권한 행.
+* 세션마다 권한 행 — ``AUTHORITY_WITNESS_LOST``(#957) 수와 standing 세션 승인
+  ``APPROVAL_STANDING_BOUND/CONSUMED/REFUSED/NOT_COVERED``(#955) 수·사유.
+* 세는 트리(지금은 LONG)마다 **깨끗한 거래일 누적** 과 목표 — 창의 시작, 가장 오래된
+  깨끗한 날, 마지막으로 깨진 날과 그 사유. 거래일은 그 트리의 tenant 캘린더에서
+  읽으므로 주말·휴장(12-25 · 12-31)은 세지도 깨지도 않고, **깨진 거래일은 그날만 세지
+  않는다** — 앞의 기록을 지우지 않는다(2026-11-11 완화,
+  ``docs/plans/2026-11-11-tos-paper-ready-relaxation.md`` §2 문장 1 «연속은 요구하지
+  않는다»). 깨끗한 하루의 조건은 ``config/tos_status_board.yaml::clean_streak`` 에 있다.
+
+**읽기 전용.** sqlite 는 :func:`tools.tos_cp3.session_inputs._connect_ro`
+(``file:…?mode=ro`` + ``PRAGMA user_version`` 핀)로만 연다. 파일은 읽기만 하고, 프로세스
+생존은 ``/proc/<pid>/cmdline`` 을 읽어 판단한다(신호를 보내지 않는다).
+
+**tos import 없음.** 방화벽(TOS-FW-R)상 ``tools/`` 는 ``tos``/``tos_runtime`` 를 import
+할 수 없다. 저장소 모양은 ``session_inputs`` 가 이미 미러링해 둔 상수·리더를 그대로 쓴다 —
+틱↔봉 결합(capsule_id · evidence seq 괄호)과 M5 계수를 두 번 구현하지 않기 위해서다.
+
+Usage::
+
+    sts tos status                       # 오늘(KST)
+    sts tos status --date 2026-10-22     # 특정 날짜
+    sts tos status --json                # 기계용
+    .venv/bin/python tools/tos_cp3/status_board.py --date 2026-10-22
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import math
+import os
+import re
+import sys
+from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.tos_cp3 import session_day as sd  # noqa: E402
+from tools.tos_cp3 import session_inputs as si  # noqa: E402
+
+DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "tos_status_board.yaml"
+KST = ZoneInfo("Asia/Seoul")
+
+BLOCK = "막힘"
+WARN = "확인"
+
+NORMAL_END_RCS = frozenset({0, 143})
+
+STALE_HALT_REASON = "TIME_NOT_ADMITTED"
+
+STAGE_UNKNOWN_HALT_REASON = "STAGE_UNKNOWN"
+INDEPENDENT_APPROVAL_STEP = "INDEPENDENT_APPROVAL"
+DECISION_ONLY_MARKET = "futures"
+STEP4_UNKNOWN_EXPECTED_LABEL = "4단계 승인 없음(선물 결정 전용 — 예상)"
+
+FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
+STALE_FIELD_REASON = "stale"
+BAND_OBSERVED_KIND = "VENUE_BAND_OBSERVED"
+PASS_OVERRUN_KIND = "MARKETFEED_PASS_OVERRUN"
+AUTHORITY_WITNESS_LOST_KIND = "AUTHORITY_WITNESS_LOST"
+STANDING_APPROVAL_KINDS: Mapping[str, str] = {
+    "bound": "APPROVAL_STANDING_BOUND",
+    "consumed": "APPROVAL_STANDING_CONSUMED",
+    "refused": "APPROVAL_STANDING_REFUSED",
+    "not_covered": "APPROVAL_STANDING_NOT_COVERED",
+}
+SEND_SEALED_KIND = "SEND_SEALED"
+HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
+AUTHORITY_KINDS: tuple[str, ...] = (
+    AUTHORITY_WITNESS_LOST_KIND,
+    *STANDING_APPROVAL_KINDS.values(),
+)
+BOOT_KIND = "TIME_SERVICE_STARTUP"
+_SESSION_DIR_RE = re.compile(r"^(?P<label>[a-z0-9][a-z0-9-]*?)-(?P<day>\d{8})$")
+_PAPER_DIR_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})-(?P<hms>\d{6})-(?P<direction>[A-Z]+)$"
+)
+BOOTPROOF_OK = "boot proof: OK"
+_BOOTPROOF_INSTRUMENT_RE = re.compile(r"· (?P<instrument>[A-Z0-9]+)$")
+_BOOTPROOF_BASELINE_RE = re.compile(r"baseline_seq=(?P<seq>-?\d+)")
+_LOG_LINE_RE = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?P<msg>.*)$")
+
+
+@dataclass(frozen=True)
+class StreakTree:
+    """누적 판정이 세는 한 트리 — 세션 디렉터리 label 과 그 트리의 tenant 캘린더."""
+
+    label: str
+    calendar_yaml: Path
+
+
+@dataclass(frozen=True)
+class StreakConfig:
+    """``config/tos_status_board.yaml::clean_streak`` 의 값(2026-11-11 완화 §2 문장 1)."""
+
+    target_days: int
+    window_days: int
+    clean_run_rcs: frozenset[int]
+    trees: tuple[StreakTree, ...]
+
+
+@dataclass(frozen=True)
+class BoardConfig:
+    """``config/tos_status_board.yaml`` 의 값."""
+
+    state_dir: Path
+    clean_streak: StreakConfig
+    tenant_sessions_subdir: str = "cp3-sessions"
+    tenant_cron_log_glob: str = "cp3-*-tenant-daily.cron.log"
+    paper_sessions_subdir: str = "paper-sessions"
+    paper_ops_subdir: str = "paper-ops"
+    paper_data_subdir: str = "paper-data"
+    paper_runtime_cmdline_needle: str = "tos_runtime"
+    paper_driver_cmdline_needle: str = "tos_paper_session"
+    stale_refusal_ratio_max: float = 0.005
+    latency_percentiles: tuple[int, ...] = (50, 90)
+    history_days: int = 10
+
+
+def load_config(path: Path = DEFAULT_CONFIG_PATH) -> BoardConfig:
+    """YAML 을 읽어 :class:`BoardConfig` 로. 빠진 키는 거부한다(조용한 기본값 없음)."""
+    import yaml
+
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: 최상위가 매핑이 아니다")
+    required = (
+        "state_dir",
+        "tenant_sessions_subdir",
+        "tenant_cron_log_glob",
+        "paper_sessions_subdir",
+        "paper_ops_subdir",
+        "paper_data_subdir",
+        "paper_runtime_cmdline_needle",
+        "paper_driver_cmdline_needle",
+        "stale_refusal_ratio_max",
+        "latency_percentiles",
+        "history_days",
+        "clean_streak",
+    )
+    missing = [key for key in required if key not in raw]
+    if missing:
+        raise ValueError(f"{path}: 키가 없다 {missing}")
+    blank = [
+        key
+        for key in ("paper_runtime_cmdline_needle", "paper_driver_cmdline_needle")
+        if not str(raw[key] or "").strip()
+    ]
+    if blank:
+        raise ValueError(f"{path}: 빈 값은 허용하지 않는다 {blank}")
+    return BoardConfig(
+        state_dir=expand_path(str(raw["state_dir"])),
+        clean_streak=load_streak_config(raw["clean_streak"], path=path),
+        tenant_sessions_subdir=str(raw["tenant_sessions_subdir"]),
+        tenant_cron_log_glob=str(raw["tenant_cron_log_glob"]),
+        paper_sessions_subdir=str(raw["paper_sessions_subdir"]),
+        paper_ops_subdir=str(raw["paper_ops_subdir"]),
+        paper_data_subdir=str(raw["paper_data_subdir"]),
+        paper_runtime_cmdline_needle=str(raw["paper_runtime_cmdline_needle"]),
+        paper_driver_cmdline_needle=str(raw["paper_driver_cmdline_needle"]),
+        stale_refusal_ratio_max=float(raw["stale_refusal_ratio_max"]),
+        latency_percentiles=tuple(int(p) for p in raw["latency_percentiles"]),
+        history_days=int(raw["history_days"]),
+    )
+
+
+def load_streak_config(raw: Any, *, path: Path) -> StreakConfig:
+    """``clean_streak`` 블록. 빠진 키·빈 목록·창보다 큰 목표는 거부한다."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: clean_streak 가 매핑이 아니다")
+    required = (
+        "target_days",
+        "window_days",
+        "clean_run_rcs",
+        "trees",
+    )
+    missing = [key for key in required if key not in raw]
+    if missing:
+        raise ValueError(f"{path}: clean_streak 에 키가 없다 {missing}")
+    target, window = int(raw["target_days"]), int(raw["window_days"])
+    if target < 1:
+        raise ValueError(
+            f"{path}: clean_streak.target_days={target} 는 1 이상이어야 한다"
+        )
+    if window < target:
+        raise ValueError(
+            f"{path}: clean_streak.window_days={window} 가 target_days={target} 보다 작다"
+        )
+    rcs = frozenset(int(rc) for rc in raw["clean_run_rcs"])
+    if not rcs:
+        raise ValueError(f"{path}: clean_streak.clean_run_rcs 가 비었다")
+    entries = raw["trees"]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError(f"{path}: clean_streak.trees 가 비었다")
+    trees: list[StreakTree] = []
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict) or not entry.get("label"):
+            raise ValueError(f"{path}: clean_streak.trees[{i}] 에 label 이 없다")
+        if not entry.get("calendar_yaml"):
+            raise ValueError(
+                f"{path}: clean_streak.trees[{i}] 에 calendar_yaml 이 없다"
+            )
+        candidate = expand_path(str(entry["calendar_yaml"]))
+        trees.append(
+            StreakTree(
+                label=str(entry["label"]),
+                calendar_yaml=(
+                    candidate if candidate.is_absolute() else REPO_ROOT / candidate
+                ),
+            )
+        )
+    labels = [tree.label for tree in trees]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"{path}: clean_streak.trees 의 label 이 겹친다 {labels}")
+    return StreakConfig(
+        target_days=target,
+        window_days=window,
+        clean_run_rcs=rcs,
+        trees=tuple(trees),
+    )
+
+
+def expand_path(value: str) -> Path:
+    return Path(os.path.expandvars(os.path.expanduser(value)))
+
+
+def percentile(values: Sequence[int], p: int) -> int | None:
+    """Nearest-rank 백분위. 빈 입력이면 ``None``."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    rank = max(1, math.ceil(p / 100 * len(ordered)))
+    return ordered[rank - 1]
+
+
+def bar_close_ms(raw_event_id: str) -> int | None:
+    """``A05611:1m:20261022T084500+0900`` → 그 1분봉 마감(시작 + 60s)의 epoch ms."""
+    try:
+        stamp = raw_event_id.split(si._RAW_EVENT_ID_SEPARATOR, 1)[1]
+        start = _dt.datetime.strptime(stamp, si._RAW_EVENT_ID_STAMP_FORMAT)
+    except (IndexError, ValueError):
+        return None
+    return int(start.timestamp() * 1000) + 60_000
+
+
+def pid_alive(pid: int | None, needle: str, *, proc_root: Path = Path("/proc")) -> bool:
+    """``pid`` 가 살아 있고 그 cmdline 에 ``needle`` 이 있으면 True(pid 재사용 방지)."""
+    if pid is None:
+        return False
+    try:
+        cmdline = (proc_root / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return False
+    return needle in cmdline.replace(b"\0", b" ").decode("utf-8", "replace")
+
+
+def _read_json(path: Path) -> Any | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _last_json_line(path: Path) -> dict[str, Any] | None:
+    try:
+        lines = [
+            ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()
+        ]
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def _hhmmss(ts: str | None) -> str:
+    return ts[11:] if ts else "—"
+
+
+@dataclass
+class RunnerLog:
+    """``session.log`` (``run_tenant_session.sh`` 의 log() 흐름)에서 읽은 사실."""
+
+    first_ts: str | None = None
+    repo_commit: str | None = None
+    market: str | None = None
+    instrument: str | None = None
+    data_leaf: str | None = None
+    tree_id: str | None = None
+    direction: str | None = None
+    source_revision: str | None = None
+    activation: str | None = None
+    band_declared: bool | None = None
+    band_line_ok: bool = False
+    band_digest: str | None = None
+    boot_at: str | None = None
+    run_pid: int | None = None
+    producer_pid: int | None = None
+    stop_at: str | None = None
+    end_at: str | None = None
+    run_rc: int | None = None
+    producer_rc: int | None = None
+    aborts: list[str] = field(default_factory=list)
+
+
+_RUNNER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("repo_commit", re.compile(r"checkout ok: .*repo_commit=(\w+)")),
+    ("market", re.compile(r"^market=(\w+) \(tree and producer agree\)")),
+    ("data_leaf", re.compile(r"instrument=(\S+) · data leaf (\S+)")),
+    ("render", re.compile(r"=== RENDER tree=(\S+) direction=(\S+)")),
+    ("band_ok", re.compile(r"band line ok · .*digest=(\w+)")),
+    ("band_slot", re.compile(r"^render: \S+ declares a band_journal_path slot")),
+    ("band_off", re.compile(r"^render: \S+ declares no band source")),
+    ("boot", re.compile(r"=== BOOT ")),
+    ("run_pid", re.compile(r"^run pid=(\d+)")),
+    ("producer_pid", re.compile(r"^producer pid=(\d+)")),
+    ("stop", re.compile(r"=== STOP ")),
+    ("end_run", re.compile(r"=== END run rc=(\d+)")),
+    ("end_producer", re.compile(r"=== END producer rc=(\d+)")),
+    ("abort", re.compile(r"^ABORT: (.*)")),
+)
+_RENDER_FIELD_RE = re.compile(r"^\s+(source_revision|activation):\s+(.*)$")
+
+
+def parse_runner_log(text: str) -> RunnerLog:
+    out = RunnerLog()
+    for line in text.splitlines():
+        stamped = _LOG_LINE_RE.match(line)
+        if stamped is None:
+            render = _RENDER_FIELD_RE.match(line)
+            if render is not None:
+                setattr(out, render.group(1), render.group(2).strip())
+            continue
+        ts, msg = stamped.group("ts"), stamped.group("msg")
+        if out.first_ts is None:
+            out.first_ts = ts
+        for name, pattern in _RUNNER_PATTERNS:
+            m = pattern.search(msg)
+            if m is None:
+                continue
+            if name == "repo_commit":
+                out.repo_commit = m.group(1)
+            elif name == "market" and out.market is None:
+                out.market = m.group(1)
+            elif name == "data_leaf":
+                out.instrument, out.data_leaf = m.group(1), m.group(2)
+            elif name == "render":
+                out.tree_id, out.direction = m.group(1), m.group(2)
+            elif name == "band_ok":
+                out.band_line_ok, out.band_digest = True, m.group(1)
+            elif name == "band_slot":
+                out.band_declared = True
+            elif name == "band_off":
+                out.band_declared = False
+            elif name == "boot":
+                out.boot_at = ts
+            elif name == "run_pid":
+                out.run_pid = int(m.group(1))
+            elif name == "producer_pid":
+                out.producer_pid = int(m.group(1))
+            elif name == "stop":
+                out.stop_at = ts
+            elif name == "end_run":
+                out.run_rc, out.end_at = int(m.group(1)), ts
+            elif name == "end_producer":
+                out.producer_rc = int(m.group(1))
+            elif name == "abort":
+                out.aborts.append(m.group(1))
+            break
+    return out
+
+
+_EXPECTED_CODE_DIGEST_RE = re.compile(
+    r"^expected_code_digest:\s*[\"']?([0-9a-f]{64})[\"']?\s*$", re.M
+)
+
+
+def expected_code_digest(config_dir: Path) -> str | None:
+    """렌더된 트리 ``release.yaml`` 의 (주석이 아닌) ``expected_code_digest``."""
+    try:
+        text = (config_dir / "release.yaml").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = _EXPECTED_CODE_DIGEST_RE.search(text)
+    return m.group(1) if m else None
+
+
+def producer_facts(session_dir: Path, percentiles: Sequence[int]) -> dict[str, Any]:
+    """journal 지연 분포 + producer-summary 카운터 + band 줄."""
+    latencies: list[int] = []
+    rows = 0
+    journal = session_dir / "journal.jsonl"
+    try:
+        lines = journal.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        rows += 1
+        close = bar_close_ms(str(row.get("raw_event_id", "")))
+        as_of = row.get("as_of_ms")
+        if close is not None and isinstance(as_of, int):
+            latencies.append(as_of - close)
+    summary = _read_json(session_dir / "producer" / "producer-summary.json")
+    counters = summary.get("counters") if isinstance(summary, dict) else None
+    return {
+        "journal_rows": rows,
+        "latency_ms": {f"p{p}": percentile(latencies, p) for p in percentiles}
+        | {"max": max(latencies) if latencies else None, "n": len(latencies)},
+        "counters": counters,
+        "band_line": _last_json_line(session_dir / "producer" / "band.jsonl"),
+    }
+
+
+@dataclass
+class LeafFacts:
+    """한 데이터 잎을 한 번 읽은 결과. 잎은 세션을 누적하므로 날짜로 자른다."""
+
+    records: list[dict[str, Any]] | None = None
+    snapshots: tuple[si.Snapshot, ...] | None = None
+    extra_rows: list[tuple[int, str, dict[str, Any]]] = field(default_factory=list)
+    code_digest_by_seq: dict[int, str | None] = field(default_factory=dict)
+    boot_seqs: list[int] = field(default_factory=list)
+    error: str | None = None
+
+
+def _kind_rows(
+    conn: Any, kinds: Sequence[str], *, after_seq: int = -1
+) -> list[tuple[int, str, dict[str, Any]]]:
+    """``(seq, kind, record)`` — 그 종류의 evidence 행, seq 오름차순(``(kind, seq)`` 인덱스)."""
+    marks = ",".join("?" * len(kinds))
+    return [
+        (
+            int(seq),
+            str(kind),
+            si._evidence_record(payload_json, seq=int(seq), kind=str(kind)),
+        )
+        for seq, kind, payload_json in conn.execute(
+            f"SELECT seq, kind, payload_json FROM entries WHERE kind IN ({marks})"
+            " AND seq > ? ORDER BY seq",
+            (*kinds, after_seq),
+        )
+    ]
+
+
+def pass_overrun_summary(
+    rows: Iterable[tuple[int, Mapping[str, Any]]],
+) -> dict[str, Any]:
+    """``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(``pass_ms`` 최대) 한 행."""
+    rows = list(rows)
+    timed = [
+        (seq, p)
+        for seq, p in rows
+        if isinstance(p.get("pass_ms"), int) and not isinstance(p.get("pass_ms"), bool)
+    ]
+    worst = None
+    if timed:
+        seq, p = max(timed, key=lambda sp: sp[1]["pass_ms"])
+        worst = {"seq": seq} | {
+            key: p.get(key)
+            for key in ("pass_ms", "budget_ms", "tick_ms", "after_pass_ms")
+        }
+    return {"rows": len(rows), "worst": worst}
+
+
+def authority_summary(
+    rows: Iterable[tuple[int, str, Mapping[str, Any]]],
+    *,
+    first_tick_seq: int | None,
+    first_send_seq: int | None,
+) -> dict[str, Any]:
+    """권한 행(:data:`AUTHORITY_KINDS`) 요약 — 증인 상실 수와 standing 승인 종류별 수·사유."""
+    lost = 0
+    mid_session: list[int] = []
+    no_tick_yet: list[int] = []
+    counts = dict.fromkeys(STANDING_APPROVAL_KINDS, 0)
+    by: dict[str, Counter[str]] = {
+        "consumed": Counter(),
+        "refused": Counter(),
+        "not_covered": Counter(),
+    }
+    names = {kind: key for key, kind in STANDING_APPROVAL_KINDS.items()}
+    for seq, kind, p in rows:
+        if kind == AUTHORITY_WITNESS_LOST_KIND:
+            lost += 1
+            before_send = first_send_seq is None or seq < first_send_seq
+            if not before_send or (
+                first_tick_seq is not None and seq >= first_tick_seq
+            ):
+                mid_session.append(seq)
+            elif first_tick_seq is None:
+                no_tick_yet.append(seq)
+        elif kind in names:
+            key = names[kind]
+            counts[key] += 1
+            if key in by:
+                field_name = "action" if key == "consumed" else "reason"
+                by[key][str(p.get(field_name))] += 1
+    return {
+        "witness_lost": lost,
+        "witness_lost_mid_session": len(mid_session),
+        "witness_lost_mid_session_seqs": mid_session,
+        "witness_lost_before_first_tick": len(no_tick_yet),
+        "witness_lost_before_first_tick_seqs": no_tick_yet,
+        "standing": counts,
+        "standing_consumed_by_action": dict(sorted(by["consumed"].items())),
+        "standing_refused_by_reason": dict(sorted(by["refused"].items())),
+        "standing_not_covered_by_reason": dict(sorted(by["not_covered"].items())),
+    }
+
+
+def read_leaf(data_dir: Path) -> LeafFacts:
+    """``session_inputs`` 의 리더로 잎을 읽는다. 거부는 문자열로 돌려준다(상태판은 죽지 않는다)."""
+    facts = LeafFacts()
+    try:
+        facts.records = si.live_decision_records(data_dir)
+        facts.snapshots = si.read_snapshots(data_dir)
+        conn = si._connect_ro(
+            data_dir / si.EVIDENCE_FILE_NAME,
+            label="evidence",
+            pinned_version=si.PINNED_EVIDENCE_SCHEMA_VERSION,
+        )
+        try:
+            facts.extra_rows = _kind_rows(
+                conn,
+                (
+                    FIELD_REFUSED_KIND,
+                    BAND_OBSERVED_KIND,
+                    PASS_OVERRUN_KIND,
+                    SEND_SEALED_KIND,
+                    *AUTHORITY_KINDS,
+                ),
+            )
+            facts.boot_seqs = [
+                int(seq)
+                for (seq,) in conn.execute(
+                    "SELECT seq FROM entries WHERE kind = ? ORDER BY seq", (BOOT_KIND,)
+                )
+            ]
+            seqs = sorted({int(r["evidence_seq"]) for r in facts.records})
+            for chunk_start in range(0, len(seqs), 500):
+                chunk = seqs[chunk_start : chunk_start + 500]
+                marks = ",".join("?" * len(chunk))
+                for seq, identity in conn.execute(
+                    f"SELECT seq, runtime_identity_json FROM entries WHERE seq IN ({marks})",
+                    chunk,
+                ):
+                    digest = None
+                    if identity:
+                        try:
+                            digest = json.loads(identity).get("code_digest")
+                        except (json.JSONDecodeError, AttributeError):
+                            digest = None
+                    facts.code_digest_by_seq[int(seq)] = digest
+        finally:
+            conn.close()
+    except (si.SessionInputsError, OSError, ValueError) as exc:
+        facts.error = f"{type(exc).__name__}: {exc}"
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 — sqlite3.Error 등, 상태판은 사유를 보여 준다
+        facts.error = f"{type(exc).__name__}: {exc}"
+    return facts
+
+
+def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str, Any]:
+    """한 세션 날짜(KST ``YYYYMMDD``)로 자른 런타임 사실."""
+    if leaf.error is not None or leaf.records is None or leaf.snapshots is None:
+        return {"error": leaf.error or "store not read"}
+    passed = [
+        snap
+        for snap in leaf.snapshots
+        if (d := si.session_day_of(snap.raw_event_id)) is None or d <= day
+    ]
+    has_day = any(si.session_day_of(snap.raw_event_id) == day for snap in passed)
+    has_unreadable = any(
+        si.session_day_of(snap.raw_event_id) is None for snap in passed
+    )
+    if has_day or has_unreadable:
+        try:
+            day_snaps, scope = si.scope_to_session_day(passed, pre_boot)
+        except si.SessionInputsError as exc:
+            return {"error": f"세션 범위 거부 — {exc}"}
+        if scope.session_day != day:
+            return {
+                "error": f"세션 범위 거부 — 저장소가 말하는 세션 날짜 {scope.session_day} ≠ {day}"
+            }
+    else:
+        day_snaps = []
+        scope = si.SessionScope(
+            session_day=day,
+            days_present=tuple(
+                sorted(
+                    {
+                        d
+                        for d in (si.session_day_of(x.raw_event_id) for x in passed)
+                        if d
+                    }
+                )
+            ),
+            all_days_total=len(leaf.snapshots),
+        )
+    day_ids = {snap.snapshot_id for snap in day_snaps}
+    ticks = [r for r in leaf.records if r["snapshot_id"] in day_ids]
+    post_boot = [r for r in ticks if r["raw_event_id"] not in pre_boot]
+    outcomes = Counter(r["outcome_kind"] for r in ticks)
+    withheld = Counter(
+        f"{r['evidence_kind']}/{r['pipeline_halt_reason']}"
+        for r in ticks
+        if r["outcome_kind"] == si.NO_OUTCOME_KIND
+    )
+    flow_halts = Counter(
+        r["flow_halt_reason"] for r in ticks if r.get("flow_halt_reason") is not None
+    )
+    step4_unknown = sum(
+        1
+        for r in ticks
+        if r.get("flow_halt_reason") == STAGE_UNKNOWN_HALT_REASON
+        and r.get("flow_halt_step") == INDEPENDENT_APPROVAL_STEP
+    )
+    withheld_post_boot = [
+        r for r in post_boot if r["outcome_kind"] == si.NO_OUTCOME_KIND
+    ]
+    stale = sum(
+        1 for r in withheld_post_boot if r["pipeline_halt_reason"] == STALE_HALT_REASON
+    )
+    other = [
+        f"{r['raw_event_id']} {r['evidence_kind']}/{r['pipeline_halt_reason']}"
+        for r in withheld_post_boot
+        if r["pipeline_halt_reason"] != STALE_HALT_REASON
+    ]
+
+    m5_block = si.consumed_field_states(
+        snapshots=day_snaps, pre_boot=pre_boot, scope=scope
+    )
+
+    refused_rows = [
+        p
+        for _seq, kind, p in leaf.extra_rows
+        if kind == FIELD_REFUSED_KIND
+        and si.session_day_of(str(p.get("raw_event_id", ""))) == day
+    ]
+    refused_by_reason: Counter[str] = Counter()
+    for p in refused_rows:
+        for reason in p.get("refused_by_reason") or {}:
+            refused_by_reason[reason] += 1
+    ages = [p["age_ms"] for p in refused_rows if isinstance(p.get("age_ms"), int)]
+    non_stale_refused = [
+        f"{p.get('raw_event_id')} {reason}"
+        for p in refused_rows
+        for reason in (p.get("refused_by_reason") or {})
+        if reason != STALE_FIELD_REASON
+    ]
+    seq_range = session_seq_range(leaf, ticks)
+    band_rows: list[dict[str, Any]] | None
+    pass_overrun: dict[str, Any] | None
+    if seq_range is None:
+        band_rows = None
+        pass_overrun = None
+        authority = None
+    else:
+        lo, hi = seq_range
+        pass_overrun = pass_overrun_summary(
+            (seq, p)
+            for seq, kind, p in leaf.extra_rows
+            if kind == PASS_OVERRUN_KIND and lo <= seq and (hi is None or seq < hi)
+        )
+        in_segment = [
+            row
+            for row in leaf.extra_rows
+            if lo <= row[0] and (hi is None or row[0] < hi)
+        ]
+        sends = [seq for seq, kind, _ in in_segment if kind == SEND_SEALED_KIND]
+        authority = authority_summary(
+            (row for row in in_segment if row[1] in AUTHORITY_KINDS),
+            first_tick_seq=(
+                min(int(r["evidence_seq"]) for r in ticks) if ticks else None
+            ),
+            first_send_seq=min(sends) if sends else None,
+        )
+        band_rows = [
+            {
+                key: p.get(key)
+                for key in (
+                    "outcome",
+                    "reason",
+                    "detail",
+                    "trading_date",
+                    "basis",
+                    "price_min",
+                    "price_max",
+                    "narrowed_intraday",
+                )
+            }
+            | {"seq": seq}
+            for seq, kind, p in leaf.extra_rows
+            if kind == BAND_OBSERVED_KIND and lo <= seq and (hi is None or seq < hi)
+        ]
+    code_digests = sorted(
+        {
+            d
+            for d in (
+                leaf.code_digest_by_seq.get(int(r["evidence_seq"])) for r in ticks
+            )
+            if d
+        }
+    )
+    post_boot_consumed = int(m5_block["counts"]["post_boot_consumed_ids"])
+    m5 = int(
+        m5_block["m5_post_boot_consumed_ids_with_a_present_value_refused_as_unknown"]
+    )
+    return {
+        "ticks": len(ticks),
+        "post_boot_ticks": len(post_boot),
+        "outcomes": dict(sorted(outcomes.items())),
+        "withheld_by_reason": dict(sorted(withheld.items())),
+        "flow_halts": dict(sorted(flow_halts.items())),
+        "flow_halts_independent_approval_unknown": step4_unknown,
+        "capacity_denied": sum(1 for r in ticks if r.get("capacity_denied")),
+        "handed_off": sum(1 for r in ticks if r.get("handed_off")),
+        "stale_withheld_post_boot": stale,
+        "other_withheld_post_boot": other,
+        "post_boot_consumed_ids": post_boot_consumed,
+        "m5_present_value_refused_as_unknown": m5,
+        "m5_ratio": (m5 / post_boot_consumed) if post_boot_consumed else None,
+        "m5_unknown_field_causes": m5_block["unknown_field_causes"],
+        "consumed_snapshots": len(day_snaps),
+        "field_refused_rows": len(refused_rows),
+        "field_refused_by_reason": dict(sorted(refused_by_reason.items())),
+        "field_refused_max_age_ms": max(ages) if ages else None,
+        "field_refused_non_stale": non_stale_refused,
+        "band_observed": band_rows,
+        "pass_overrun": pass_overrun,
+        "authority": authority,
+        "seq_range": list(seq_range) if seq_range else None,
+        "code_digests": code_digests,
+    }
+
+
+def session_seq_range(
+    leaf: LeafFacts, ticks: Sequence[Mapping[str, Any]]
+) -> tuple[int, int | None] | None:
+    """이 세션의 부팅 구간 ``[boot, 다음 boot)`` evidence seq 범위."""
+    if not leaf.boot_seqs:
+        return None
+    if ticks:
+        first = min(int(r["evidence_seq"]) for r in ticks)
+        starts = [b for b in leaf.boot_seqs if b <= first]
+        if not starts:
+            return None
+        start = starts[-1]
+    else:
+        start = leaf.boot_seqs[-1]
+        if any(int(r["evidence_seq"]) > start for r in leaf.records or ()):
+            return None
+    later = [b for b in leaf.boot_seqs if b > start]
+    return start, (later[0] if later else None)
+
+
+@dataclass
+class TenantSession:
+    name: str
+    label: str
+    day: str
+    path: Path
+    runner: RunnerLog
+    status: str
+    run_alive: bool
+    producer_alive: bool
+    expected_code_digest: str | None
+    producer: dict[str, Any]
+    store: dict[str, Any] | None
+    boot_snapshot_error: str | None = None
+    issues: list[tuple[str, str]] = field(default_factory=list)
+
+
+def _session_status(runner: RunnerLog, run_alive: bool, producer_alive: bool) -> str:
+    if runner.aborts:
+        return "ABORT"
+    if runner.end_at is not None:
+        return "ENDED" if runner.run_rc in NORMAL_END_RCS else "FAILED"
+    if runner.boot_at is not None:
+        return "RUNNING" if run_alive else "LOST"
+    return "PRE-BOOT" if producer_alive else "NOT-BOOTED"
+
+
+def read_tenant_session(
+    path: Path,
+    *,
+    leaves: dict[str, LeafFacts],
+    cfg: BoardConfig,
+    proc_root: Path | None,
+    with_store: bool = True,
+) -> TenantSession:
+    """한 세션 디렉터리. ``proc_root=None`` 이면 생존 확인을 하지 않는다(지난 날짜)."""
+    m = _SESSION_DIR_RE.match(path.name)
+    assert m is not None
+    try:
+        runner = parse_runner_log((path / "session.log").read_text(encoding="utf-8"))
+    except OSError:
+        runner = RunnerLog()
+    needle = str(path)
+    run_alive = proc_root is not None and pid_alive(
+        runner.run_pid, needle, proc_root=proc_root
+    )
+    producer_alive = proc_root is not None and pid_alive(
+        runner.producer_pid, needle, proc_root=proc_root
+    )
+    status = _session_status(runner, run_alive, producer_alive)
+
+    store: dict[str, Any] | None = None
+    boot_snapshot_error: str | None = None
+    if with_store and runner.boot_at and not runner.data_leaf:
+        store = {
+            "error": "session.log 에 'instrument=… · data leaf …' 줄이 없어 저장소를 열 수 없다"
+        }
+    elif with_store and runner.data_leaf and runner.boot_at:
+        leaf = leaves.get(runner.data_leaf)
+        if leaf is None:
+            leaf = leaves[runner.data_leaf] = read_leaf(Path(runner.data_leaf))
+        boot_snapshot = path / "producer" / "boot-journal-snapshot.json"
+        try:
+            pre_boot = si.read_boot_snapshot(boot_snapshot)
+        except (OSError, si.SessionInputsError, json.JSONDecodeError) as exc:
+            pre_boot = frozenset()
+            boot_snapshot_error = f"{type(exc).__name__}: {exc}"
+        store = store_facts(leaf, m.group("day"), pre_boot)
+
+    session = TenantSession(
+        name=path.name,
+        label=m.group("label"),
+        day=m.group("day"),
+        path=path,
+        runner=runner,
+        status=status,
+        run_alive=run_alive,
+        producer_alive=producer_alive,
+        expected_code_digest=expected_code_digest(path / "config"),
+        producer=producer_facts(path, cfg.latency_percentiles),
+        store=store,
+        boot_snapshot_error=boot_snapshot_error,
+    )
+    session.issues = tenant_issues(session, cfg)
+    return session
+
+
+def _overrun_issues(overrun: Mapping[str, Any] | None) -> list[tuple[str, str]]:
+    """진단 행이라 막힘이 아니라 확인이다 — 런타임은 이 행으로 아무것도 결정하지 않는다(#949)."""
+    if not overrun or not overrun.get("rows"):
+        return []
+    return [
+        (
+            WARN,
+            f"{PASS_OVERRUN_KIND} {overrun['rows']}행 — {_fmt_overrun_worst(overrun)}",
+        )
+    ]
+
+
+def _authority_issues(auth: Mapping[str, Any] | None) -> list[tuple[str, str]]:
+    """장중 증인 상실은 막힘, standing 거절·미적용은 확인 — :func:`authority_summary`."""
+    if not auth or "error" in auth:
+        return []
+    issues: list[tuple[str, str]] = []
+    if auth["witness_lost_mid_session"]:
+        seqs = ",".join(str(x) for x in auth["witness_lost_mid_session_seqs"])
+        issues.append(
+            (
+                BLOCK,
+                f"{AUTHORITY_WITNESS_LOST_KIND} 장중 {auth['witness_lost_mid_session']}행"
+                f" (seq {seqs}; 첫 틱 뒤 또는 송신 봉인 뒤)"
+                " — 이후 송신은 재부팅 전까지 거절된다(fail-closed)",
+            )
+        )
+    if auth["witness_lost_before_first_tick"]:
+        seqs = ",".join(str(x) for x in auth["witness_lost_before_first_tick_seqs"])
+        issues.append(
+            (
+                WARN,
+                f"{AUTHORITY_WITNESS_LOST_KIND} 첫 틱 전 상실"
+                f" {auth['witness_lost_before_first_tick']}행 (seq {seqs})"
+                " — 장 전 부팅이면 설계상, 첫 봉 뒤에도 남아 있으면 확인 필요",
+            )
+        )
+    for key, reasons in (
+        ("refused", auth["standing_refused_by_reason"]),
+        ("not_covered", auth["standing_not_covered_by_reason"]),
+    ):
+        if auth["standing"][key]:
+            issues.append(
+                (
+                    WARN,
+                    f"{STANDING_APPROVAL_KINDS[key]} {auth['standing'][key]}행"
+                    f" ({_fmt_counts(reasons)})",
+                )
+            )
+    return issues
+
+
+def _fmt_authority(auth: Mapping[str, Any] | None) -> str:
+    if auth is None:
+        return "권한 행: 부팅 구간을 정할 수 없어 보지 못함"
+    st = auth["standing"]
+    detail = {
+        "consumed": auth["standing_consumed_by_action"],
+        "refused": auth["standing_refused_by_reason"],
+        "not_covered": auth["standing_not_covered_by_reason"],
+    }
+    parts = [f"BOUND {st['bound']}"]
+    for key, label in (
+        ("consumed", "CONSUMED"),
+        ("refused", "REFUSED"),
+        ("not_covered", "NOT_COVERED"),
+    ):
+        extra = f" ({_fmt_counts(detail[key])})" if st[key] else ""
+        parts.append(f"{label} {st[key]}{extra}")
+    return (
+        f"{AUTHORITY_WITNESS_LOST_KIND} {auth['witness_lost']}행"
+        f" (장중 {auth['witness_lost_mid_session']}"
+        + (
+            f" · 첫 틱 전 {auth['witness_lost_before_first_tick']}"
+            if auth["witness_lost_before_first_tick"]
+            else ""
+        )
+        + ")"
+        f" · standing 승인 {' · '.join(parts)}"
+    )
+
+
+def _fmt_overrun_worst(overrun: Mapping[str, Any]) -> str:
+    w = overrun.get("worst")
+    if not w:
+        return "pass_ms 없음"
+    return (
+        f"최악 pass {w['pass_ms']}ms > 창 {w['budget_ms']}ms"
+        f" (tick {w['tick_ms']}ms + post-pass {w['after_pass_ms']}ms, seq {w['seq']})"
+    )
+
+
+def _fmt_overrun(overrun: Mapping[str, Any] | None) -> str:
+    if overrun is None:
+        return f"{PASS_OVERRUN_KIND}: 부팅 구간을 정할 수 없어 보지 못함"
+    if not overrun["rows"]:
+        return f"{PASS_OVERRUN_KIND} 0행"
+    return f"{PASS_OVERRUN_KIND} {overrun['rows']}행 · {_fmt_overrun_worst(overrun)}"
+
+
+def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
+    issues: list[tuple[str, str]] = []
+    r = s.runner
+    for line in r.aborts:
+        issues.append((BLOCK, f"ABORT: {line}"))
+    if s.status == "NOT-BOOTED":
+        issues.append(
+            (
+                BLOCK,
+                "런타임이 부팅하지 않았고 러너 프로세스도 없다(session.log 끝 확인)",
+            )
+        )
+    elif s.status == "PRE-BOOT":
+        issues.append((WARN, "생산자는 돌고 있으나 런타임 부팅 전"))
+    elif s.status == "LOST":
+        issues.append((BLOCK, f"런타임 pid {r.run_pid} 가 END 기록 없이 사라졌다"))
+    elif s.status == "FAILED":
+        issues.append((BLOCK, f"런타임 종료 rc={r.run_rc} (정상은 0/143)"))
+    if r.producer_rc is not None and r.producer_rc not in NORMAL_END_RCS:
+        issues.append((BLOCK, f"생산자 종료 rc={r.producer_rc}"))
+    if r.boot_at and r.band_declared is not False and not r.band_line_ok:
+        issues.append((WARN, "부팅 전 band 줄 없음(band plan §4 수용 1)"))
+    counters = s.producer.get("counters") or {}
+    for key in ("fetch_error", "produce_error"):
+        if counters.get(key):
+            issues.append((WARN, f"생산자 {key}={counters[key]}"))
+    if s.boot_snapshot_error is not None:
+        issues.append(
+            (
+                WARN,
+                "부팅 스냅샷을 읽지 못해 pre-boot 봉을 빼지 않고 셌다 — "
+                f"{s.boot_snapshot_error}",
+            )
+        )
+    if r.boot_at and s.expected_code_digest is None:
+        issues.append(
+            (
+                WARN,
+                "release.yaml 의 expected_code_digest 를 찾지 못해 code_digest 를 대조하지 않았다",
+            )
+        )
+    st = s.store
+    if st is not None:
+        if "error" in st:
+            issues.append((BLOCK, f"런타임 저장소 상태 모름 — {st['error']}"))
+        else:
+            if st["ticks"] == 0:
+                if s.status in ("RUNNING", "PRE-BOOT"):
+                    issues.append((WARN, "부팅했지만 아직 소비한 틱이 없다"))
+                else:
+                    issues.append((BLOCK, "부팅한 세션이 틱을 하나도 소비하지 않았다"))
+            for line in st["other_withheld_post_boot"]:
+                issues.append((BLOCK, f"stale 이 아닌 보류: {line}"))
+            for line in st["field_refused_non_stale"]:
+                issues.append((BLOCK, f"stale 이 아닌 필드 거절: {line}"))
+            ratio = st["m5_ratio"]
+            if ratio is not None and ratio > cfg.stale_refusal_ratio_max:
+                level = WARN if s.status in ("RUNNING", "PRE-BOOT") else BLOCK
+                suffix = " (진행 중 — 판정은 종료 뒤)" if level == WARN else ""
+                issues.append(
+                    (
+                        level,
+                        f"stale 거절(M5 ①) {st['m5_present_value_refused_as_unknown']}"
+                        f"/{st['post_boot_consumed_ids']} = {ratio:.3%}"
+                        f" > {cfg.stale_refusal_ratio_max:.1%}{suffix}",
+                    )
+                )
+            bands = st["band_observed"]
+            if bands is None:
+                if r.band_declared:
+                    issues.append(
+                        (
+                            WARN,
+                            "부팅 구간을 정할 수 없어 VENUE_BAND_OBSERVED 를 보지 못했다",
+                        )
+                    )
+            else:
+                for b in bands:
+                    if b["outcome"] != "OBSERVED":
+                        issues.append(
+                            (
+                                BLOCK,
+                                f"VENUE_BAND_OBSERVED {b['outcome']} seq {b['seq']}"
+                                f" reason={b['reason']} detail={b['detail']}",
+                            )
+                        )
+                    elif str(b["trading_date"]) != s.day:
+                        issues.append(
+                            (
+                                WARN,
+                                f"VENUE_BAND_OBSERVED trading_date {b['trading_date']}"
+                                f" ≠ 세션 날짜 {s.day} (seq {b['seq']})",
+                            )
+                        )
+                if r.band_declared and not bands:
+                    issues.append(
+                        (
+                            WARN,
+                            "band 를 선언한 트리인데 이 부팅 구간에 VENUE_BAND_OBSERVED 행 없음",
+                        )
+                    )
+            issues.extend(_overrun_issues(st["pass_overrun"]))
+            issues.extend(_authority_issues(st["authority"]))
+            if (
+                s.expected_code_digest
+                and st["code_digests"]
+                and st["code_digests"] != [s.expected_code_digest]
+            ):
+                issues.append(
+                    (
+                        BLOCK,
+                        f"런타임 code_digest {','.join(d[:12] for d in st['code_digests'])}"
+                        f" ≠ release.yaml {s.expected_code_digest[:12]}",
+                    )
+                )
+    return issues
+
+
+def _read_pid(path: Path) -> int | None:
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def paper_segment_rows(
+    cfg: BoardConfig,
+    bootproof: Sequence[str],
+    report: Mapping[str, Any] | None,
+    kinds: Sequence[str],
+) -> list[tuple[int, str, dict[str, Any]]] | dict[str, str] | None:
+    """상주 paper 세션 부팅 구간의 ``kinds`` 행. 잎이나 기준 seq 를 모르면 ``None``,"""
+    if not bootproof or BOOTPROOF_OK not in bootproof[0]:
+        return None
+    report = report if isinstance(report, Mapping) else {}
+    baseline = report.get("baseline_evidence_seq")
+    if not isinstance(baseline, int) and len(bootproof) > 2:
+        m = _BOOTPROOF_BASELINE_RE.search(bootproof[2])
+        baseline = int(m.group("seq")) if m else None
+    data_dir = report.get("data_dir")
+    if not data_dir and bootproof:
+        m = _BOOTPROOF_INSTRUMENT_RE.search(bootproof[0].strip())
+        if m:
+            data_dir = str(
+                cfg.state_dir / cfg.paper_data_subdir / m.group("instrument")
+            )
+    if not isinstance(baseline, int) or not data_dir:
+        return None
+    try:
+        conn = si._connect_ro(
+            Path(data_dir) / si.EVIDENCE_FILE_NAME,
+            label="evidence",
+            pinned_version=si.PINNED_EVIDENCE_SCHEMA_VERSION,
+        )
+        try:
+            rows = _kind_rows(conn, (BOOT_KIND, *kinds), after_seq=baseline)
+            (first_tick,) = conn.execute(
+                "SELECT MIN(seq) FROM entries WHERE kind = ? AND seq > ?",
+                (HANDLING_STARTED_KIND, baseline),
+            ).fetchone()
+        finally:
+            conn.close()
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 — sqlite3.Error 등, 상태판은 사유를 보여 준다
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    boots = [seq for seq, kind, _ in rows if kind == BOOT_KIND]
+    hi = boots[1] if len(boots) > 1 else None
+    if first_tick is not None and (hi is None or first_tick < hi):
+        rows.append((int(first_tick), HANDLING_STARTED_KIND, {}))
+    return [row for row in rows if row[1] != BOOT_KIND and (hi is None or row[0] < hi)]
+
+
+def paper_facts(
+    cfg: BoardConfig, date_iso: str, *, proc_root: Path | None
+) -> dict[str, Any]:
+    """그 날짜의 상주 paper 세션. ``proc_root=None`` 이면 pid 생존을 보지 않는다(지난 날짜)."""
+    root = cfg.state_dir / cfg.paper_sessions_subdir
+    try:
+        candidates = sorted(
+            p
+            for p in root.iterdir()
+            if p.is_dir()
+            and (m := _PAPER_DIR_RE.match(p.name))
+            and m.group("date") == date_iso
+        )
+    except OSError:
+        candidates = []
+    ops = cfg.state_dir / cfg.paper_ops_subdir
+    runtime_pid = _read_pid(ops / "paper-session.pid")
+    driver_pid = _read_pid(ops / "paper-session.driver.pid")
+    facts: dict[str, Any] = {
+        "session": None,
+        "live_check": proc_root is not None,
+        "runtime_alive": proc_root is not None
+        and pid_alive(
+            runtime_pid, cfg.paper_runtime_cmdline_needle, proc_root=proc_root
+        ),
+        "driver_alive": proc_root is not None
+        and pid_alive(driver_pid, cfg.paper_driver_cmdline_needle, proc_root=proc_root),
+        "issues": [],
+    }
+    if not candidates:
+        facts["issues"].append((WARN, f"{date_iso} 상주 paper 세션 디렉터리 없음"))
+        return facts
+    session = candidates[-1]
+    try:
+        bootproof = (session / "bootproof.txt").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        bootproof = []
+    report = _read_json(session / "report.json")
+    facts["session"] = session.name
+    facts["bootproof"] = bootproof[0] if bootproof else None
+    if isinstance(report, dict):
+        facts["report"] = {
+            key: report.get(key)
+            for key in (
+                "verdict",
+                "exit_code",
+                "stop_reason",
+                "started_kst",
+                "ended_kst",
+                "events_consumed",
+                "stale_withheld",
+                "stale_ratio",
+                "worktree_commit",
+            )
+        }
+        breakdown = report.get("decision_breakdown_delta") or {}
+        facts["report"]["outcomes"] = breakdown.get("outcomes")
+        facts["report"]["withheld"] = breakdown.get("withheld")
+        facts["report"]["flow_halted"] = breakdown.get("flow_halted")
+    else:
+        facts["report"] = None
+    rows = paper_segment_rows(
+        cfg, bootproof, report, (PASS_OVERRUN_KIND, SEND_SEALED_KIND, *AUTHORITY_KINDS)
+    )
+    if isinstance(rows, dict):
+        facts["pass_overrun"] = facts["authority"] = rows
+        facts["issues"].append(
+            (WARN, f"{PASS_OVERRUN_KIND}·권한 행을 읽지 못했다 — {rows['error']}")
+        )
+    elif rows is None:
+        facts["pass_overrun"] = facts["authority"] = None
+    else:
+        facts["pass_overrun"] = pass_overrun_summary(
+            (seq, p) for seq, kind, p in rows if kind == PASS_OVERRUN_KIND
+        )
+        ticks = [seq for seq, kind, _ in rows if kind == HANDLING_STARTED_KIND]
+        sends = [seq for seq, kind, _ in rows if kind == SEND_SEALED_KIND]
+        facts["authority"] = authority_summary(
+            (row for row in rows if row[1] in AUTHORITY_KINDS),
+            first_tick_seq=min(ticks) if ticks else None,
+            first_send_seq=min(sends) if sends else None,
+        )
+        facts["issues"].extend(_overrun_issues(facts["pass_overrun"]))
+        facts["issues"].extend(_authority_issues(facts["authority"]))
+    if not facts["bootproof"] or BOOTPROOF_OK not in facts["bootproof"]:
+        facts["issues"].append(
+            (BLOCK, f"boot proof 가 OK 가 아니다: {facts['bootproof']!r}")
+        )
+    if facts["report"] is not None:
+        if facts["report"].get("verdict") != "ok":
+            facts["issues"].append(
+                (
+                    BLOCK,
+                    f"paper verdict={facts['report'].get('verdict')} rc={facts['report'].get('exit_code')}",
+                )
+            )
+    elif not facts["live_check"]:
+        facts["issues"].append(
+            (BLOCK, "지난 날짜인데 report.json 이 없다(세션이 정상 종료되지 않음)")
+        )
+    elif not (facts["runtime_alive"] and facts["driver_alive"]):
+        facts["issues"].append(
+            (BLOCK, "report.json 없이 상주 런타임/드라이버가 멈춰 있다")
+        )
+    return facts
+
+
+SETTLED_STATUSES = frozenset({"ENDED", "FAILED", "ABORT", "LOST"})
+
+
+@dataclass(frozen=True)
+class TreeCalendar:
+    """한 트리가 거래하는 날 — tenant 캘린더에서 읽은 휴장일 집합."""
+
+    version: str
+    holidays: frozenset[_dt.date]
+
+
+def load_tree_calendar(path: Path) -> TreeCalendar:
+    """tenant 캘린더의 휴장일을 :mod:`tools.tos_cp3.session_day` 로 읽는다."""
+    import yaml
+
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+    if not isinstance(data, dict):
+        raise sd.SessionDayError(f"{path}: 최상위가 매핑이 아니다")
+    sd.validate_overrides(data, text=text)
+    version = data.get("calendar_version")
+    if not isinstance(version, str) or not version:
+        raise sd.SessionDayError(f"{path}: calendar_version 이 문자열이 아니다")
+    try:
+        holidays = sd.holidays_of(data)
+    except sd.SessionDayError as exc:
+        raise sd.SessionDayError(f"{path}: {exc}") from exc
+    return TreeCalendar(version=version, holidays=holidays)
+
+
+def day_clean(session: TenantSession | None, scfg: StreakConfig) -> str:
+    """깨끗한 거래일인가 — 깨끗하면 ``""``, 아니면 **왜 아닌지** 한 줄."""
+    if session is None:
+        return "세션 디렉터리 없음"
+    r = session.runner
+    if session.status != "ENDED":
+        detail = f": {r.aborts[0]}" if r.aborts else ""
+        return f"세션 상태 {session.status}{detail}"
+    if r.run_rc not in scfg.clean_run_rcs:
+        return f"런타임 종료 rc={r.run_rc} (깨끗은 {sorted(scfg.clean_run_rcs)})"
+    return ""
+
+
+def day_pending(session: TenantSession | None) -> str | None:
+    """상태판 날짜를 아직 판정할 수 없는 이유 — 없으면 ``None``."""
+    if session is None:
+        return "세션 디렉터리 아직 없음"
+    if session.status not in SETTLED_STATUSES:
+        return f"세션 {session.status}"
+    return None
+
+
+def tree_streak(
+    tree: StreakTree,
+    *,
+    sessions: Mapping[tuple[str, str], TenantSession],
+    day: _dt.date,
+    today: _dt.date,
+    scfg: StreakConfig,
+) -> dict[str, Any]:
+    """한 트리의 «창 안에서 깨끗한 거래일이 몇 날인가» — **누적**."""
+    out: dict[str, Any] = {
+        "label": tree.label,
+        "target_days": scfg.target_days,
+        "window_days": scfg.window_days,
+        "calendar": str(tree.calendar_yaml),
+        "calendar_version": None,
+        "days": 0,
+        "met": False,
+        "start": None,
+        "pending": None,
+        "broke_on": None,
+        "broke_reason": None,
+        "window_start": None,
+        "error": None,
+    }
+    try:
+        calendar = load_tree_calendar(tree.calendar_yaml)
+    except (OSError, sd.SessionDayError) as exc:
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        return out
+    out["calendar_version"] = calendar.version
+    clean = 0
+    start: _dt.date | None = None
+    walked: _dt.date | None = None
+    cursor = day
+    # SAFETY: 연도 커버리지 거부는 2026-11-20 에 없어졌다(운영자 지시 — 「캘린더 관리가
+    # 리스크가 안 되어도 돼」 · #1147 이 생산자에서 먼저 걷었다). 달력은 아는 휴장일만
+    # 담고, 적히지 않은 평일은 어느 해든 거래일이므로 이 walk 은 해를 넘어가도 멈추지
+    # 않는다. 그 전에는 2027-01-01 부터 누적 절이 오류만 찍었다.
+    for _ in range(scfg.window_days):
+        walked = cursor
+        if sd.is_trading_day(cursor, calendar.holidays):
+            session = sessions.get((cursor.strftime("%Y%m%d"), tree.label))
+            pending = day_pending(session) if cursor == day == today else None
+            if pending is not None:
+                out["pending"] = pending
+            else:
+                why = day_clean(session, scfg)
+                if why:
+                    if out["broke_on"] is None:
+                        out["broke_on"] = cursor.isoformat()
+                        out["broke_reason"] = why
+                else:
+                    clean += 1
+                    start = cursor
+                    if clean >= scfg.target_days:
+                        break
+        cursor -= _dt.timedelta(days=1)
+    out["days"] = clean
+    out["met"] = clean >= scfg.target_days
+    out["start"] = start.isoformat() if start else None
+    out["window_start"] = walked.isoformat() if walked else None
+    return out
+
+
+def _session_dirs(cfg: BoardConfig) -> list[Path]:
+    root = cfg.state_dir / cfg.tenant_sessions_subdir
+    try:
+        return sorted(
+            p for p in root.iterdir() if p.is_dir() and _SESSION_DIR_RE.match(p.name)
+        )
+    except OSError:
+        return []
+
+
+def cron_lines(cfg: BoardConfig, date_iso: str) -> dict[str, str]:
+    """크론 래퍼 로그마다 그 날짜의 마지막 줄."""
+    out: dict[str, str] = {}
+    for path in sorted(cfg.state_dir.glob(cfg.tenant_cron_log_glob)):
+        try:
+            lines = [
+                ln
+                for ln in path.read_text(encoding="utf-8").splitlines()
+                if ln.startswith(date_iso)
+            ]
+        except OSError:
+            continue
+        if lines:
+            out[path.name] = lines[-1]
+    return out
+
+
+def build_board(
+    cfg: BoardConfig,
+    *,
+    day: _dt.date,
+    today: _dt.date,
+    proc_root: Path = Path("/proc"),
+) -> dict[str, Any]:
+    """상태판 문서. pid 생존은 ``day == today`` 일 때만 본다 — 지난 날짜의 pid 는 의미가 없다."""
+    live_root: Path | None = proc_root if day == today else None
+    day_key = day.strftime("%Y%m%d")
+    date_iso = day.isoformat()
+    leaves: dict[str, LeafFacts] = {}
+    dirs = _session_dirs(cfg)
+    on_day = [
+        read_tenant_session(p, leaves=leaves, cfg=cfg, proc_root=live_root)
+        for p in dirs
+        if _SESSION_DIR_RE.match(p.name).group("day") == day_key  # type: ignore[union-attr]
+    ]
+    history_days = sorted(
+        {
+            _SESSION_DIR_RE.match(p.name).group("day")  # type: ignore[union-attr]
+            for p in dirs
+        }
+        - {day_key},
+    )
+    earlier = [d for d in history_days if d < day_key]
+    keep = cfg.history_days - 1
+    history_days = earlier[-keep:] if keep > 0 else []
+    history = [
+        read_tenant_session(p, leaves=leaves, cfg=cfg, proc_root=None)
+        for p in dirs
+        if _SESSION_DIR_RE.match(p.name).group("day") in history_days  # type: ignore[union-attr]
+    ]
+    paper = paper_facts(cfg, date_iso, proc_root=live_root)
+    scfg = cfg.clean_streak
+    by_key: dict[tuple[str, str], TenantSession] = {
+        (s.day, s.label): s for s in history + on_day
+    }
+    window = {
+        (day - _dt.timedelta(days=i)).strftime("%Y%m%d")
+        for i in range(scfg.window_days)
+    }
+    for p in dirs:
+        m = _SESSION_DIR_RE.match(p.name)
+        assert m is not None
+        key = (m.group("day"), m.group("label"))
+        if key in by_key or key[0] not in window:
+            continue
+        by_key[key] = read_tenant_session(
+            p, leaves=leaves, cfg=cfg, proc_root=None, with_store=False
+        )
+    streak = [
+        tree_streak(tree, sessions=by_key, day=day, today=today, scfg=scfg)
+        for tree in scfg.trees
+    ]
+    issues: list[tuple[str, str, str]] = []
+    if not on_day:
+        issues.append((WARN, "tenant", f"{date_iso} CP-3 tenant 세션 디렉터리 없음"))
+    for s in on_day:
+        issues.extend((level, s.name, text) for level, text in s.issues)
+    issues.extend((level, "paper", text) for level, text in paper["issues"])
+    for t in streak:
+        if t["error"]:
+            issues.append(
+                (
+                    WARN,
+                    f"streak/{t['label']}",
+                    f"깨끗한 거래일을 셀 수 없다 — {t['error']}",
+                )
+            )
+    return {
+        "date": date_iso,
+        "state_dir": str(cfg.state_dir),
+        "generated_kst": _dt.datetime.now(KST).isoformat(timespec="seconds"),
+        "tenant_sessions": [_session_json(s) for s in on_day],
+        "cron": cron_lines(cfg, date_iso),
+        "paper": paper,
+        "history": [
+            _history_row(s)
+            for s in sorted(history + on_day, key=lambda s: (s.day, s.label))
+        ],
+        "clean_streak": streak,
+        "issues": [
+            {"level": lv, "where": where, "text": text} for lv, where, text in issues
+        ],
+    }
+
+
+def _session_json(s: TenantSession) -> dict[str, Any]:
+    r = s.runner
+    return {
+        "name": s.name,
+        "label": s.label,
+        "day": s.day,
+        "status": s.status,
+        "run_alive": s.run_alive,
+        "producer_alive": s.producer_alive,
+        "instrument": r.instrument,
+        "market": r.market,
+        "tree_id": r.tree_id,
+        "direction": r.direction,
+        "repo_commit": r.repo_commit,
+        "activation": r.activation,
+        "expected_code_digest": s.expected_code_digest,
+        "band_declared": r.band_declared,
+        "band_line_ok": r.band_line_ok,
+        "band_digest": r.band_digest,
+        "started": r.first_ts,
+        "boot_at": r.boot_at,
+        "stop_at": r.stop_at,
+        "end_at": r.end_at,
+        "run_rc": r.run_rc,
+        "producer_rc": r.producer_rc,
+        "aborts": r.aborts,
+        "producer": s.producer,
+        "store": s.store,
+        "issues": [{"level": lv, "text": t} for lv, t in s.issues],
+    }
+
+
+def _history_row(s: TenantSession) -> dict[str, Any]:
+    st = s.store or {}
+    return {
+        "day": s.day,
+        "label": s.label,
+        "status": s.status,
+        "run_rc": s.runner.run_rc,
+        "ticks": st.get("ticks"),
+        "stale": st.get("m5_present_value_refused_as_unknown"),
+        "other_withheld": len(st.get("other_withheld_post_boot") or []),
+        "band": None if st.get("band_observed") is None else len(st["band_observed"]),
+        "overrun": (st.get("pass_overrun") or {}).get("rows"),
+        "witness_lost": (st.get("authority") or {}).get("witness_lost"),
+        "witness_lost_mid_session": (st.get("authority") or {}).get(
+            "witness_lost_mid_session"
+        ),
+        "store_error": st.get("error"),
+        "blocks": sum(1 for lv, _ in s.issues if lv == BLOCK),
+    }
+
+
+def _fmt_counts(counts: Mapping[str, Any] | None) -> str:
+    if not counts:
+        return "없음"
+    return " · ".join(f"{k} {v}" for k, v in counts.items())
+
+
+def _fmt_flow_halts(store: Mapping[str, Any], market: str | None) -> str:
+    """흐름 정지 사유 분포. 선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙인다."""
+    counts = dict(store["flow_halts"])
+    step4 = store.get("flow_halts_independent_approval_unknown") or 0
+    if market != DECISION_ONLY_MARKET or not step4:
+        return _fmt_counts(counts)
+    rest = counts.get(STAGE_UNKNOWN_HALT_REASON, 0) - step4
+    if rest > 0:
+        counts[STAGE_UNKNOWN_HALT_REASON] = rest
+    else:
+        counts.pop(STAGE_UNKNOWN_HALT_REASON, None)
+    counts[STEP4_UNKNOWN_EXPECTED_LABEL] = step4
+    return _fmt_counts(counts)
+
+
+def _short(value: str | None, n: int = 12) -> str:
+    return value[:n] if value else "—"
+
+
+def render_text(board: Mapping[str, Any]) -> str:
+    out: list[str] = []
+    add = out.append
+    blocks = [i for i in board["issues"] if i["level"] == BLOCK]
+    warns = [i for i in board["issues"] if i["level"] == WARN]
+    add(f"TOS 상태판 — {board['date']} (KST) · 읽기 전용 · {board['state_dir']}")
+    verdict = "막힘 있음" if blocks else ("확인 필요" if warns else "이상 없음")
+    add(
+        f"판정: {verdict} (막힘 {len(blocks)} · 확인 {len(warns)}) · 생성 {board['generated_kst']}"
+    )
+    add("")
+    add("■ CP-3 tenant 세션")
+    if not board["tenant_sessions"]:
+        add("  (없음)")
+    for s in board["tenant_sessions"]:
+        alive = " · 런타임 살아 있음" if s["run_alive"] else ""
+        add(
+            f"  {s['name']}  {s['direction'] or '?'} {s['instrument'] or '?'}  [{s['status']}]{alive}"
+        )
+        add(
+            f"    시작 {_hhmmss(s['started'])} · 부팅 {_hhmmss(s['boot_at'])} · 정지 {_hhmmss(s['stop_at'])}"
+            f" · 종료 {_hhmmss(s['end_at'])} (run rc={s['run_rc']}, producer rc={s['producer_rc']})"
+        )
+        st = s["store"] or {}
+        code = ",".join(_short(d) for d in st.get("code_digests") or []) or "—"
+        match = ""
+        if st.get("code_digests") and s["expected_code_digest"]:
+            match = (
+                " = release.yaml"
+                if st["code_digests"] == [s["expected_code_digest"]]
+                else " ≠ release.yaml"
+            )
+        add(
+            f"    rev {_short(s['repo_commit'])} · tree {s['tree_id'] or '—'} · {s['activation'] or 'activation —'}"
+            f" · code_digest {code}{match}"
+        )
+        if "error" in st:
+            add(f"    저장소: 상태 모름 — {st['error']}")
+        elif st:
+            add(
+                f"    틱 {st['ticks']} (post-boot {st['post_boot_ticks']}) · 결정 {_fmt_counts(st['outcomes'])}"
+            )
+            add(f"    보류 사유: {_fmt_counts(st['withheld_by_reason'])}")
+            add(
+                f"    흐름 정지: {_fmt_flow_halts(st, s['market'])}"
+                f" · capacity_denied {st['capacity_denied']} · handed_off {st['handed_off']}"
+            )
+            ratio = st["m5_ratio"]
+            add(
+                f"    stale 거절(M5 ①: 값 있는 UNKNOWN) {st['m5_present_value_refused_as_unknown']}"
+                f"/{st['post_boot_consumed_ids']} ({'—' if ratio is None else f'{ratio:.3%}'})"
+                f" · TIME_NOT_ADMITTED 보류(post-boot) {st['stale_withheld_post_boot']}"
+                f" · 그 밖의 보류 {len(st['other_withheld_post_boot'])}"
+                f" · UNKNOWN 원인 {_fmt_counts({k: v.get('post_boot') for k, v in st['m5_unknown_field_causes'].items()})}"
+            )
+            age = st["field_refused_max_age_ms"]
+            add(
+                f"    MARKETFEED_FIELD_REFUSED {st['field_refused_rows']}행"
+                f" ({_fmt_counts(st['field_refused_by_reason'])}{'' if age is None else f' · 최대 age {age}ms'})"
+            )
+            if st["band_observed"] is None:
+                add("    VENUE_BAND_OBSERVED: 부팅 구간을 정할 수 없어 보지 못함")
+            elif st["band_observed"]:
+                for b in st["band_observed"]:
+                    if b["outcome"] == "OBSERVED":
+                        add(
+                            f"    VENUE_BAND_OBSERVED OBSERVED {b['trading_date']} basis {b['basis']}"
+                            f" [{b['price_min']}, {b['price_max']}] narrowed={b['narrowed_intraday']}"
+                        )
+                    else:
+                        add(
+                            f"    VENUE_BAND_OBSERVED {b['outcome']} reason={b['reason']}"
+                            f" detail={b['detail']} (seq {b['seq']})"
+                        )
+            elif s["band_declared"] is False:
+                add("    VENUE_BAND_OBSERVED 0행 (이 트리는 band 를 끔)")
+            else:
+                add("    VENUE_BAND_OBSERVED 0행")
+            add(f"    {_fmt_overrun(st['pass_overrun'])}")
+            add(f"    {_fmt_authority(st['authority'])}")
+        else:
+            add("    저장소: 부팅 전이라 읽지 않음")
+        band = "있음 " + _short(s["band_digest"]) if s["band_line_ok"] else "없음"
+        p = s["producer"]
+        lat = p["latency_ms"]
+        lat_txt = " · ".join(
+            f"{k} {v}ms" for k, v in lat.items() if k.startswith("p") and v is not None
+        )
+        c = p.get("counters") or {}
+        counters = (
+            f"published {c.get('published')} · fetch_error {c.get('fetch_error')} · produce_error {c.get('produce_error')}"
+            f" · skipped_behind {c.get('skipped_behind')} · late_completed {c.get('late_completed')}"
+            if c
+            else "summary 아직 없음"
+        )
+        add(
+            f"    생산자: journal {p['journal_rows']}줄 · 지연(as_of−분마감) {lat_txt or '—'} · 최대 {lat['max']}ms · band 줄 {band}"
+        )
+        add(f"    생산자 카운터: {counters}")
+    if board["cron"]:
+        add("  크론 마지막 줄:")
+        for name, line in board["cron"].items():
+            add(f"    {name}: {line}")
+    add("")
+    add("■ 상주 paper")
+    paper = board["paper"]
+    alive = (
+        f"런타임 {'살아 있음' if paper['runtime_alive'] else '없음'}"
+        f" · 드라이버 {'살아 있음' if paper['driver_alive'] else '없음'}"
+        if paper["live_check"]
+        else "지난 날짜 — 프로세스 생존은 보지 않음"
+    )
+    add(f"  {paper['session'] or '(오늘 세션 없음)'} · {alive}")
+    if paper.get("session"):
+        add(f"    {paper.get('bootproof') or 'bootproof 없음'}")
+        rep = paper.get("report")
+        if rep:
+            add(
+                f"    verdict {rep['verdict']} rc={rep['exit_code']} stop={rep['stop_reason']}"
+                f" · 소비 {rep['events_consumed']} · stale 보류 {rep['stale_withheld']} ({rep['stale_ratio']})"
+            )
+            add(
+                f"    결정 {_fmt_counts(rep.get('outcomes'))} · 보류 {_fmt_counts(rep.get('withheld'))}"
+            )
+            add(f"    흐름 정지 {_fmt_counts(rep.get('flow_halted'))}")
+        else:
+            add("    report.json 아직 없음(세션 진행 중이면 정상)")
+        po = paper.get("pass_overrun")
+        if po is None:
+            add(f"    {PASS_OVERRUN_KIND}: 잎·기준 seq 를 몰라 보지 못함")
+        elif "error" in po:
+            add(f"    {PASS_OVERRUN_KIND}: 읽지 못함 — {po['error']}")
+        else:
+            add(f"    {_fmt_overrun(po)}")
+        pa = paper.get("authority")
+        if pa is None:
+            add("    권한 행: 잎·기준 seq 를 몰라 보지 못함")
+        elif "error" in pa:
+            add(f"    권한 행: 읽지 못함 — {pa['error']}")
+        else:
+            add(f"    {_fmt_authority(pa)}")
+    add("")
+    if board["history"]:
+        label_w = max(10, *(len(h["label"]) for h in board["history"]))
+        add("■ 최근 세션(날짜별)")
+        add(
+            "  날짜      세션" + " " * (label_w - 2) + "상태        rc   틱"
+            "   stale 기타 band 초과 상실/장중 막힘"
+        )
+        for h in board["history"]:
+            err = " 저장소모름" if h["store_error"] else ""
+            lost = (
+                "None"
+                if h["witness_lost"] is None
+                else f"{h['witness_lost']}/{h['witness_lost_mid_session']}"
+            )
+            add(
+                f"  {h['day']}  {h['label']:<{label_w}}  {h['status']:<10}"
+                f"  {str(h['run_rc']):>3}"
+                f"  {str(h['ticks']):>4}  {str(h['stale']):>4}  {h['other_withheld']:>3}  {str(h['band']):>3}  {str(h['overrun']):>3}  {lost:>9}"
+                f"  {h['blocks']:>3}{err}"
+            )
+        add("")
+    streak = board.get("clean_streak") or []
+    if streak:
+        add(
+            f"■ 깨끗한 거래일 누적 (창 {streak[0]['window_days']}일 · 목표"
+            f" {streak[0]['target_days']} 거래일 · 끝난 거래일만 · 연속 아님"
+            " · 판정에는 넣지 않는다)"
+        )
+        for t in streak:
+            line = f"  {t['label']:<10} {t['days']}/{t['target_days']}"
+            line += " ✔ 목표 충족" if t["met"] else ""
+            if t["start"]:
+                line += f" · 가장 오래된 깨끗한 날 {t['start']}"
+            add(line)
+            if t["window_start"]:
+                add(f"    센 창 {t['window_start']} ~ {board['date']}")
+            if t["pending"]:
+                add(f"    {board['date']} 보류 — {t['pending']}")
+            if t["broke_on"]:
+                add(
+                    f"    마지막 깨진 거래일 {t['broke_on']} — {t['broke_reason']}"
+                    " (누적을 지우지 않는다)"
+                )
+            if t["error"]:
+                add(f"    셀 수 없다 — {t['error']}")
+            add(f"    캘린더 {t['calendar']} ({t['calendar_version'] or '모름'})")
+        add("")
+    add("■ 막힌 것 / 확인할 것")
+    if not board["issues"]:
+        add("  없음")
+    for i in board["issues"]:
+        add(f"  [{i['level']}] {i['where']}: {i['text']}")
+    return "\n".join(out) + "\n"
+
+
+def today_kst() -> _dt.date:
+    return _dt.datetime.now(KST).date()
+
+
+def run(
+    *,
+    config_path: Path = DEFAULT_CONFIG_PATH,
+    state_dir: str | None = None,
+    date: str | None = None,
+    as_json: bool = False,
+    proc_root: Path = Path("/proc"),
+) -> tuple[str, int]:
+    """(출력, 종료코드). 막힘이 있으면 1, 없으면 0."""
+    cfg = load_config(config_path)
+    if state_dir is not None:
+        cfg = BoardConfig(**{**cfg.__dict__, "state_dir": expand_path(state_dir)})
+    day = _dt.date.fromisoformat(date) if date else today_kst()
+    board = build_board(cfg, day=day, today=today_kst(), proc_root=proc_root)
+    text = (
+        json.dumps(board, ensure_ascii=False, indent=2, default=str) + "\n"
+        if as_json
+        else render_text(board)
+    )
+    blocked = any(i["level"] == BLOCK for i in board["issues"])
+    return text, (1 if blocked else 0)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument("--state-dir", default=None)
+    parser.add_argument("--date", default=None, help="YYYY-MM-DD (기본: 오늘 KST)")
+    parser.add_argument("--json", action="store_true")
+    return parser
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    text, code = run(
+        config_path=args.config,
+        state_dir=args.state_dir,
+        date=args.date,
+        as_json=args.json,
+    )
+    sys.stdout.write(text)
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

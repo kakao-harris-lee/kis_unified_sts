@@ -1,0 +1,278 @@
+"""The new-risk-halt clear door: one operator confirmation, custody-gated."""
+
+from __future__ import annotations
+
+import json
+import os
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from tos_runtime._named_tbd import is_named_tbd_placeholder
+from tos_runtime.custody.file_custody import verify_file_mode_and_owner
+from tos_runtime.custody.ports import CustodyLoadRefused
+from tos_runtime.engine.inbox import NewRiskHaltClearOutcome
+from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.safety.latch import NewRiskHaltReader
+
+__all__ = [
+    "NewRiskHaltDoorDecision",
+    "ReArmApprovalFileError",
+    "ReArmOutcome",
+    "ReArmStatus",
+    "ReArmWorkflow",
+    "prepare_new_risk_halt_clear",
+]
+
+_REARM_APPROVED_KIND = "REARM_APPROVED"
+_REARM_REFUSED_KIND = "REARM_REFUSED"
+
+_APPROVE = "APPROVE"
+_DECISIONS = frozenset({_APPROVE, "DENY", "ABSTAIN"})
+
+
+class ReArmApprovalFileError(Exception):
+    """Raised internally for any refusal reading/validating the on-disk approval file,"""
+
+
+class ReArmStatus(StrEnum):
+    """The two-outcome result of one re-arm attempt (module docstring)."""
+
+    APPROVED = "APPROVED"
+    REFUSED = "REFUSED"
+
+
+@dataclass(frozen=True)
+class ReArmOutcome:
+    """One :meth:`ReArmWorkflow.approve_and_clear` result."""
+
+    status: ReArmStatus
+    reasons: tuple[str, ...]
+    attestation_text: str | None
+
+
+def _load_raw_rearm_file(
+    path: Path, *, expected_owner_uid: int, getuid: Callable[[], int]
+) -> dict[str, Any]:
+    """Custody-gated read + parse of the on-disk approval file (module docstring item 2 —"""
+    if not path.is_file():
+        raise ReArmApprovalFileError(f"rearm approval file not found: {path}")
+    try:
+        verify_file_mode_and_owner(
+            path, expected_owner_uid=expected_owner_uid, getuid=getuid
+        )
+    except CustodyLoadRefused as exc:
+        raise ReArmApprovalFileError(
+            f"{path} failed the custody mode/owner gate: {exc}"
+        ) from exc
+    try:
+        raw_text = path.read_text()
+    except OSError as exc:
+        raise ReArmApprovalFileError(f"cannot read {path}: {exc}") from exc
+    try:
+        raw = yaml.safe_load(raw_text)
+    except yaml.YAMLError as exc:
+        raise ReArmApprovalFileError(f"{path} is not valid YAML: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ReArmApprovalFileError(
+            f"{path} must parse to a mapping (got {type(raw).__name__})"
+        )
+    return raw
+
+
+def _already_approved(evidence_store: SqliteEvidenceStore, seq: int) -> bool:
+    """Whether a prior ``REARM_APPROVED`` row already names ``seq`` (module docstring"""
+    rows = evidence_store.connection.execute(
+        "SELECT payload_json FROM entries WHERE kind = ?",
+        (_REARM_APPROVED_KIND,),
+    ).fetchall()
+    for (payload_json,) in rows:
+        payload = json.loads(payload_json)["payload"]
+        if payload.get("latched_evidence_seq") == seq:
+            return True
+    return False
+
+
+def _verify_environment_label(
+    raw: Mapping[str, Any], path: Path, environment_label: str
+) -> None:
+    """Module docstring item 3 — cross-environment isolation."""
+    file_label = raw.get("environment_label")
+    if file_label != environment_label or not file_label:
+        raise ReArmApprovalFileError(
+            f"{path} environment_label={file_label!r} does not match runtime "
+            f"environment_label={environment_label!r} — refuse (cross-environment "
+            "isolation)"
+        )
+
+
+def _verify_approval(
+    raw: Mapping[str, Any], path: Path, latched_evidence_seq: int
+) -> str:
+    """Module docstring items 1 (file half) and 4 — return the approving principal id."""
+    file_seq = raw.get("latched_evidence_seq")
+    if file_seq != latched_evidence_seq:
+        raise ReArmApprovalFileError(
+            f"{path} latched_evidence_seq={file_seq!r} does not match the "
+            f"requested {latched_evidence_seq!r} — refuse (stale/wrong approval file)"
+        )
+    approvals = raw.get("approvals")
+    if not isinstance(approvals, list) or len(approvals) != 1:
+        raise ReArmApprovalFileError(
+            f"{path} 'approvals' must be a list of exactly one "
+            "{principal_id, decision} entry"
+        )
+    entry = approvals[0]
+    if not isinstance(entry, dict):
+        raise ReArmApprovalFileError(f"{path} the 'approvals' entry must be a mapping")
+    principal_id = entry.get("principal_id")
+    decision = entry.get("decision")
+    if not isinstance(principal_id, str) or not principal_id.strip():
+        raise ReArmApprovalFileError(
+            f"{path} the 'approvals' entry has a missing/blank principal_id"
+        )
+    if is_named_tbd_placeholder(principal_id):
+        raise ReArmApprovalFileError(
+            f"{path} the 'approvals' entry's principal_id is still the template "
+            "placeholder 'TBD' — operator-fill before use"
+        )
+    if decision not in _DECISIONS:
+        raise ReArmApprovalFileError(
+            f"{path} the 'approvals' entry has an invalid decision {decision!r}"
+        )
+    if decision != _APPROVE:
+        raise ReArmApprovalFileError(
+            f"{path} the 'approvals' entry decision is {decision!r}, not {_APPROVE!r}"
+        )
+    return principal_id
+
+
+class ReArmWorkflow:
+    """Evaluates one operator approval file for one latched evidence seq."""
+
+    def __init__(
+        self,
+        approvals_dir: Path,
+        evidence_store: SqliteEvidenceStore,
+        inbox: NewRiskHaltReader,
+        *,
+        environment_label: str,
+        expected_owner_uid: int,
+        getuid: Callable[[], int] = os.getuid,
+    ) -> None:
+        """Bind the approval directory, the evidence sink, and the custody expectations."""
+        self._approvals_dir = approvals_dir
+        self._evidence_store = evidence_store
+        self._inbox = inbox
+        self._environment_label = environment_label
+        self._expected_owner_uid = expected_owner_uid
+        self._getuid = getuid
+
+    def approve_and_clear(self, latched_evidence_seq: int) -> ReArmOutcome:
+        """Evaluate the approval file for ``latched_evidence_seq`` and record evidence."""
+        path = self._approvals_dir / "rearm" / f"{latched_evidence_seq}.yaml"
+        try:
+            if _already_approved(self._evidence_store, latched_evidence_seq):
+                raise ReArmApprovalFileError(
+                    f"evidence_seq {latched_evidence_seq} already has a "
+                    f"{_REARM_APPROVED_KIND} row — one approval, one use "
+                    "(module docstring item 2); a re-latched seq needs a new "
+                    "approval, not the leftover file"
+                )
+            raw = _load_raw_rearm_file(
+                path,
+                expected_owner_uid=self._expected_owner_uid,
+                getuid=self._getuid,
+            )
+            _verify_environment_label(raw, path, self._environment_label)
+            principal_id = _verify_approval(raw, path, latched_evidence_seq)
+        except ReArmApprovalFileError as exc:
+            reason = str(exc)
+            self._evidence_store.append(
+                {
+                    "latched_evidence_seq": latched_evidence_seq,
+                    "status": ReArmStatus.REFUSED.value,
+                    "reasons": [reason],
+                },
+                kind=_REARM_REFUSED_KIND,
+                record_class=_REARM_REFUSED_KIND,
+            )
+            return ReArmOutcome(
+                status=ReArmStatus.REFUSED, reasons=(reason,), attestation_text=None
+            )
+
+        attestation_text = f"operator-rearm-approved:{principal_id}"
+        self._evidence_store.append(
+            {
+                "latched_evidence_seq": latched_evidence_seq,
+                "status": ReArmStatus.APPROVED.value,
+                "principal_id": principal_id,
+            },
+            kind=_REARM_APPROVED_KIND,
+            record_class=_REARM_APPROVED_KIND,
+        )
+        return ReArmOutcome(
+            status=ReArmStatus.APPROVED,
+            reasons=(),
+            attestation_text=attestation_text,
+        )
+
+
+@dataclass(frozen=True)
+class NewRiskHaltDoorDecision:
+    """The result of :func:`prepare_new_risk_halt_clear` — either a terminal,"""
+
+    refusal: NewRiskHaltClearOutcome | None
+    attestation_text: str | None
+
+
+def prepare_new_risk_halt_clear(
+    *,
+    current: Mapping[str, object] | None,
+    latched_evidence_seq: int,
+    approvals_dir: Path,
+    evidence_store: SqliteEvidenceStore,
+    inbox: NewRiskHaltReader,
+    environment_label: str,
+    expected_owner_uid: int,
+    refused_kind: str,
+) -> NewRiskHaltDoorDecision:
+    """Every check a caller needs BEFORE its own storage-layer clear call — the seq"""
+
+    def _refuse(outcome: NewRiskHaltClearOutcome) -> NewRiskHaltDoorDecision:
+        evidence_store.append(
+            {
+                "outcome": outcome.value,
+                "requested_evidence_seq": latched_evidence_seq,
+                "current_latched_evidence_seq": (
+                    current.get("evidence_seq") if current is not None else None
+                ),
+            },
+            kind=refused_kind,
+            record_class=refused_kind,
+        )
+        return NewRiskHaltDoorDecision(refusal=outcome, attestation_text=None)
+
+    if current is None:
+        return _refuse(NewRiskHaltClearOutcome.NO_LATCH)
+    if current.get("evidence_seq") != latched_evidence_seq:
+        return _refuse(NewRiskHaltClearOutcome.SEQ_MISMATCH)
+
+    workflow = ReArmWorkflow(
+        approvals_dir,
+        evidence_store,
+        inbox,
+        environment_label=environment_label,
+        expected_owner_uid=expected_owner_uid,
+    )
+    rearm_outcome = workflow.approve_and_clear(latched_evidence_seq)
+    if rearm_outcome.status is not ReArmStatus.APPROVED:
+        return _refuse(NewRiskHaltClearOutcome.QUORUM_REFUSED)
+
+    return NewRiskHaltDoorDecision(
+        refusal=None, attestation_text=rearm_outcome.attestation_text
+    )

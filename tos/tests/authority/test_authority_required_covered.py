@@ -1,0 +1,112 @@
+"""Required-covered issuance guards + ISSUED-reachable-under-null-bounds (§2.2/§3.2)."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+from pydantic import ValidationError
+from tos.authority import (
+    ArtifactIntegrityError,
+    ArtifactStatus,
+    AuthorityEpochTransitionRecord,
+    AuthorityTransitionReason,
+    DegradedLeaseOwnershipRecord,
+    SafetyAuthorityCapability,
+)
+from tos.canonical import DigestBoundArtifact
+
+from .._required_covered import (
+    assert_required_covered_non_vacuous,
+    null_path,
+    required_covered_cases,
+)
+from ._authority_strategies import (
+    SCHEME,
+    capability_required_kwargs,
+    issue_capability,
+    lease_required_kwargs,
+    transition_required_kwargs,
+)
+
+_ARTIFACTS: list[tuple[type[DigestBoundArtifact], Callable[..., dict[str, Any]]]] = [
+    (SafetyAuthorityCapability, capability_required_kwargs),
+    (AuthorityEpochTransitionRecord, transition_required_kwargs),
+    (DegradedLeaseOwnershipRecord, lease_required_kwargs),
+]
+
+
+@pytest.mark.parametrize("cls,kwargs_fn,path", required_covered_cases(_ARTIFACTS))
+def test_missing_required_covered_rejects_issuance(
+    cls: type[DigestBoundArtifact], kwargs_fn: Callable[..., dict[str, Any]], path: str
+) -> None:
+    """Dropping any required covered path makes an ISSUED record unconstructable (§3.2)."""
+    kwargs = null_path(kwargs_fn(), path)
+    with pytest.raises(ValidationError):
+        cls.issue(scheme=SCHEME, **kwargs)
+
+
+def test_every_record_has_non_vacuous_required_covered() -> None:
+    """No digest-bound authority record has an empty _REQUIRED_COVERED (fail-open guard)."""
+    assert_required_covered_non_vacuous(_ARTIFACTS)
+
+
+def test_capability_issued_reachable_under_null_numeric_bounds() -> None:
+    """A capability ISSUES with both numeric claims null (bounds excluded from required, §2.2)."""
+    capability = issue_capability(
+        maximum_quantity=None,
+        maximum_risk_vector_effect_or_reservation_identity=None,
+    )
+    assert capability.status is ArtifactStatus.ISSUED
+    assert capability.canonical_digest is not None
+
+
+def test_issued_record_requires_independent_id() -> None:
+    """An issued capability needs a concrete independent id (never null / 'TBD') (§2.1/§3.1)."""
+    with pytest.raises(ValidationError):
+        SafetyAuthorityCapability.issue(
+            scheme=SCHEME, **capability_required_kwargs(capability_id=None)
+        )
+    with pytest.raises(ValidationError):
+        SafetyAuthorityCapability.issue(
+            scheme=SCHEME, **capability_required_kwargs(capability_id="TBD")
+        )
+
+
+def test_epoch_transition_rejects_non_increasing_epoch() -> None:
+    """(canary) A transition whose new_epoch <= old_epoch is unconstructable (§5.2/§10.5)."""
+    with pytest.raises(ValidationError):
+        AuthorityEpochTransitionRecord.issue(
+            scheme=SCHEME, **transition_required_kwargs(old_epoch=5, new_epoch=5)
+        )
+    with pytest.raises(ValidationError):
+        AuthorityEpochTransitionRecord.issue(
+            scheme=SCHEME, **transition_required_kwargs(old_epoch=6, new_epoch=5)
+        )
+
+
+def test_epoch_transition_strictly_increasing_is_issuable() -> None:
+    """The strictly-increasing guard is not constant-reject: a real advance issues."""
+    record = AuthorityEpochTransitionRecord.issue(
+        scheme=SCHEME,
+        **transition_required_kwargs(
+            old_epoch=5,
+            new_epoch=6,
+            transition_reason=AuthorityTransitionReason.SAFETY_AUTHORITY_FAILOVER,
+        ),
+    )
+    assert record.status is ArtifactStatus.ISSUED
+    assert record.issued_new_epoch > record.issued_old_epoch
+
+
+def test_issued_epoch_accessors_raise_on_a_draft_transition() -> None:
+    """``issued_old_epoch``/``issued_new_epoch`` are reachable, not dead code: a DRAFT"""
+    draft = AuthorityEpochTransitionRecord()
+    assert draft.status is ArtifactStatus.DRAFT
+    assert draft.old_epoch is None
+    assert draft.new_epoch is None
+    with pytest.raises(ArtifactIntegrityError):
+        _ = draft.issued_old_epoch
+    with pytest.raises(ArtifactIntegrityError):
+        _ = draft.issued_new_epoch

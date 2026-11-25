@@ -1,0 +1,6 @@
+# CP-3 tenant (Setup D / **SHORT**) — config-sourced 피연산자 바인딩.
+strategies:
+  setup_d_short.strategy:
+    config_binding_version: cp3-b1b-bind-1
+    bindings:
+      z_entry_min_x1000: 1800

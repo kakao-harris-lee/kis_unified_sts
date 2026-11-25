@@ -1,0 +1,1108 @@
+"""Tests for the CP-3 B1a shared indicator producer (``tools/tos_cp3``)."""
+
+from __future__ import annotations
+
+import json
+import math
+import warnings
+from collections import Counter
+from collections.abc import Mapping
+from dataclasses import replace
+from datetime import date, datetime, time, timedelta
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from shared.backtest.market_context_replay import MarketContextReplay
+from shared.decision.setups.vwap_reversion import SetupDVWAPReversion
+from shared.instruments.contract_spec import (
+    ContractSpecRegistry,
+    resolve_contract_spec,
+)
+from shared.strategy.exit.setup_target_exit import SetupTargetExit
+from shared.strategy.market_time import is_trading_day_kst
+from tools.tos_cp3 import legacy_setup_d_driver as legacy_driver  # noqa: E402
+from tools.tos_cp3 import produce_fields
+
+SYMBOL = "101S6000"
+SESSIONS = (date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4), date(2026, 3, 5))
+BARS_PER_SESSION = 421
+SHORT_SESSION = date(2026, 3, 6)
+SHORT_SESSION_BARS = 200
+SEED = 20261008
+BURST_SESSION_INDEX = 2
+
+STRATEGY_YAML = (
+    produce_fields.REPO_ROOT
+    / "config"
+    / "strategies"
+    / "futures"
+    / "setup_d_vwap_reversion.yaml"
+)
+
+
+def _synthetic_bars() -> pd.DataFrame:
+    """Four KST futures sessions of 1-minute bars, seeded and deterministic."""
+    rng = np.random.default_rng(SEED)
+    rows: list[dict[str, object]] = []
+    price = 400.0
+    period = 53
+    impulse = 0.9
+    for session_idx, day in enumerate(SESSIONS):
+        base = datetime.combine(day, time(8, 45))
+        price += float(rng.normal(0.0, 0.5))
+        for minute in range(BARS_PER_SESSION):
+            phase = minute % period
+            vol = 0.30 if phase < 12 else 0.03
+            sign = 1.0 if (minute // period + session_idx) % 2 == 0 else -1.0
+            step = float(rng.normal(0.0, vol))
+            if phase == 4:
+                step += impulse * sign
+            if phase == 5:
+                step += impulse * 0.8 * sign
+            if phase in (7, 8, 9):
+                step -= impulse * 0.45 * sign
+            if session_idx == BURST_SESSION_INDEX and 200 <= minute <= 230:
+                step *= 3.0
+            open_ = price
+            price = price + step
+            high = max(open_, price) + abs(float(rng.normal(0.0, vol))) * 0.6
+            low = min(open_, price) - abs(float(rng.normal(0.0, vol))) * 0.6
+            rows.append(
+                {
+                    "code": SYMBOL,
+                    "timestamp": base + timedelta(minutes=minute),
+                    "open": round(open_, 2),
+                    "high": round(high, 2),
+                    "low": round(low, 2),
+                    "close": round(price, 2),
+                    "volume": int(50 + abs(step) * 400),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+@pytest.fixture(scope="module")
+def bars() -> pd.DataFrame:
+    return _synthetic_bars()
+
+
+@pytest.fixture(scope="module")
+def strategy() -> produce_fields.StrategyInputs:
+    return produce_fields.load_strategy_inputs(STRATEGY_YAML)
+
+
+@pytest.fixture(scope="module")
+def anchor() -> produce_fields.OpenAnchor:
+    """The open anchor the producer resolves for this window — the era rule."""
+    return produce_fields.resolve_open_anchor(
+        cli_value="auto", first_session=SESSIONS[0], last_session=SESSIONS[-1]
+    )
+
+
+def _contract_spec():
+    registry = ContractSpecRegistry.from_yaml(
+        str(produce_fields.REPO_ROOT / "config" / "execution.yaml")
+    )
+    return resolve_contract_spec(SYMBOL, registry)
+
+
+def _produce(
+    df: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> list[produce_fields.FieldRecord]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return legacy_driver.produce_records(
+            df.reset_index(drop=True),
+            symbol=SYMBOL,
+            strategy=strategy,
+            contract_spec=_contract_spec(),
+            anchor=anchor,
+        )
+
+
+def _write_parquet_tree(df: pd.DataFrame, root: Path) -> Path:
+    """Write *df* in the ``ParquetMarketDataStore`` partition layout."""
+    for day, chunk in df.groupby(df["timestamp"].dt.date):
+        part = (
+            root
+            / "futures"
+            / "minute"
+            / f"code={SYMBOL}"
+            / f"year={day.year}"
+            / f"month={day.month:02d}"
+            / f"day={day.isoformat()}"
+        )
+        part.mkdir(parents=True, exist_ok=True)
+        chunk.rename(columns={"timestamp": "datetime"}).reset_index(
+            drop=True
+        ).to_parquet(part / "part-0.parquet", index=False)
+    return root
+
+
+JOURNAL_REQUIRED_KEYS_MIRROR = frozenset(
+    {"raw_event_id", "instrument", "as_of_ms", "fields", "source_id"}
+)
+
+BAR_NON_OPTIONAL_FIELDS = (
+    "bar_index",
+    "timestamp_coordinate",
+    "open_price",
+    "high_price",
+    "low_price",
+    "close_price",
+    "volume",
+    "session_token",
+)
+
+BAR_FIELD_SOURCE: dict[str, tuple[str, str]] = {
+    "bar_index": ("", "runner"),
+    "timestamp_coordinate": ("as_of_ms", "line"),
+    "open_price": ("open_x100", "fields"),
+    "high_price": ("high_x100", "fields"),
+    "low_price": ("low_x100", "fields"),
+    "close_price": ("close_x100", "fields"),
+    "volume": ("volume", "fields"),
+    "session_token": ("session_token", "fields"),
+}
+
+
+def test_line_shape_matches_journal_required_keys(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    records = _produce(bars, strategy, anchor)
+    for record in (records[0], records[len(records) // 2], records[-1]):
+        payload = json.loads(record.to_json_line())
+        assert set(payload) == JOURNAL_REQUIRED_KEYS_MIRROR
+        assert payload["source_id"] == produce_fields.SOURCE_ID
+        assert payload["source_id"].startswith("tos-cp3-b1a/")
+        assert payload["instrument"] == SYMBOL
+        assert isinstance(payload["as_of_ms"], int)
+        assert isinstance(payload["fields"], dict)
+    assert set(produce_fields.JOURNAL_REQUIRED_KEYS) == JOURNAL_REQUIRED_KEYS_MIRROR
+
+
+def test_fields_carry_the_bar_so_b1b_needs_no_second_parquet_path(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """Every ``Bar`` input is present, and the invariants ``Bar`` enforces hold."""
+    records = _produce(bars, strategy, anchor)
+    by_stamp = {
+        pd.Timestamp(row.timestamp): row for row in bars.itertuples(index=False)
+    }
+
+    assert set(BAR_FIELD_SOURCE) == set(BAR_NON_OPTIONAL_FIELDS)
+    for bar_field, (source, where) in BAR_FIELD_SOURCE.items():
+        if where == "fields":
+            assert source in produce_fields.FIELD_ORDER, bar_field
+        elif where == "line":
+            assert source in produce_fields.JOURNAL_REQUIRED_KEYS, bar_field
+        else:
+            assert where == "runner" and source == "", bar_field
+
+    for record in records:
+        fields = record.fields
+        low = fields["low_x100"]
+        high = fields["high_x100"]
+        assert isinstance(low, int) and isinstance(high, int)
+        assert low > 0 and high > 0
+        assert high >= low
+        for edge in ("open_x100", "close_x100"):
+            assert low <= fields[edge] <= high, (edge, record.raw_event_id)
+        assert isinstance(fields["volume"], int) and fields["volume"] >= 0
+        assert isinstance(fields["session_token"], str)
+        assert fields["session_token"].strip()
+        assert fields["session_token"] == record.bar_kst.date().isoformat()
+
+        row = by_stamp[pd.Timestamp(record.bar_kst).tz_localize(None)]
+        assert fields["open_x100"] == produce_fields.scaled_int_half_up(
+            row.open, produce_fields.PRICE_SCALE
+        )
+        assert fields["high_x100"] == produce_fields.scaled_int_half_up(
+            row.high, produce_fields.PRICE_SCALE
+        )
+        assert fields["low_x100"] == produce_fields.scaled_int_half_up(
+            row.low, produce_fields.PRICE_SCALE
+        )
+        assert fields["volume"] == int(row.volume)
+
+
+def test_fields_match_legacy_setup_evaluation(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    records = _produce(bars, strategy, anchor)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        replay = MarketContextReplay(
+            df=bars.reset_index(drop=True),
+            symbol=SYMBOL,
+            macro_snapshot=None,
+            scheduled_events=[],
+            contract_spec=_contract_spec(),
+            market_open_hour=anchor.hour,
+            market_open_minute=anchor.minute,
+            min_volume=0,
+        )
+        contexts = list(replay.iter_contexts())
+    setup = SetupDVWAPReversion(config=strategy.entry_config)
+    cfg = strategy.entry_config
+    extreme_x1000 = produce_fields.scaled_int_toward_zero(
+        cfg.extreme_atr_mult, produce_fields.Z_SCALE
+    )
+
+    by_bar = {record.bar_kst: record for record in records}
+    assert len(by_bar) == len(records)
+
+    outcomes: Counter[str] = Counter()
+    for ctx in contexts:
+        signal = setup.check(ctx)
+        record = by_bar.get(ctx.now)
+        if record is None:
+            assert (
+                produce_fields._inputs_unusable(ctx.current_price, ctx.vwap, ctx.atr_14)
+                is not None
+            )
+            continue
+        reason = setup.last_reject_reason
+        outcome = "FIRED" if signal is not None else (reason or "").split("(")[0]
+        outcomes[outcome] += 1
+        fields = record.fields
+
+        assert fields["close_x100"] == produce_fields.scaled_int_half_up(
+            ctx.current_price, produce_fields.PRICE_SCALE
+        )
+        assert fields["vwap_x100"] == produce_fields.scaled_int_half_up(
+            ctx.vwap, produce_fields.PRICE_SCALE
+        )
+        assert fields["atr14_x100"] == produce_fields.scaled_int_half_up(
+            ctx.atr_14, produce_fields.PRICE_SCALE
+        )
+        expected_z = SetupDVWAPReversion.vwap_extension_z(
+            ctx.current_price, ctx.vwap, ctx.atr_14
+        )
+        assert fields["z_x1000"] == produce_fields.scaled_int_toward_zero(
+            expected_z, produce_fields.Z_SCALE
+        )
+
+        minutes = ctx.minutes_since_open()
+        assert fields["entry_window"] is (
+            cfg.valid_minutes_min <= minutes <= cfg.no_entry_after_minutes_since_open
+        )
+        assert fields["vwap_reverted"] is (abs(expected_z) <= strategy.vwap_revert_band)
+
+        if outcome == "FIRED":
+            assert fields["hi_vol"] is True
+            assert fields["stall_ok"] is True
+            assert fields["reversal_ok"] is True
+            assert fields["entry_window"] is True
+            assert abs(fields["z_x1000"]) >= extreme_x1000
+        elif outcome in {"before_window", "after_cutoff"}:
+            assert fields["entry_window"] is False
+            assert fields["hi_vol"] is False
+            assert fields["stall_ok"] is False
+            assert fields["reversal_ok"] is False
+        elif outcome == "vol_below_gate":
+            assert fields["entry_window"] is True
+            assert fields["hi_vol"] is False
+            assert fields["stall_ok"] is False
+            assert fields["reversal_ok"] is False
+        elif outcome == "not_extreme":
+            assert fields["entry_window"] is True
+            assert fields["hi_vol"] is True
+            assert abs(fields["z_x1000"]) < extreme_x1000
+            assert fields["stall_ok"] is False
+            assert fields["reversal_ok"] is False
+        elif outcome in {"still_trending_up", "still_trending_down"}:
+            assert fields["entry_window"] is True
+            assert fields["hi_vol"] is True
+            assert fields["stall_ok"] is False
+            assert fields["reversal_ok"] is False
+        elif outcome == "awaiting_reversal_confirm":
+            assert fields["entry_window"] is True
+            assert fields["hi_vol"] is True
+            assert fields["stall_ok"] is True
+            assert fields["reversal_ok"] is False
+        elif outcome == "low_confidence":
+            assert fields["entry_window"] is True
+            assert fields["hi_vol"] is True
+            assert fields["stall_ok"] is True
+            assert fields["reversal_ok"] is True
+        else:  # pragma: no cover - a new reject reason must be mapped
+            pytest.fail(f"unmapped legacy outcome {outcome!r}")
+
+    for required in (
+        "FIRED",
+        "before_window",
+        "after_cutoff",
+        "vol_below_gate",
+        "not_extreme",
+        "awaiting_reversal_confirm",
+    ):
+        assert outcomes[required] > 0, (required, dict(outcomes))
+    assert outcomes["low_confidence"] >= 2, dict(outcomes)
+    assert outcomes["still_trending_up"] + outcomes["still_trending_down"] > 0, dict(
+        outcomes
+    )
+    assert sum(outcomes.values()) == len(
+        records
+    ), "this series is meant to have no unusable-input bars"
+
+
+def test_eod_matches_the_legacy_exit_decision(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """Compare ``eod`` to ``SetupTargetExit`` itself, not to the producer's rule."""
+    records = _produce(bars, strategy, anchor)
+    exit_gen = SetupTargetExit(strategy.exit_config)
+
+    emitted_sessions = sorted({record.bar_kst.date() for record in records})
+    for session in emitted_sessions:
+        probe = datetime.combine(session, time(12, 0)).replace(
+            tzinfo=records[0].bar_kst.tzinfo
+        )
+        assert is_trading_day_kst(probe), session
+
+    for record in records:
+        assert record.fields["eod"] is exit_gen._should_eod_close(record.bar_kst)
+
+    holiday_bar = datetime.combine(SESSIONS[0], time(15, 20)).replace(
+        tzinfo=records[0].bar_kst.tzinfo
+    )
+    assert not is_trading_day_kst(holiday_bar)
+    assert exit_gen._should_eod_close(holiday_bar) is False
+    assert holiday_bar.time() >= strategy.exit_config.eod_close_time
+    assert SESSIONS[0] not in emitted_sessions
+
+
+PREFIX_N = BARS_PER_SESSION * 2 + 100
+PREFIX_K = BARS_PER_SESSION
+
+
+def test_prefix_of_longer_run_equals_shorter_run(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    short = _produce(bars.iloc[:PREFIX_N], strategy, anchor)
+    long = _produce(bars.iloc[: PREFIX_N + PREFIX_K], strategy, anchor)
+
+    assert 0 < len(short) < len(long)
+    short_lines = [record.to_json_line() for record in short]
+    long_lines = [record.to_json_line() for record in long]
+    assert long_lines[: len(short_lines)] == short_lines
+
+
+_ORIGINAL_ITER_CONTEXTS = MarketContextReplay.iter_contexts
+
+
+def test_lookahead_variant_breaks_the_prefix_property(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replace ATR with the FULL-SERIES peak — the classic look-ahead."""
+
+    def lookahead_iter_contexts(self: MarketContextReplay):
+        contexts = list(_ORIGINAL_ITER_CONTEXTS(self))
+        peak = max(ctx.atr_14 for ctx in contexts)
+        for ctx in contexts:
+            yield replace(ctx, atr_14=peak)
+
+    def peak_for(rows: int) -> float:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            replay = MarketContextReplay(
+                df=bars.iloc[:rows].reset_index(drop=True),
+                symbol=SYMBOL,
+                macro_snapshot=None,
+                scheduled_events=[],
+                contract_spec=_contract_spec(),
+                market_open_hour=anchor.hour,
+                market_open_minute=anchor.minute,
+                min_volume=0,
+            )
+            return max(ctx.atr_14 for ctx in _ORIGINAL_ITER_CONTEXTS(replay))
+
+    assert peak_for(PREFIX_N + PREFIX_K) > peak_for(PREFIX_N)
+
+    monkeypatch.setattr(MarketContextReplay, "iter_contexts", lookahead_iter_contexts)
+
+    short = _produce(bars.iloc[:PREFIX_N], strategy, anchor)
+    long = _produce(bars.iloc[: PREFIX_N + PREFIX_K], strategy, anchor)
+
+    short_lines = [record.to_json_line() for record in short]
+    long_lines = [record.to_json_line() for record in long]
+    assert 0 < len(short_lines) < len(long_lines)
+    assert long_lines[: len(short_lines)] != short_lines
+
+
+def test_no_float_in_any_field(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    records = _produce(bars, strategy, anchor)
+    assert records
+    for record in records:
+        assert set(record.fields) == set(produce_fields.FIELD_ORDER)
+        for key, value in record.fields.items():
+            assert not isinstance(value, float), (key, value)
+            assert isinstance(value, (bool, int, str)), (key, type(value))
+        reloaded = json.loads(record.to_json_line())["fields"]
+        for key, value in reloaded.items():
+            assert not isinstance(value, float), (key, value)
+
+
+def test_float_field_is_refused() -> None:
+    """The no-float guard names a concrete failing input, not a hope."""
+    with pytest.raises(produce_fields.ProduceFieldsError, match="not int/bool/str"):
+        produce_fields._assert_scalar_fields(
+            {"close_x100": 559.45},  # type: ignore[dict-item]
+            "probe",
+        )
+
+
+def test_z_quantization_is_symmetric_and_conservative() -> None:
+    """``z_x1000`` truncates toward zero; prices round half-up (D8)."""
+    scale = produce_fields.Z_SCALE
+    assert produce_fields.scaled_int_toward_zero(1.7995, scale) == 1799
+    assert produce_fields.scaled_int_toward_zero(-1.7995, scale) == -1799
+    assert produce_fields.scaled_int_half_up(1.7995, scale) == 1800
+
+    threshold = produce_fields.scaled_int_toward_zero(1.8, scale)
+    assert threshold == 1800
+    for z in (1.7, 1.7995, 1.79999, -1.7995, 1.8, -1.8, 2.5, -2.5):
+        integer_fires = (
+            abs(produce_fields.scaled_int_toward_zero(z, scale)) >= threshold
+        )
+        real_fires = abs(z) >= 1.8
+        assert not (integer_fires and not real_fires), z
+
+    assert (
+        produce_fields.scaled_int_half_up(559.45, produce_fields.PRICE_SCALE) == 55945
+    )
+    assert (
+        produce_fields.scaled_int_half_up(559.455, produce_fields.PRICE_SCALE) == 55946
+    )
+    low, high = 100.0049, 100.0051
+    assert produce_fields.scaled_int_half_up(
+        high, produce_fields.PRICE_SCALE
+    ) >= produce_fields.scaled_int_half_up(low, produce_fields.PRICE_SCALE)
+
+
+def test_non_finite_input_aborts_rather_than_being_omitted() -> None:
+    """NaN is a corrupt dataset, not a quiet bar — it must not become a count."""
+    with pytest.raises(produce_fields.ProduceFieldsError, match="non-finite"):
+        produce_fields._inputs_unusable(math.nan, 400.0, 0.5)
+    with pytest.raises(produce_fields.ProduceFieldsError, match="non-finite"):
+        produce_fields._inputs_unusable(400.0, 400.0, math.inf)
+    assert produce_fields._inputs_unusable(400.0, 400.0, 0.0) is not None
+    assert produce_fields._inputs_unusable(400.0, 400.0, 0.5) is None
+
+
+def test_trend_filter_enabled_is_refused(tmp_path: Path) -> None:
+    """No trend field is published, so a run with the gate on must not proceed."""
+    source = yaml_text = STRATEGY_YAML.read_text(encoding="utf-8")
+    assert "trend_filter_enabled: false" in source
+    patched = tmp_path / "setup_d_trend_on.yaml"
+    patched.write_text(
+        yaml_text.replace("trend_filter_enabled: false", "trend_filter_enabled: true"),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        produce_fields.ProduceFieldsError, match="trend_filter_enabled is true"
+    ):
+        produce_fields.load_strategy_inputs(patched)
+
+
+def test_band_premise_is_asserted(tmp_path: Path) -> None:
+    """The vwap_reverted note's premise is a guard, not a comment."""
+    text = STRATEGY_YAML.read_text(encoding="utf-8")
+    patched = tmp_path / "setup_d_flat_trigger.yaml"
+    patched.write_text(
+        text.replace("extreme_atr_mult: 1.8", "extreme_atr_mult: 1.2"), encoding="utf-8"
+    )
+    with pytest.raises(produce_fields.ProduceFieldsError, match="is not greater than"):
+        produce_fields.load_strategy_inputs(patched)
+
+
+def test_open_anchor_era_rule() -> None:
+    """Pre-cutover data gets 09:00; a straddling window is refused."""
+    pre = produce_fields.resolve_open_anchor(
+        cli_value="auto",
+        first_session=date(2025, 12, 1),
+        last_session=date(2026, 4, 30),
+    )
+    assert (pre.hour, pre.minute, pre.source) == (9, 0, "era-rule")
+
+    post = produce_fields.resolve_open_anchor(
+        cli_value="auto", first_session=date(2026, 7, 1), last_session=date(2026, 8, 1)
+    )
+    assert post.source == "config"
+
+    override = produce_fields.resolve_open_anchor(
+        cli_value="08:45",
+        first_session=date(2025, 12, 1),
+        last_session=date(2026, 4, 30),
+    )
+    assert (override.hour, override.minute, override.source) == (8, 45, "cli")
+
+    with pytest.raises(produce_fields.ProduceFieldsError, match="straddles"):
+        produce_fields.resolve_open_anchor(
+            cli_value="auto",
+            first_session=date(2026, 6, 1),
+            last_session=date(2026, 7, 1),
+        )
+    with pytest.raises(produce_fields.ProduceFieldsError, match="HH:MM"):
+        produce_fields.resolve_open_anchor(
+            cli_value="nine",
+            first_session=date(2026, 7, 1),
+            last_session=date(2026, 8, 1),
+        )
+
+
+def _bars_with_flat_run() -> pd.DataFrame:
+    """Two sessions whose second session holds a perfectly flat 41-bar run."""
+    rows: list[dict[str, object]] = []
+    price = 400.0
+    for session_idx, day in enumerate(SESSIONS[:2]):
+        base = datetime.combine(day, time(8, 45))
+        for minute in range(BARS_PER_SESSION):
+            if session_idx == 1 and 100 <= minute <= 140:
+                open_ = high = low = close = 400.0
+            else:
+                price += 0.05 if minute % 2 else -0.03
+                open_ = close = price
+                high, low = price + 0.05, price - 0.05
+            rows.append(
+                {
+                    "code": SYMBOL,
+                    "timestamp": base + timedelta(minutes=minute),
+                    "open": open_,
+                    "high": high,
+                    "low": low,
+                    "close": close,
+                    "volume": 10,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_zero_atr_bars_are_omitted_not_filled(
+    strategy: produce_fields.StrategyInputs, anchor: produce_fields.OpenAnchor
+) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        produced = legacy_driver.produce_bars(
+            _bars_with_flat_run(),
+            symbol=SYMBOL,
+            strategy=strategy,
+            contract_spec=_contract_spec(),
+            anchor=anchor,
+        )
+
+    assert produced.omitted, "the flat run must produce unusable-ATR bars"
+    assert {reason for _, reason in produced.omitted} == {
+        "atr_14 <= 0 (z is undefined)"
+    }
+    assert len(produced.records) + len(produced.omitted) == produced.bars_replayed
+
+    omitted_ids = {raw_event_id for raw_event_id, _ in produced.omitted}
+    assert not (omitted_ids & {record.raw_event_id for record in produced.records})
+    for record in produced.records:
+        assert record.fields["atr14_x100"] > 0
+
+
+def test_the_observer_sees_every_replayed_bar_and_changes_no_record(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """The read-only hook S1b's ``_atr_window`` measurement reads the setup through."""
+    emit = frozenset(SESSIONS[-1:])
+    seen: list[tuple[datetime, Mapping[str, Any]]] = []
+    closes = dict(zip(bars["timestamp"], bars["close"]))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kwargs = {
+            "symbol": SYMBOL,
+            "strategy": strategy,
+            "contract_spec": _contract_spec(),
+            "anchor": anchor,
+            "emit_days": emit,
+        }
+        plain = legacy_driver.produce_bars(bars.reset_index(drop=True), **kwargs)
+        watched = legacy_driver.produce_bars(
+            bars.reset_index(drop=True),
+            **kwargs,
+            observer=lambda stamp, ev: seen.append((stamp, dict(ev))),
+        )
+
+    assert produce_fields.render_jsonl(watched.records) == produce_fields.render_jsonl(
+        plain.records
+    )
+    assert len(seen) == plain.bars_replayed > len(plain.records)
+    assert {stamp.date() for stamp, _ in seen} > set(emit), "only emitted bars observed"
+
+    for stamp, ev in seen:
+        open_at = stamp.replace(
+            hour=anchor.hour, minute=anchor.minute, second=0, microsecond=0
+        )
+        assert (
+            ev.get("minutes_since_open") == (stamp - open_at).total_seconds() / 60
+        ), f"{stamp}: this eval was computed on a different bar"
+
+    advanced = [(stamp, ev) for stamp, ev in seen if "vol_ref" in ev]
+    assert advanced, "no bar advanced the causal ATR window"
+    for stamp, ev in advanced:
+        assert ev["entry_window"] is True, stamp
+        assert ev["atr_14"] > 0, stamp
+        assert ev["close"] == closes[stamp.replace(tzinfo=None)], stamp
+    for stamp, ev in seen:
+        if "vol_ref" in ev:
+            continue
+        assert not (
+            ev.get("entry_window") is True and ev.get("inputs_usable") is True
+        ), f"{stamp}: an in-window usable bar advanced the window without a vol_ref"
+    references = [ev["vol_ref"] for _, ev in advanced]
+    assert None in references and any(r is not None for r in references)
+
+
+def test_an_observer_cannot_write_into_the_setups_eval(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    '"Read-only hook" holds by construction, not by the caller\'s good manners.'
+    emit = frozenset(SESSIONS[-1:])
+    refused: list[type[BaseException]] = []
+
+    def write_through(stamp: datetime, ev: Mapping[str, Any]) -> None:
+        ev["hi_vol"] = True  # type: ignore[index]  # the write under test
+
+    def write_through_and_swallow(stamp: datetime, ev: Mapping[str, Any]) -> None:
+        try:
+            ev["hi_vol"] = True  # type: ignore[index]
+        except TypeError as exc:
+            refused.append(type(exc))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kwargs = {
+            "symbol": SYMBOL,
+            "strategy": strategy,
+            "contract_spec": _contract_spec(),
+            "anchor": anchor,
+            "emit_days": emit,
+        }
+        plain = legacy_driver.produce_bars(bars.reset_index(drop=True), **kwargs)
+        with pytest.raises(TypeError):
+            legacy_driver.produce_bars(
+                bars.reset_index(drop=True), **kwargs, observer=write_through
+            )
+        tolerated = legacy_driver.produce_bars(
+            bars.reset_index(drop=True),
+            **kwargs,
+            observer=write_through_and_swallow,
+        )
+
+    assert refused, "the swallowing observer never reached its write"
+    assert produce_fields.render_jsonl(
+        tolerated.records
+    ) == produce_fields.render_jsonl(plain.records)
+    assert any(not record.fields["hi_vol"] for record in plain.records), (
+        "every record already carries hi_vol=true, so the refused write "
+        "would have changed nothing and claim 2 is vacuous"
+    )
+
+
+def _run(root: Path, out: Path, **kwargs) -> produce_fields.RunResult:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return produce_fields.run(
+            data_root=root,
+            symbol=SYMBOL,
+            start=SESSIONS[0],
+            end=SESSIONS[-1],
+            strategy_yaml=STRATEGY_YAML,
+            out_dir=out,
+            **kwargs,
+        )
+
+
+def test_jsonl_and_lineage_are_byte_deterministic(
+    bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    data_root = _write_parquet_tree(bars, tmp_path / "market")
+
+    first = _run(data_root, tmp_path / "out-1", min_bars_per_day=0)
+    second = _run(data_root, tmp_path / "out-2", min_bars_per_day=0)
+
+    assert first.jsonl_bytes == second.jsonl_bytes
+    assert first.lineage_bytes == second.lineage_bytes
+    assert first.jsonl_path.read_bytes() == first.jsonl_bytes
+    assert (
+        first.lineage["output"]["jsonl_sha256"]
+        == second.lineage["output"]["jsonl_sha256"]
+    )
+
+    lineage = first.lineage
+    dataset = lineage["dataset"]
+    assert dataset["input_file_count"] == len(SESSIONS)
+    assert all(len(item["sha256"]) == 64 for item in dataset["input_files"])
+    assert dataset["bars_emitted"] == len(first.records)
+    assert dataset["bars_loaded"] == len(bars)
+    assert dataset["min_bars_per_day"] == 0
+    assert dataset["min_volume"] == 0
+    omitted = dataset["omitted_bars"]
+    assert omitted["count"] == 0
+    assert omitted["raw_event_ids"] == []
+    assert omitted["raw_event_ids_truncated"] is False
+    assert (
+        dataset["bars_after_density_gate"]
+        - dataset["replay_warmup_bars_skipped"]
+        - dataset["first_session_bars_dropped_no_prior_close"]
+        == dataset["bars_replayed"]
+    )
+    assert dataset["bars_replayed"] == dataset["bars_emitted"] + omitted["count"]
+
+    assert (
+        lineage["strategy"]["sha256"]
+        == produce_fields.load_strategy_inputs(STRATEGY_YAML).sha256
+    )
+    assert lineage["strategy"]["market_open_kst"] == "09:00"
+    assert lineage["strategy"]["market_open_source"] == "era-rule"
+    assert lineage["strategy"]["vwap_revert_band_source"].startswith(
+        "strategy.entry.params.reversal_confirm_atr_mult"
+    )
+
+    runtime = lineage["tool"]["runtime"]
+    assert runtime["python"] and runtime["numpy"] != "unavailable"
+    assert runtime["pandas"] != "unavailable"
+    assert "shared/decision/setups/vwap_reversion.py" in lineage["common_mode"]
+    assert "NOT independent" in lineage["common_mode"]
+    assert lineage["tool"]["source_id"] == produce_fields.SOURCE_ID
+    assert lineage["encoding"]["journal_required_keys"] == list(
+        produce_fields.JOURNAL_REQUIRED_KEYS
+    )
+
+    assert set(lineage["fields"]) == set(produce_fields.FIELD_ORDER)
+    for name, spec in lineage["fields"].items():
+        assert {
+            "unit",
+            "scale",
+            "multiplier",
+            "sign",
+            "type",
+            "quantization",
+            "formula_id",
+            "window_bars",
+            "parents",
+            "range_observed",
+        } <= set(spec), name
+        assert isinstance(spec["scale"], str), name
+        assert isinstance(spec["multiplier"], str), name
+        assert spec["sign"] in {"signed", "unsigned"}, name
+        assert spec["type"] in {"int", "bool", "str"}, name
+        assert spec["parents"], name
+    assert lineage["fields"]["z_x1000"]["sign"] == "signed"
+    assert lineage["fields"]["z_x1000"]["quantization"] == "truncate_toward_zero"
+    assert lineage["fields"]["close_x100"]["quantization"] == "half_up"
+    assert "min" in lineage["fields"]["close_x100"]["range_observed"]
+    assert set(lineage["fields"]["hi_vol"]["range_observed"]) == {"true", "false"}
+    assert lineage["fields"]["session_token"]["range_observed"]["distinct"] >= 1
+
+    assert {entry["id"] for entry in lineage["declared_differences"]} == {
+        f"D{index}" for index in range(1, 11)
+    }
+    assert "timestamp" not in json.dumps(lineage["tool"])
+
+
+def _bars_with_a_short_session(bars: pd.DataFrame) -> pd.DataFrame:
+    """The usual series plus one session too thin to clear the 330 default."""
+    base = datetime.combine(SHORT_SESSION, time(8, 45))
+    price = 400.0
+    rows: list[dict[str, object]] = []
+    for minute in range(SHORT_SESSION_BARS):
+        price += 0.05 if minute % 2 else -0.03
+        rows.append(
+            {
+                "code": SYMBOL,
+                "timestamp": base + timedelta(minutes=minute),
+                "open": price,
+                "high": price + 0.05,
+                "low": price - 0.05,
+                "close": price,
+                "volume": 10,
+            }
+        )
+    return pd.concat([bars, pd.DataFrame(rows)], ignore_index=True)
+
+
+def test_min_bars_per_day_gate_drops_a_thin_session(
+    bars: pd.DataFrame, tmp_path: Path
+) -> None:
+    """The density gate is a real knob, defaulted to the walk-forward's 330."""
+    assert produce_fields.DEFAULT_MIN_BARS_PER_DAY == 330
+    assert SHORT_SESSION_BARS < produce_fields.DEFAULT_MIN_BARS_PER_DAY
+    widened = _bars_with_a_short_session(bars)
+    data_root = _write_parquet_tree(widened, tmp_path / "market")
+
+    def one(out_name: str, **kwargs) -> produce_fields.RunResult:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return produce_fields.run(
+                data_root=data_root,
+                symbol=SYMBOL,
+                start=SESSIONS[0],
+                end=SHORT_SESSION,
+                strategy_yaml=STRATEGY_YAML,
+                out_dir=tmp_path / out_name,
+                **kwargs,
+            )
+
+    off = one("off", min_bars_per_day=0)
+    default_run = one("default")
+
+    assert off.lineage["dataset"]["bars_after_density_gate"] == len(widened)
+    assert (
+        default_run.lineage["dataset"]["bars_after_density_gate"]
+        == len(widened) - SHORT_SESSION_BARS
+    )
+    assert default_run.lineage["dataset"]["min_bars_per_day"] == 330
+    assert off.jsonl_bytes != default_run.jsonl_bytes
+    assert off.lineage["dataset"]["bars_emitted"] > (
+        default_run.lineage["dataset"]["bars_emitted"]
+    )
+    assert SHORT_SESSION.isoformat() not in default_run.jsonl_bytes.decode("utf-8")
+    assert SHORT_SESSION.isoformat() in off.jsonl_bytes.decode("utf-8")
+
+    with pytest.raises(produce_fields.ProduceFieldsError, match="density gate dropped"):
+        one("all-dropped", min_bars_per_day=500)
+
+
+def test_d7_measurement_buckets_are_disjoint_exhaustive_and_session_bounded(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+) -> None:
+    """The generator behind the D7 literal, exercised on the synthetic series."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        measurement = legacy_driver.measure_moving_vs_frozen_exit(
+            bars.reset_index(drop=True),
+            symbol=SYMBOL,
+            strategy=strategy,
+            contract_spec=_contract_spec(),
+            anchor=anchor,
+        )
+
+    assert set(measurement) == set(produce_fields.D7_MEASUREMENT)
+    for key, value in measurement.items():
+        if key in {"window", "market_open_kst"}:
+            assert isinstance(value, str), key
+        else:
+            assert isinstance(value, int), key
+
+    assert measurement["entries"] > 0
+
+    assert (
+        measurement["earlier"]
+        + measurement["identical"]
+        + measurement["later"]
+        + measurement["never_either"]
+        == measurement["entries"]
+    )
+    assert (
+        measurement["earlier_frozen_never_reached_in_session"] <= measurement["earlier"]
+    )
+    assert measurement["later_moving_never_reached_in_session"] <= measurement["later"]
+    assert measurement["lead_bars_measured_over"] <= (
+        measurement["earlier"]
+        - measurement["earlier_frozen_never_reached_in_session"]
+        + measurement["later"]
+        - measurement["later_moving_never_reached_in_session"]
+    )
+
+    assert 0 <= measurement["max_lead_bars"] < BARS_PER_SESSION
+    assert 0 <= measurement["median_lead_bars"] <= measurement["max_lead_bars"]
+
+    assert measurement["market_open_kst"] == anchor.kst
+
+
+def test_measure_d7_cli_prints_a_pasteable_literal(
+    bars: pd.DataFrame, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--measure-d7`` is the generator the D7 comment names, and it runs."""
+    assert produce_fields.D7_GENERATOR_COMMAND == "produce_fields.py --measure-d7"
+    data_root = _write_parquet_tree(bars, tmp_path / "market")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        exit_code = produce_fields.main(
+            [
+                "--data-root",
+                str(data_root),
+                "--symbol",
+                SYMBOL,
+                "--start",
+                SESSIONS[0].isoformat(),
+                "--end",
+                SESSIONS[-1].isoformat(),
+                "--strategy-yaml",
+                str(STRATEGY_YAML),
+                "--min-bars-per-day",
+                "0",
+                "--measure-d7",
+            ]
+        )
+    assert exit_code == 0
+    printed = capsys.readouterr().out
+    assert printed.startswith("D7_MEASUREMENT: dict[str, Any] = {")
+    assert '"min_bars_per_day": DEFAULT_MIN_BARS_PER_DAY,' in printed
+    for key in produce_fields.D7_MEASUREMENT:
+        assert f'"{key}":' in printed, key
+
+    result = _run(data_root, tmp_path / "out", min_bars_per_day=0)
+    d7 = next(
+        entry for entry in result.lineage["declared_differences"] if entry["id"] == "D7"
+    )
+    assert d7["d7_measurement_generator"] == produce_fields.D7_GENERATOR_COMMAND
+
+
+def test_out_is_required_unless_measuring(bars: pd.DataFrame, tmp_path: Path) -> None:
+    data_root = _write_parquet_tree(bars, tmp_path / "market")
+    with pytest.raises(SystemExit):
+        produce_fields.main(
+            [
+                "--data-root",
+                str(data_root),
+                "--symbol",
+                SYMBOL,
+                "--start",
+                SESSIONS[0].isoformat(),
+                "--end",
+                SESSIONS[-1].isoformat(),
+                "--strategy-yaml",
+                str(STRATEGY_YAML),
+            ]
+        )
+
+
+def _lineage_kwargs(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+    tmp_path: Path,
+) -> dict[str, object]:
+    """A valid ``build_lineage`` call, for the red proofs to spoil one key of."""
+    df = bars.reset_index(drop=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        produced = legacy_driver.produce_bars(
+            df,
+            symbol=SYMBOL,
+            strategy=strategy,
+            contract_spec=_contract_spec(),
+            anchor=anchor,
+        )
+    warmup, first_session = produce_fields._bar_accounting(df)
+    return {
+        "produced": produced,
+        "jsonl_bytes": produce_fields.render_jsonl(produced.records),
+        "symbol": SYMBOL,
+        "strategy": strategy,
+        "contract_spec": _contract_spec(),
+        "anchor": anchor,
+        "data_root": tmp_path,
+        "requested_start": SESSIONS[0],
+        "requested_end": SESSIONS[-1],
+        "min_bars_per_day": 0,
+        "bars_loaded": len(df),
+        "bars_after_density_gate": len(df),
+        "warmup_skipped": warmup,
+        "first_session_dropped": first_session,
+        "input_files": [
+            produce_fields.InputFile(
+                path="probe.parquet", sha256="0" * 64, size_bytes=1
+            )
+        ],
+    }
+
+
+def test_empty_input_file_list_with_bars_loaded_is_refused(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+    tmp_path: Path,
+) -> None:
+    """A lineage must not claim an input list it does not have."""
+    kwargs = _lineage_kwargs(bars, strategy, anchor, tmp_path)
+    assert produce_fields.build_lineage(**kwargs)["dataset"]["input_file_count"] == 1
+
+    kwargs["input_files"] = []
+    with pytest.raises(
+        produce_fields.ProduceFieldsError, match="no Parquet partition was found"
+    ):
+        produce_fields.build_lineage(**kwargs)
+
+
+def test_bar_accounting_that_does_not_reconcile_is_refused(
+    bars: pd.DataFrame,
+    strategy: produce_fields.StrategyInputs,
+    anchor: produce_fields.OpenAnchor,
+    tmp_path: Path,
+) -> None:
+    """``gated - dropped == replayed`` is a guard, not a comment."""
+    kwargs = _lineage_kwargs(bars, strategy, anchor, tmp_path)
+    kwargs["warmup_skipped"] = int(kwargs["warmup_skipped"]) + 1  # type: ignore[arg-type]
+    with pytest.raises(produce_fields.ProduceFieldsError, match="does not reconcile"):
+        produce_fields.build_lineage(**kwargs)
+
+
+def test_duplicate_bar_timestamps_are_refused() -> None:
+    """A duplicated minute would make the OHLCV lookup pick one arbitrarily."""
+    base = datetime.combine(SESSIONS[0], time(9, 0))
+    rows = [
+        {
+            "code": SYMBOL,
+            "timestamp": base,
+            "open": 400.0,
+            "high": 400.5,
+            "low": 399.5,
+            "close": 400.0,
+            "volume": 10,
+        },
+        {
+            "code": SYMBOL,
+            "timestamp": base,
+            "open": 401.0,
+            "high": 401.5,
+            "low": 400.5,
+            "close": 401.0,
+            "volume": 11,
+        },
+    ]
+    with pytest.raises(
+        produce_fields.ProduceFieldsError, match="duplicate bar timestamps"
+    ):
+        legacy_driver._bar_lookup(pd.DataFrame(rows))
+
+    rows[1]["timestamp"] = base + timedelta(minutes=1)
+    assert len(legacy_driver._bar_lookup(pd.DataFrame(rows))) == 2

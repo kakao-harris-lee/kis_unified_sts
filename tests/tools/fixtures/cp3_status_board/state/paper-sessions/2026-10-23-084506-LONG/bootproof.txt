@@ -1,0 +1,3 @@
+boot proof: OK · boot 57.81s · genesis=False · rev 6dc35f7b7fe8 · A05611
+activation ACTIVATED 5 (re-derived in a fresh process)
+evidence schema user_version=2 v2-shape=True · baseline_seq=540128

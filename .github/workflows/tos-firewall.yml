@@ -1,0 +1,800 @@
+# tos import-firewall — enforcement layer ③ (design §3.3-③).
+#
+# Runs the full firewall on EVERY pull request and every push to main, with NO
+# path gating: the checks are cheap and path-gating would leave an evasion gap
+# (a PR that edits both tos/ and the gate could skip enforcement). Steps mirror
+# the three enforcement layers:
+#   1. python tools/tos_firewall_check.py  — layer ① (default-deny AST gate)
+#   2. lint-imports                        — layer ② (transitive forbidden-pkg)
+#   3. pytest tos/tests                     — hermetic package tests (§2.4)
+#
+# tos/runtime/ (design #40 D1.3, ratified by the operator 2026-09-08): the
+# runtime-scope allowlist split lives INSIDE
+# tools/tos_firewall_check.py's single forward scan (rules a-d apply the R1
+# allowlist per-file via scope_for_tos_path) — layer ① above already covers
+# BOTH tos/ scopes in its one invocation, no extra firewall step is added
+# here. Only two things are new: installing the tos-runtime distribution
+# editable (so lint-imports's static analysis can resolve `tos_runtime` as a
+# root package for the transitive contracts in .importlinter, and so its own
+# hermetic test suite is importable) and running that suite as its own step.
+#
+# ---------------------------------------------------------------------------
+# 2026-10-22 — ONE job became FOUR, and the `tos-firewall` check name survived
+# ---------------------------------------------------------------------------
+# Measured on the last three green runs (39732037775 / 39629209685 /
+# 39731584866): the single job took 742-756s wall, and four steps were 85% of
+# it — governance batteries 202s, tos-runtime tests 187s, Layer 4 mutation
+# battery 131s, tos kernel tests 114s. Every one of them ran AFTER the others
+# finished, for no reason other than sharing a job: no step here consumes an
+# artifact a previous step produced. They are now three jobs that run at the
+# same time:
+#
+#   tos-firewall-gates   the enforcement layers + the spec/size/digest
+#                        checkers (the Layer 4 mutation battery that used to
+#                        set this job's floor was retired 2026-11-12 —
+#                        docs/plans/2026-11-12-phase0-retirement-plan.md)
+#   tos-firewall-tests   the four pytest suites (now under pytest-xdist)
+#   tos-firewall-static  Black + the five mypy invocations
+#
+# THE CHECK NAME IS NOT SPLIT. The previous version of this header argued that
+# the Layer 4 gate must be a *step* rather than a job, because a new job adds a
+# new branch-protection check NAME and leaves the old one meaning less than it
+# says — the exact "guard that admits what it names" shape this repo keeps
+# getting bitten by. That argument is still right, so the fourth job below is
+# `tos-firewall`: an aggregator that needs all three and fails unless every one
+# of them reports `success`. The context `tos-firewall` therefore still means
+# "every tos firewall, test, and static check passed", and whether it is marked
+# required stays a repository-ruleset setting, unchanged by this file. The
+# aggregator fails closed: `skipped` and `cancelled` are not `success`.
+#
+# The three jobs each pay the ~25s checkout+install again. That is runner time,
+# not wall time, and it is the price of the ~9 minutes this removes from every
+# PR's critical path.
+#
+# NOTE: marking the `tos-firewall` job a *required* check is a GitHub
+# repository-ruleset setting and is NOT configured here — see the handoff
+# report.
+name: tos-firewall
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # ===========================================================================
+  # Enforcement layers + governance checkers.
+  # ===========================================================================
+  tos-firewall-gates:
+    runs-on: ubuntu-latest
+    # Was 30 for the whole monolith. Each split job gets a backstop sized to
+    # its own content with the same generous multiple of the measured time
+    # (~190s here), so a hang still fails fast and NAMES the slow job.
+    timeout-minutes: 15
+
+    steps:
+      # The three setup steps are anchored here and aliased by the other two
+      # jobs below (YAML anchors, the same mechanism test.yml already uses for
+      # its `paths` list). One definition, three jobs — an install that drifts
+      # between jobs is a silent "works in one gate, not the other".
+      - &checkout
+        name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # **전체 이력(+태그).**  소비자는 둘 다 사라졌다: Layer 4 검사기의
+          # `C2UP` 측정 출처 검증은 2026-11-12 퇴역
+          # (docs/plans/2026-11-12-phase0-retirement-plan.md §2) 에, 태그
+          # `legacy-final` 의 blob 을 `git cat-file` 로 읽던
+          # `tests/tools/test_cp3_emit_legacy_decisions.py` 는 2026-11-13 B3
+          # 은퇴에 지워졌다.  남은 체커들은 `ls-files`/`rev-parse` 만 쓰므로
+          # 이력 깊이를 요구하지 않는다.  그래도 여기서 얕게 바꾸지 않는 것은
+          # CI 체크아웃 동작 변경이 이 PR 의 범위가 아니기 때문이다 — 줄이려면
+          # 따로 재어 보고 바꾼다.
+          #
+          # The static job costs ~1s extra for it — so all three share this
+          # anchor rather than each deciding for itself.
+          fetch-depth: 0
+
+      - &setup-python
+        name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          # Keyed by the resolved interpreter + the dependency files
+          # setup-python hashes (pyproject.toml here). Measured effect on the
+          # install step: 23-24s with the cache warm.
+          cache: 'pip'
+
+      - &install
+        name: Install minimal dependencies
+        # Deliberately minimal — the heavy runtime stack (talib/pandas/...) is
+        # NOT needed:
+        #   * tos + its 4 pinned third parties + pytest/hypothesis, via the
+        #     tos package's own [test] extra.
+        #   * import-linter (+ grimp) for layer ②.
+        #   * the repo-root package installed with --no-deps so grimp can LOCATE
+        #     shared/services/cli (it analyses them statically via AST and never
+        #     executes them, so their runtime deps are unnecessary).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "./tos[test]"
+          # tos-runtime (design #40 D1.3 item 5, ratified by the operator 2026-09-08) — installed AFTER
+          # the kernel above, editable, with --no-deps. Reproduced 2026-09-08
+          # (independent review finding, MEDIUM) in a throwaway venv: WITHOUT
+          # --no-deps, `pip install -e "./tos/runtime[test]"` resolves
+          # tos/runtime/pyproject.toml's `tos @ {root:uri}/../` dependency
+          # itself, which pip treats as "(re)install this requirement" —
+          # SILENTLY REPLACING the kernel's editable install from the step
+          # above with a non-editable, built wheel (`pip list --editable`
+          # afterward showed `tos-runtime` only, `tos` gone). --no-deps skips
+          # that resolution entirely, so the kernel's prior editable install
+          # is left untouched (`pip list --editable` then shows BOTH `tos`
+          # and `tos-runtime`, verified in the same throwaway-venv
+          # reproduction). The `[test]` extra (pytest/hypothesis) is NOT
+          # requested here — it is not needed: both are already installed,
+          # pinned to the SAME versions, by the kernel's own `[test]` extra
+          # one line above (verified: `pytest tos/runtime/tests` imports and
+          # runs cleanly with no separate test-extra install).
+          pip install -e "./tos/runtime" --no-deps
+          pip install import-linter
+          pip install -e . --no-deps
+          # Layer 4 의 RULE 축은 S-25 manifest(YAML)를 읽는다.  루트 프로젝트는
+          # `pyyaml>=6.0` 를 의존으로 선언하지만 위 설치는 `--no-deps` 라 딸려오지
+          # 않는다.  **부재 시 검사기는 조용히 건너뛰지 않고 `TOS-CC-RULE-MANIFEST`
+          # 로 red 를 낸다**(fail-closed) — 그래서 여기서 명시 설치한다.
+          # (`tos` 패키지의 §3.2 서드파티 allowlist 와는 무관하다 — `tools/` 의
+          #  저장소 도구가 쓰는 것이지 `tos` 패키지가 임포트하는 것이 아니다.)
+          pip install "pyyaml>=6.0"
+          # Black/mypy — Phase 1 작업 7 (계획 §2 표 7행). 로컬 .venv 와 정확히
+          # 같은 버전으로 핀 — CI 만 다른 버전에서 다른 판정을 내는 것을 막는다.
+          pip install "black==26.5.1" "mypy==2.3.1"
+          # pytest-xdist — the TEST RUNNER's process pool, used by the
+          # `tos-firewall-tests` job's `-n auto`. Pinned to the local .venv's
+          # version (3.8.0, the one the pre-merge flake runs were measured on),
+          # same discipline as black/mypy one line above.
+          #
+          # This is NOT a §3.2 third-party allowlist entry and must not be
+          # added to tos/pyproject.toml: the allowlist governs what the `tos`
+          # and `tos_runtime` PACKAGES may import, and nothing under tos/
+          # imports xdist — it is a pytest plugin the runner loads, exactly
+          # like import-linter/black/mypy above are repo tools rather than
+          # kernel dependencies. It also does not move the kernel's pinned
+          # `pytest==9.0.2`: xdist 3.8.0 requires pytest>=7, which 9.0.2
+          # already satisfies.
+          pip install "pytest-xdist==3.8.0"
+
+      - name: Layer 1 — custom AST firewall (default-deny)
+        run: python tools/tos_firewall_check.py
+
+      - name: Layer 2 — import-linter (transitive forbidden-package defense)
+        run: lint-imports
+
+      # release.yaml's expected_code_digest vs the measured source tree
+      # (tools/tos_redigest.py's own docstring has the why). From PR #919,
+      # which added it to the single job between Layer 2 and the test
+      # batteries; it lands here, in the checker job, because that is what it
+      # is — it re-derives a pin and compares, it runs no tests.
+      #
+      # #919's reason for the position was "fails in seconds rather than after
+      # the ~6.5-minute batteries below". That reason is now structural rather
+      # than positional: the batteries are a SEPARATE JOB that runs beside this
+      # one, so this check reports in seconds no matter what they are doing.
+      # The tool shells out to the runtime's own `print-digests` — it never
+      # reimplements the digest, and tools/ may not import tos (firewall).
+      - name: expected_code_digest is current (tos_redigest --check)
+        run: python tools/tos_redigest.py --check
+
+      - name: tos size budget
+        # config/tos_size_budget.yaml exceptions register — Phase 1 작업 6.
+        run: python tools/tos_size_budget.py --check
+
+      # 2026-11-13 (docs/plans/2026-11-13-tos-code-halving-plan.md §S3): four
+      # steps stood here — an mdBook v0.5.4 pin, `mdbook build tos-spec`, and
+      # before them `tos_completion_status --check` / `tos_contract_check`
+      # (retired 2026-11-12). The corpus they built and judged, `tos-spec/`
+      # (66k lines) and `tos-evidence/` (25k), is retired: no runtime, cron or
+      # deploy path read either, and `tos_spec_status.py` went with them. The
+      # content stays in git history.
+
+  # ===========================================================================
+  # Every pytest suite this workflow owns, all four under pytest-xdist.
+  # ===========================================================================
+  tos-firewall-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - *checkout
+      - *setup-python
+      - *install
+
+      # 2026-11-12 (docs/plans/2026-11-12-phase0-retirement-plan.md §2): a
+      # mikefarah-yq v4.48.1 pin step stood here, installed over /usr/bin/yq
+      # because `tests/tools/test_u17_verify.py` drove `tools/u17-verify.sh`
+      # (which shelled out to `tools/wfcanon-v222.py`, whose M-4 parser gate
+      # failed closed on any other yq). All three files were retired with that
+      # plan, and nothing else in this workflow calls yq.
+
+      # `-n auto` = one worker per runner CPU (4 on this hosted image).
+      # Measured locally against this commit's tree (16-core host, `-n 4` to
+      # mimic the runner, .venv pytest 9.0.2 / pytest-xdist 3.8.0):
+      #   tos/tests          119.8s serial -> 48.4s   (9657 tests, 0 failures)
+      #   tos/runtime/tests  338.3s serial -> 93.7s   (3697 passed both ways)
+      # The suites are hermetic by construction (tos/tests: no .env, no
+      # network, no Redis; tos/runtime/tests: loopback + tmp_path only, with
+      # autouse network/write guards in its conftest), so the usual
+      # cross-worker hazard — external shared state — does not exist here.
+      # xdist workers talk to the controller over execnet PIPES, not sockets,
+      # so the runtime suite's autouse socket guard does not see them.
+      - name: tos hermetic package tests
+        run: pytest tos/tests -n auto
+
+      # design #40 D1.3 item 5 (ratified by the operator 2026-09-08) — the runtime shell's own hermetic
+      # suite (D1.4: zero external network/ambient env/writes outside
+      # tmp_path — tos/runtime/tests/conftest.py's autouse socket guard).
+      # Isolated rootdir via tos/runtime/pyproject.toml's own
+      # [tool.pytest.ini_options], same pattern as the kernel step above.
+      - name: tos-runtime hermetic package tests
+        run: pytest tos/runtime/tests -n auto
+
+      # CP-3 B1b (docs/plans/2026-10-07-tos-cp3-first-tenant-kickoff.md §3 B1b).
+      # `tos/runtime/cp3/` is a sibling of `tos/runtime/src`, deliberately
+      # OUTSIDE it: the paper release pin's `expected_code_digest` folds every
+      # `*.py` under the two installed package roots (`tos/src/tos` and
+      # `tos/runtime/src/tos_runtime`), so a file added under either would ABORT
+      # the resident paper session every morning. Being outside those roots also
+      # means FOUR gates would not have covered it — the three checks (pytest /
+      # Black / mypy) and the size budget, whose own `scope` list in
+      # `config/tos_size_budget.yaml` is path-based for the same reason. The
+      # first three name the directory explicitly (here, and in the static job
+      # below); the fourth gained `tos/runtime/cp3` in that config (2026-10-08
+      # review: the earlier version of this comment named three holes and
+      # omitted the size budget, and `tos_size_budget --check PASS` was being
+      # cited for a tree the checker never looked at). Same
+      # "unformatted-by-nobody" shape the Black step's own scope note describes.
+      #
+      # No `-n auto` here on purpose: this suite measures 3s, which is less than
+      # xdist's own worker spin-up, so parallelising it would make it slower.
+      - name: tos-cp3 hermetic tests
+        run: pytest tos/runtime/cp3/tests
+
+      # tos governance test batteries — these test the checker scripts run as
+      # steps in the `tos-firewall-gates` job (tools/tos_firewall_check.py,
+      # tools/tos_redigest.py,
+      # tools/tos_size_budget.py) and the EV-L3 crash/restart battery under
+      # tests/tos_l3/. They
+      # need no runtime stack (imports are stdlib + pytest + pyyaml only —
+      # already installed above) and no Redis, so they live here rather than in
+      # the legacy `test` job in .github/workflows/test.yml, which is now
+      # path-gated away from tos/doc changes and would otherwise be the only
+      # thing gating a tos-only PR.
+      #
+      # TWO PASSES, the repo convention (docs/CI_PARALLEL_NOTES.md): parallel
+      # over everything NOT marked `serial`, then a second, unparallelised pass
+      # over the `serial`-marked ones.
+      #
+      # The one test that made the split necessary here —
+      #   tests/tools/test_tos_evidence_scan_measure.py::
+      #     test_a_stop_signal_during_the_end_of_run_bookkeeping_is_deferred_not_lost
+      # — went with `tools/tos_evidence_scan_{measure,bench}.py` on 2026-11-15
+      # (retired one-off measurement drivers: no CI step, cron, runner or
+      # runbook called either one). This corpus therefore carries NO
+      # `serial`-marked test today, so the second pass collects nothing and
+      # pytest exits 5 ("no tests ran").
+      #
+      # The pass stays rather than being deleted, because the marker still has
+      # to be honoured the day someone adds a `serial` test under
+      # tests/tools/test_tos_*.py or tests/tos_l3 — without it, the `-m "not
+      # serial"` filter on the first pass would silently skip that test
+      # forever. Exit 5, and ONLY exit 5, is accepted. This is NOT `|| true`:
+      # a real serial-pass failure (exit 1) still turns this step red.
+      - name: tos governance test batteries (parallel + serial 2-pass)
+        # `set -e` (not `&&`) chains the two passes, so a comment can sit
+        # between them without breaking a line continuation.
+        run: |
+          set -euo pipefail
+          pytest tests/tools/test_tos_*.py \
+            tests/tos_l3 -q -p no:cacheprovider -n auto -m "not serial"
+          # Second pass: the `serial` marker. No test carries it today, so
+          # pytest exits 5 ("no tests ran") — see the step header for why that
+          # one code, and only that one, is tolerated here.
+          set +e
+          pytest tests/tools/test_tos_*.py \
+            tests/tos_l3 -q -p no:cacheprovider -m serial
+          serial_rc=$?
+          set -e
+          if [ "$serial_rc" -ne 0 ] && [ "$serial_rc" -ne 5 ]; then
+            echo "serial pass failed with exit $serial_rc" >&2
+            exit "$serial_rc"
+          fi
+
+  # ===========================================================================
+  # Formatting and typing. Nothing here reads anything the other jobs write.
+  # ===========================================================================
+  tos-firewall-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - *checkout
+      - *setup-python
+      - *install
+
+      # Phase 1 작업 7 (계획 §2 표 7행). 두 스텝의 실행 위치가 다르다 —
+      # (독립 리뷰 Low-4, 2026-09-07: 이전 주석은 «둘 다 `cd tos`」로 실행한다고 잘못
+      # 적었으나 실제로는 mypy만 그렇다):
+      #   * Black 은 **저장소 루트**에서 실행하며, 루트 `pyproject.toml` 의
+      #     `[tool.black]` 설정을 읽는다(로컬 §1 기준선 측정 명령과 동일한 호출).
+      #     대상은 `tos/src tos/tests` 에 더해 **정확히** 이 워크플로가 소유하는 저장소
+      #     레벨 파일 둘 — `tools/tos_size_budget.py`·
+      #     `tests/tools/test_tos_size_budget.py` — 만 명시로 얹는다(독립 리뷰
+      #     Low-4 후속, 2026-09-07: 이 둘은 이전엔 이 스텝의 게이트 밖이었다).
+      #     `tools/`·`tests/tools/` 전체로 넓히지 않는다 — 그 아래 다른 파일들이
+      #     Black-clean 이라는 보장이 없다.
+      #   * mypy 는 `cd tos` 로 이동해 `src` 를 검사하며, `tos/pyproject.toml` 에
+      #     `[tool.mypy]` 섹션이 없어 상위로 올라가 루트 `pyproject.toml` 을 읽는다
+      #     (로컬 실행 시 "../pyproject.toml: note: unused section(s)" 로 실측 확인).
+      # Scope note (PR #742 follow-up). This step used to check `tos/src tos/tests`
+      # plus exactly one tool and its test, leaving `tos/runtime/src`,
+      # `tos/runtime/tests` and the rest of the tos governance tooling unformatted-
+      # by-nobody — the same shape of hole as the mypy one #742 closed, in the same
+      # job. The audit that found it also measured the cost of closing it: all 421
+      # newly covered files were ALREADY clean (406 under tos/runtime, 15 across the
+      # tooling), so this widening required no reformatting commit and cannot be
+      # carrying a silent reformat. Checked file totals: 845 before, 1266 after.
+      # (421, not the 423 first written here: the globs below match 17 tooling files,
+      # but two of them — tos_size_budget.py and its test — were already named
+      # explicitly by the old command, so they are not new coverage. Counting glob
+      # matches as "new" is the same shape of slip this step's other note exists to
+      # correct; an independent review caught it by diffing the two file SETS with
+      # `git ls-files` instead of trusting either total.)
+      #
+      # Scope note 2 (PR #937 follow-up). `tests/tools/test_tos_*.py` +
+      # `tests/tools/test_u17_verify.py` became the whole directory. The two
+      # patterns named 15 of the 43 `.py` files there; the other 28 — 14
+      # `test_broker_probes_*`, 13 `test_cp3_*` and `test_bcp_digest.py` —
+      # were formatted-by-nobody, and #937 found one of them
+      # (`test_broker_probes_balance.py`) genuinely unformatted on main
+      # while every check stayed green. It was the ONLY one: with it fixed,
+      # `black --check tests/tools` reports 43 files unchanged, so this
+      # widening carries no reformatting and cannot hide a silent reformat.
+      # Measured as a SET diff with `git ls-files`, not by counting glob
+      # matches, for the reason the note above gives — 28 new, 15 already
+      # named, 43 total.
+      #
+      # The directory, not a glob: a new test file under `tests/tools/` joins
+      # this gate the moment it is added, which is the hole the first note
+      # describes. `tests/tools/fixtures/` holds no `.py` at all, so nothing
+      # black would rewrite is used as a verbatim test input.
+      #
+      # Only the BLOCKING Black runs here. The advisory one in
+      # `.github/workflows/test.yml` (`black --check --diff .`, whole repo,
+      # `continue-on-error: true`) is deliberately left alone: the ~300-file
+      # formatting debt it reports is tracked separately, and that is why
+      # `test_broker_probes_balance.py` could sit unformatted on main.
+      - name: Black (tos)
+        run: >-
+          black --check tos/src tos/tests tos/runtime/src tos/runtime/tests
+          tos/runtime/cp3
+          tools/tos_*.py tests/tools
+
+      - name: mypy (tos kernel)
+        run: cd tos && mypy src --ignore-missing-imports
+
+      # tos/src/tos/py.typed (PEP 561 marker, added alongside this step) makes
+      # the kernel's own types visible to this check instead of resolving as
+      # `Any` — without it, every tos_runtime call into a kernel function/
+      # predicate/artifact silently typed as `Any`, masking real errors here.
+      - name: mypy (tos runtime)
+        run: mypy tos/runtime/src --ignore-missing-imports
+
+      # The two TEST trees, added after PR #737: a type defect in a test HELPER
+      # (`example_integrity.py` reassigning one name at two types, which can mask a
+      # broken assertion) survived three review rounds and three green CI runs
+      # precisely because the two steps above check `src` only.
+      #
+      # Both trees carry ~1.9k pre-existing errors, so they cannot simply be added.
+      # Two rejected shapes and why:
+      #   * a per-FILE exception list — that is the "registry with an unpinned
+      #     satellite" class this repo has already been bitten by; a new file joins
+      #     silently uncovered.
+      #   * a baseline error COUNT ratchet — a fingerprint, which the review
+      #     convention §5 forbids on purpose.
+      # So the deferral is per ERROR CODE instead. That list is finite, it does not
+      # rot as files are added (a new file is checked for every enabled code from the
+      # moment it exists), and it only ever shrinks. Enabled today are thirteen codes:
+      # the original nine that flag a real mismatch rather than a missing annotation
+      # (measured to 0 in both trees by the commit that added this step), plus four
+      # more added by the test-tree mypy ratchet plan's stage 1
+      # (test-tree mypy ratchet plan §3.1, retired 2026-11-13) — `misc`,
+      # `index`, `operator`, `union-attr` — fixed by adding real None-checks/type
+      # narrowing at each call site, never by loosening a type or an assertion.
+      #
+      # Stage 2 (same plan, §3.2) added a fourteenth code: `no-any-return` — 55 hits
+      # (37 kernel + 18 runtime; `mypy --version` must read 2.3.1, the CI pin), fixed
+      # by assigning the Any-typed expression to a variable and adding a real
+      # `assert isinstance(...)` before the return, never a `cast`. Two recurring
+      # shapes: 37 of the 55 were the same `mp.Queue.get()` result in the
+      # `*_import_closure.py` helpers (one instance per package, not deduplicated —
+      # see the registry-with-unpinned-satellite note above; this stage left the
+      # duplication in place on purpose, scoped to the error-code fix only — that
+      # duplication is gone since 2026-11-15: the 24 per-package helpers are now one
+      # table in `tos/tests/_closure_{policy,table,children}.py`), and 9
+      # were `connection.execute(...).fetchone()[0]` SQLite count helpers (against
+      # `SqliteEvidenceStore.connection`), which also gained a `row is not None`
+      # check the bare `[0]` indexing had been skipping silently.
+      #
+      # Stage 2b (same plan, §5) added a fifteenth code: `return-value` — 116 hits
+      # (105 kernel + 11 runtime). 108 of those (94 `DigestBoundArtifact.issue()` +
+      # 14 `IdDerivedArtifact.issue()` call sites) were one root cause: both
+      # `@classmethod issue()` methods in `tos/src/tos/canonical/_base.py` declared
+      # their return type as the base class instead of `Self`, so every subclass
+      # override (`Proposal.issue()`, `AuthoredStrategy.issue()`, ...) looked like it
+      # returned the base type to callers. Fixed by declaring both `-> Self`
+      # (`requires-python >= 3.11`, no `typing_extensions` needed); this also made 7
+      # `# type: ignore[return-value]` comments genuinely dead (confirmed by running
+      # the kernel gate with each removed and checking no error reappears at that
+      # line), removed alongside. The remaining 8 were judged individually, never by
+      # widening an ignore's label to also cover `return-value`:
+      # `tos/tests/afg/test_afg_{void_canaries,truthy_sentinel}.py` returned
+      # `ActionFlowDecision.result` (`ActionFlowResult | None`) from a helper typed
+      # to return `ActionFlowResult`; `result` is also in `_REQUIRED_COVERED`, so any
+      # decision built via `.issue()` (the only path these helpers use) already fails
+      # construction if `result` is `None` — a redundant `assert is not None` at the
+      # call site would be dead code (the `assert row is not None` lesson from the
+      # `no-any-return` stage), so the fix instead added a real
+      # `ActionFlowDecision.issued_result` property to
+      # `tos/src/tos/afg/records.py` that performs that one narrowing at its actual
+      # invariant boundary. Five `tos/runtime/tests/**/conftest.py` (+
+      # `calendar/test_owner.py`) `FixedKeyProvider` doubles were missing
+      # `KeyProvider.key_for()` — a real Protocol-conformance gap, not a mislabeled
+      # ignore, fixed by adding `key_for` to match the idiom already used by the
+      # sibling doubles in `riskstate/conftest.py` / `venue/conftest.py`. The last,
+      # `compose/test_rcl_tip_generation_provider.py`, returned `AppendReceipt.seq`
+      # (`int | None`); unlike the `ActionFlowDecision` case, nothing validates
+      # `AppendReceipt` at construction, so `assert receipt.seq is not None` is a
+      # live, reachable check (and the same pattern the kernel itself uses at e.g.
+      # `tos_runtime/nontrade/latch.py:139` and `tos_runtime/engine/driver.py:642`).
+      #
+      # The `Self` fix also surfaced two errors NOT counted in the 116 (both were
+      # previously masked by `attr-defined`, which stays deferred): a genuinely
+      # redundant `cast(ApprovalSetConsumptionRecord, ...)` in
+      # `tos/tests/hag/test_hag_void_canaries.py` — a sibling `.issue()` call two
+      # lines below it was never cast, proving the cast only existed to paper over
+      # the base-type return — deleted along with the then-unused `cast` import; and
+      # 3 `operator` errors (an enabled code) in
+      # `tos/tests/authority/test_authority_required_covered.py`, where
+      # `record.new_epoch > record.old_epoch` had type-checked against `Any` (via
+      # `attr-defined`) before `Self` let mypy resolve the real `int | None` fields.
+      # Both epochs are `_REQUIRED_COVERED` AND re-checked by a dedicated
+      # `_epoch_strictly_increasing` model validator, so — same reasoning as
+      # `ActionFlowDecision.issued_result` — an inline `assert is not None` would be
+      # dead; fixed with `AuthorityEpochTransitionRecord.issued_old_epoch` /
+      # `.issued_new_epoch` properties in `tos/src/tos/authority/records.py`. Both
+      # kernel properties raise `ArtifactIntegrityError` on the `None` branch rather
+      # than asserting — verified NOT dead by constructing an ISSUED-status instance
+      # via `model_construct()` (which bypasses the validator; this repo already
+      # treats that as a real threat model, e.g. `tos/tests/test_required_covered.py`
+      # module docstring) and confirming the raise actually fires.
+      #
+      # A full-tree, zero-disable mypy sweep after the `Self` fix (looking for any
+      # OTHER now-dead ignore this ratchet's own scope wouldn't otherwise catch)
+      # found 6 more genuinely-dead `# type: ignore[return-value]` comments on
+      # direct `Cls.issue(...)` calls, same root cause as the kernel's 7:
+      # `tos/tests/marketfeed/_marketfeed_fixtures.py:150,178`,
+      # `tos/tests/dsl/test_dsl_context_value.py:75,152`, and
+      # `tos/runtime/tests/marketfeed/_store_fixtures.py:100,128` — removed. The
+      # same sweep for a now-redundant `cast(...)` around an `.issue()` call found
+      # none beyond the one already listed above.
+      #
+      # `unused-ignore` was named in PR #742 as the next code to enable, on the
+      # strength of 53 hits under FULL checking. That is wrong while any code is
+      # deferred, and the correction is the useful part of this note: measured back
+      # when nine codes were enabled and ten deferred, exactly the flags below minus
+      # the `unused-ignore` deferral gave 283 (183 kernel + 100 runtime), not 53. The
+      # extra 230 are ignores that stop being "used" once the deferrals are applied:
+      # 228 name a deferred code directly (`# type: ignore[arg-type]` reads as
+      # "unused" only because `arg-type` is off right now), and 2 name `call-arg` —
+      # an ENABLED code — where turning the nine off removes the error at that line by
+      # cascade, so the mechanism there is interaction between deferred codes rather
+      # than the ignore's own code being off. An independent review measured that
+      # split; the one-to-one story was too strong, and the practical conclusion
+      # holds either way. Deleting them to go green would quietly remove the
+      # suppressions that the deferred codes need the moment they are enabled, i.e.
+      # it would make this gate harder to ratchet, not easier. So `unused-ignore` is
+      # enabled LAST, after every code it interacts with — it measures the others, it
+      # does not lead them. Stage 1 separately removed the 53 genuinely dead ignores
+      # (unused regardless of deferral state) while leaving the 230 deferral-dependent
+      # ones in place.
+      #
+      # `attr-defined` enabled (2026-09-18, 2-stage-2 third/last PR): 108 errors / 46
+      # files at measurement time, five subject shapes: `"type"` (36), `"object"`
+      # (36), `"AST"` (23), `"FixtureFunctionDefinition"` (10), `"ModelMetaclass"`
+      # (2), plus one `Module has no attribute` outlier. Every one was a root-cause
+      # fix, not a per-line suppression:
+      #
+      # - `"type"` (36): a shared `_ARTIFACTS: list[tuple[type, ...]]`-shaped
+      #   collection (or a bare `model: type` / `cls: type` test-function parameter)
+      #   erased the real artifact base, so `._REQUIRED_COVERED` / `._ID_FIELD` /
+      #   `._COVERED_FIELDS` / `.issue()` / pydantic's own `.model_fields` /
+      #   `.model_config` all read as missing. Annotating with the real common base
+      #   (`type[DigestBoundArtifact]`, `type[IndependentIdArtifact]`, or
+      #   `type[pydantic.BaseModel]` for the two dict/list literals whose values
+      #   don't share a digest-bound base) fixed every instance; two `enum_cls: type`
+      #   parameters that iterate an Enum class needed `type[Enum]` instead.
+      # - `"object"` (36): a helper's declared return type (or a `dict[str, object]`
+      #   mutable box closing over a composed runtime) was strictly weaker than what
+      #   it actually produced — e.g. `tos_runtime/tests/marketfeed/test_scheduler
+      #   .py`'s `_decide()` was annotated `-> object` while wrapping `decide_tick()`,
+      #   which actually returns `TickDecision` (21 of the 36 errors, one fix).
+      #   Fixed by annotating each helper with its real return type
+      #   (`TickDecision`, `ComposedRuntime`, `EngineCore`, `VenueServiceStage`) —
+      #   the last two needed `if TYPE_CHECKING:` imports to avoid a runtime import
+      #   at module scope, mirroring this file's existing local-import style. Two
+      #   remaining `object` cases were mypy inference quirks rather than missing
+      #   annotations: a `sorted(FROZENSET, key=lambda i: i.value)` expression
+      #   inline inside `@pytest.mark.parametrize(...)` had its lambda parameter
+      #   widened to `object` by parametrize's own dynamically-typed `argvalues`
+      #   context (verified: the identical `sorted()` call type-checks cleanly once
+      #   hoisted to an explicitly annotated module-level constant) — fixed by that
+      #   hoist in `test_egressgw_applicability.py`; and a heterogeneous tuple of
+      #   five `set[SomeStrEnum]` literals (`test_replacement_vocabulary.py`) joined
+      #   to plain `object` on iteration since the five enum types share no common
+      #   base narrower than `Enum` — fixed with an explicit
+      #   `tuple[set[StrEnum], ...]` annotation.
+      # - `"AST"` (23, operator directive: type-narrow, no exception lane): every
+      #   instance was the same shape — an `isinstance(node, ast.Import)` /
+      #   `ast.ImportFrom` (or `ast.If`/`ast.Assign`/...) branch narrows `node`
+      #   correctly, but `node.lineno` was read AFTER the if/elif chain, where
+      #   `node`'s type has widened back to the bare `ast.AST` `ast.walk()` yields.
+      #   Fixed in all 22 files (20 near-identical `test_*_import_closure.py`
+      #   sibling-import scanners — merged into one shared scanner on 2026-11-15,
+      #   `tos/tests/_closure_policy.py::scan_offenders` — + `test_stm_truthy_sentinel.py` +
+      #   `test_sir_void_canaries.py`) the same way: capture `node.lineno` (or
+      #   `(name, node.lineno)` / `(target, node.lineno)` pairs) INSIDE each
+      #   narrowed branch instead of reading it from the widened loop variable
+      #   afterward. No `isinstance` narrowing was removed or weakened.
+      # - `"FixtureFunctionDefinition"` (10, 3 files): `config_dir.__wrapped__(root)`
+      #   — pytest's own documented escape hatch for calling the plain function a
+      #   `@pytest.fixture` wraps, used identically in `test_symmetry.py` (3),
+      #   `test_riskstate_wiring.py` (4), and `test_venue_wiring.py` (3) — reaches an
+      #   attribute pytest's typed `FixtureFunctionDefinition` deliberately does not
+      #   expose (calling a fixture directly is unsupported API). Consolidated into
+      #   one new `call_wrapped_fixture()` helper in `compose/conftest.py` with a
+      #   single documented `# type: ignore[attr-defined]` plus a real
+      #   `isinstance(result, Path)` runtime guard (needed to avoid trading the
+      #   attr-defined error for a `no-any-return` one on the SAME enabled code) —
+      #   ten call sites now import and call the shared helper instead of each
+      #   carrying its own gap.
+      # - `"ModelMetaclass"` (2): the same collapse-to-metaclass shape as `"type"`
+      #   above, on an unannotated `list`/`dict` literal of different pydantic model
+      #   classes (`_RECON_MODELS`, `_TEMPLATE_MODELS`) — fixed with an explicit
+      #   `list[type[pydantic.BaseModel]]` / `dict[str, type[pydantic.BaseModel]]`
+      #   annotation.
+      # - `Module has no attribute "engine"` (1): `sys.modules["tos_runtime"].engine
+      #   = ...` (restoring a package attribute a cold-cache-eviction test popped)
+      #   is dynamic module-attribute assignment mypy cannot model on `ModuleType` —
+      #   switched to `setattr(sys.modules["tos_runtime"], "engine", ...)`, same
+      #   runtime behavior, no attribute access for mypy to reject.
+      #
+      # `tos/tests/sci/test_sci_truthy_sentinel.py:48` was the one line flagged in
+      # advance (§2.1's "not covered by" case, PR #747): `# type: ignore[index]` on
+      # `member is type(member)[member.name]` covered a real `[index]` error (mypy
+      # not knowing `type[object]` supports subscripting) while the SAME line's
+      # `member.name` attr-defined error went uncovered, because the surrounding
+      # three test functions all took `member: object`. Retyping the parameter to
+      # `member: StrEnum` fixed the attr-defined AND, as a side effect, made mypy's
+      # enum-aware handling of `type[StrEnum].__getitem__` type-check the subscript
+      # too — so the `[index]` ignore became genuinely unused and was removed, not
+      # merely widened to `[index, attr-defined]`. Confirmed by re-running with the
+      # label removed: zero errors on that line, `unused-ignore` clean.
+      #
+      # Dead-suppression sweep (a zero-disable, whole-tree mypy run, not just this
+      # PR's own touched files): baseline was 18 `# type: ignore[attr-defined]`
+      # comments tree-wide (`git grep -c` against pre-PR `main`); 12 became
+      # dead/removed by the root-cause fixes above (10 replaced by the
+      # `call_wrapped_fixture()` consolidation losing their per-call-site ignore,
+      # 2 in `test_evidence_required_covered.py`/`test_orthostate_composite.py`-
+      # style `_ARTIFACTS` files whose `cls._REQUIRED_COVERED` / `cls.issue(...)`
+      # ignores became unused once `cls` carried a real base type) — 6 remain, all
+      # confirmed live by the same zero-disable sweep (zero `unused-ignore` hits
+      # tree-wide): `test_slice_gaps.py:192` (`.fget` on a property descriptor
+      # reached via the class, not an instance), `test_sci_records.py:85,87`
+      # (`left`/`right: object` parameters deliberately kept untyped beyond
+      # `.canonical_digest`), `test_stm_authority.py:85`, the new
+      # `call_wrapped_fixture()` helper itself (documented above), and
+      # `test_parity_and_resubmit.py:229` — none of these five pre-existing ones
+      # were touched by this PR.
+      #
+      # Stage 3 (2026-09-23, docs/plans/2026-09-22-tos-test-tree-mypy-ratchet-
+      # stage3-plan.md) enabled `arg-type`: 773 errors (499 kernel + 274
+      # runtime) at plan time (main `29f39fe6`), closed across six PRs, each a
+      # root-cause fix, never a per-line suppression:
+      #   - #778 (`362b047b`, buckets E + B, 158): producer helpers annotated
+      #     with their real return type instead of `object`; genuinely Optional
+      #     values narrowed at the call site or via a non-Optional accessor on
+      #     the producer, same discipline as stage 2's `issued_result`.
+      #   - #782 (`782920f3`, bucket A, `test_brokercap_routing.py` alone, 96):
+      #     the file the later A-shaped PRs pattern off of.
+      #   - #783 (`d58b7d7a`, buckets A-fn + A-issue, 113): `dict` kwargs
+      #     splats into keyword-only kernel predicates replaced by a test-side
+      #     `TypedDict` matching the signature 1:1; `issue(**content)` calls
+      #     pulled `scheme`/`status` out of the dict into explicit keywords.
+      #   - #784 (`d1c56cf3`, buckets A-pyd + A-rt, 236): pydantic-model
+      #     builders switched from dict-splat construction to
+      #     `Model.model_validate({**base, **overrides})` (still validates, so
+      #     an illegal override still raises) plus the same TypedDict treatment
+      #     for runtime dataclass/class builders.
+      #   - #786 (`7aba8a0d`, buckets D + C-prime + Z + residual E/B, 166, plus
+      #     12 new runtime Protocol ports): test doubles fixed to satisfy their
+      #     Protocol or concrete base (missing members added, or the double
+      #     subclassed where the callee uses a wide surface); where a narrow
+      #     surface was all a caller needed, a Protocol port was introduced in
+      #     `tos_runtime` instead — one time service had accreted five
+      #     different double shapes, which a port narrows rather than widens.
+      #   - #785 (`70ca43a1`, kernel type hygiene): two defects this surfaced
+      #     (a `_FileCustodyKwargs` TypedDict needed a required/optional split)
+      #     fixed the same way, not suppressed.
+      #   Rule enforced across all six: a call site exercising an illegal input
+      #   keeps its `pytest.raises` and gets a `cast(...)` at the illegal
+      #   value, never a `# type: ignore`; no Protocol member and no
+      #   kernel/runtime signature was widened just to make a double or a
+      #   builder fit.
+      #   CI blind spot found while landing #786: the two TEST-tree steps below
+      #   do not surface body errors inside `tos_runtime/src` reached via
+      #   import from a runtime test — only the separate `mypy (tos runtime)`
+      #   SOURCE step above does. That is why all four mypy steps in this job
+      #   stay independent rather than collapsing a source check into the
+      #   matching test-tree one.
+      #   Deliberately left deferred: `no-untyped-def` only (parent plan §6 (1),
+      #   an operator decision out of this stage's scope; `check_untyped_defs =
+      #   true` already checks these bodies, so annotating them gains little
+      #   detection power). `unused-ignore` was measured at 8 hits under this
+      #   stage's new flags (5 kernel + 3 runtime, down from 187 under the old
+      #   arg-type-still-deferred flags on the same tree) and enabled by
+      #   docs/plans/2026-09-23-tos-test-tree-mypy-ratchet-final-unused-ignore-
+      #   plan.md: all eight were dead `# type: ignore[no-untyped-def]` comments
+      #   suppressing a code this job already disables, so the comments were
+      #   deleted rather than the flag kept — CI's `warn_unused_ignores = true`
+      #   declaration (`pyproject.toml`) now matches what the gate enforces.
+      #
+      # Two steps, never one: `mypy tos/tests tos/runtime/tests` in a single
+      # invocation aborts with `Duplicate module named "tests"` and checks almost
+      # nothing.
+      - name: mypy (tos kernel tests)
+        run: >-
+          mypy tos/tests --ignore-missing-imports
+          --disable-error-code=no-untyped-def
+
+      - name: mypy (tos runtime tests)
+        run: >-
+          mypy tos/runtime/tests --ignore-missing-imports
+          --disable-error-code=no-untyped-def
+
+      # CP-3 B1b, sources AND tests in one invocation (the package is small and
+      # has no duplicate-module hazard). Same single deferral the two test-tree
+      # steps carry; everything else is checked.
+      - name: mypy (tos cp3)
+        run: >-
+          mypy tos/runtime/cp3 --ignore-missing-imports
+          --disable-error-code=no-untyped-def
+
+      # The tos GOVERNANCE TOOLING under `tools/` — the checkers this very job
+      # runs as steps (`tos_firewall_check` /
+      # `tos_redigest` / `tos_size_budget`) plus the CP-3 producer package
+      # `tools/tos_cp3/`.
+      # Until now NOTHING type-checked them: the five steps above cover
+      # `tos/**` only, and `type-check` in `.github/workflows/test.yml` runs
+      # `mypy shared/ ... || true` — a different path, and advisory. A type
+      # defect in a gate's own source reached main silently, which is the same
+      # "checked-by-nobody" shape the Black step's scope note describes.
+      #
+      # Same flags as the two SOURCE steps above, deliberately: `tools/` is
+      # source, not a test tree, so `no-untyped-def` stays ENABLED here rather
+      # than deferred the way the three test/cp3 steps defer it. Measured on
+      # c2f6ee15 before the fixes in this PR: 39 errors / 13 files with these
+      # flags (30 / 12 with `no-untyped-def` disabled). All 39 are fixed in the
+      # same PR — no baseline file, no `|| true`.
+      #
+      # `--explicit-package-bases` is required, not cosmetic. `tools/` has no
+      # `__init__.py` (deliberately — the directory is a bag of scripts, not a
+      # package), so without it mypy maps
+      # `tools/tos_x.py` to the module `tos_x` while the sibling imports inside
+      # the tree say `tools.tos_x`, and the run ABORTS on "Source file found
+      # twice under different module names" after checking nothing.
+      #
+      # What this step's mypy can SEE is the minimal install above — for
+      # `tools/` that is `-e . --no-deps` plus pyyaml and mypy itself. pandas
+      # and the yaml stubs are NOT installed, so those types resolve to `Any`
+      # here while a full local `.venv` resolves them for real. The trap that
+      # follows from it: a `# type: ignore[...]` that local stubs make
+      # NECESSARY is dead weight in CI and fails this step as `unused-ignore`
+      # (`warn_unused_ignores = true` in the root pyproject). Write such a
+      # suppression so both environments accept it —
+      # `# type: ignore[assignment, unused-ignore]`, naming `unused-ignore`
+      # alongside the real code — rather than tuning it to one environment.
+      # (The worked example this note used to cite,
+      # `tools/tos_contract_check.py:480`, was retired 2026-11-12 —
+      # docs/plans/2026-11-12-phase0-retirement-plan.md.)
+      #
+      # Reproducing this locally: run it from a checkout whose venv was
+      # `pip install -e .`-ed FROM THAT SAME checkout (what the install step
+      # above does here). The editable install drops that path into a `.pth`,
+      # which mypy then treats as a site-packages root — so `shared.*`, which
+      # several of these tools import, resolves as an installed LIBRARY: its
+      # types are read but its own errors are not reported. From a tree whose
+      # venv points somewhere else, the same command resolves `shared/` as
+      # source and reports its ~600 pre-existing errors on top. Measured both
+      # ways while writing this step; the CI shape is the first one.
+      #
+      # SCOPE, stated so the remainder is named rather than silently excluded:
+      # this covers `tools/tos_*.py` + `tools/tos_cp3/`, which is a GLOB, not a
+      # list — a tool added under either path joins the gate automatically
+      # (`tos_recovery_drill.py` and `tos_cp3/status_board.py`, both landed
+      # while this PR was open, were picked up and are clean).
+      # The rest of `tools/` is NOT covered. The 2026-11-12 Phase-0 retirement
+      # (docs/plans/2026-11-12-phase0-retirement-plan.md) deleted most of that
+      # remainder — `tools/spikes/phase0_contract/` and the three loose v222
+      # scripts — so what is left uncovered is `tools/broker_probes/` (14
+      # files, 20 errors at 06051fc3 under these same flags); `tools/bcp_digest.py`
+      # was deleted on 2026-11-15, unused. Widening to all of `tools/` is a follow-up, and
+      # the broker-probe part of it touches real-order paths.
+      - name: mypy (tos tooling)
+        run: >-
+          mypy tools/tos_*.py tools/tos_cp3 --ignore-missing-imports
+          --explicit-package-bases
+
+  # ===========================================================================
+  # TOS rescope M3 (docs/plans/2026-10-22-tos-rescope-plan.md §2 sentence 3):
+  # kill -9 at 전송 직전 / 직후 / 결과 수신 직후, 3 rounds each, then two
+  # restarts per drill. SYNTHETIC transport only; the child refuses any other
+  # transport and installs the runtime suite's loopback-only socket guard.
+  # Its own job (not a step in tos-firewall-tests) so the check name
+  # `tos-recovery-drill` can be added to the ruleset on its own. Measured
+  # locally: 9 drills in 80s (each child 2-3s). `--timeout 30` per child: at
+  # the script's 120s default, a hang would run into this job's timeout
+  # before the table and FAIL lines print.
+  # ===========================================================================
+  tos-recovery-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - *checkout
+      - *setup-python
+      - *install
+
+      - name: kill -9 recovery drill (3 points x 3 rounds, synthetic)
+        run: python tools/tos_recovery_drill.py --rounds 3 --timeout 30 --workdir "$RUNNER_TEMP/recovery-drill"
+
+  # ===========================================================================
+  # The check context the rest of the repo (and any future ruleset entry) names.
+  # It owns no checks of its own; it exists so that splitting the work across
+  # three runners did not split the NAME that says the work passed.
+  # ===========================================================================
+  tos-firewall:
+    runs-on: ubuntu-latest
+    needs: [tos-firewall-gates, tos-firewall-tests, tos-firewall-static, tos-recovery-drill]
+    # `always()` so this job still runs — and still FAILS — when a dependency
+    # failed or was cancelled. Without it the aggregator would be `skipped`,
+    # and a skipped required check is treated as passing by some settings.
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Every tos-firewall job must have succeeded
+        # Fail-closed on anything that is not literally `success`: `failure`,
+        # `cancelled` and `skipped` all land here. `join(needs.*.result, ' ')`
+        # expands to one space-separated word per dependency, in the order
+        # declared above.
+        run: |
+          set -euo pipefail
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "dependency results: $results"
+          for r in $results; do
+            if [ "$r" != "success" ]; then
+              echo "::error::a tos-firewall job did not succeed ($results)"
+              exit 1
+            fi
+          done
+          echo "all tos-firewall jobs succeeded"

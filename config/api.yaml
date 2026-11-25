@@ -1,0 +1,113 @@
+# API 서버 설정
+# 민감 정보 (API_KEY, TELEGRAM_TOKEN 등)는 .env 파일에서 관리
+
+api:
+  title: "KIS Unified Trading API"
+  version: "0.1.0"
+  debug: false
+
+  # 서버 설정
+  # NOTE: 실제 바인딩 포트는 컨테이너 CMD(uvicorn ... --port)가 정한다.
+  # 단일 API 통합 이후 dashboard FastAPI 는 :8001 로 서빙된다(이전 게이트웨이 :8000 제거).
+  # 이 값은 메타/문서용이며 CORS·title 등 다른 키만 코드에서 사용된다.
+  server:
+    host: "0.0.0.0"
+    port: 8001
+
+  # CORS 설정
+  cors:
+    # 프로덕션에서는 명시적인 도메인만 허용
+    allowed_origins:
+      - "https://your-domain.com"
+      - "https://app.your-domain.com"
+    allow_credentials: true
+    allowed_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+    allowed_headers:
+      - "Content-Type"
+      - "Authorization"
+      - "X-API-Key"
+
+  # Rate Limiting 설정
+  rate_limits:
+    enabled: true
+    # 기본 제한 (분당 요청 수)
+    default: "60/minute"
+    # 엔드포인트별 제한
+    endpoints:
+      health: "120/minute"
+      status: "60/minute"
+      trading_start: "5/minute"
+      trading_stop: "10/minute"
+      trading_pause: "10/minute"
+      trading_resume: "10/minute"
+      strategies: "30/minute"
+      backtest: "10/minute"
+
+  # HTTP 클라이언트 풀 설정
+  http_client:
+    pool_limit: 100
+    pool_limit_per_host: 30
+    dns_cache_ttl: 300  # 초
+    timeout_total: 30   # 초
+    timeout_connect: 10 # 초
+
+  # 에러 응답 설정
+  errors:
+    # 프로덕션에서는 상세 에러 숨김
+    expose_details: false
+    # 로그에 스택 트레이스 포함
+    log_stacktrace: true
+
+  # Authentication 설정
+  authentication:
+    # API 키 기반 인증
+    api_key:
+      enabled: true
+      # 환경 변수에서 로드: DASHBOARD_API_KEY
+      header_name: "X-API-Key"
+      query_param_name: "api_key"  # WebSocket용
+
+    # 대시보드 인증
+    dashboard:
+      require_auth: true
+      # 개발 모드: DASHBOARD_DEV_MODE=true로 인증 비활성화 가능
+      dev_mode: false
+
+    # 메트릭스 엔드포인트 인증
+    metrics:
+      require_auth: false  # Prometheus 스크래퍼 호환성 위해 기본 비활성화
+
+    # 공개 엔드포인트 (인증 불필요)
+    public_endpoints:
+      - "/health"
+      - "/docs"
+      - "/redoc"
+      - "/openapi.json"
+
+
+# 개발 환경 오버라이드
+development:
+  api:
+    debug: true
+
+    cors:
+      allowed_origins:
+        - "http://localhost:5081"
+        - "http://localhost:8080"
+        - "http://127.0.0.1:5081"
+        - "http://127.0.0.1:8080"
+
+    rate_limits:
+      enabled: false  # 개발 시 비활성화
+
+    errors:
+      expose_details: true
+
+    authentication:
+      dashboard:
+        require_auth: false  # 개발 환경에서는 기본 비활성화
+        dev_mode: true

@@ -1,0 +1,31 @@
+# marketfeed.yaml — TOS paper 배포 **부팅 증명 픽스처** (W-A / A-5)
+# 부팅 증명 픽스처 — 거래 전략 아님 · 대칭은 전략 제안 경로 착지 후 · 운영자 선택 (가) 2026-09-23
+# 출처: docs/plans/2026-09-23-tos-paper-coordinates-and-first-boot-design.md §4 5항 ·
+#       운영자 선택 (가) 2026-09-23 · 상위 계획 §7.8 A-5
+#       (「로컬 헤르메틱 틱 원천이 존재하는지는 측정했다: 존재한다.
+#         `marketfeed.yaml::intake_kind: journal` 이 그것이고, 구현
+#         `tos_runtime/marketfeed/journal.py::JsonLinesObservationJournal` 은
+#         json+pathlib 만 쓰며 소켓을 열지 않고 시계도 읽지 않는다」).
+
+instruments: ["TBD"]
+
+instrument_class: "krx-stock"
+
+account: "TBD"
+
+direction: "LONG"
+quantity_basis: "RISK"
+unit: "SHARES"
+
+intake_kind: "journal"
+
+journal_path: "TBD"
+
+poll_interval_ms: 400
+
+journal_pass_allowance_ms: 100
+
+time_evaluate_closed_interval_ms: 60000
+
+snapshot_age_bound: 20
+interval_width: 10

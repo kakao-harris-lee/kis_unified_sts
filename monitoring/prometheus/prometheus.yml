@@ -1,0 +1,27 @@
+# Prometheus Configuration
+# KIS Unified Trading Platform 메트릭 수집 설정
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'kis-unified-sts'
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  # Prometheus 자체 메트릭
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # `kis-dashboard` (dashboard:8001/metrics) 잡은 L4 에서 지웠다: /metrics 를
+  # 올리던 라우트가 사라져 타깃이 404 로 영구 down 이고, 그 메트릭의 생산자인
+  # 레거시 트레이딩 서비스는 2026-10-08 부터 정지라 값도 전부 0이었다
+  # (docs/plans/2026-11-07-legacy-removal-plan.md §3 L6).
+
+  # Redis 메트릭 (Redis Exporter — monitoring/docker-compose.yml 스택)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']

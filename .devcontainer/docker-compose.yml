@@ -1,0 +1,33 @@
+# Dev Container stack — isolated from the production docker-compose.yml.
+#
+# `app` is the workspace container you attach to (VS Code Dev Containers /
+# GitHub Codespaces). It shares `redis`'s network namespace so Redis is
+# reachable at localhost:6379 exactly like CI — some tests connect to localhost
+# directly and do NOT read REDIS_URL, so a sibling service alone is not enough.
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # No auth + ephemeral: a throwaway dev Redis, isolated from any real server.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    image: mcr.microsoft.com/devcontainers/python:3.11
+    # Reach Redis at localhost:6379 (shares redis's netns). NOTE: network_mode
+    # forbids sibling `networks:`/`ports:`; forwardPorts in devcontainer.json
+    # target this shared namespace, which is what we want.
+    network_mode: "service:redis"
+    command: sleep infinity
+    environment:
+      ENVIRONMENT: dev
+      REDIS_URL: redis://localhost:6379/1
+    volumes:
+      - ..:/workspaces/kis_unified_sts:cached
+    depends_on:
+      redis:
+        condition: service_healthy

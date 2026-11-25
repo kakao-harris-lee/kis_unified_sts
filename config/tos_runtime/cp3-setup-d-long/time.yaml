@@ -1,0 +1,32 @@
+# time.yaml — TOS paper 배포 승인값 (W-A / A-2)
+# 승인 출처: operator 2026-09-18 설정값 승인 · 2026-09-23 제안표 채택 확정 ·
+#            docs/plans/2026-09-18-tos-config-value-proposal.md §2.1 · §4.2 · §4.3
+# 제안표 §0 — 이 파일이 무엇이고 무엇이 아닌가:
+#   **이것은 첫 부팅 프로파일이지 운영 안전 태세가 아니다.** 여기 적힌 값들은
+#   `run` 이 로컬 헤르메틱 환경에서 구동하도록 만드는 값이다. 구조적으로
+#   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
+#   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
+
+MAX_time_source_precision_ms: 50
+MAX_time_transport_and_queue_uncertainty_ms: 50
+MAX_time_source_disagreement_ms: 50
+MAX_clock_domain_conversion_uncertainty_ms: 50
+MAX_future_timestamp_tolerance_ms: 50
+MAX_time_source_sequence_gap_ms: 50
+MAX_process_suspension_ms: 2000
+MAX_critical_input_consumer_receipt_age_ms: 1000
+MAX_time_conservative_freshness_age_ms: 1000
+
+MIN_time_independent_reference_count: 1
+
+MAX_send_result_wait_ms: 2000
+
+time_health_snapshot_heartbeat_ms: 55000
+
+tz_db_version: "2026c"
+
+trading_calendar_version: "krx-2026.11"
+
+verification_profile_version: "VERIFICATION-PROFILE-002-v2.1"
+
+safety_profile_version: "tos-paper-profile-g1"

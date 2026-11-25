@@ -1,0 +1,60 @@
+# tos_runtime.compose per-strategy Order Construction facts (steps 2/3/5/11) example config
+# (TOS `run` 구동 아크 plan, docs/plans/2026-09-17-tos-run-boot-and-real-sources-arc-plan.md
+# §2 decision 2, §4 W1 lane A)
+#
+# Loader: tos_runtime.compose._construction_config.load_construction_config
+#
+# Every value below is `null` (named-TBD): this is an EXAMPLE file, not an
+# approved config. A real deployment copies this file (e.g. under
+# config/tos_runtime/paper/), fills in every leaf, and passes it via
+# `tos-runtime-compose run --config-dir <dir>` (the loader reads
+# construction.yaml straight out of that same directory). A still-null,
+# still-"TBD", or missing required leaf here IS a fail-closed refusal at
+# load (tos_runtime.compose._construction_config.ConstructionConfigError),
+# never a silent default. An unrecognized top-level key also refuses.
+#
+# `price` is deliberately NOT a key in this file (plan §2 decision 2,
+# binding) — see the loader module's own docstring. A price literal here
+# would be exactly the injected literal the (a′) wave removed from
+# ConstructionConfig itself; the per-tick value view is the real price
+# source once a tick source is wired, correlated via `price_field_key`/
+# `shape_price_field_key` below.
+
+# --- identity scope --------------------------------------------------------
+# The account and instrument this composition's Order Construction facts
+# apply to (tos_runtime.compose._types.ConstructionConfig's own docstring —
+# genuine per-deployment configuration, not a bound compose could derive).
+
+account: null
+instrument: null
+
+# The closed order-action taxonomy token this composition constructs
+# (tos.venue.vocabulary.ActionClass — one of NEW_LONG/NEW_SHORT/INCREASE/
+# DECREASE/CLOSE/REVERSAL/CANCEL/AMEND). Refused at load if not a valid
+# member.
+
+action_class: null
+
+# The session/calendar instrument class key step 3's session gate reads
+# (tos_runtime.calendar.owner.SessionFactsOwner.session_context's own
+# argument — must be a class calendar.yaml actually declares sessions for).
+
+instrument_class: null
+
+# The SIDE token (e.g. "BUY"/"SELL") this composition's outbound command is
+# expected to carry — tos/src/tos/egressgw/gateway.py:1220 requires this to
+# equal the command's own derived SIDE axis; a mismatch refuses the send at
+# the egress gate, not at boot.
+
+outbound_side: null
+
+# --- price correlation -------------------------------------------------
+# The Critical Input Policy field key (tos_runtime.compose._marketfeed_wiring
+# / critical_input_policy.yaml's own `fields[].field_key`) this construction
+# prices against once a tick carries a value view
+# (tos.egressgw.construction.OrderConstructionStage._price_for). Both keys
+# must name fields the deployed critical_input_policy.yaml actually
+# declares — this loader cannot see or cross-check that file.
+
+price_field_key: null
+shape_price_field_key: null

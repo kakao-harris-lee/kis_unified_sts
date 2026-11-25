@@ -1,0 +1,1924 @@
+"""CP-3 tenant daily cron — the wrapper and its installer, end to end, hermetically."""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+import pytest
+import yaml
+
+from tools.tos_cp3 import session_day
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_RUNNERS = _REPO_ROOT / "tools" / "tos_cp3" / "runners"
+_WRAPPER_REL = "tools/tos_cp3/runners/cp3_tenant_daily.sh"
+_INSTALLER_REL = "tools/tos_cp3/runners/install_tenant_cron.sh"
+
+_HOLIDAY = "2026-11-03"
+_OPEN_DAY = "2026-10-26"
+_OVERRIDE_DAY = "2026-12-03"
+
+_CALENDAR = f"""calendar_version: "t"
+holidays:
+  - "{_HOLIDAY}"
+sessions:
+  krx-index-futures:
+    - {{phase: CONTINUOUS, start: "08:45", end: "15:45", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}}
+  krx-stock:
+    - {{phase: PRE_OPEN,    start: "08:30", end: "08:40", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}}
+    - {{phase: CONTINUOUS,  start: "09:00", end: "15:30", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}}
+    - {{phase: AFTER_HOURS, start: "15:40", end: "16:00", days: [MON,TUE,WED,THU,FRI], crosses_midnight: false}}
+session_overrides:
+  "{_OVERRIDE_DAY}":
+    reason: "test fixture — fictitious late open"
+    sessions:
+      krx-index-futures:
+        - {{phase: CONTINUOUS, start: "09:45", end: "16:45", crosses_midnight: false}}
+      krx-stock:
+        - {{phase: CONTINUOUS, start: "10:00", end: "16:30", crosses_midnight: false}}
+"""
+
+_PRODUCER_CONFIG = """calendar_yaml: config/tos_runtime/cp3-setup-d-long/calendar.yaml
+calendar_session_id: krx-index-futures
+calendar_session_phase: CONTINUOUS
+"""
+
+_STOCK_PRODUCER_CONFIG = """calendar_yaml: config/tos_runtime/cp3-setup-d-stock-{symbol}/calendar.yaml
+calendar_session_id: krx-stock
+calendar_session_phase: CONTINUOUS
+market: stock
+"""
+
+_STOCK_SYMBOLS: tuple[str, ...] = tuple(
+    re.search(
+        r'^STOCK_SYMBOLS="([^"]+)"',
+        (_REPO_ROOT / "tools/tos_cp3/runners/cp3_tenant_daily.sh").read_text(
+            encoding="utf-8"
+        ),
+        flags=re.MULTILINE,
+    )
+    .group(1)  # type: ignore[union-attr]
+    .split()
+)
+
+_STOCK_LEGACY_SYMBOL = "005930"
+
+_SYMBOL_REF = re.search(
+    r"^STOCK_ENV_INSTRUMENT_REF='([^']+)'",
+    (_REPO_ROOT / "tools/tos_cp3/runners/cp3_tenant_daily.sh").read_text(
+        encoding="utf-8"
+    ),
+    flags=re.MULTILINE,
+).group(
+    1
+)  # type: ignore[union-attr]
+
+
+def _stock_host_suffix(symbol: str) -> str:
+    return "" if symbol == _STOCK_LEGACY_SYMBOL else f"-{symbol}"
+
+
+def _stock_lc(symbol: str) -> str:
+    return "stock" if symbol == _STOCK_LEGACY_SYMBOL else f"stock-{symbol}"
+
+
+_STUB_RUNNER = """#!/bin/bash
+# Test stub: record what the wrapper handed over, exit with the requested rc.
+env | grep '^TENANT_' | sort
+# A stock session: the wrapper waits for this line in TENANT_LOG before it writes
+# today's standing approval. CP3_TEST_STUB_NO_RENDER=1 withholds it, and
+# CP3_TEST_STUB_RENDER_AFTER_S delays it (the real render follows the open).
+if [ -n "${TENANT_KIS_MOCK_TRANSPORT_CONFIG:-}" ] && [ -z "${CP3_TEST_STUB_NO_RENDER:-}" ]; then
+  [ -n "${CP3_TEST_STUB_RENDER_AFTER_S:-}" ] && sleep "$CP3_TEST_STUB_RENDER_AFTER_S"
+  echo "render ok -> ${TENANT_RENDER_OUT:-}" >>"$TENANT_LOG"
+fi
+[ -n "${CP3_TEST_STUB_SLEEP_S:-}" ] && sleep "$CP3_TEST_STUB_SLEEP_S"
+exit "${CP3_TEST_STUB_RC:-0}"
+"""
+
+_STUB_EXPORT_BARS = """#!/usr/bin/env python3
+import os
+import pathlib
+import sys
+import time
+
+pathlib.Path(os.environ["FAKE_EXPORT_ARGV"]).write_text(
+    "\\n".join(sys.argv[1:]) + "\\n", encoding="utf-8"
+)
+if os.environ.get("FAKE_EXPORT_HANG_S"):
+    time.sleep(float(os.environ["FAKE_EXPORT_HANG_S"]))
+sys.exit(int(os.environ.get("FAKE_EXPORT_RC", "0")))
+"""
+
+_STUB_COMPOSE_CLI = '''"""Test stub of tos_runtime.compose.cli."""
+
+import os
+import pathlib
+
+
+def main(argv):
+    out = os.environ.get("FAKE_APPROVAL_OUT")
+    if out:
+        pathlib.Path(out).write_text("\\n".join(argv) + "\\n", encoding="utf-8")
+    return int(os.environ.get("FAKE_APPROVAL_RC", "0"))
+'''
+
+_FAKE_CRONTAB = """#!/bin/bash
+# Test stub: `crontab -l` prints $FAKE_CRONTAB_FILE, `crontab FILE` replaces it.
+# FAKE_CRONTAB_LIST_ERR makes -l fail with that stderr; every write is counted.
+if [ "${1:-}" = "-l" ]; then
+  if [ -n "${FAKE_CRONTAB_LIST_ERR:-}" ]; then echo "$FAKE_CRONTAB_LIST_ERR" >&2; exit 1; fi
+  [ -f "$FAKE_CRONTAB_FILE" ] || { echo "no crontab for test" >&2; exit 1; }
+  cat "$FAKE_CRONTAB_FILE"
+else
+  echo "$1" >>"$FAKE_CRONTAB_FILE.writes"
+  cp "$1" "$FAKE_CRONTAB_FILE"
+fi
+"""
+
+_FAKE_INSTALL = """#!/bin/bash
+# Test stub: fail when FAKE_INSTALL_FAIL is set, otherwise the real install(1).
+[ -n "${FAKE_INSTALL_FAIL:-}" ] && { echo "install: simulated failure" >&2; exit 1; }
+exec /usr/bin/install "$@"
+"""
+
+_NO_YAML_PYTHON = """#!/bin/bash
+echo "ModuleNotFoundError: No module named 'yaml'" >&2
+exit 1
+"""
+
+_OTHER_LINES = """SHELL=/bin/bash
+# TOS paper 상주 세션
+CRON_TZ=Asia/Seoul
+45 8  * * 1-5 /bin/bash /x/tos-paper-session.sh start >> /x/cron.log 2>&1 # tos-paper-session
+0 18 * * 1-5 /x/cold-backup-nightly.sh >> /x/cold.log 2>&1 # cold-backup-nightly
+"""
+
+_LEGACY_LINES = """CRON_TZ=Asia/Seoul
+38 8 * * 1-5 /usr/bin/flock -n /tmp/a.lock /bin/bash /x/run-cp3-tenant-daily.sh LONG >> /x/l.log 2>&1 # cp3-long-tenant-daily
+40 8 * * 1-5 /usr/bin/flock -n /tmp/b.lock /bin/bash /x/run-cp3-tenant-daily.sh SHORT >> /x/s.log 2>&1 # cp3-short-tenant-daily
+53 8 * * 1-5 /bin/bash /x/run-cp3-tenant-daily.sh STOCK >> /x/k.log 2>&1 # cp3-stock-tenant-daily
+"""
+
+
+def _canonical_transport_block() -> str:
+    """The `mode: live` … `allow_plaintext…` block of the real setup script."""
+    lines = (
+        (_REPO_ROOT / "tools/tos_cp3/runners/setup_stock_mock_once.sh")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("mode: live"))
+    end = next(i for i, ln in enumerate(lines) if ln.startswith("allow_plaintext"))
+    return "\n".join(lines[start : end + 1]) + "\n"
+
+
+def _git(*args: str, cwd: Path) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _write(path: Path, text: str, mode: int | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    if mode is not None:
+        path.chmod(mode)
+
+
+class Env:
+    """One hermetic world: origin, MAIN clone, HOME, STATE, fake crontab."""
+
+    def __init__(self, tmp: Path) -> None:
+        self.tmp = tmp
+        seed = tmp / "seed"
+        for rel in (_WRAPPER_REL, _INSTALLER_REL):
+            _write(seed / rel, (_REPO_ROOT / rel).read_text(encoding="utf-8"), 0o755)
+        _write(
+            seed / "tools/tos_cp3/runners/run_tenant_session.sh", _STUB_RUNNER, 0o755
+        )
+        _write(seed / "tools/tos_cp3/export_bars.py", _STUB_EXPORT_BARS, 0o755)
+        for tree in (
+            "cp3-setup-d-long",
+            "cp3-setup-d-short",
+            *(f"cp3-setup-d-stock-{symbol}" for symbol in _STOCK_SYMBOLS),
+        ):
+            _write(seed / f"config/tos_runtime/{tree}/calendar.yaml", _CALENDAR)
+        _write(seed / "config/tos_probes/cp3-live-producer.yaml", _PRODUCER_CONFIG)
+        for symbol in _STOCK_SYMBOLS:
+            _write(
+                seed / f"config/tos_probes/cp3-live-producer-stock-{symbol}.yaml",
+                _STOCK_PRODUCER_CONFIG.format(symbol=symbol),
+            )
+        for rel in (
+            "tools/tos_cp3/runners/stock-mock-session.env.example",
+            "tools/tos_cp3/runners/setup_stock_mock_once.sh",
+        ):
+            shutil.copy(_REPO_ROOT / rel, seed / rel)
+        for rel in (
+            "tos/runtime/src/tos_runtime/__init__.py",
+            "tos/runtime/src/tos_runtime/compose/__init__.py",
+        ):
+            _write(seed / rel, "")
+        _write(seed / "tos/runtime/src/tos_runtime/compose/cli.py", _STUB_COMPOSE_CLI)
+        # The gate's own modules, with their `__init__.py` files: `$MAIN` is on the
+        # interpreter's path (editable install), so without them PEP 420 hands
+        # `tools.tos_cp3` to the real checkout and the wrapper would not be reading
+        # the tree it fetched.
+        for rel in (
+            "tools/tos_cp3/__init__.py",
+            "tools/tos_cp3/ops/__init__.py",
+            "tools/tos_cp3/session_day.py",
+            "tools/tos_cp3/ops/market_open.py",
+        ):
+            _write(seed / rel, (_REPO_ROOT / rel).read_text(encoding="utf-8"))
+        _write(seed / "shared/__init__.py", "")
+        _write(seed / "shared/instruments/__init__.py", "")
+        shutil.copy(
+            _REPO_ROOT / "shared/instruments/futures.py",
+            seed / "shared/instruments/futures.py",
+        )
+        _git("init", "-q", "-b", "main", cwd=seed)
+        _git("add", "-A", cwd=seed)
+        _git("commit", "-q", "-m", "seed", cwd=seed)
+        self.origin = tmp / "origin.git"
+        _git("clone", "-q", "--bare", str(seed), str(self.origin), cwd=tmp)
+        self.main = tmp / "main"
+        _git("clone", "-q", str(self.origin), str(self.main), cwd=tmp)
+        (self.main / ".venv/bin").mkdir(parents=True)
+        (self.main / ".venv/bin/python").symlink_to(sys.executable)
+
+        self.home = tmp / "home"
+        self.state = self.home / ".local/state/tos"
+        self.state.mkdir(parents=True)
+        self.dest_dir = self.home / ".config/kis-probes"
+        self.locks = tmp / "locks"
+        bindir = tmp / "bin"
+        _write(bindir / "crontab", _FAKE_CRONTAB, 0o755)
+        _write(bindir / "install", _FAKE_INSTALL, 0o755)
+        self.crontab = tmp / "crontab.txt"
+        self.approval_argv = tmp / "approval-argv.txt"
+        self.export_argv = tmp / "export-argv.txt"
+        self.projection = tmp / "paper-projection"
+        self.base_env = {
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "HOME": str(self.home),
+            "TZ": "Asia/Seoul",
+            "FAKE_CRONTAB_FILE": str(self.crontab),
+            "FAKE_APPROVAL_OUT": str(self.approval_argv),
+            "FAKE_EXPORT_ARGV": str(self.export_argv),
+            "CP3_DAILY_MAIN": str(self.main),
+            "CP3_DAILY_STATE": str(self.state),
+            "CP3_DAILY_LOCK_DIR": str(self.locks),
+            "CP3_DAILY_NOTIFY": "0",
+            "CP3_DAILY_APPROVAL_WAIT_TRIES": "3",
+            "CP3_DAILY_APPROVAL_WAIT_SLEEP_S": "1",
+            "LANG": "C.UTF-8",
+        }
+
+    def run(
+        self, rel: str, *args: str, **extra: str
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["/bin/bash", str(self.main / rel), *args],
+            env={**self.base_env, **extra},
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    def daily(self, *args: str, **extra: str) -> subprocess.CompletedProcess[str]:
+        return self.run(_WRAPPER_REL, *args, **extra)
+
+    def install(self, *args: str, **extra: str) -> subprocess.CompletedProcess[str]:
+        return self.run(_INSTALLER_REL, *args, **extra)
+
+
+@pytest.fixture
+def env(tmp_path: Path) -> Env:
+    return Env(tmp_path)
+
+
+def _data_parents(env: Env) -> None:
+    for lc in ("long", "short"):
+        (env.state / f"cp3-setup-d-{lc}-data").mkdir(mode=0o700)
+    for symbol in _STOCK_SYMBOLS:
+        _stock_host_state(env, symbol=symbol)
+
+
+def _stock_host_state(
+    env: Env, *, symbol: str = _STOCK_LEGACY_SYMBOL, transport: str | None = None
+) -> Path:
+    """One STOCK tenant's one-time host state (§7.2-f): durable parent, custody,"""
+    suffix = _stock_host_suffix(symbol)
+    for name in (
+        f"cp3-setup-d-stock-{symbol}-data",
+        f"cp3-setup-d-stock{suffix}-custody",
+        f"cp3-setup-d-stock{suffix}-ops",
+    ):
+        (env.state / name).mkdir(mode=0o700, exist_ok=True)
+    path = env.state / f"cp3-setup-d-stock{suffix}-ops/kis_mock_transport.yaml"
+    path.write_text(
+        _canonical_transport_block() if transport is None else transport,
+        encoding="utf-8",
+    )
+    return path
+
+
+_APPROVAL_REL = "cp3-setup-d-stock-custody/approvals/standing-session.yaml"
+_ARCHIVE_REL = "cp3-setup-d-stock-custody/approvals-archive"
+
+
+def _approval_doc(trading_date: str) -> str:
+    """The shape ``write-standing-approval`` emits, trimmed to what the wrapper reads."""
+    return (
+        "schema: tos-standing-session-approval/1\n"
+        "environment_label: paper\n"
+        f"trading_date: '{trading_date}'\n"
+        "instrument: '005930'\n"
+        "max_quantity: 1\n"
+    )
+
+
+def _write_approval(env: Env, body: str) -> Path:
+    path = env.state / _APPROVAL_REL
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_dry_run_is_the_default_and_writes_nothing(env: Env) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    r = env.install()
+    assert r.returncode == 0, r.stderr
+    assert "DRY-RUN" in r.stdout
+    assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES
+    assert not env.dest_dir.exists()
+    dest = env.dest_dir / "run-cp3-tenant-daily.sh"
+    assert (
+        f"+38 8 * * 1-5 /bin/bash {dest} LONG >> {env.state}/cp3-long-tenant-daily.cron.log 2>&1 # cp3-long-tenant-daily"
+        in r.stdout
+    )
+    assert (
+        f"+40 8 * * 1-5 /bin/bash {dest} SHORT >> {env.state}/cp3-short-tenant-daily.cron.log 2>&1 # cp3-short-tenant-daily"
+        in r.stdout
+    )
+    for direction, lc, _sleep_s, at in _CATCHUP:
+        hhmm = f"{int(at[3:])} {int(at[:2])}"
+        assert (
+            f"+{hhmm} * * 1-5 /bin/bash {dest} {direction} >>"
+            f" {env.state}/cp3-{lc}-tenant-daily.cron.log 2>&1 # cp3-{lc}-tenant-daily"
+            in r.stdout
+        ), r.stdout
+    assert "+CRON_TZ=Asia/Seoul" in r.stdout
+
+
+def test_apply_replaces_hand_lines_keeps_the_rest_and_is_idempotent(env: Env) -> None:
+    env.crontab.write_text(_OTHER_LINES + _LEGACY_LINES, encoding="utf-8")
+    r = env.install("--apply")
+    assert r.returncode == 0, r.stdout + r.stderr
+    tab = env.crontab.read_text(encoding="utf-8")
+    assert tab.startswith(_OTHER_LINES)
+    assert "/usr/bin/flock -n /tmp/a.lock" not in tab
+    assert "/x/k.log" not in tab
+    assert tab.count("# cp3-long-tenant-daily") == 1
+    assert tab.count("# cp3-short-tenant-daily") == 1
+    assert tab.count("# cp3-stock-tenant-daily") == 1
+    assert tab.count("# BEGIN CP3_TENANT_DAILY") == 1
+    assert "CP3_DAILY_TODAY" not in tab
+
+    dest = env.dest_dir / "run-cp3-tenant-daily.sh"
+    assert dest.read_bytes() == (_REPO_ROOT / _WRAPPER_REL).read_bytes()
+    assert stat.S_IMODE(dest.stat().st_mode) == 0o700
+    assert list(env.dest_dir.glob("crontab.bak.*"))
+
+    again = env.install("--apply")
+    assert again.returncode == 0, again.stderr
+    assert "crontab unchanged" in again.stdout
+    assert "(no change)" in again.stdout
+    assert env.crontab.read_text(encoding="utf-8") == tab
+
+
+def test_apply_backs_up_a_different_existing_wrapper(env: Env) -> None:
+    env.dest_dir.mkdir(parents=True)
+    old = env.dest_dir / "run-cp3-tenant-daily.sh"
+    old.write_text("#!/bin/bash\necho hand-made\n", encoding="utf-8")
+    r = env.install("--apply")
+    assert r.returncode == 0, r.stderr
+    assert [
+        p.read_text(encoding="utf-8")
+        for p in env.dest_dir.glob("run-cp3-tenant-daily.sh.bak.*")
+    ] == ["#!/bin/bash\necho hand-made\n"]
+
+
+def test_remove_drops_only_our_lines(env: Env) -> None:
+    env.crontab.write_text(_OTHER_LINES + _LEGACY_LINES, encoding="utf-8")
+    assert env.install("--apply").returncode == 0
+    dry = env.install("--remove")
+    assert dry.returncode == 0 and "DRY-RUN" in dry.stdout
+    assert "# BEGIN CP3_TENANT_DAILY" in env.crontab.read_text(encoding="utf-8")
+    r = env.install("--remove", "--apply")
+    assert r.returncode == 0, r.stderr
+    tab = env.crontab.read_text(encoding="utf-8")
+    assert "tenant-daily" not in tab and "CP3_TENANT_DAILY" not in tab
+    assert tab.startswith(_OTHER_LINES)
+
+
+def test_apply_refuses_an_unmerged_installer(env: Env) -> None:
+    inst = env.main / _INSTALLER_REL
+    inst.write_text(
+        inst.read_text(encoding="utf-8") + "# local edit\n", encoding="utf-8"
+    )
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    r = env.install("--apply")
+    assert r.returncode == 2
+    assert "differs from origin/main" in r.stderr
+    assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES
+
+
+def test_apply_refuses_a_non_kst_host(env: Env) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    r = env.install("--apply", TZ="UTC")
+    assert r.returncode == 2
+    assert "no working CRON_TZ" in r.stderr
+    assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES
+
+
+def test_1154_the_dry_run_names_a_projection_dir_set_outside_the_block(
+    env: Env,
+) -> None:
+    """The hand-added 2026-11-22 line: named, kept, and not duplicated inside."""
+    hand = "TOS_OPERATOR_PROJECTION_DIR=/home/deploy/.local/state/tos/paper-projection"
+    env.crontab.write_text(f"{hand}\n{_OTHER_LINES}", encoding="utf-8")
+    r = env.install()
+    assert r.returncode == 0, r.stderr
+    assert (
+        "projection dir: the crontab sets it outside this block "
+        "(/home/deploy/.local/state/tos/paper-projection)" in r.stdout
+    )
+    assert env.install("--apply").returncode == 0
+    tab = env.crontab.read_text(encoding="utf-8")
+    assert tab.count(hand) == 1 and tab.startswith(hand)
+
+
+def test_1154_the_dry_run_says_where_the_projection_dir_comes_from_otherwise(
+    env: Env,
+) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    r = env.install()
+    assert r.returncode == 0, r.stderr
+    assert "projection dir: not in the crontab" in r.stdout
+
+
+def test_holiday_is_a_silent_skip(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_HOLIDAY)
+    assert r.returncode == 0, r.stdout
+    assert "SKIP" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not (env.state / f"measure/wt-cp3-long-{_HOLIDAY.replace('-', '')}").exists()
+
+
+def test_weekend_and_extra_closed_dates_skip(env: Env) -> None:
+    _data_parents(env)
+    assert "SKIP" in env.daily("SHORT", CP3_DAILY_TODAY="2026-10-24").stdout
+    r = env.daily(
+        "SHORT", CP3_DAILY_TODAY="2026-12-30", CP3_DAILY_EXTRA_CLOSED="2026-12-30"
+    )
+    assert r.returncode == 0 and "SKIP" in r.stdout
+
+
+def test_real_tenant_calendars_carry_the_krx_year_end_close() -> None:
+    """The wrapper no longer defaults 2026-12-31 into the extra closed dates (#964):"""
+    for tree in ("cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"):
+        path = _REPO_ROOT / "config" / "tos_runtime" / tree / "calendar.yaml"
+        holidays = {
+            str(h) for h in yaml.safe_load(path.read_text(encoding="utf-8"))["holidays"]
+        }
+        assert "2026-12-31" in holidays, tree
+
+
+def test_real_tenant_calendars_carry_the_exam_day_override() -> None:
+    """#924: the wrapper derives the stop time from the tree's own calendar, so the"""
+    for tree in ("cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"):
+        path = _REPO_ROOT / "config" / "tos_runtime" / tree / "calendar.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert sorted(str(k) for k in data["session_overrides"]) == ["2026-11-19"], tree
+
+    def _stop(producer_rel: str, day: str) -> str:
+        session = session_day.load_producer_session(
+            _REPO_ROOT / producer_rel, repo_root=_REPO_ROOT
+        )
+        return session.stop_at(date.fromisoformat(day), after_close_min=5)
+
+    assert _stop("config/tos_probes/cp3-live-producer.yaml", "2026-11-19") == "16:50"
+    assert _stop("config/tos_probes/cp3-live-producer.yaml", "2026-11-18") == "15:50"
+    assert (
+        _stop("config/tos_probes/cp3-live-producer-stock-005930.yaml", "2026-11-19")
+        == "16:35"
+    )
+    assert (
+        _stop("config/tos_probes/cp3-live-producer-stock-005930.yaml", "2026-11-18")
+        == "15:35"
+    )
+
+
+def test_open_day_runs_the_runner_with_every_tenant_value(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    session = env.state / "cp3-sessions" / f"long-{_OPEN_DAY.replace('-', '')}"
+    out = (session / "runner.out").read_text(encoding="utf-8")
+    wt = env.state / "measure" / f"wt-cp3-long-{_OPEN_DAY.replace('-', '')}"
+    for expected in (
+        "TENANT_DIRECTION=LONG",
+        "TENANT_TREE=cp3-setup-d-long",
+        f"TENANT_DATA_PARENT={env.state}/cp3-setup-d-long-data",
+        f"TENANT_JOURNAL={session}/journal.jsonl",
+        "TENANT_STOP_AT=15:50",
+        f"TENANT_ENV_FILE={env.main}/.env.mock",
+        "TENANT_ENVIRONMENT_LABEL=paper",
+        f"TENANT_PRODUCER_CONFIG={wt}/config/tos_probes/cp3-live-producer.yaml",
+    ):
+        assert expected in out
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+    assert _git("rev-parse", "HEAD", cwd=wt) == _git(
+        "rev-parse", "origin/main", cwd=env.main
+    )
+
+
+def _runner_out(env: Env, lc: str, day: str) -> str:
+    session = env.state / "cp3-sessions" / f"{lc}-{day.replace('-', '')}"
+    return (session / "runner.out").read_text(encoding="utf-8")
+
+
+def test_924_a_dated_override_moves_the_stop_time_with_the_close(env: Env) -> None:
+    """#924: the stop comes from THAT day's close in the tree's calendar (16:45 + 5),"""
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OVERRIDE_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "TENANT_STOP_AT=16:50" in _runner_out(env, "long", _OVERRIDE_DAY)
+    assert "09:45-16:45 OVERRIDE" in r.stdout
+
+
+def test_924_a_regular_day_keeps_15_50_and_the_knobs_still_work(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "SHORT", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_STOP_AFTER_CLOSE_MIN="7"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "TENANT_STOP_AT=15:52" in _runner_out(env, "short", _OPEN_DAY)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OVERRIDE_DAY, CP3_DAILY_STOP_AT="14:00")
+    assert r.returncode == 0, r.stdout
+    assert "TENANT_STOP_AT=14:00" in _runner_out(env, "long", _OVERRIDE_DAY)
+
+
+def test_924_an_unreadable_session_window_is_a_failure_not_a_run(env: Env) -> None:
+    _data_parents(env)
+    cfg = env.main / "config/tos_probes/cp3-live-producer.yaml"
+    cfg.write_text(_PRODUCER_CONFIG.replace("CONTINUOUS", "NOPE"), encoding="utf-8")
+    _git("commit", "-qam", "break the phase", cwd=env.main)
+    _git("push", "-q", "origin", "HEAD:main", cwd=env.main)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "stop time not derivable" in r.stdout
+    assert not (
+        env.state / "cp3-sessions" / f"long-{_OPEN_DAY.replace('-', '')}"
+    ).exists()
+
+
+def test_924_preflight_shows_the_dated_window_and_stop(env: Env) -> None:
+    r = env.daily("LONG", "--preflight", _OVERRIDE_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "09:45-16:45 OVERRIDE" in r.stdout and "stop_at=16:50" in r.stdout
+    r = env.daily("LONG", "--preflight", _OPEN_DAY)
+    assert "08:45-15:45 regular" in r.stdout and "stop_at=15:50" in r.stdout
+
+
+def test_normal_sigterm_end_is_not_a_failure(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily("SHORT", CP3_DAILY_TODAY=_OPEN_DAY, CP3_TEST_STUB_RC="143")
+    assert r.returncode == 143
+    assert "정상" in r.stdout and "실패" not in r.stdout
+
+
+@pytest.mark.parametrize("rc", ["3", "4", "5", "1"])
+def test_runner_failure_alerts(env: Env, rc: str) -> None:
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY, CP3_TEST_STUB_RC=rc)
+    assert r.returncode == int(rc)
+    assert f"일일 세션 실패 ({_OPEN_DAY}) rc={rc}" in r.stdout
+
+
+def test_one_session_per_day_and_old_worktrees_are_cleared(env: Env) -> None:
+    _data_parents(env)
+    assert env.daily("LONG", CP3_DAILY_TODAY="2026-10-23").returncode == 0
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "removed old worktree" in r.stdout
+    assert not (env.state / "measure/wt-cp3-long-20261023").exists()
+    again = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert again.returncode == 2
+    assert "already exists" in again.stdout and "실패" in again.stdout
+
+
+def test_missing_data_parent_is_refused_with_an_alert(env: Env) -> None:
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2
+    assert "data parent missing" in r.stdout and "notify-body" in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+
+
+def test_a_held_lock_is_a_failure_not_a_second_session(env: Env) -> None:
+    _data_parents(env)
+    env.locks.mkdir()
+    with open(env.locks / "cp3-long-tenant-daily.wrapper.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 75
+    assert "lock busy" in r.stdout and "실패" in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert env.daily("SHORT", CP3_DAILY_TODAY=_OPEN_DAY).returncode == 0
+
+
+def test_bad_arguments(env: Env) -> None:
+    assert env.daily().returncode == 2
+    assert env.daily("BOTH").returncode == 2
+    assert env.daily("LONG", "--now").returncode == 2
+
+
+def test_preflight_reports_the_roll_and_writes_nothing(env: Env) -> None:
+    _data_parents(env)
+    (env.state / "cp3-setup-d-long-data/A05611").mkdir()
+    before = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+
+    r11 = env.daily("LONG", "--preflight", "2026-11-12")
+    assert r11.returncode == 0, r11.stdout + r11.stderr
+    assert "market=OPEN" in r11.stdout and "instrument=A05611" in r11.stdout
+    assert "present (continues)" in r11.stdout
+
+    r13 = env.daily("LONG", "--preflight", "2026-11-13")
+    assert "instrument=A05612" in r13.stdout
+    assert "absent (first session genesis)" in r13.stdout
+
+    closed = env.daily("SHORT", "--preflight", _HOLIDAY)
+    assert "market=CLOSED" in closed.stdout
+
+    after = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+    assert after == before
+
+
+def _assert_alerted_failure(r: subprocess.CompletedProcess[str], rc: int = 2) -> None:
+    assert r.returncode == rc, r.stdout + r.stderr
+    assert "SKIP" not in r.stdout
+    assert "일일 세션 실패" in r.stdout and "notify-body" in r.stdout
+
+
+def test_b1_a_python_that_cannot_import_yaml_is_a_failure_not_a_skip(env: Env) -> None:
+    _data_parents(env)
+    py = env.main / ".venv/bin/python"
+    py.unlink()
+    _write(py, _NO_YAML_PYTHON, 0o755)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    _assert_alerted_failure(r)
+    assert "holiday check failed (rc=1)" in r.stdout
+    # §7.2 좌표 규율: the gate's own output reaches the CRON LOG, never the telegram
+    # body — an unexpected fault there can carry a broker error body with it.
+    assert "market-open check output (rc=1): " in r.stdout
+    assert "ModuleNotFoundError" in r.stdout
+    assert "ModuleNotFoundError" not in r.stdout.split("notify-body: ", 1)[1]
+    assert not (env.state / "cp3-sessions").exists()
+    assert not (
+        env.state / f"measure/wt-cp3-long-{_OPEN_DAY.replace('-', '')}"
+    ).exists()
+    pre = env.daily("LONG", "--preflight", _OPEN_DAY)
+    assert pre.returncode == 2 and "market=" not in pre.stdout
+
+
+def test_b1_an_impossible_date_is_a_failure_not_a_skip(env: Env) -> None:
+    _data_parents(env)
+    _assert_alerted_failure(env.daily("SHORT", CP3_DAILY_TODAY="2026-02-30"))
+    assert env.daily("SHORT", "--preflight", "2026-02-30").returncode == 2
+
+
+def test_1143_a_calendar_without_this_years_holidays_runs_the_day(env: Env) -> None:
+    """#1143: 2027-01-04 against 2026-only holidays used to be an ALERTED refusal, so"""
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY="2027-01-04")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "일일 세션 실패" not in r.stdout
+    assert "market closed" not in r.stdout
+    # No credential file is reachable from this hermetic tree, so the gate takes the
+    # fallback the old refusal replaced: an unlisted weekday is a trading day.
+    assert "market open on 2027-01-04" in r.stdout
+    assert "calendar fallback" in r.stdout
+    assert (env.state / "cp3-sessions/long-20270104").is_dir()
+    pre = env.daily("LONG", "--preflight", "2027-01-04")
+    assert pre.returncode == 0 and "market=OPEN" in pre.stdout
+
+
+def test_1143_the_gate_asks_no_broker_on_a_weekend_or_a_listed_holiday(
+    env: Env,
+) -> None:
+    """A closed day costs no KIS call and writes no answer file (KIS: 「1일 1회」)."""
+    _data_parents(env)
+    for day in (_HOLIDAY, "2026-10-24"):
+        r = env.daily("SHORT", CP3_DAILY_TODAY=day)
+        assert f"market closed on {day} (source=calendar · " in r.stdout
+        assert "SKIP" in r.stdout
+        # No telegram: the operator already knows about a weekend or a listed holiday.
+        assert "notify-body" not in r.stdout
+    assert not (env.state / "market-open").exists()
+
+
+def _cache_closed(env: Env, day: str) -> Path:
+    """Pre-seed the day's broker answer as `N`, so the gate takes it without a call."""
+    cache = env.state / "market-open"
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / f"{day.replace('-', '')}.json"
+    path.write_text(
+        json.dumps({"bass_dt": day.replace("-", ""), "opnd_yn": "N"}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_1143_an_unlisted_broker_closure_telegrams_once_for_the_whole_host(
+    env: Env,
+) -> None:
+    """A weekday KRX did not open and no calendar lists: every tenant SKIPs silently,"""
+    _data_parents(env)
+    _cache_closed(env, _OPEN_DAY)
+    marker = env.state / f"market-open/{_OPEN_DAY.replace('-', '')}.notified"
+
+    first = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert f"market closed on {_OPEN_DAY} (source=broker · " in first.stdout
+    assert "opnd_yn=N" in first.stdout and "SKIP" in first.stdout
+    assert "일일 세션 실패" not in first.stdout
+    assert "KIS 휴장 응답, 달력에 없음" in first.stdout
+    assert marker.is_file()
+    assert not (env.state / "cp3-sessions").exists()
+
+    # The second tenant of the day: same SKIP, no second message.
+    second = env.daily("SHORT", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert f"market closed on {_OPEN_DAY} (source=broker · " in second.stdout
+    assert "이미 보냈다" in second.stdout
+    assert "notify-body" not in second.stdout
+
+    # The body carries the date, the cache path and the recovery — no gate output.
+    body = first.stdout.split("notify-body: ", 1)[1]
+    assert _OPEN_DAY in body
+    assert f"{env.state}/market-open/{_OPEN_DAY.replace('-', '')}.json" in body
+    assert "opnd_yn 을 Y 로" in body and "--catch-up" in body
+
+    # Read-only: `--preflight` reports CLOSED and spends no message of its own.
+    marker.unlink()
+    pre = env.daily("LONG", "--preflight", _OPEN_DAY)
+    assert pre.returncode == 0 and "market=CLOSED" in pre.stdout
+    assert not marker.exists()
+    assert "notify-body" not in pre.stdout
+
+
+def test_n1_a_non_kst_host_zone_is_refused_at_run_time(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY, TZ="UTC")
+    _assert_alerted_failure(r)
+    assert "not +0900" in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+
+
+def test_n4_the_hand_lines_outer_lock_does_not_block_the_new_wrapper(env: Env) -> None:
+    _data_parents(env)
+    env.locks.mkdir()
+    with open(env.locks / "cp3-long-tenant-daily.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+
+
+def test_n4_a_failed_wrapper_install_rolls_the_crontab_back(env: Env) -> None:
+    env.crontab.write_text(_OTHER_LINES + _LEGACY_LINES, encoding="utf-8")
+    env.dest_dir.mkdir(parents=True)
+    old = env.dest_dir / "run-cp3-tenant-daily.sh"
+    old.write_text("#!/bin/bash\necho hand-made\n", encoding="utf-8")
+    r = env.install("--apply", FAKE_INSTALL_FAIL="1")
+    assert r.returncode == 2
+    assert "rolled back crontab" in r.stderr
+    assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES + _LEGACY_LINES
+    assert old.read_text(encoding="utf-8") == "#!/bin/bash\necho hand-made\n"
+
+
+def test_n5_missing_credentials_are_logged_as_a_failed_notify(env: Env) -> None:
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOTIFY="1")
+    assert r.returncode == 2
+    assert (
+        "telegram notify FAILED: TELEGRAM_BRIEFING_BOT_TOKEN and TELEGRAM_BRIEFING_CHAT_ID missing"
+        in r.stdout
+    )
+
+
+def test_n5_curl_treats_http_errors_as_failure() -> None:
+    text = (_REPO_ROOT / _WRAPPER_REL).read_text(encoding="utf-8")
+    assert "curl --fail " in text
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_n6_a_crontab_read_error_aborts_instead_of_wiping(
+    env: Env, apply: bool
+) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    args = ("--apply",) if apply else ()
+    r = env.install(
+        *args, FAKE_CRONTAB_LIST_ERR="crontab: cannot open spool: Permission denied"
+    )
+    assert r.returncode == 2
+    assert "crontab -l failed" in r.stderr
+    assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES
+    assert not Path(f"{env.crontab}.writes").exists()
+
+
+def test_n6_no_crontab_at_all_is_an_empty_crontab(env: Env) -> None:
+    r = env.install("--apply")
+    assert r.returncode == 0, r.stderr
+    assert "# BEGIN CP3_TENANT_DAILY" in env.crontab.read_text(encoding="utf-8")
+
+
+def _stock_session(
+    env: Env, day: str, run: int = 1, *, symbol: str = _STOCK_LEGACY_SYMBOL
+) -> Path:
+    name = f"{_stock_lc(symbol)}-r{run}-{day.replace('-', '')}"
+    return env.state / "cp3-sessions" / name
+
+
+def _stock_wt(
+    env: Env, day: str, run: int = 1, *, symbol: str = _STOCK_LEGACY_SYMBOL
+) -> Path:
+    name = f"wt-cp3-{_stock_lc(symbol)}-r{run}-{day.replace('-', '')}"
+    return env.state / "measure" / name
+
+
+def test_stock_open_day_hands_the_runner_the_env_examples_tenant_values(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    session = _stock_session(env, _OPEN_DAY)
+    out = (session / "runner.out").read_text(encoding="utf-8")
+    for expected in (
+        "TENANT_TREE=cp3-setup-d-stock-005930",
+        "TENANT_DIRECTION=LONG",
+        "TENANT_INSTRUMENT=005930",
+        "TENANT_ENVIRONMENT_LABEL=paper",
+        "TENANT_STOP_AT=15:40",
+        f"TENANT_DATA_PARENT={env.state}/cp3-setup-d-stock-005930-data",
+        f"TENANT_CUSTODY_ROOT={env.state}/cp3-setup-d-stock-custody",
+        f"TENANT_KIS_MOCK_TRANSPORT_CONFIG={env.state}/cp3-setup-d-stock-ops/kis_mock_transport.yaml",
+        f"TENANT_ENV_FILE={env.main}/.env.mock",
+        f"TENANT_LOG={session}/session.log",
+        f"TENANT_RENDER_OUT={session}/render",
+        f"TENANT_JOURNAL={session}/journal.jsonl",
+        f"TENANT_PRODUCER_SESSION_DIR={session}/producer",
+        f"TENANT_PRODUCER_CONFIG={_stock_wt(env, _OPEN_DAY)}"
+        "/config/tos_probes/cp3-live-producer-stock-005930.yaml",
+    ):
+        assert expected in out, out
+    assert (session / "runner.pid").read_text(encoding="utf-8").strip().isdigit()
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+    assert _git("rev-parse", "HEAD", cwd=_stock_wt(env, _OPEN_DAY)) == _git(
+        "rev-parse", "origin/main", cwd=env.main
+    )
+
+
+def test_stock_the_standing_approval_is_written_after_render_ok(env: Env) -> None:
+    """#955: without today's standing approval the flow stops at step 4 and the"""
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "write-standing-approval rc=0" in r.stdout
+    session = _stock_session(env, _OPEN_DAY)
+    assert env.approval_argv.read_text(encoding="utf-8").splitlines() == [
+        "write-standing-approval",
+        "--config-dir",
+        f"{session}/render",
+        "--custody-root",
+        f"{env.state}/cp3-setup-d-stock-custody",
+        "--environment-label",
+        "paper",
+        "--trading-date",
+        _OPEN_DAY,
+    ]
+    assert (session / "approval.out").exists()
+
+
+def test_stock_no_approval_when_the_session_ends_before_render_ok(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_TEST_STUB_NO_RENDER="1",
+        CP3_TEST_STUB_RC="3",
+    )
+    assert r.returncode == 3, r.stdout
+    assert not env.approval_argv.exists()
+    assert "write-standing-approval rc=" not in r.stdout
+    assert "render ok 전에 끝났다" in r.stdout
+    assert f"일일 세션 실패 ({_OPEN_DAY}) rc=3" in r.stdout
+
+
+def test_stock_a_session_that_never_renders_alerts_and_keeps_running(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_TEST_STUB_NO_RENDER="1",
+        CP3_TEST_STUB_SLEEP_S="6",
+    )
+    assert r.returncode == 0, r.stdout
+    assert not env.approval_argv.exists()
+    assert "no 'render ok' within 3s" in r.stdout
+    assert "상시 승인 못 씀" in r.stdout
+
+
+def test_stock_a_failed_approval_write_alerts_but_does_not_kill_the_session(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY, FAKE_APPROVAL_RC="1")
+    assert r.returncode == 0, r.stdout
+    assert "write-standing-approval rc=1" in r.stdout
+    assert "상시 승인 쓰기 실패" in r.stdout and "notify-body" in r.stdout
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+
+
+def test_stock_a_transport_key_missing_from_the_operation_file_is_refused(
+    env: Env,
+) -> None:
+    """The 10-30 r1 failure: #979 added `app_key_request_wait_budget_ms` on 10-28,"""
+    _data_parents(env)
+    path = env.state / "cp3-setup-d-stock-ops/kis_mock_transport.yaml"
+    kept = [
+        ln
+        for ln in path.read_text(encoding="utf-8").splitlines()
+        if not ln.startswith("app_key_request_wait_budget_ms:")
+    ]
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "운영 전송 설정 키가 정본" in r.stdout and "notify-body" in r.stdout
+    assert "app_key_request_wait_budget_ms:" in r.stdout
+    assert not _stock_session(env, _OPEN_DAY).exists()
+    assert not _stock_wt(env, _OPEN_DAY).exists()
+    assert not env.approval_argv.exists()
+
+
+def test_stock_a_missing_transport_config_is_refused_not_skipped(env: Env) -> None:
+    _data_parents(env)
+    (env.state / "cp3-setup-d-stock-ops/kis_mock_transport.yaml").unlink()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "SKIP" not in r.stdout
+    assert (
+        "전송 설정 키 대조 실패" in r.stdout and "transport config missing" in r.stdout
+    )
+    assert not _stock_wt(env, _OPEN_DAY).exists()
+
+
+def test_stock_holiday_is_a_silent_skip(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_HOLIDAY)
+    assert r.returncode == 0, r.stdout
+    assert "SKIP" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not _stock_wt(env, _HOLIDAY).exists()
+    assert not env.approval_argv.exists()
+
+
+def test_stock_924_a_dated_override_moves_the_stop_with_the_stock_close(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OVERRIDE_DAY)
+    assert r.returncode == 0, r.stdout
+    out = (_stock_session(env, _OVERRIDE_DAY) / "runner.out").read_text(
+        encoding="utf-8"
+    )
+    assert "TENANT_STOP_AT=16:40" in out
+    assert "10:00-16:30 OVERRIDE" in r.stdout
+
+
+def test_stock_924_the_approval_wait_grows_with_the_dated_open_delay(
+    env: Env,
+) -> None:
+    """review-1021 r1 HIGH: `render ok` follows the OPEN — the runner's first-row"""
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        CP3_DAILY_TODAY=_OVERRIDE_DAY,
+        CP3_DAILY_APPROVAL_WAIT_TRIES="1",
+        CP3_DAILY_APPROVAL_WAIT_SLEEP_S="1",
+        CP3_TEST_STUB_RENDER_AFTER_S="3",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "개장이 정규보다 3600s 늦다" in r.stdout
+    assert "상시 승인 대기를 3601s 로 늘린다" in r.stdout
+    assert "no 'render ok' within" not in r.stdout
+    assert "write-standing-approval rc=0" in r.stdout
+    assert env.approval_argv.exists()
+
+
+def test_stock_924_a_regular_day_keeps_the_fixed_approval_wait(env: Env) -> None:
+    """The other half of the pair: a regular day's delay is 0, so the bound is the"""
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_DAILY_APPROVAL_WAIT_TRIES="1",
+        CP3_DAILY_APPROVAL_WAIT_SLEEP_S="1",
+        CP3_TEST_STUB_RENDER_AFTER_S="3",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "개장이 정규보다" not in r.stdout
+    assert "no 'render ok' within 1s" in r.stdout
+    assert not env.approval_argv.exists()
+
+
+def test_stock_one_session_per_day_and_old_worktrees_are_cleared(env: Env) -> None:
+    _data_parents(env)
+    assert env.daily("STOCK", CP3_DAILY_TODAY="2026-10-23").returncode == 0
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "removed old worktree" in r.stdout
+    assert not _stock_wt(env, "2026-10-23").exists()
+    again = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert again.returncode == 2
+    assert "already exists" in again.stdout and "실패" in again.stdout
+
+
+def test_stock_holds_its_own_lock(env: Env) -> None:
+    _data_parents(env)
+    env.locks.mkdir(exist_ok=True)
+    with open(env.locks / "cp3-stock-tenant-daily.wrapper.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+        assert env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY).returncode == 0
+    assert r.returncode == 75
+    assert "lock busy" in r.stdout and "실패" in r.stdout
+    assert not _stock_session(env, _OPEN_DAY).exists()
+
+
+_EXTRA_STOCK_SYMBOLS = tuple(
+    symbol for symbol in _STOCK_SYMBOLS if symbol != _STOCK_LEGACY_SYMBOL
+)
+
+
+def test_the_runner_declares_more_than_one_stock_symbol() -> None:
+    """The directive's own shape: three slots need three symbols, all distinct."""
+    assert len(_STOCK_SYMBOLS) >= 3, _STOCK_SYMBOLS
+    assert len(set(_STOCK_SYMBOLS)) == len(_STOCK_SYMBOLS), _STOCK_SYMBOLS
+    assert _STOCK_LEGACY_SYMBOL in _STOCK_SYMBOLS, _STOCK_SYMBOLS
+    assert all(re.fullmatch(r"[0-9]{6}", s) for s in _STOCK_SYMBOLS), _STOCK_SYMBOLS
+
+
+@pytest.mark.parametrize("symbol", _EXTRA_STOCK_SYMBOLS)
+def test_stock_symbol_runs_with_its_own_tree_producer_leaf_and_custody(
+    env: Env, symbol: str
+) -> None:
+    """`STOCK:<symbol>` is a tenant of its own, down to the custody root."""
+    _data_parents(env)
+    r = env.daily(f"STOCK:{symbol}", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    session = _stock_session(env, _OPEN_DAY, symbol=symbol)
+    out = (session / "runner.out").read_text(encoding="utf-8")
+    suffix = _stock_host_suffix(symbol)
+    for expected in (
+        f"TENANT_TREE=cp3-setup-d-stock-{symbol}",
+        f"TENANT_INSTRUMENT={symbol}",
+        "TENANT_DIRECTION=LONG",
+        "TENANT_STOP_AT=15:40",
+        f"TENANT_DATA_PARENT={env.state}/cp3-setup-d-stock-{symbol}-data",
+        f"TENANT_CUSTODY_ROOT={env.state}/cp3-setup-d-stock{suffix}-custody",
+        f"TENANT_KIS_MOCK_TRANSPORT_CONFIG={env.state}"
+        f"/cp3-setup-d-stock{suffix}-ops/kis_mock_transport.yaml",
+        f"TENANT_LOG={session}/session.log",
+        f"TENANT_PRODUCER_CONFIG={_stock_wt(env, _OPEN_DAY, symbol=symbol)}"
+        f"/config/tos_probes/cp3-live-producer-stock-{symbol}.yaml",
+    ):
+        assert expected in out, out
+    argv = env.approval_argv.read_text(encoding="utf-8").split("\n")
+    assert (
+        argv[argv.index("--custody-root") + 1]
+        == f"{env.state}/cp3-setup-d-stock{suffix}-custody"
+    ), argv
+    assert argv[argv.index("--config-dir") + 1] == f"{session}/render", argv
+    assert not _stock_session(env, _OPEN_DAY).exists()
+
+
+def test_each_stock_tenant_gets_its_own_boot_stagger(env: Env) -> None:
+    """One app key, one token a minute — so the BOOTS are spread, not the cron minutes."""
+    _data_parents(env)
+    offsets: dict[str, int] = {}
+    for index, symbol in enumerate(_STOCK_SYMBOLS):
+        argument = "STOCK" if symbol == _STOCK_LEGACY_SYMBOL else f"STOCK:{symbol}"
+        r = env.daily(argument, CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_BOOT_OFFSET_S="7")
+        assert r.returncode == 0, r.stdout
+        out = (_stock_session(env, _OPEN_DAY, symbol=symbol) / "runner.out").read_text(
+            encoding="utf-8"
+        )
+        (line,) = [
+            ln for ln in out.splitlines() if ln.startswith("TENANT_BOOT_DELAY_S=")
+        ]
+        offsets[symbol] = int(line.split("=", 1)[1])
+        assert f"boot_delay={offsets[symbol]}s" in r.stdout, r.stdout
+        assert offsets[symbol] == index * 7, (symbol, index, offsets)
+    assert offsets[_STOCK_SYMBOLS[0]] == 0, offsets
+    assert len(set(offsets.values())) == len(offsets), offsets
+
+
+def test_the_default_boot_offset_clears_the_kis_token_minute() -> None:
+    """70 s = KIS's own one-token-per-minute window plus room to reach the first token use."""
+    text = (_REPO_ROOT / "tools/tos_cp3/runners/cp3_tenant_daily.sh").read_text("utf-8")
+    match = re.search(
+        r"^\s*BOOT_OFFSET_S=\$\{CP3_DAILY_BOOT_OFFSET_S:-([0-9]+)\}", text, re.M
+    )
+    assert match is not None, "BOOT_OFFSET_S default not found — did the runner move?"
+    assert int(match.group(1)) >= 60, match.group(1)
+
+
+def test_bare_stock_and_the_legacy_symbol_are_ONE_tenant(env: Env) -> None:
+    """Two spellings may never become two sessions on one trading day."""
+    _data_parents(env)
+    assert env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY).returncode == 0
+    again = env.daily(f"STOCK:{_STOCK_LEGACY_SYMBOL}", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert again.returncode == 2, again.stdout
+    assert "already exists — refusing (one session per day)" in again.stdout
+
+
+@pytest.mark.parametrize("symbol", _EXTRA_STOCK_SYMBOLS)
+def test_each_stock_tenant_holds_its_own_lock(env: Env, symbol: str) -> None:
+    """One tenant's running session must not stop another symbol's from starting."""
+    _data_parents(env)
+    env.locks.mkdir(exist_ok=True)
+    lock = env.locks / f"cp3-{_stock_lc(symbol)}-tenant-daily.wrapper.lock"
+    with open(lock, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held = env.daily(f"STOCK:{symbol}", CP3_DAILY_TODAY=_OPEN_DAY)
+        assert env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY).returncode == 0
+    assert held.returncode == 75
+    assert "lock busy" in held.stdout
+    assert not _stock_session(env, _OPEN_DAY, symbol=symbol).exists()
+
+
+@pytest.mark.parametrize(
+    ("argument", "needle"),
+    [
+        ("STOCK:999999", "unknown stock symbol '999999'"),
+        ("STOCK:", "unknown stock symbol ''"),
+        ("STOCKfoo", "usage:"),
+    ],
+)
+def test_a_stock_argument_that_names_no_tenant_is_refused_and_writes_nothing(
+    env: Env, argument: str, needle: str
+) -> None:
+    _data_parents(env)
+    before = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+    r = env.daily(argument, CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert needle in r.stderr, r.stderr
+    after = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+    assert after == before
+
+
+@pytest.mark.parametrize("symbol", _EXTRA_STOCK_SYMBOLS)
+def test_stock_symbol_preflight_names_its_own_leaf_and_transport(
+    env: Env, symbol: str
+) -> None:
+    _data_parents(env)
+    r = env.daily(f"STOCK:{symbol}", "--preflight", _OPEN_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"instrument={symbol}" in r.stdout
+    assert f"{env.state}/cp3-setup-d-stock-{symbol}-data/{symbol}" in r.stdout
+    suffix = _stock_host_suffix(symbol)
+    assert f"cp3-setup-d-stock{suffix}-ops/kis_mock_transport.yaml" in r.stdout
+
+
+def test_preflight_refuses_an_env_example_that_hardcodes_a_symbol(env: Env) -> None:
+    """The symbol flows argument -> TOS_STOCK_SYMBOL -> TENANT_INSTRUMENT, once."""
+    _data_parents(env)
+    rel = "tools/tos_cp3/runners/stock-mock-session.env.example"
+    path = env.main / rel
+    before = path.read_text(encoding="utf-8")
+    after = before.replace(
+        f"TENANT_INSTRUMENT={_SYMBOL_REF}", "TENANT_INSTRUMENT=005930"
+    )
+    assert (
+        after != before
+    ), "the env example no longer sets TENANT_INSTRUMENT to the reference"
+    path.write_text(after, encoding="utf-8")
+    _git("commit", "-q", "-am", "pin a symbol", cwd=env.main)
+    _git("push", "-q", "origin", "main", cwd=env.main)
+    _git("fetch", "-q", "origin", cwd=env.main)
+    r = env.daily("STOCK:000660", "--preflight", _OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert f"not {_SYMBOL_REF}" in r.stdout, r.stdout
+
+
+def test_stock_preflight_reports_the_window_leaf_and_transport_keys(env: Env) -> None:
+    _data_parents(env)
+    before = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+    r = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"krx-stock CONTINUOUS {_OPEN_DAY} 09:00-15:30 regular" in r.stdout
+    assert "stop_at=15:40" in r.stdout
+    assert "market=OPEN" in r.stdout and "instrument=005930" in r.stdout
+    assert f"leaf {env.state}/cp3-setup-d-stock-005930-data/005930" in r.stdout
+    assert "transport config keys = 정본" in r.stdout
+    assert "standing approval slot free" in r.stdout
+    assert f"session dir {_stock_session(env, _OPEN_DAY)}" in r.stdout
+    assert f"worktree {_stock_wt(env, _OPEN_DAY)}" in r.stdout
+
+    closed = env.daily("STOCK", "--preflight", _HOLIDAY)
+    assert closed.returncode == 0 and "market=CLOSED" in closed.stdout
+
+    override = env.daily("STOCK", "--preflight", _OVERRIDE_DAY)
+    assert "10:00-16:30 OVERRIDE" in override.stdout
+    assert "stop_at=16:40" in override.stdout
+
+    after = sorted(
+        p.relative_to(env.tmp) for p in env.tmp.rglob("*") if ".git" not in p.parts
+    )
+    assert after == before
+
+
+def test_stock_preflight_names_a_transport_key_difference_without_refusing(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    _stock_host_state(env, transport="mode: live\nonly_key: 1\n")
+    r = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "keys DIFFER" in r.stdout and "a run would refuse" in r.stdout
+    assert "only_key:" in r.stdout
+    assert "market=OPEN" in r.stdout
+
+
+def test_stock_1031_yesterdays_approval_is_archived_before_the_runner(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    stale = _write_approval(env, _approval_doc("20261023"))
+    stale_bytes = stale.read_bytes()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "archived the 20261023 standing approval" in r.stdout
+    assert not stale.exists()
+    archived = env.state / _ARCHIVE_REL / "standing-session.20261023.yaml"
+    assert archived.read_bytes() == stale_bytes
+    assert not list((env.state / _APPROVAL_REL).parent.iterdir())
+    assert "write-standing-approval rc=0" in r.stdout
+    argv = env.approval_argv.read_text(encoding="utf-8").splitlines()
+    assert argv[-2:] == ["--trading-date", _OPEN_DAY]
+    assert "--replace" not in argv
+
+
+def test_stock_1031_todays_approval_is_kept_and_not_rewritten(env: Env) -> None:
+    """A manual RUN=2 restart: the slot already carries today, so it stays and the"""
+    _data_parents(env)
+    mine = _write_approval(env, _approval_doc(_OPEN_DAY.replace("-", "")))
+    kept = mine.read_bytes()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "already carries today" in r.stdout and "쓰지 않는다" in r.stdout
+    assert mine.read_bytes() == kept
+    assert not (env.state / _ARCHIVE_REL).exists()
+    assert not env.approval_argv.exists()
+    assert "write-standing-approval rc=" not in r.stdout
+
+
+def test_stock_1031_an_archive_name_collision_gets_a_suffix(env: Env) -> None:
+    _data_parents(env)
+    archive = env.state / _ARCHIVE_REL
+    archive.mkdir(mode=0o700, parents=True)
+    taken = archive / "standing-session.20261023.yaml"
+    taken.write_text("already archived under that name\n", encoding="utf-8")
+    _write_approval(env, _approval_doc("20261023"))
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert taken.read_text(encoding="utf-8") == "already archived under that name\n"
+    suffixed = archive / "standing-session.20261023.1.yaml"
+    assert "trading_date: '20261023'" in suffixed.read_text(encoding="utf-8")
+    assert f"-> {suffixed}" in r.stdout
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "trading_date: 2026-10-23\n",
+        "schema: tos-standing-session-approval/1\n",
+        "- not: a mapping\n",
+        "trading_date: '20261023'\n  bad: indent\n",
+        "",
+    ],
+)
+def test_stock_1031_an_unreadable_approval_file_is_refused(env: Env, body: str) -> None:
+    """Not guessed at, not moved: a file this wrapper cannot read exactly is a file"""
+    _data_parents(env)
+    path = _write_approval(env, body)
+    before = path.read_bytes()
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 2, r.stdout
+    assert "상시 승인 파일을 읽을 수 없다" in r.stdout and "notify-body" in r.stdout
+    assert path.read_bytes() == before
+    assert not (env.state / _ARCHIVE_REL).exists()
+    assert not env.approval_argv.exists()
+    assert not _stock_session(env, _OPEN_DAY).exists()
+    assert not _stock_wt(env, _OPEN_DAY).exists()
+
+
+def test_stock_1031_low1_a_holiday_skips_before_the_operation_file_checks(
+    env: Env,
+) -> None:
+    """review-1031 LOW-1: a weekday holiday skips silently even when both operation"""
+    _data_parents(env)
+    _stock_host_state(env, transport="mode: live\nonly_key: 1\n")
+    _write_approval(env, "nonsense: [\n")
+    r = env.daily("STOCK", CP3_DAILY_TODAY=_HOLIDAY)
+    assert r.returncode == 0, r.stdout
+    assert "SKIP" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert "keys" not in r.stdout and "approval" not in r.stdout
+    assert not (env.state / _ARCHIVE_REL).exists()
+
+
+def test_stock_1031_preflight_names_the_slot_without_moving_anything(
+    env: Env,
+) -> None:
+    _data_parents(env)
+    stale = _write_approval(env, _approval_doc("20261023"))
+    before = stale.read_bytes()
+    r = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "standing approval slot carries 20261023" in r.stdout
+    assert f"{env.state}/{_ARCHIVE_REL}/standing-session.20261023.yaml" in r.stdout
+    assert stale.read_bytes() == before
+    assert not (env.state / _ARCHIVE_REL).exists()
+
+    _write_approval(env, _approval_doc(_OPEN_DAY.replace("-", "")))
+    mine = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert f"slot already carries {_OPEN_DAY.replace('-', '')}" in mine.stdout
+
+    _write_approval(env, "- not: a mapping\n")
+    bad = env.daily("STOCK", "--preflight", _OPEN_DAY)
+    assert bad.returncode == 0
+    assert "slot not readable" in bad.stdout and "a run would refuse" in bad.stdout
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_n6_a_begin_without_end_aborts(env: Env, apply: bool) -> None:
+    broken = (
+        _OTHER_LINES
+        + "# BEGIN CP3_TENANT_DAILY (half-edited)\nCRON_TZ=Asia/Seoul\n0 3 * * 0 /x/keep-me.sh\n"
+    )
+    env.crontab.write_text(broken, encoding="utf-8")
+    args = ("--apply",) if apply else ()
+    r = env.install(*args)
+    assert r.returncode == 2
+    assert "without a matching" in r.stderr
+    assert env.crontab.read_text(encoding="utf-8") == broken
+    assert not Path(f"{env.crontab}.writes").exists()
+
+
+_CATCHUP = (
+    ("LONG", "long", 90, "08:38"),
+    ("SHORT", "short", 240, "08:40"),
+    ("STOCK", "stock", 390, "08:53"),
+    ("STOCK:000660", "stock-000660", 540, "08:55"),
+    ("STOCK:005380", "stock-005380", 690, "08:57"),
+)
+
+
+def test_1038_dry_run_shows_the_three_reboot_lines(env: Env) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    r = env.install()
+    assert r.returncode == 0, r.stderr
+    dest = env.dest_dir / "run-cp3-tenant-daily.sh"
+    for direction, lc, sleep_s, at in _CATCHUP:
+        assert (
+            f"+@reboot sleep {sleep_s}; /bin/bash {dest} {direction} --catch-up {at}"
+            f" >> {env.state}/cp3-{lc}-tenant-daily.cron.log 2>&1"
+            f" # cp3-{lc}-tenant-catchup" in r.stdout
+        ), r.stdout
+    assert env.crontab.read_text(encoding="utf-8") == _OTHER_LINES
+
+
+def test_1038_apply_writes_them_in_the_block_and_remove_takes_them_with_it(
+    env: Env,
+) -> None:
+    env.crontab.write_text(_OTHER_LINES, encoding="utf-8")
+    assert env.install("--apply").returncode == 0
+    tab = env.crontab.read_text(encoding="utf-8")
+    body = tab.split("# BEGIN CP3_TENANT_DAILY", 1)[1].split("# END", 1)[0]
+    reboot = [ln for ln in body.splitlines() if ln.startswith("@reboot")]
+    assert len(reboot) == len(_CATCHUP), tab
+    assert [ln.split("--catch-up ", 1)[1].split()[0] for ln in reboot] == [
+        at for _, _, _, at in _CATCHUP
+    ]
+    sleeps = [int(ln.split("sleep ", 1)[1].split(";", 1)[0]) for ln in reboot]
+    assert all(b - a >= 120 for a, b in zip(sleeps, sleeps[1:], strict=False)), sleeps
+    assert all("%" not in ln for ln in reboot), reboot
+
+    again = env.install("--apply")
+    assert again.returncode == 0 and "crontab unchanged" in again.stdout
+
+    assert env.install("--remove", "--apply").returncode == 0
+    after = env.crontab.read_text(encoding="utf-8")
+    assert "@reboot" not in after and "catchup" not in after
+    assert after.startswith(_OTHER_LINES)
+
+
+def test_1038_a_hand_installed_catchup_line_outside_the_block_is_dropped(
+    env: Env,
+) -> None:
+    """Same rule as the 10-22 hand `-tenant-daily` lines: one direction, one line."""
+    env.crontab.write_text(
+        _OTHER_LINES + "@reboot sleep 60; /bin/bash /x/run-cp3-tenant-daily.sh LONG"
+        " --catch-up 08:38 >> /x/l.log 2>&1 # cp3-long-tenant-catchup\n",
+        encoding="utf-8",
+    )
+    assert env.install("--apply").returncode == 0
+    tab = env.crontab.read_text(encoding="utf-8")
+    assert "/x/l.log" not in tab
+    assert tab.count("# cp3-long-tenant-catchup") == 1
+    assert tab.startswith(_OTHER_LINES)
+
+
+def test_a_hand_installed_per_symbol_stock_line_outside_the_block_is_dropped(
+    env: Env,
+) -> None:
+    """The tag filter has to reach `cp3-stock-<6 digits>-tenant-*` too."""
+    env.crontab.write_text(
+        _OTHER_LINES + "55 8 * * 1-5 /bin/bash /x/run-cp3-tenant-daily.sh STOCK:000660"
+        " >> /x/hand.log 2>&1 # cp3-stock-000660-tenant-daily\n"
+        "@reboot sleep 60; /bin/bash /x/run-cp3-tenant-daily.sh STOCK:005380"
+        " --catch-up 08:57 >> /x/hand2.log 2>&1 # cp3-stock-005380-tenant-catchup\n",
+        encoding="utf-8",
+    )
+    assert env.install("--apply").returncode == 0
+    tab = env.crontab.read_text(encoding="utf-8")
+    assert "/x/hand.log" not in tab and "/x/hand2.log" not in tab
+    assert tab.count("# cp3-stock-000660-tenant-daily") == 1
+    assert tab.count("# cp3-stock-005380-tenant-catchup") == 1
+    assert tab.startswith(_OTHER_LINES)
+
+
+def test_1038_catchup_runs_the_session_the_reboot_missed(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="09:10"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "재부팅 catch-up 기동" in r.stdout
+    assert "TENANT_STOP_AT=15:50" in _runner_out(env, "long", _OPEN_DAY)
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+
+
+def test_1038_b_a_boot_before_the_regular_minute_does_nothing(env: Env) -> None:
+    """The regular line is still going to fire, so the catch-up must not race it —"""
+    _data_parents(env)
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="08:20"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "08:38" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not (env.state / "measure").exists()
+
+
+def test_1038_a_a_holiday_takes_the_wrappers_existing_silent_skip(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "SHORT", "--catch-up", "08:40", CP3_DAILY_TODAY=_HOLIDAY, CP3_DAILY_NOW="09:10"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "SKIP" in r.stdout and "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+
+
+def test_1038_c_a_boot_past_the_stop_time_starts_nothing(env: Env) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="15:50"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "15:50" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not (
+        env.state / f"measure/wt-cp3-long-{_OPEN_DAY.replace('-', '')}"
+    ).exists()
+
+
+def test_1038_c_the_stop_bound_is_the_run_paths_own_derivation(env: Env) -> None:
+    """#924 × #1038: 16:00 is past a regular day's 15:50 and inside the override"""
+    _data_parents(env)
+    regular = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="16:00"
+    )
+    assert regular.returncode == 0 and "CATCH-UP SKIP" in regular.stdout
+    late = env.daily(
+        "LONG",
+        "--catch-up",
+        "08:38",
+        CP3_DAILY_TODAY=_OVERRIDE_DAY,
+        CP3_DAILY_NOW="16:00",
+    )
+    assert late.returncode == 0, late.stdout
+    assert "TENANT_STOP_AT=16:50" in _runner_out(env, "long", _OVERRIDE_DAY)
+
+
+def test_1038_d_a_session_cut_by_a_mid_day_reboot_is_not_restarted(env: Env) -> None:
+    """A second session on one day stays the operator's RUN=2 decision (§7.2-f)."""
+    _data_parents(env)
+    session = env.state / "cp3-sessions" / f"long-{_OPEN_DAY.replace('-', '')}"
+    session.mkdir(parents=True)
+    (session / "runner.out").write_text("cut by the reboot\n", encoding="utf-8")
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="09:10"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "RUN=2" in r.stdout
+    assert "notify-body" not in r.stdout
+    assert (session / "runner.out").read_text(encoding="utf-8") == "cut by the reboot\n"
+
+
+def test_1038_d_a_still_running_session_is_a_quiet_skip_not_a_lock_alert(
+    env: Env,
+) -> None:
+    """A catch-up that fires while the regular line's call is still running finds"""
+    _data_parents(env)
+    (env.state / "cp3-sessions" / f"long-{_OPEN_DAY.replace('-', '')}").mkdir(
+        parents=True
+    )
+    env.locks.mkdir()
+    with open(env.locks / "cp3-long-tenant-daily.wrapper.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = env.daily(
+            "LONG",
+            "--catch-up",
+            "08:38",
+            CP3_DAILY_TODAY=_OPEN_DAY,
+            CP3_DAILY_NOW="09:10",
+        )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout
+    assert "lock busy" not in r.stdout and "notify-body" not in r.stdout
+
+
+def test_1039_low1_a_lock_held_by_the_regular_run_is_a_quiet_skip(env: Env) -> None:
+    """review-1039 LOW-1: the two can overlap for real — a boot at 08:36:30-08:37"""
+    _data_parents(env)
+    env.locks.mkdir()
+    with open(env.locks / "cp3-long-tenant-daily.wrapper.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = env.daily(
+            "LONG",
+            "--catch-up",
+            "08:38",
+            CP3_DAILY_TODAY=_OPEN_DAY,
+            CP3_DAILY_NOW="08:38",
+        )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "lock held by the regular run" in r.stdout
+    assert "lock busy" not in r.stdout and "notify-body" not in r.stdout
+    assert not (env.state / "cp3-sessions").exists()
+    assert not (env.state / "measure").exists()
+
+
+@pytest.mark.parametrize("extra", ["LONG", "--preflight", _OPEN_DAY, "0"])
+def test_1039_low2_an_argument_after_the_time_is_refused(env: Env, extra: str) -> None:
+    """review-1039 LOW-2: a 4th word in the cron line is a typo, and half-reading it"""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        "--catch-up",
+        "08:38",
+        extra,
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_DAILY_NOW="09:10",
+    )
+    assert r.returncode == 2, r.stdout
+    assert f"unexpected argument '{extra}'" in r.stderr
+    assert "usage:" in r.stderr
+    assert not (env.state / "cp3-sessions").exists()
+
+
+@pytest.mark.parametrize(
+    "bad", ["", "8:38", "0838", "25:00", "08:60", "08:3x", "08:38:00", "08:38 "]
+)
+def test_1038_a_time_the_wrapper_cannot_read_exactly_is_refused(
+    env: Env, bad: str
+) -> None:
+    _data_parents(env)
+    r = env.daily(
+        "LONG", "--catch-up", bad, CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="09:10"
+    )
+    assert r.returncode == 2, r.stdout
+    assert "want HH:MM" in r.stderr
+    assert not (env.state / "cp3-sessions").exists()
+
+
+def test_1038_an_unreadable_now_override_is_refused(env: Env) -> None:
+    """The test-only clock knob gets the same strictness — a mis-typed one would"""
+    r = env.daily(
+        "LONG", "--catch-up", "08:38", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="9:10"
+    )
+    assert r.returncode == 2 and "want HH:MM" in r.stderr
+
+
+def test_1038_stock_a_late_start_still_writes_the_standing_approval(env: Env) -> None:
+    """11-06 by hand: the STOCK session started at 09:13 and `render ok` came ~60 s"""
+    _data_parents(env)
+    r = env.daily(
+        "STOCK",
+        "--catch-up",
+        "08:53",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_DAILY_NOW="09:13",
+        CP3_TEST_STUB_RENDER_AFTER_S="1",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "재부팅 catch-up 기동" in r.stdout
+    assert "write-standing-approval rc=0" in r.stdout
+    assert env.approval_argv.read_text(encoding="utf-8").splitlines()[-1] == _OPEN_DAY
+    out = (_stock_session(env, _OPEN_DAY) / "runner.out").read_text(encoding="utf-8")
+    assert "TENANT_STOP_AT=15:40" in out
+
+
+def test_1038_stock_a_catchup_that_skips_does_not_touch_the_approval_slot(
+    env: Env,
+) -> None:
+    """The stop-time gate decides BEFORE the STOCK pre-runner steps: a catch-up that"""
+    _data_parents(env)
+    stale = _write_approval(env, _approval_doc("20261023"))
+    before = stale.read_bytes()
+    r = env.daily(
+        "STOCK", "--catch-up", "08:53", CP3_DAILY_TODAY=_OPEN_DAY, CP3_DAILY_NOW="15:40"
+    )
+    assert r.returncode == 0, r.stdout
+    assert "CATCH-UP SKIP" in r.stdout and "notify-body" not in r.stdout
+    assert stale.read_bytes() == before
+    assert not (env.state / _ARCHIVE_REL).exists()
+    assert not _stock_session(env, _OPEN_DAY).exists()
+
+
+_SESSION_DAY = _OPEN_DAY.replace("-", "")
+
+
+def _long_session_dir(env: Env) -> Path:
+    return env.state / "cp3-sessions" / f"long-{_SESSION_DAY}"
+
+
+def _env_paper(env: Env, value: str, *, eol: str = "\n") -> None:
+    """$MAIN/.env.paper — what docker compose reads for the dashboard's mount."""
+    (env.main / ".env.paper").write_text(
+        f"COMPOSE_PROJECT_NAME=kis_paper{eol}TOS_OPERATOR_PROJECTION_DIR={value}{eol}",
+        encoding="utf-8",
+        newline="",
+    )
+
+
+def test_the_export_hook_skips_loudly_when_no_projection_dir_is_set(env: Env) -> None:
+    """Unset variable is a SKIP with a reason, never a guessed destination."""
+    _data_parents(env)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "BARS EXPORT SKIPPED — TOS_OPERATOR_PROJECTION_DIR is unset" in r.stdout
+    assert f"{env.main}/.env.paper does not set it" in r.stdout
+    assert not env.export_argv.exists()
+    assert "일일 세션 종료" in r.stdout
+
+
+def test_1154_the_export_hook_reads_the_projection_dir_from_env_paper(
+    env: Env,
+) -> None:
+    """#1154: the tenant cron carries no such variable, so every session SKIPPED."""
+    _data_parents(env)
+    _env_paper(env, str(env.projection))
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert f"projection dir read from {env.main}/.env.paper" in r.stdout
+    assert env.export_argv.read_text(encoding="utf-8").splitlines() == [
+        str(_long_session_dir(env)),
+        "--out-dir",
+        str(env.projection),
+        "--state-dir",
+        str(env.state),
+    ]
+
+
+def test_1154_an_explicit_projection_dir_wins_over_env_paper(env: Env) -> None:
+    """A crontab line still decides; the file is only consulted when it is absent."""
+    _data_parents(env)
+    _env_paper(env, str(env.tmp / "from-env-paper"))
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+    )
+    assert r.returncode == 0, r.stdout
+    assert "projection dir read from" not in r.stdout
+    argv = env.export_argv.read_text(encoding="utf-8")
+    assert str(env.projection) in argv and "from-env-paper" not in argv
+
+
+def test_1154_a_relative_value_in_env_paper_is_refused_like_any_other(
+    env: Env,
+) -> None:
+    """The derived value goes through the same absolute-path guard."""
+    _data_parents(env)
+    _env_paper(env, "./data/tos_runtime")
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "is not absolute" in r.stdout
+    assert not env.export_argv.exists()
+
+
+@pytest.mark.parametrize(
+    ("written", "eol"),
+    [
+        ("{p}", "\r\n"),
+        ("{p} # the dashboard mount", "\n"),
+        ('"{p}" # the dashboard mount', "\n"),
+        ("'{p}'", "\n"),
+        ("  {p}  ", "\n"),
+    ],
+    ids=["crlf", "inline-comment", "quoted-and-commented", "single-quoted", "padded"],
+)
+def test_1154_env_file_spelling_does_not_reach_the_exporter(
+    env: Env, written: str, eol: str
+) -> None:
+    """An absolute path keeps a leading `/` through a CR or a comment, so the"""
+    _data_parents(env)
+    _env_paper(env, written.format(p=env.projection), eol=eol)
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert env.export_argv.read_text(encoding="utf-8").splitlines()[1:3] == [
+        "--out-dir",
+        str(env.projection),
+    ]
+
+
+def test_1154_a_value_that_is_not_a_path_is_refused_not_created(env: Env) -> None:
+    """Whitespace left after normalisation means a mis-typed line, not a path."""
+    _data_parents(env)
+    _env_paper(env, f"{env.projection} and more")
+    r = env.daily("LONG", CP3_DAILY_TODAY=_OPEN_DAY)
+    assert r.returncode == 0, r.stdout
+    assert "holds whitespace, a quote or '#'" in r.stdout
+    assert "BARS EXPORT SKIPPED" in r.stdout
+    assert not env.export_argv.exists()
+
+
+def test_the_export_hook_skips_a_relative_projection_dir(env: Env) -> None:
+    """A relative path resolves against cron's cwd, not the dashboard mount."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR="./data/tos_runtime",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "is not absolute" in r.stdout
+    assert not env.export_argv.exists()
+
+
+def test_a_zero_ceiling_does_not_disable_the_export_timeout(env: Env) -> None:
+    """`timeout 0s` means no timeout, so 0 falls back to the default ceiling."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+        CP3_BARS_CEILING_S="0",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "ceiling 120s" in r.stdout
+
+
+def test_the_export_hook_runs_after_the_runner_and_keeps_the_session_rc(
+    env: Env,
+) -> None:
+    """Enabled: it runs after the runner, with the session dir and the state root."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+    )
+    assert r.returncode == 0, r.stdout
+    assert env.export_argv.read_text(encoding="utf-8").splitlines() == [
+        str(_long_session_dir(env)),
+        "--out-dir",
+        str(env.projection),
+        "--state-dir",
+        str(env.state),
+    ]
+    lines = r.stdout.splitlines()
+    runner_rc = next(i for i, line in enumerate(lines) if "runner rc=" in line)
+    export = next(i for i, line in enumerate(lines) if "BARS EXPORT session=" in line)
+    assert runner_rc < export
+    assert "END BARS EXPORT rc=0" in r.stdout
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+
+
+def test_a_failing_export_does_not_change_the_sessions_verdict(env: Env) -> None:
+    """The one property that matters: the export's rc is logged and discarded."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+        FAKE_EXPORT_RC="2",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "END BARS EXPORT rc=2" in r.stdout
+    assert "this rc does NOT change the session's" in r.stdout
+    assert "일일 세션 종료" in r.stdout and "정상" in r.stdout
+
+
+def test_a_succeeding_export_does_not_mask_a_failing_session(env: Env) -> None:
+    """A session that failed keeps ITS code, not the export's."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        CP3_TEST_STUB_RC="3",
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+    )
+    assert r.returncode == 3, r.stdout
+    assert "END BARS EXPORT rc=0" in r.stdout
+    assert "ABORT" in r.stdout
+
+
+def test_a_hanging_export_is_bounded_and_still_not_fatal(env: Env) -> None:
+    """A wedged export must not hold the cron wrapper's flock past midnight."""
+    _data_parents(env)
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+        CP3_BARS_CEILING_S="1",
+        FAKE_EXPORT_HANG_S="30",
+    )
+    assert r.returncode == 0, r.stdout
+    assert "END BARS EXPORT rc=124" in r.stdout
+    assert "일일 세션 종료" in r.stdout
+
+
+def test_the_hook_adds_nothing_to_the_state_tree(env: Env) -> None:
+    """It READS the 0700 state tree; the only thing it writes is its own log."""
+    _data_parents(env)
+    before = {p.name for p in env.state.iterdir()}
+    r = env.daily(
+        "LONG",
+        CP3_DAILY_TODAY=_OPEN_DAY,
+        TOS_OPERATOR_PROJECTION_DIR=str(env.projection),
+    )
+    assert r.returncode == 0, r.stdout
+    # `market-open` is the gate's day-answer cache and its own token cache (#1143) —
+    # one directory, shared by every tenant on the host, and nothing else is new.
+    assert {p.name for p in env.state.iterdir()} - before <= {
+        "cp3-sessions",
+        "market-open",
+        "measure",
+    }
+    assert (_long_session_dir(env) / "bars-export.out").exists()
+    assert not (env.state / "cp3-setup-d-long-data" / "bars").exists()

@@ -1,0 +1,101 @@
+# CP-3 STOCK (005930, KIS MOCK) tenant — declarative indicator fields (P2-b).
+
+schema: tos-fields/1
+catalog: tos-field-catalog/1
+
+fields:
+  - {name: bar_open, op: bar.open}
+  - {name: bar_high, op: bar.high}
+  - {name: bar_low, op: bar.low}
+  - {name: close, op: bar.close}
+  - {name: bar_volume, op: bar.volume}
+  - {name: token, op: session.token}
+
+  - {name: vwap, op: session.vwap_typical}
+  - {name: atr, op: atr, params: {period: 14}}
+  - {name: mso, op: session.minutes_since_open, params: {open_hour: 9, open_minute: 0}}
+
+  - {name: entry_window, op: between, inputs: [mso], params: {lo: 15, hi: 345}}
+
+  - {name: atr_pos, op: gt, inputs: [atr], params: {const: 0}}
+  - {name: close_pos, op: gt, inputs: [close], params: {const: 0}}
+  - {name: usable, op: all, inputs: [entry_window, atr_pos, close_pos]}
+
+  - {name: prev_close, op: gated_lag, inputs: [close], params: {sample_when: usable}}
+  - name: vol_ref
+    op: gated_percentile
+    inputs: [atr]
+    params: {q: 90.0, window: 780, warmup: 120, sample_when: usable}
+  - name: recent_high
+    op: gated_max
+    inputs: [close]
+    params: {window: 15, warmup: 5, sample_when: usable}
+  - name: recent_low
+    op: gated_min
+    inputs: [close]
+    params: {window: 15, warmup: 5, sample_when: usable}
+
+  - {name: vol_ref_pos, op: gt, inputs: [vol_ref], params: {const: 0}}
+  - {name: vol_gate_on, op: permissive, inputs: [vol_ref_pos], params: {when_missing: false}}
+  - {name: vol_gate_off, op: not, inputs: [vol_gate_on]}
+  - {name: vol_ok_raw, op: ge, inputs: [atr, vol_ref], params: {mult: 0.9}}
+  - {name: vol_ok, op: permissive, inputs: [vol_ok_raw], params: {when_missing: true}}
+  - {name: vol_pass, op: any, inputs: [vol_gate_off, vol_ok]}
+  - {name: hi_vol, op: all, inputs: [usable, vol_pass]}
+
+  - {name: z, op: ratio_z, inputs: [close, vwap, atr]}
+  - {name: abs_z, op: abs, inputs: [z]}
+  - {name: z_short_side, op: ge, inputs: [z], params: {const: 1.8}}
+  - {name: z_long_side, op: le, inputs: [z], params: {const: -1.8}}
+  - {name: extreme, op: any, inputs: [z_short_side, z_long_side]}
+  - {name: through_extreme, op: all, inputs: [hi_vol, extreme]}
+
+  - {name: stall_short_ratio, op: ratio_z, inputs: [close, recent_high, atr]}
+  - {name: stall_long_ratio, op: ratio_z, inputs: [recent_low, close, atr]}
+  - {name: stall_short_raw, op: le, inputs: [stall_short_ratio], params: {const: 1.5}}
+  - {name: stall_long_raw, op: le, inputs: [stall_long_ratio], params: {const: 1.5}}
+  - {name: stall_short_ok, op: permissive, inputs: [stall_short_raw], params: {when_missing: true}}
+  - {name: stall_long_ok, op: permissive, inputs: [stall_long_raw], params: {when_missing: true}}
+  - {name: not_short_side, op: not, inputs: [z_short_side]}
+  - {name: not_long_side, op: not, inputs: [z_long_side]}
+  - {name: stall_short_gate, op: any, inputs: [not_short_side, stall_short_ok]}
+  - {name: stall_long_gate, op: any, inputs: [not_long_side, stall_long_ok]}
+  - {name: stall_ok, op: all, inputs: [through_extreme, stall_short_gate, stall_long_gate]}
+
+  - {name: prev_close_pos, op: gt, inputs: [prev_close], params: {const: 0}}
+  - {name: prev_close_known, op: permissive, inputs: [prev_close_pos], params: {when_missing: false}}
+  - {name: prev_z, op: ratio_z, inputs: [prev_close, vwap, atr]}
+  - {name: abs_prev_z, op: abs, inputs: [prev_z]}
+  - {name: turn_long_raw, op: gt, inputs: [close, prev_close]}
+  - {name: turn_short_raw, op: lt, inputs: [close, prev_close]}
+  - {name: turn_long, op: permissive, inputs: [turn_long_raw], params: {when_missing: false}}
+  - {name: turn_short, op: permissive, inputs: [turn_short_raw], params: {when_missing: false}}
+  - {name: turn_long_gate, op: any, inputs: [not_long_side, turn_long]}
+  - {name: turn_short_gate, op: any, inputs: [not_short_side, turn_short]}
+  - {name: one, op: const, params: {value: 1.0}}
+  - {name: z_improvement, op: ratio_z, inputs: [abs_prev_z, abs_z, one]}
+  - {name: improve_raw, op: ge, inputs: [z_improvement], params: {const: 0.2}}
+  - {name: improve_ok, op: permissive, inputs: [improve_raw], params: {when_missing: false}}
+  - name: reversal_ok
+    op: all
+    inputs: [stall_ok, prev_close_known, turn_long_gate, turn_short_gate, improve_ok]
+
+  - {name: vwap_reverted, op: le, inputs: [abs_z], params: {const: 0.2}}
+  - {name: eod, op: time_ge, params: {at: "15:15"}}
+
+publish:
+  - {field: bar_open, as: open_x100, scale: {mult: 100, round: half_up}}
+  - {field: bar_high, as: high_x100, scale: {mult: 100, round: half_up}}
+  - {field: bar_low, as: low_x100, scale: {mult: 100, round: half_up}}
+  - {field: close, as: close_x100, scale: {mult: 100, round: half_up}}
+  - {field: bar_volume, as: volume, scale: {mult: 1, round: half_up}}
+  - {field: token, as: session_token}
+  - {field: vwap, as: vwap_x100, scale: {mult: 100, round: half_up}}
+  - {field: atr, as: atr14_x100, scale: {mult: 100, round: half_up}}
+  - {field: z, as: z_x1000, scale: {mult: 1000, round: toward_zero}}
+  - {field: hi_vol, as: hi_vol}
+  - {field: stall_ok, as: stall_ok}
+  - {field: reversal_ok, as: reversal_ok}
+  - {field: entry_window, as: entry_window}
+  - {field: vwap_reverted, as: vwap_reverted}
+  - {field: eod, as: eod}

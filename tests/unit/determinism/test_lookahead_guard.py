@@ -1,0 +1,64 @@
+"""Unit tests for the look-ahead guard (moved from tests/unit/backtest)."""
+
+import numpy as np
+import pytest
+
+from shared.determinism import LookaheadGuard, LookaheadGuardMode
+
+
+@pytest.mark.parametrize(
+    "mode,should_raise",
+    [
+        (LookaheadGuardMode.OFF, False),
+        (LookaheadGuardMode.WARN, False),
+        (LookaheadGuardMode.ASSERT, True),
+    ],
+)
+def test_lookahead_guard_basic(mode, should_raise, caplog):
+    guard = LookaheadGuard(mode=mode)
+    arr = np.array([1, 2, 3, 4, 5])
+    timestamps = [10, 20, 30, 40, 50]
+    context_timestamp = 30
+    if should_raise:
+        with pytest.raises(AssertionError):
+            guard.check(arr, timestamps, context_timestamp, "test")
+    else:
+        guard.check(arr, timestamps, context_timestamp, "test")
+        if mode == LookaheadGuardMode.WARN:
+            assert any("lookahead" in r.message.lower() for r in caplog.records)
+
+
+def test_lookahead_guard_no_future():
+    guard = LookaheadGuard(mode=LookaheadGuardMode.ASSERT)
+    arr = np.array([1, 2, 3])
+    timestamps = [10, 20, 30]
+    context_timestamp = 30
+    guard.check(arr, timestamps, context_timestamp, "test")
+
+
+def test_lookahead_guard_empty():
+    guard = LookaheadGuard(mode=LookaheadGuardMode.ASSERT)
+    arr = np.array([])
+    timestamps = []
+    context_timestamp = 10
+    guard.check(arr, timestamps, context_timestamp, "test")
+
+
+def test_lookahead_guard_warn_logs(caplog):
+    guard = LookaheadGuard(mode=LookaheadGuardMode.WARN)
+    arr = np.array([1, 2, 3, 4])
+    timestamps = [1, 2, 3, 4]
+    context_timestamp = 2
+    guard.check(arr, timestamps, context_timestamp, "warn-test")
+    assert any("lookahead" in r.message.lower() for r in caplog.records)
+
+
+def test_lookahead_guard_fingerprint_detects_mutation():
+    guard = LookaheadGuard(mode=LookaheadGuardMode.ASSERT)
+    arr = [1.0, 2.0, 3.0, 4.0]
+    fp = (len(arr), arr[0], arr[-2])
+    guard.check_fingerprint(arr, fp, "no-mutation")
+
+    mutated = [1.0, 2.0, 99.0, 4.0]
+    with pytest.raises(AssertionError):
+        guard.check_fingerprint(mutated, fp, "mutated")

@@ -1,0 +1,15 @@
+runtime_storage:
+  backend: sqlite
+  sqlite:
+    path: data/runtime/${ENVIRONMENT:dev}/runtime.db
+    wal: true
+    busy_timeout_ms: 5000
+    synchronous: NORMAL
+
+market_data:
+  source: parquet
+  parquet:
+    root: data/market
+
+dashboard:
+  trade_stats_source: runtime_ledger
