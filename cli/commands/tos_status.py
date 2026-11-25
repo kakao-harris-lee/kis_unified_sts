@@ -17,6 +17,10 @@
 * ``export-symbols`` → ``tools/tos_cp3/export_symbols.py`` (같은 계획 §5
   «종목별 운영 화면»). ``perf`` 와 ``status`` 가 이미 센 것을 종목 하나의 줄로 모아
   ``export-bars`` 와 같은 디렉터리에 쓴다. 대시보드는 그 파일을 경로로만 연다.
+* ``export-status`` → ``tools/tos_cp3/export_status.py`` (가독성 계획
+  ``docs/plans/2026-11-25-tos-operator-page-legibility-plan.md`` §4 ① «상태 띠»).
+  ``status`` 가 이미 내린 판정에서 화면이 읽을 것만 골라 같은 디렉터리에 쓴다 —
+  호스트 경로 · 릴리스 digest · 커밋은 떼고.
 """
 
 from __future__ import annotations
@@ -41,6 +45,7 @@ def tos_cmd() -> None:
         sts tos inspect stock-r1-20261110 --from 09:00 --to 10:00
         sts tos perf
         sts tos export-symbols
+        sts tos export-status
     """
 
 
@@ -302,6 +307,65 @@ def tos_export_symbols(
 
     sys.exit(
         export_symbols.main(
+            [
+                *(["--out-dir", out_dir] if out_dir else []),
+                *(["--date", date] if date else []),
+                *(["--state-dir", state_dir] if state_dir else []),
+                "--config",
+                str(config_path or status_board.DEFAULT_CONFIG_PATH),
+            ]
+        )
+    )
+
+
+@tos_cmd.command("export-status")
+@click.option(
+    "--out-dir",
+    default=None,
+    help="대상 루트 (기본: $TOS_OPERATOR_PROJECTION_DIR — 컨테이너가 읽는 그 디렉터리)",
+)
+@click.option("--date", "date", default=None, help="YYYY-MM-DD (기본: 오늘 KST)")
+@click.option(
+    "--state-dir",
+    default=None,
+    help="상태 루트 (기본: config/tos_status_board.yaml 의 state_dir)",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="상태판 설정 YAML (기본: config/tos_status_board.yaml)",
+)
+def tos_export_status(
+    out_dir: str | None,
+    date: str | None,
+    state_dir: str | None,
+    config_path: Path | None,
+) -> None:
+    """한 장 상태판을 대시보드가 읽는 JSON 으로 내보낸다.
+
+    tenant 세션 상태 · 이슈 목록(확인/막힘) · 깨끗한 날 누적 · 상주 paper 세션을
+    `<dir>/status/board.json` 에 원자적으로(tmp + rename) 쓴다. 판정은 `sts tos
+    status` 의 것을 그대로 쓴다 — 여기서 다시 세지 않는다.
+
+    호스트 경로(state_dir · 달력 경로) · 릴리스 digest · 저장소 커밋은 **싣지
+    않는다**. `/tos` 는 Cloudflare Access 뒤에서 인터넷에 열려 있다.
+
+    종료 코드는 `status` 와 다르다 — 막힘이 있어도 0 이다. 막힘 여부는 문서 안의
+    `blocked` 가 말한다.
+
+    \b
+    Examples:
+        sts tos export-status
+        sts tos export-status --date 2026-11-25 --out-dir /tmp/dry-run
+    """
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from tools.tos_cp3 import export_status, status_board
+
+    sys.exit(
+        export_status.main(
             [
                 *(["--out-dir", out_dir] if out_dir else []),
                 *(["--date", date] if date else []),

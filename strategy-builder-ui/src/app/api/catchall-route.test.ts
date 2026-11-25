@@ -103,6 +103,17 @@ describe("TOS projection proxy boundary", () => {
     expect(String(fetchMock.mock.calls[0][0])).toBe("http://localhost:5081/api/tos/sessions");
   });
 
+  it("forwards the status board the strip reads", async () => {
+    // Without this path in the allowlist the strip 404s under `next dev` and
+    // the page's top row silently reads as "no data" on a healthy day.
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ available: true, document: null }));
+    const response = await GET(requestFor("/api/tos/status"), contextFor(["tos", "status"]));
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe("http://localhost:5081/api/tos/status");
+  });
+
   it("forwards one session's bars, which carries a caller-supplied segment", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ available: true }));
     const response = await GET(
@@ -129,6 +140,11 @@ describe("TOS projection proxy boundary", () => {
     [["tos", "sessions", ""], "/api/tos/sessions/"],
     [["tos", "sessions", "stock-r1-20261125", "bars", "extra"], "/api/tos/sessions/stock-r1-20261125/bars/extra"],
     [["tos", "SESSIONS"], "/api/tos/SESSIONS"],
+    // The status board is one exact path too — it must not have opened a
+    // subtree the dashboard does not serve.
+    [["tos", "status", "board"], "/api/tos/status/board"],
+    [["tos", "status", ""], "/api/tos/status/"],
+    [["tos", "STATUS"], "/api/tos/STATUS"],
   ])("refuses %s — the allowlist is exact, not a prefix", async (path, url) => {
     // Exercises the exactPathRoots allowlist in proxyRouting.ts: with that
     // lookup removed, every one of these proxies through as if it were the
