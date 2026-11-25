@@ -46,12 +46,42 @@ PATH_PLACEHOLDER = "<경로>"
 #: 계좌로 보이는 수가 있던 자리.
 ACCOUNT_PLACEHOLDER = "<계좌>"
 
-#: 절대 경로 토큰. ``/`` 또는 ``~/`` 로 시작하고 한 글자 이상 이어지는 덩어리.
+#: URL — 매치하면 **그대로 둔다**. 경로 규칙이 ``//host/path`` 를 잘라 주소를
+#: 반쪽으로 만들지 않게, 같은 훑기에서 먼저 잡아 두고 원문을 돌려준다.
+_URL = r"(?P<url>[A-Za-z][A-Za-z0-9+.\-]*://[^\s'\"<>]*)"
+
+#: 윈도 경로. ``C:\...`` · ``C:/...`` 와 ``\\wsl$\...`` 같은 UNC.
+_WINDOWS = (
+    r"(?P<win>(?<![A-Za-z0-9_])"
+    r"(?:[A-Za-z]:[\\/]|\\\\[A-Za-z0-9_.$-]+\\)[^\s'\"<>]*)"
+)
+
+#: ``$HOME/...`` · ``${TENANT_CUSTODY_ROOT}/...`` — 러너가 끼워 넣는 모양.
+_SHELL = r"(?P<shell>\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/[A-Za-z0-9_./@%+\-]*)"
+
+#: 절대 경로 토큰. ``~/`` 로 시작하거나 ``/`` 구획이 둘 이상인 덩어리.
 #:
-#: 앞이 단어 문자나 ``.`` 이면 **매치하지 않는다** — 「확인/막힘」, ``0/143``,
-#: ``a/b`` 같은 한국어·비율 표기를 경로로 오인하지 않기 위해서다. 홀로 선 ``/``
-#: 도 뒤에 한 글자 이상을 요구하므로 매치하지 않는다.
-_ABSOLUTE_PATH = re.compile(r"(?<![\w.])~?/[\w./@%+-]+")
+#: 앞이 ASCII 단어 문자나 ``.`` 이면 매치하지 않는다 — ``0/143`` 같은 비율을
+#: 경로로 오인하지 않기 위해서다. 한글은 여기서 **빠진다**: ``잎/home/deploy/x``
+#: 처럼 조사 바로 뒤에 붙은 경로가 그대로 새 나갔다(#1179 리뷰 LOW).
+#: 구획을 둘 이상 요구하므로 ``확인/막힘`` · ``손익/pnl`` 은 경로가 아니다.
+_POSIX = (
+    r"(?P<posix>(?<![A-Za-z0-9_.])"
+    r"(?:~/[A-Za-z0-9_./@%+\-]*|/[A-Za-z0-9_.@%+\-]+(?:/[A-Za-z0-9_.@%+\-]*)+))"
+)
+
+#: ``.local/state/tos/...`` 처럼 숨은 디렉터리로 시작하는 상대 경로.
+_RELATIVE = r"(?P<rel>(?<![A-Za-z0-9_./~])\.[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_.@%+\-]+)+)"
+
+_PATH_TOKEN = re.compile("|".join((_URL, _WINDOWS, _SHELL, _POSIX, _RELATIVE)))
+
+#: 따옴표 안이 경로로 시작하면 **닫는 따옴표까지** 지운다 — 공백이 든 경로의
+#: 꼬리(``'/home/deploy/my data/x.yaml'`` 의 ``my data/x.yaml``)가 남지 않게.
+_QUOTED_PATH = re.compile(
+    r"""(['"])((?:~?/|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/|[A-Za-z]:[\\/]|\\\\)[^'"]*)\1"""
+)
+
+_ASCII_LETTER = re.compile(r"[A-Za-z]")
 
 #: 계좌 번호 모양. 하이픈 형(``12345678-01``)과 10~12 자리 숫자.
 #:
@@ -60,6 +90,14 @@ _ABSOLUTE_PATH = re.compile(r"(?<![\w.])~?/[\w./@%+-]+")
 #: 원화 가격(7자리 이하). 하한을 8 로 내리면 날짜가 전부 가려진다.
 _HYPHENATED_ACCOUNT = re.compile(r"(?<!\d)\d{8}-\d{2}(?!\d)")
 _BARE_ACCOUNT = re.compile(r"(?<!\d)\d{10,12}(?!\d)")
+
+#: 계좌라고 **이름표가 붙은** 8자리. ``CANO=50205915`` · ``계좌 50205915``.
+#:
+#: SAFETY: 이름표 없는 8자리는 절대 지우지 않는다 — 거래일(20261125)이 전부 가려진다
+_LABELLED_ACCOUNT = re.compile(
+    r"((?:CANO|ACNO|ACCT|ACCOUNT|계좌)[A-Za-z0-9_]*\s*[:=]?\s*)(\d{8})(?![\d-])",
+    re.IGNORECASE,
+)
 
 #: 이 글자를 이름에 담은 환경변수의 값은 계좌로 보고 지운다
 #: (``KIS_STOCK_ACCOUNT_NO`` · ``KIS_FUTURES_ACCOUNT_NO`` …).
@@ -90,6 +128,17 @@ def account_values_from_env(
     )
 
 
+def _replace_path_token(match: re.Match[str]) -> str:
+    """한 토큰을 자리 표시로 — URL 과 숫자뿐인 비율은 원문 그대로 돌려준다."""
+    token = match.group(0)
+    if match.lastgroup == "url":
+        return token
+    # SAFETY: 「3 /378」 처럼 숫자뿐인 덩어리는 비율이지 경로가 아니다 — 지우면 측정값이 사라진다
+    if match.lastgroup == "posix" and not _ASCII_LETTER.search(token):
+        return token
+    return PATH_PLACEHOLDER
+
+
 def redact_text(
     text: str,
     *,
@@ -111,11 +160,14 @@ def redact_text(
     # 긴 것부터 — 짧은 접두가 긴 값을 반쪽만 지우는 일이 없게.
     for value in sorted((v for v in extra_paths if v), key=len, reverse=True):
         out = out.replace(value, PATH_PLACEHOLDER)
-    out = _ABSOLUTE_PATH.sub(PATH_PLACEHOLDER, out)
+    # 따옴표가 먼저다 — 토큰 규칙이 공백에서 끊고 나면 꼬리만 남은 채 닫힌다.
+    out = _QUOTED_PATH.sub(lambda m: f"{m.group(1)}{PATH_PLACEHOLDER}{m.group(1)}", out)
+    out = _PATH_TOKEN.sub(_replace_path_token, out)
     for value in sorted((v for v in account_values if v), key=len, reverse=True):
         out = out.replace(value, ACCOUNT_PLACEHOLDER)
     if mask_account_pattern:
         out = _HYPHENATED_ACCOUNT.sub(ACCOUNT_PLACEHOLDER, out)
+        out = _LABELLED_ACCOUNT.sub(rf"\1{ACCOUNT_PLACEHOLDER}", out)
         out = _BARE_ACCOUNT.sub(ACCOUNT_PLACEHOLDER, out)
     return out
 

@@ -42,6 +42,46 @@
       "why": "a bare ten-digit account number",
       "input": "INVALID_CHECK_ACNO for 5020591501",
       "expected": "INVALID_CHECK_ACNO for <계좌>"
+    },
+    {
+      "why": "a path glued straight onto Hangul, with no space to end the word",
+      "input": "잎/home/deploy/.local/state/tos/x 를 열지 못했다",
+      "expected": "잎<경로> 를 열지 못했다"
+    },
+    {
+      "why": "a $HOME-rooted path, as the runner interpolates it",
+      "input": "TENANT_CUSTODY_ROOT=$HOME/.local/state/tos/cp3-stock-custody",
+      "expected": "TENANT_CUSTODY_ROOT=<경로>"
+    },
+    {
+      "why": "a relative state path",
+      "input": ".local/state/tos/cp3-long.log 를 읽지 못했다",
+      "expected": "<경로> 를 읽지 못했다"
+    },
+    {
+      "why": "a quoted path whose tail is behind a space",
+      "input": "FileNotFoundError: [Errno 2] No such file or directory: '/home/deploy/my data/calendar.yaml'",
+      "expected": "FileNotFoundError: [Errno 2] No such file or directory: '<경로>'"
+    },
+    {
+      "why": "a Windows drive path",
+      "input": "cannot open C:\\Users\\deploy\\state\\tos\\cp3.log",
+      "expected": "cannot open <경로>"
+    },
+    {
+      "why": "a WSL UNC path",
+      "input": "copied from \\\\wsl$\\Ubuntu\\home\\deploy\\state",
+      "expected": "copied from <경로>"
+    },
+    {
+      "why": "eight digits that an account label introduces",
+      "input": "CANO=50205915 조회 실패",
+      "expected": "CANO=<계좌> 조회 실패"
+    },
+    {
+      "why": "eight digits after the Korean account label",
+      "input": "계좌 50205915 연결 실패",
+      "expected": "계좌 <계좌> 연결 실패"
     }
   ],
   "kept": [
@@ -68,6 +108,22 @@
     {
       "why": "a KRW figure is far short of an account's digits",
       "input": "손익 -19000 원"
+    },
+    {
+      "why": "a ratio whose slash follows a space is still a ratio",
+      "input": "판단한 봉 3 /378 봉"
+    },
+    {
+      "why": "a URL must survive whole, not lose its host to the path rule",
+      "input": "see https://example.invalid/tos/status for the board"
+    },
+    {
+      "why": "a Korean word, a slash and an English word is not a path",
+      "input": "손익/pnl 비교는 그대로 둔다"
+    },
+    {
+      "why": "a bare eight-digit run is a trading date, not an account",
+      "input": "20261125 세션은 rc=0 으로 끝났다"
     }
   ]
 }

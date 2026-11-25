@@ -44,8 +44,8 @@ def test_a_careless_rule_would_break_these_and_must_not(case: dict[str, str]) ->
 
 def test_the_fixture_is_not_empty() -> None:
     """빈 표 위에서 위 두 루프가 공허하게 통과하지 않게."""
-    assert len(_CASES["redacted"]) >= 8
-    assert len(_CASES["kept"]) >= 6
+    assert len(_CASES["redacted"]) >= 16
+    assert len(_CASES["kept"]) >= 10
 
 
 def test_configured_account_values_are_removed_even_when_the_pattern_misses() -> None:
