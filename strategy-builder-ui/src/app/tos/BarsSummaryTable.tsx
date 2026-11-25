@@ -1,6 +1,8 @@
 "use client";
 
 import type { TosBarsSummary } from '@/lib/dashboard/tosBars';
+import { glossaryLabel, haltPairLabel } from '@/lib/dashboard/tosGlossary';
+import Term from './Term';
 
 interface BarsSummaryTableProps {
   summary: TosBarsSummary;
@@ -21,6 +23,25 @@ function tally(values: Record<string, number> | null | undefined): string {
 }
 
 /**
+ * The same tally, with each raw code paired with its plain-Korean name.
+ *
+ * The code stays because it is what `sts tos inspect` prints; the name is what
+ * makes the row readable without that command at hand.
+ */
+function namedTally(values: Record<string, number> | null | undefined): string {
+  if (values == null) return '알 수 없음';
+  const entries = Object.entries(values);
+  if (!entries.length) return '없음';
+  return entries
+    .map(([key, n]) => {
+      const [reason, step] = key.split('@');
+      const named = key.includes('@') ? haltPairLabel(reason, step) : glossaryLabel(key);
+      return named === key ? `${key} ${n}` : `${named}(${key}) ${n}`;
+    })
+    .join(' · ');
+}
+
+/**
  * Which comparison blocked which rule, how often — the roadmap §P1 question.
  *
  * The denominator is the COUNTED bars, not every rendered bar: a withheld bar
@@ -32,8 +53,9 @@ export default function BarsSummaryTable({ summary }: BarsSummaryTableProps) {
   return (
     <div className="min-w-0 space-y-3">
       <p className="text-sm text-slate-600 dark:text-slate-300">
-        전체 {count(summary.bars)}봉 · 분모 {count(summary.counted_bars)}봉(엔진 값 기준)
-        {' · '}보류 {count(summary.withheld_bars)}봉 · journal 대체 {count(summary.substituted_bars)}봉
+        전체 {count(summary.bars)}봉 · 분모 <Term name="counted_bars">{count(summary.counted_bars)}봉</Term>
+        {'(엔진 값 기준) · '}보류 {count(summary.withheld_bars)}봉 · journal 대체{' '}
+        {count(summary.substituted_bars)}봉
       </p>
       <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
         <div className="flex justify-between gap-2">
@@ -50,15 +72,15 @@ export default function BarsSummaryTable({ summary }: BarsSummaryTableProps) {
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-slate-500 dark:text-slate-400">결정</dt>
-          <dd className="text-right">{tally(summary.decisions)}</dd>
+          <dd className="text-right">{namedTally(summary.decisions)}</dd>
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-slate-500 dark:text-slate-400">증거 결과</dt>
-          <dd className="text-right">{tally(summary.evidence_outcomes)}</dd>
+          <dd className="text-right">{namedTally(summary.evidence_outcomes)}</dd>
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-slate-500 dark:text-slate-400">증거 정지</dt>
-          <dd className="text-right">{tally(summary.evidence_halts)}</dd>
+          <dd className="text-right">{namedTally(summary.evidence_halts)}</dd>
         </div>
         <div className="flex justify-between gap-2">
           <dt className="text-slate-500 dark:text-slate-400">조인 실패</dt>
@@ -83,7 +105,7 @@ export default function BarsSummaryTable({ summary }: BarsSummaryTableProps) {
                 className="border-t border-slate-200 font-medium dark:border-slate-800"
               >
                 <th scope="row" className="py-2 pr-3 text-left font-medium">
-                  {rule.label ?? '?'} · {rule.rule_id ?? '알 수 없음'}
+                  <Term name={rule.rule_id} /> · {rule.rule_id ?? '알 수 없음'}
                 </th>
                 <td className="py-2 pr-3 text-right">{count(rule.fired_bars)} 발화</td>
                 <td className="py-2 pr-3 text-right">{count(rule.bars)}</td>

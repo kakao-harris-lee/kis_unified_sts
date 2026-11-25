@@ -1,16 +1,10 @@
 "use client";
 
-import { useQuery } from '@tanstack/react-query';
-import { isAxiosError } from 'axios';
-import config from '@/config/tos-control-plane.json';
 import {
   ORDER_BAR_TIME_BASIS,
   TOS_LEDGER_HOLDING_BASIS,
-  isAcceptedSymbolsDocument,
   isTodaysDocument,
   sessionPhase,
-  symbolsState,
-  tosSymbolsApi,
   type SessionPhase,
   type SymbolsState,
   type TosSymbolFill,
@@ -20,16 +14,19 @@ import {
   type TosSymbolSession,
   type TosSymbolSide,
 } from '@/lib/dashboard/tosSymbols';
+import { AsOf, Badge, ageLabel } from './marks';
+import Term from './Term';
+import type { SymbolsRead } from './queries';
 
 const labels: Record<SymbolsState, string> = {
-  loading: '종목 현황을 불러오는 중',
-  error: '종목 현황 조회 연결 오류',
-  missing: '아직 종목 현황이 내보내지지 않았습니다',
-  unreadable: '종목 현황 파일을 열지 못했습니다',
-  invalid: '종목 현황 형식 오류',
-  unsupported: '지원하지 않는 종목 현황 버전',
-  unknown: '종목 현황 확인 불가',
-  ready: '종목 현황을 조회했습니다',
+  loading: '거래 현황을 불러오는 중',
+  error: '거래 현황 조회 연결 오류',
+  missing: '아직 거래 현황이 내보내지지 않았습니다',
+  unreadable: '거래 현황 파일을 열지 못했습니다',
+  invalid: '거래 현황 형식 오류',
+  unsupported: '지원하지 않는 거래 현황 버전',
+  unknown: '거래 현황 확인 불가',
+  ready: '거래 현황을 조회했습니다',
 };
 
 const hints: Record<SymbolsState, string> = {
@@ -48,13 +45,6 @@ const phaseLabels: Record<SessionPhase, string> = {
   settled: '종료',
   none: '오늘 시작 안 함',
   unknown: '확인 필요',
-};
-
-const phaseStyles: Record<SessionPhase, string> = {
-  running: 'border-emerald-300 text-emerald-800 dark:border-emerald-800 dark:text-emerald-200',
-  settled: 'border-slate-300 text-slate-700 dark:border-slate-700 dark:text-slate-300',
-  none: 'border-slate-300 text-slate-500 dark:border-slate-700 dark:text-slate-400',
-  unknown: 'border-amber-300 text-amber-800 dark:border-amber-800 dark:text-amber-200',
 };
 
 /** A decimal string from the exporter, grouped. Unparseable text is shown as-is. */
@@ -140,16 +130,21 @@ function HaltCell({ halt }: { halt: TosSymbolHalt | null | undefined }) {
     <div className="space-y-0.5">
       {flow ? (
         <div className="font-medium">
-          {flow.reason ?? '알 수 없음'}
+          <Term name={flow.reason} />
           {flow.time_kst ? ` · ${flow.time_kst}` : ''}
-          {flow.step ? <span className="font-normal text-slate-500 dark:text-slate-400"> · {flow.step}</span> : null}
+          {flow.step ? (
+            <span className="font-normal text-slate-500 dark:text-slate-400">
+              {' · '}
+              <Term name={flow.step} />
+            </span>
+          ) : null}
         </div>
       ) : (
         <div className="text-slate-500 dark:text-slate-400">흐름 정지 없음</div>
       )}
       {withheld && (
         <div className="text-xs text-slate-500 dark:text-slate-400">
-          보류 {withheld.reason ?? '알 수 없음'}
+          보류 <Term name={withheld.reason} />
           {withheld.time_kst ? ` · ${withheld.time_kst}` : ''}
         </div>
       )}
@@ -167,12 +162,12 @@ function SessionCell({
   const phase = sessionPhase(session);
   return (
     <div className="space-y-1">
-      <span className={`inline-block rounded-full border px-2 py-0.5 text-xs ${phaseStyles[phase]}`}>
+      <Badge tone={phase === 'running' ? 'good' : phase === 'unknown' ? 'warn' : 'neutral'}>
         {phaseLabels[phase]}
         {/* The raw status rides along for every phase but "none": ENDED and
             FAILED are both settled-ish, and the operator needs the difference. */}
         {phase !== 'none' && session?.status ? ` · ${session.status}` : ''}
-      </span>
+      </Badge>
       <div className="text-xs text-slate-500 dark:text-slate-400">
         {session?.boot_at ? `부팅 ${session.boot_at}` : '부팅 기록 없음'}
         {session?.end_at ? ` · 종료 ${session.end_at}` : ''}
@@ -217,34 +212,21 @@ function SymbolRowCells({ row }: { row: TosSymbolRow }) {
 }
 
 /**
- * Read-only per-symbol operator rows (usage plan §5 «종목별 운영 화면»).
+ * «무엇을 사고팔았나» — today's fills and what TOS's own ledger still holds.
  *
- * One row per stock tenant: today's buys, today's sells, what TOS's own ledger
- * still holds, and the last thing that blocked a bar. The document is produced
- * on the host by `sts tos export-symbols` and read by the Control Plane purely
- * as a file — this panel never reaches the kernel, the session stores, or a
- * broker, and nothing here can issue a command.
+ * One row per stock tenant, from a document produced on the host by
+ * `sts tos export-symbols` and read by the Control Plane purely as a file —
+ * this panel never reaches the kernel, the session stores, or a broker, and
+ * nothing here can issue a command.
  *
  * 보유 is labelled «TOS 기준» on purpose: it is the FIFO open lot from TOS's own
  * evidence, not an account balance. The web tier never calls KIS.
+ *
+ * There is no PnL column, because the document carries no PnL. An empty column
+ * reading 「—」 would be read as 「0」 within a week.
  */
-export default function SymbolsPanel() {
-  const query = useQuery({
-    queryKey: ['tos-symbols-today'],
-    queryFn: tosSymbolsApi.getSymbolsToday,
-    refetchInterval: config.pollIntervalMs,
-    retry: false,
-  });
-
-  const response = query.data;
-  const state = symbolsState(response, query.isError || query.fetchStatus === 'paused');
-  // The same acceptance predicate the banner uses — see isAcceptedSymbolsDocument.
-  const document =
-    response?.available && isAcceptedSymbolsDocument(response.document)
-      ? response.document
-      : null;
-  const httpStatus = isAxiosError(query.error) ? query.error.response?.status : undefined;
-  const authError = httpStatus === 401 || httpStatus === 403;
+export default function SymbolsPanel({ read }: { read: SymbolsRead }) {
+  const { state, document, response, authError } = read;
   const today = isTodaysDocument(document);
   // A document from an earlier day is not an error — the exporter runs at session
   // end — but reading it as today's trading would be. Say so where the rows are.
@@ -252,13 +234,14 @@ export default function SymbolsPanel() {
 
   return (
     <section
-      aria-label="종목별 운영 현황"
+      aria-label="거래 현황"
       className="min-w-0 space-y-4 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900"
     >
       <div className="min-w-0">
-        <h2 className="font-semibold">종목별 운영 현황 · 읽기 전용</h2>
+        <h2 className="font-semibold">거래 현황</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          종목마다 그날의 매수 · 매도 체결, TOS 원장이 아는 보유, 마지막 차단 사유를 봅니다.
+          무엇을 사고팔았나 — 종목마다 그날의 매수 · 매도 체결, TOS 원장이 아는 보유, 마지막 차단
+          사유를 봅니다.
         </p>
       </div>
 
@@ -279,12 +262,15 @@ export default function SymbolsPanel() {
         <p className="mt-2 text-xs">
           {document?.date ? `기준일 ${document.date}` : '기준일 알 수 없음'}
           {document?.generated_kst ? ` · 내보낸 시각 ${document.generated_kst}` : ''}
-          {response?.age_seconds != null ? ` · 내보낸 뒤 ${Math.floor(response.age_seconds)}초` : ''}
+          {response?.age_seconds != null ? ` · ${ageLabel(response.age_seconds)}` : ''}
         </p>
       </div>
 
       {document && today === false && (
-        <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+        <p
+          role="alert"
+          className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+        >
           기준일 {document.date} — 오늘(KST)의 기록이 아닙니다. 아래 값을 오늘의 거래로 읽지 마세요.
         </p>
       )}
@@ -305,11 +291,11 @@ export default function SymbolsPanel() {
                     the header follows the document's own basis: a future basis
                     names itself instead of being read as TOS's ledger. */}
                 <th scope="col" className="py-2 pr-3">
-                  보유 (
-                  {document.holding_basis === TOS_LEDGER_HOLDING_BASIS
-                    ? 'TOS 기준'
-                    : (document.holding_basis ?? '기준 모름')}
-                  )
+                  {document.holding_basis === TOS_LEDGER_HOLDING_BASIS ? (
+                    <Term name={TOS_LEDGER_HOLDING_BASIS}>보유 (TOS 기준)</Term>
+                  ) : (
+                    `보유 (${document.holding_basis ?? '기준 모름'})`
+                  )}
                 </th>
                 <th scope="col" className="py-2">마지막 차단 사유</th>
               </tr>
@@ -328,10 +314,17 @@ export default function SymbolsPanel() {
         </div>
       )}
 
-      <p className="text-xs text-slate-500 dark:text-slate-400">
-        보유는 브로커 잔고 조회가 아니라 TOS 증거에서 아직 닫히지 않은 수량입니다. 체결 시각은
-        브로커 체결 시각이 아니라 그 주문을 낸 결정 봉의 시각입니다.
+      <p className="text-sm">
+        <Badge tone="neutral">
+          <Term name="decision_only" /> — 선물 tenant 는 주문 없음
+        </Badge>
       </p>
+
+      <AsOf>
+        선물 tenant 는 판단만 기록하므로 체결도 보유도 없고 이 표에 나오지 않습니다. 보유는 브로커
+        잔고 조회가 아니라 TOS 증거에서 아직 닫히지 않은 수량이며, 체결 시각은 브로커 체결 시각이
+        아니라 그 주문을 낸 결정 봉의 시각입니다.
+      </AsOf>
     </section>
   );
 }

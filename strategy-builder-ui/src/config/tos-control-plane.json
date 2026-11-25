@@ -2,5 +2,9 @@
   "pollIntervalMs": 15000,
   "staleAfterSeconds": 60,
   "clockTickMs": 1000,
-  "legacyStockInstrument": "005930"
+  "legacyStockInstrument": "005930",
+  "timelineHeadRows": 8,
+  "timelineQuietMaxRows": 60,
+  "eventLogMaxRows": 40,
+  "eventLogHeadRows": 8
 }
