@@ -165,9 +165,15 @@ export default function BarsPanel({ requested, read, refetchMs }: BarsPanelProps
           <AsOf>
             호스트가 내보낸 파일입니다 · 마지막으로 내보낸 시각{' '}
             {response?.age_seconds != null ? ageLabel(response.age_seconds) : '알 수 없음'}
+            {/* «더 바뀌지 않습니다» is the DOCUMENT's claim, not an inference
+                from the fact that we stopped polling: a document written
+                before the flag existed, or one whose session this page cannot
+                place, says only when it was written. */}
             {refetchMs
               ? ` · 진행 중인 세션이라 ${Math.round(refetchMs / 1000)}초마다 다시 읽습니다`
-              : ' · 끝난 세션이라 더 바뀌지 않습니다'}
+              : document.final === true
+                ? ' · 끝난 세션이라 더 바뀌지 않습니다'
+                : ''}
           </AsOf>
         </div>
       )}

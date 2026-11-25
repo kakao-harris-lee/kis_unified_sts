@@ -752,3 +752,56 @@ def test_no_explanation_block_carries_a_host_path(
     )
     assert str(tmp_path) not in added
     assert str(session_tree) not in added
+
+
+def test_a_session_with_no_recorded_exit_is_not_final(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """런너가 종료를 기록하기 전이면 그 문서는 아직 마지막 말이 아니다."""
+    path = _export(tmp_path, session_tree, monkeypatch)
+    assert json.loads(path.read_text(encoding="utf-8"))["final"] is False
+
+
+def test_the_recorded_exit_is_what_makes_a_document_final(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``session.log.run-rc`` — 세션 행의 상태가 서 있는 그 증거."""
+    (session_tree / "cp3-sessions" / SESSION / eb.RUN_RC_FILE_NAME).write_text(
+        "123/456 0\n", encoding="utf-8"
+    )
+    path = _export(tmp_path, session_tree, monkeypatch)
+    assert json.loads(path.read_text(encoding="utf-8"))["final"] is True
+
+
+def test_a_late_intraday_tick_cannot_replace_the_session_end_document(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """반나절짜리 문서가 하루치 문서를 덮으면 운영자는 반나절을 하루로 읽는다."""
+    run_rc = session_tree / "cp3-sessions" / SESSION / eb.RUN_RC_FILE_NAME
+    run_rc.write_text("123/456 0\n", encoding="utf-8")
+    path = _export(tmp_path, session_tree, monkeypatch)
+    assert json.loads(path.read_text(encoding="utf-8"))["final"] is True
+
+    # 뒤늦게 도착한 장중 틱: 종료 증거가 사라진 것처럼 보여도 거부한다.
+    run_rc.unlink()
+    with pytest.raises(eb.ExportRefusal, match="final document"):
+        _export(tmp_path, session_tree, monkeypatch)
+    assert json.loads(path.read_text(encoding="utf-8"))["final"] is True
+
+
+def test_a_document_written_before_the_flag_existed_is_replaceable(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``final`` 이 없는 옛 문서까지 거부하면 첫 장중 실행이 전부 막힌다."""
+    path = eb.document_path(tmp_path / "projection", SESSION)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"session": SESSION}), encoding="utf-8")
+    assert eb._existing_is_final(path) is False
+    written = _export(tmp_path, session_tree, monkeypatch)
+    assert written == path
+
+
+def test_an_unreadable_session_directory_is_not_called_ended(tmp_path: Path) -> None:
+    """모르면 «끝나지 않았다» 다 — 끝났다고 가정하면 장중에 가짜 청산이 남는다."""
+    assert eb.session_ended(None) is False
+    assert eb.session_ended(tmp_path / "nope") is False

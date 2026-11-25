@@ -61,6 +61,9 @@ ASSUMPTIONS = (
     "ONE_POSITION_AT_A_TIME",
 )
 
+#: 아직 도는 세션에서 열린 포지션을 마지막 봉 종가로 **평가**했다는 표시.
+OPEN_MARK_BASIS = "OPEN_MARKED_TO_LAST_BAR"
+
 #: 미청산으로 끝난 포지션을 마지막 봉 종가로 닫을 때 붙는 표시.
 FORCED_CLOSE_REASON = "LAST_BAR_FORCED_CLOSE"
 
@@ -166,6 +169,7 @@ def build_hypothetical_pnl(
     contract: Contract,
     instrument: str | None = None,
     probe_rule_ids: frozenset[str] = frozenset(),
+    session_ended: bool = True,
 ) -> dict[str, Any]:
     """진입 판단 봉과 다음 청산 판단 봉을 짝지어 «체결됐다면» 손익을 센다.
 
@@ -177,9 +181,16 @@ def build_hypothetical_pnl(
     문서만 보고 말할 수 있다.
 
     포지션을 쥐고 있는 동안의 진입 판단은 **무시한다** — 한 계약만 든다는 가정
-    (:data:`ASSUMPTIONS`)이고, 쌓으면 그 가정도 수도 다른 것이 된다. 마지막 봉까지
-    열려 있으면 그 봉 종가로 닫고 ``forced_close`` 를 붙인다: 안 닫으면 그날 성적이
-    «진입만 있고 결과 없음» 으로 빠져 조용히 좋아 보인다.
+    (:data:`ASSUMPTIONS`)이고, 쌓으면 그 가정도 수도 다른 것이 된다.
+
+    마지막 봉까지 열려 있는 포지션의 처리는 **세션이 끝났는지**에 달렸다.
+
+    * 끝난 세션이면 그 봉 종가로 닫고 ``forced_close`` 를 붙인다: 안 닫으면 그날
+      성적이 «진입만 있고 결과 없음» 으로 빠져 조용히 좋아 보인다.
+    * 아직 도는 세션이면 **닫지 않는다**. 장중 내보내기(P3)는 5분마다 같은 날을
+      다시 쓰는데, 그때마다 열린 포지션을 마지막 봉에 닫아 ``trades`` 에 넣으면
+      «끝난 왕복» 이 아닌 것을 끝났다고 말하고 승·왕복·합계가 전부 그 가짜 청산
+      위에서 계산된다. 대신 ``open_position`` 으로 따로 내고 합계에서는 뺀다.
 
     Args:
         bars: 바 문서의 ``bars`` 그대로. 각 봉은 ``decision_kind`` ·
@@ -188,6 +199,9 @@ def build_hypothetical_pnl(
         contract: 배수 · 가격 필드 · 스케일. 전부 설정에서 읽은 값이다.
         instrument: 월물 코드. 기록용이고 계산에 쓰지 않는다.
         probe_rule_ids: 주문 경로 시험 규칙의 id — 그 진입은 세지 않는다.
+        session_ended: 그 세션이 끝났는지. 거짓이면 마지막까지 열린 포지션을
+            닫지 않고 ``open_position`` 으로 낸다. 모르면 호출자가 거짓을
+            준다 — 끝났다고 가정하면 장중에 가짜 청산이 기록된다.
 
     Returns:
         ``trades`` · ``totals`` · ``assumptions`` 를 담은 블록. 실현 손익과 같은
@@ -229,9 +243,15 @@ def build_hypothetical_pnl(
             trades.append(_trade(open_entry, bar, price, direction, contract))
             open_entry = None
 
+    open_position: dict[str, Any] | None = None
     if open_entry is not None and last_priced is not None:
         bar, price = last_priced
-        trades.append(_trade(open_entry, bar, price, direction, contract, forced=True))
+        if session_ended:
+            trades.append(
+                _trade(open_entry, bar, price, direction, contract, forced=True)
+            )
+        else:
+            open_position = _open_position(open_entry, bar, price, direction, contract)
 
     total_points = sum((Decimal(t["points"]) for t in trades), Decimal(0))
     total_krw = sum((Decimal(t["hypothetical_pnl_krw"]) for t in trades), Decimal(0))
@@ -244,6 +264,8 @@ def build_hypothetical_pnl(
         "price_field": contract.price_field,
         "price_scale": contract.price_scale,
         "assumptions": list(ASSUMPTIONS),
+        # 세션이 끝났는지 — 화면이 «확정» 과 «평가» 를 가르는 근거다.
+        "session_ended": session_ended,
         "trades": trades,
         "totals": {
             "trades": len(trades),
@@ -255,12 +277,43 @@ def build_hypothetical_pnl(
             "hypothetical_pnl_krw": _num(total_krw) if trades else None,
             "forced_closes": sum(1 for t in trades if t["forced_close"]),
         },
+        # 아직 닫히지 않은 포지션의 평가 — 위 합계에 **들어 있지 않다**. 끝난
+        # 세션에서는 언제나 ``None`` 이다(그때는 마지막 봉에서 닫는다).
+        "open_position": open_position,
         # 결정은 엔진의 것인데 세지 않은 봉 — 사유와 함께. 비어 있지 않으면 위의
         # 수는 그 봉들을 **빼고** 센 것이다.
         "skipped_decisions": skipped,
         # 결정은 있었는데 종가를 읽지 못한 봉. 비어 있는 것이 정상이고, 비어 있지
         # 않으면 위의 수는 그 봉들을 **빼고** 센 것이다.
         "unpriced_decisions": unpriced,
+    }
+
+
+def _open_position(
+    entry: Mapping[str, Any],
+    as_of_bar: Mapping[str, Any],
+    as_of_price: Decimal,
+    direction: str,
+    contract: Contract,
+) -> dict[str, Any]:
+    """아직 닫히지 않은 포지션을 마지막 봉 종가로 **평가**한 것.
+
+    거래가 아니다. 키 이름이 전부 다르고(``unrealized_pnl_krw``), ``basis`` 가
+    무엇에 맞춰 평가했는지를 말한다 — 이 수를 왕복·승·합계에 더하면 끝나지 않은
+    일을 끝났다고 세는 것이 된다.
+    """
+    entry_bar = entry["bar"]
+    entry_price: Decimal = entry["price"]
+    points = _points(entry_price, as_of_price, direction)
+    return {
+        "entry_time_kst": entry_bar.get("time_kst"),
+        "entry_rule_id": entry_bar.get("decision_rule_id"),
+        "entry_price_points": _num(entry_price),
+        "as_of_time_kst": as_of_bar.get("time_kst"),
+        "as_of_price_points": _num(as_of_price),
+        "points": _num(points),
+        "unrealized_pnl_krw": _num(points * Decimal(contract.multiplier_krw_per_point)),
+        "basis": OPEN_MARK_BASIS,
     }
 
 

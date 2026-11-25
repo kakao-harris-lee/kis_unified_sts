@@ -41,7 +41,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.tos_cp3 import bars_explain, hypothetical_pnl, inspect_session  # noqa: E402
+from tools.tos_cp3 import (  # noqa: E402
+    bars_explain,
+    hypothetical_pnl,
+    inspect_session,
+    status_board,
+)
 
 __all__ = [
     "BARS_SCHEMA_VERSION",
@@ -58,6 +63,7 @@ __all__ = [
     "export_bars",
     "main",
     "resolve_contract",
+    "session_ended",
 ]
 
 BARS_SUBDIR = "bars"
@@ -70,6 +76,10 @@ DIR_MODE = 0o700
 DOCUMENT_MODE = 0o600
 
 SESSION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+#: Written by the runner once its child exits (``run_tenant_session.sh``
+#: ``RECORD_CHILD_RC``) — the same end evidence ``status_board`` reads.
+RUN_RC_FILE_NAME = "session.log.run-rc"
 
 #: The markets whose tenants decide but never order (operator decision
 #: 2026-11-05). Only these get a hypothetical PnL: on a tenant that really
@@ -129,14 +139,38 @@ def document_path(out_dir: Path, session_name: str) -> Path:
     return out_dir / BARS_SUBDIR / f"{session_name}.json"
 
 
+def _session_dir(session: str, *, state_dir: str | None) -> Path | None:
+    """Where this session's runner records live, or None when unresolvable.
+
+    Resolved through the same reader the inspection itself uses, so the two
+    cannot disagree about which directory a session name means. A refusal
+    yields None, and :func:`session_ended` then answers «not ended».
+    """
+    try:
+        config = status_board.load_config(status_board.DEFAULT_CONFIG_PATH)
+        root = (
+            status_board.expand_path(state_dir)
+            if state_dir is not None
+            else config.state_dir
+        )
+        return inspect_session.resolve_session(
+            session,
+            state_dir=root,
+            sessions_subdir=config.tenant_sessions_subdir,
+            with_evidence=False,
+        ).session_dir
+    except (inspect_session.InspectRefusal, ValueError, OSError):
+        return None
+
+
 def _inspect_document(
     session: str,
     *,
     state_dir: str | None,
     data_dir: str | None,
     runner: inspect_session.Runner | None = None,
-) -> tuple[str, dict[str, object]]:
-    """``(session name, the inspection document)`` for ``session``."""
+) -> tuple[str, dict[str, object], Path | None]:
+    """``(session name, the inspection document, the session directory)``."""
     extra = {} if runner is None else {"runner": runner}
     outcome = inspect_session.run(
         session=session,
@@ -174,7 +208,7 @@ def _inspect_document(
             "filename and the path segment GET /api/tos/sessions/{id}/bars is "
             "asked for, so a document written under it could never be served"
         )
-    return name, document
+    return name, document, _session_dir(session, state_dir=state_dir)
 
 
 def _narrow_directory(directory: Path) -> None:
@@ -285,6 +319,7 @@ def attach_explanations(
     session: str,
     *,
     state_dir: str | None = None,
+    session_ended: bool = True,
 ) -> dict[str, Any]:
     """Add ``explain`` and, for a decision-only tenant, ``hypothetical_pnl``.
 
@@ -341,8 +376,44 @@ def attach_explanations(
             for rule in document["explain"]["rules"]
             if rule.get("probe") and rule.get("rule_id")
         ),
+        # A session still running keeps its open position OPEN; closing it at
+        # the latest bar every five minutes would report a round trip that
+        # never happened.
+        session_ended=session_ended,
     )
     return document
+
+
+def session_ended(session_dir: Path | None) -> bool:
+    """Whether the runner recorded an exit for this session.
+
+    The same evidence the per-symbol row's status rests on: the runner writes
+    ``<session.log>.run-rc`` once its child exits
+    (``run_tenant_session.sh``'s ``RECORD_CHILD_RC``), and ``status_board``
+    reads the matching ``session.log`` stamp to call the session ENDED.
+
+    SAFETY: unknown is NOT ended — a session dir this cannot read leaves an open position marked rather than closed at a bar that is not the day's last
+    """
+    if session_dir is None:
+        return False
+    try:
+        return (session_dir / RUN_RC_FILE_NAME).is_file()
+    except OSError:
+        return False
+
+
+def _existing_is_final(path: Path) -> bool:
+    """Whether a document already at ``path`` says it is the session's last.
+
+    A document written before this flag existed carries no ``final`` key and is
+    replaceable, which is what keeps the first intraday run from refusing on
+    every session exported yesterday.
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("final") is True
 
 
 def export_bars(
@@ -355,12 +426,23 @@ def export_bars(
 ) -> Path:
     """Export ``session``'s inspection document and return where it landed."""
     destination_root = default_out_dir() if out_dir is None else out_dir
-    name, document = _inspect_document(
+    name, document, session_dir = _inspect_document(
         session, state_dir=state_dir, data_dir=data_dir, runner=runner
     )
     document["schema_version"] = BARS_SCHEMA_VERSION
-    attach_explanations(document, session, state_dir=state_dir)
+    ended = session_ended(session_dir)
+    # The document says for itself whether it can still change. The page reads
+    # it to decide between «끝난 세션이라 더 바뀌지 않습니다» and a bare
+    # generated time, and the guard below reads it to protect the last word.
+    document["final"] = ended
+    attach_explanations(document, session, state_dir=state_dir, session_ended=ended)
     path = document_path(destination_root, name)
+    # SAFETY: a late intraday tick must never replace the session-end document with a mid-session one — the operator would read a half day as the whole day
+    if not ended and _existing_is_final(path):
+        raise ExportRefusal(
+            f"{path}: refusing to replace a final document with a mid-session one "
+            "— that session already recorded its exit"
+        )
     try:
         _write_atomically(
             path, json.dumps(document, ensure_ascii=False, sort_keys=True) + "\n"

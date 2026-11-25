@@ -214,6 +214,30 @@ export interface TosHypotheticalSkipped extends TosHypotheticalDecision {
  * (a guaranteed fill, no fees, no slippage) all push the figure the same,
  * flattering way.
  */
+/**
+ * A hypothetical position still open at the document's last bar.
+ *
+ * Only a session that has NOT ended carries one: while the intraday export
+ * rewrites the same day every few minutes, closing the position at whatever
+ * bar is currently last would report a round trip that never happened, and
+ * the wins, the round trips and the total would all rest on it.
+ *
+ * Deliberately not shaped like a trade — its own key names and its own
+ * `basis` — so nothing can add it to a finished figure.
+ */
+export interface TosHypotheticalOpenPosition {
+  entry_time_kst?: string | null;
+  entry_rule_id?: string | null;
+  entry_price_points?: string | null;
+  /** The bar it is marked against: the last one with a price. */
+  as_of_time_kst?: string | null;
+  as_of_price_points?: string | null;
+  points?: string | null;
+  /** Never `hypothetical_pnl_krw` — it must not be summable with the total. */
+  unrealized_pnl_krw?: string | null;
+  basis?: string | null;
+}
+
 export interface TosBarsHypotheticalPnl {
   hypothetical?: boolean | null;
   direction?: string | null;
@@ -231,6 +255,9 @@ export interface TosBarsHypotheticalPnl {
    * say what the total excluded instead of implying it counted everything.
    */
   skipped_decisions?: TosHypotheticalSkipped[] | null;
+  /** False means these figures are mid-session; an open position is marked. */
+  session_ended?: boolean | null;
+  open_position?: TosHypotheticalOpenPosition | null;
 }
 
 export interface TosBarsDocument {
@@ -255,6 +282,12 @@ export interface TosBarsDocument {
   explain_error?: string | null;
   hypothetical_pnl?: TosBarsHypotheticalPnl | null;
   hypothetical_pnl_error?: string | null;
+  /**
+   * True once the session recorded its exit — this document is its last word.
+   * Absent on documents written before the flag existed, which the page reads
+   * as «cannot tell», never as final.
+   */
+  final?: boolean | null;
 }
 
 export interface TosBarsResponse {
@@ -432,6 +465,14 @@ export function hypotheticalError(
   return document?.hypothetical_pnl_error ?? null;
 }
 
+/** The position a running session is still holding, if the document has one. */
+export function openPosition(
+  document: TosBarsDocument | null | undefined,
+): TosHypotheticalOpenPosition | null {
+  if (!hasHypotheticalPnl(document)) return null;
+  return document?.hypothetical_pnl?.open_position ?? null;
+}
+
 /**
  * How many decision bars the hypothetical total deliberately left out.
  *
@@ -501,9 +542,17 @@ export interface TosSessionsResponse {
  */
 export const LEGACY_STOCK_INSTRUMENT = displayConfig.legacyStockInstrument;
 
-/** `2026-11-25` → `11-25`; anything else is passed through unchanged. */
+/**
+ * `2026-11-25` → `11-25`; a name whose tail is not a date says so.
+ *
+ * «알 수 없음», not «날짜 없음»: the route refuses to claim a date the file
+ * name does not carry, and the two readings are different — the page does not
+ * know when this session ran, which is not the same as the session having no
+ * date.
+ */
 export function sessionDayLabel(date: string | null): string {
-  return date && date.length === 10 ? date.slice(5) : (date ?? '날짜 없음');
+  if (!date) return '알 수 없음';
+  return date.length === 10 ? date.slice(5) : date;
 }
 
 /**

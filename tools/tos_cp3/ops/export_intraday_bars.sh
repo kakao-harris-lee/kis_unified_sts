@@ -17,7 +17,8 @@ SESSIONS="${TOS_SESSIONS_DIR:-$STATE/cp3-sessions}"
 LOCK="${TOS_EXPORT_BARS_LOCK:-/tmp/tos-export-bars-intraday.lock}"
 CEILING_S="${TOS_EXPORT_BARS_CEILING_S:-120}"
 DRY_RUN="${TOS_EXPORT_BARS_DRY_RUN:-0}"
-TODAY="${TOS_EXPORT_BARS_DATE:-$(date +%Y%m%d)}"
+# SAFETY: 날짜는 KST 로 읽는다 — 호스트 TZ 가 UTC 면 09시 전에는 어제 세션을 내보낸다
+TODAY="${TOS_EXPORT_BARS_DATE:-$(TZ=Asia/Seoul date +%Y%m%d)}"
 
 # SAFETY: 겹치는 틱을 쌓지 않는다 — 앞 틱이 아직 돌면 조용히 빠진다. 블로킹으로 기다리면 5분마다 한 줄씩 밀려 결국 동시에 다섯 개가 돈다
 exec 9>"$LOCK" || exit 0
@@ -32,6 +33,11 @@ for dir in "$SESSIONS"/*-"$TODAY"; do
   [ -d "$dir" ] || continue
   name="$(basename "$dir")"
   found=$((found + 1))
+  # SAFETY: 이미 끝난 세션은 건너뛴다 — 뒤늦은 틱이 하루치 문서를 반나절짜리로 덮지 않게. 내보내기 쪽에도 같은 거부가 있지만, 여기서 멈추면 그 거부가 로그를 채우지 않는다
+  if [ -f "$dir/session.log.run-rc" ]; then
+    echo "$(date -Is) $name 종료됨 — 건너뜀"
+    continue
+  fi
   if [ "$DRY_RUN" = "1" ]; then
     echo "$(date -Is) would export $name"
     continue

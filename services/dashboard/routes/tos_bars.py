@@ -507,6 +507,35 @@ class BarsHypotheticalPnl(BaseModel):
     #: Decision bars deliberately left out, each with its reason — so the page
     #: can say what the total excluded instead of implying it counted everything.
     skipped_decisions: list[HypotheticalSkipped] | None = None
+    #: Whether the session had ended when this was computed. False means the
+    #: figures below are mid-session and an open position is marked, not closed.
+    session_ended: bool | None = None
+    #: The position still open at the last bar, when the session is running.
+    #: Excluded from ``trades``, ``totals`` and the win count.
+    open_position: HypotheticalOpenPosition | None = None
+
+
+class HypotheticalOpenPosition(BaseModel):
+    """A hypothetical position still open at the document's last bar.
+
+    Only a session that has NOT ended can carry one. It is deliberately not
+    shaped like a trade — different key names, its own ``basis`` — because it
+    is a mark, not a result: adding it to the round trips or the totals would
+    report an unfinished thing as finished.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    entry_time_kst: str | None = None
+    entry_rule_id: str | None = None
+    entry_price_points: str | None = None
+    #: The bar this was marked against — the last one with a price.
+    as_of_time_kst: str | None = None
+    as_of_price_points: str | None = None
+    points: str | None = None
+    #: Never ``hypothetical_pnl_krw``: it must not be summable with the total.
+    unrealized_pnl_krw: str | None = None
+    basis: str | None = None
 
 
 class TosBarsDocument(BaseModel):
@@ -542,6 +571,10 @@ class TosBarsDocument(BaseModel):
     explain_error: str | None = None
     hypothetical_pnl: BarsHypotheticalPnl | None = None
     hypothetical_pnl_error: str | None = None
+    #: True once the session recorded its exit — this document is its last
+    #: word. Absent on documents written before the flag existed, which the
+    #: page treats as "cannot tell" rather than as final.
+    final: bool | None = None
 
 
 class TosBarsResponse(BaseModel):
