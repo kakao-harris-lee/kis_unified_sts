@@ -296,6 +296,16 @@ export const GLOSSARY: Record<string, GlossaryTerm> = {
     meaning: '주문 경로 점검용 진입이라 전략의 성과로 세지 않습니다.',
   },
 
+  open_position: {
+    label: '보유 중 · 평가',
+    meaning:
+      '아직 닫히지 않은 가상 포지션을 마지막 봉 종가로 평가한 값입니다. 확정된 손익이 아니고, 왕복·승·합계에 들어가지 않습니다. 세션이 끝나면 실제 청산 판단으로 다시 계산됩니다.',
+  },
+  OPEN_MARKED_TO_LAST_BAR: {
+    label: '마지막 봉 기준 평가',
+    meaning: '그 세션에서 가격이 있는 마지막 봉의 종가에 맞춰 평가했다는 뜻입니다.',
+  },
+
   // --- the status board's vocabulary ------------------------------------------------
   clean_streak: {
     label: '깨끗한 날 누적',
@@ -431,8 +441,54 @@ const ISSUE_CODE = /^([A-Z][A-Z0-9_]{3,})\b/;
 const RELEASE_DIGEST_MARKER = 'expected_code_digest';
 const RELEASE_DIGEST_KEY = 'release.yaml::expected_code_digest';
 
-/** The reason the board prints inside the parentheses of a standing-approval row. */
-const ISSUE_REASON = /\(([a-z][a-z0-9_]*)[^)]*\)/;
+/**
+ * The parenthesised reason list of a standing-approval row.
+ *
+ * The board writes `(name n · name n · …)` — `status_board.py::_fmt_counts`
+ * joins `f"{k} {v}"` with ` · ` over a dict the caller already sorted
+ * ALPHABETICALLY. So the first reason is not the worst one: a row reading
+ * `(open_over_outstanding_reservation 1 · uses_exhausted:OPEN-LONG 1)` is
+ * routine in its first pair and a stop in its second, and reading only the
+ * first would caption it «정상 동작 · 조치 불필요» while approvals are
+ * exhausted.
+ */
+const ISSUE_PARENS = /\(([^)]*)\)/;
+
+/** One `name n` pair; the name may carry `:` and `-` (`uses_exhausted:OPEN-LONG`). */
+const REASON_PAIR = /^(\S+)\s+\d+$/;
+
+/** Only these codes carry a reason list — other codes parenthesise other things. */
+const REASON_BEARING_CODES = new Set([
+  'APPROVAL_STANDING_NOT_COVERED',
+  'APPROVAL_STANDING_REFUSED',
+]);
+
+/** The one reason that is expected on an ordinary day. */
+const ROUTINE_REASON = 'open_over_outstanding_reservation';
+
+/**
+ * Every reason named in a standing-approval row, or null when the text does
+ * not parse as a reason list.
+ *
+ * Null is NOT an empty list: a shape this cannot read must not be reported as
+ * «no reason to worry». The caller turns it into «확인 필요».
+ */
+export function issueReasons(text: string | null | undefined): string[] | null {
+  const inner = text == null ? null : ISSUE_PARENS.exec(text)?.[1];
+  if (inner == null) return null;
+  const parts = inner
+    .split('·')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  const names: string[] = [];
+  for (const part of parts) {
+    const name = REASON_PAIR.exec(part)?.[1];
+    if (!name) return null;
+    names.push(name);
+  }
+  return names;
+}
 
 const ISSUE_ACTIONS: Record<string, IssueAction> = {
   MARKETFEED_PASS_OVERRUN: '반복되면 확인',
@@ -467,18 +523,36 @@ export function issueExplanation(
   if (!code) return null;
   const term = GLOSSARY[code];
   if (!term) return null;
-  const reason = ISSUE_REASON.exec(text)?.[1];
-  const reasonTerm = reason ? glossaryTerm(reason) : null;
-  if (reasonTerm) {
+  if (!REASON_BEARING_CODES.has(code)) {
+    return { code, sentence: term.meaning, action: ISSUE_ACTIONS[code] ?? '확인 필요' };
+  }
+  const reasons = issueReasons(text);
+  // Unparseable parentheses: say the code's own sentence and ask for a look.
+  // «조치 불필요» is a claim about reasons we could not read.
+  if (reasons == null) {
+    return { code, sentence: term.meaning, action: '확인 필요' };
+  }
+  const notRoutine = reasons.filter((reason) => reasonBase(reason) !== ROUTINE_REASON);
+  if (notRoutine.length === 0) {
     return {
       code,
-      sentence: reasonTerm.meaning,
-      // The reason decides the action, not the code: the routine one asks for
-      // nothing and the others are a real stop.
-      action: reason === 'open_over_outstanding_reservation' ? '조치 불필요' : '확인 필요',
+      sentence: glossaryTerm(ROUTINE_REASON)?.meaning ?? term.meaning,
+      action: '조치 불필요',
     };
   }
-  return { code, sentence: term.meaning, action: ISSUE_ACTIONS[code] ?? '확인 필요' };
+  // At least one reason is a real stop: name THOSE, and never the routine one,
+  // which is what made the row look harmless.
+  const sentences = notRoutine.map((reason) => {
+    const base = reasonBase(reason);
+    const known = glossaryTerm(base);
+    return known ? `${known.label} — ${known.meaning}` : `${reason} — 이 페이지가 모르는 사유입니다.`;
+  });
+  return { code, sentence: sentences.join(' '), action: '확인 필요' };
+}
+
+/** `uses_exhausted:OPEN-LONG-BUY` → `uses_exhausted`; the action is not the reason. */
+export function reasonBase(reason: string): string {
+  return reason.split(':')[0];
 }
 
 /** The suffix the kernel appends to an approval halt: `· standing: <reason>`. */
@@ -506,15 +580,10 @@ export function standingReason(detail: string | null | undefined): StandingReadi
   if (!detail) return null;
   const reason = STANDING_SUFFIX.exec(detail)?.[1];
   if (!reason) return null;
-  // `uses_exhausted:OPEN-LONG-…` carries the action after a colon.
-  const base = reason.split(':')[0];
+  const base = reasonBase(reason);
   const term = glossaryTerm(base);
   if (!term) return null;
-  return {
-    reason: base,
-    sentence: term.meaning,
-    routine: base === 'open_over_outstanding_reservation',
-  };
+  return { reason: base, sentence: term.meaning, routine: base === ROUTINE_REASON };
 }
 
 /**

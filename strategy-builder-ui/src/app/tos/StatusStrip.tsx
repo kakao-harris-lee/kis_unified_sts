@@ -99,15 +99,31 @@ interface IssueGroup {
  */
 export function groupIssues(issues: TosStatusIssue[]): IssueGroup[] {
   const groups = new Map<string, IssueGroup>();
-  for (const issue of issues) {
+  const levelOrder = new Map<string, number>();
+  issues.forEach((issue, index) => {
+    const level = issue.level ?? '';
+    if (!levelOrder.has(level)) levelOrder.set(level, index);
+  });
+  const order = new Map<string, number>();
+  for (const [index, issue] of issues.entries()) {
     const explanation = issueExplanation(issue.text);
-    const key = `${issue.level ?? ''}|${explanation?.code ?? issue.text ?? ''}`;
+    // The READING is part of the identity, not just the code. Two rows of the
+    // same code can mean opposite things — one standing-approval row is
+    // routine and the next is a stop — and a key of `level|code` would merge
+    // them under whichever arrived first.
+    const key = [
+      issue.level ?? '',
+      explanation?.code ?? issue.text ?? '',
+      explanation?.action ?? '',
+      explanation?.sentence ?? '',
+    ].join('|');
     const group = groups.get(key);
     if (group) {
       group.rows.push(issue);
       if (issue.where && !group.where.includes(issue.where)) group.where.push(issue.where);
       continue;
     }
+    order.set(key, index);
     groups.set(key, {
       key,
       level: issue.level,
@@ -116,7 +132,24 @@ export function groupIssues(issues: TosStatusIssue[]): IssueGroup[] {
       rows: [issue],
     });
   }
-  return [...groups.values()];
+  // Inside a level: what needs doing first, what needs nothing last. The
+  // level order itself is the one `orderedIssues` already established.
+  return [...groups.values()].sort((left, right) => {
+    const byLevel =
+      (levelOrder.get(left.level ?? '') ?? 0) - (levelOrder.get(right.level ?? '') ?? 0);
+    if (byLevel !== 0) return byLevel;
+    const byAction = actionRank(left.explanation) - actionRank(right.explanation);
+    if (byAction !== 0) return byAction;
+    return (order.get(left.key) ?? 0) - (order.get(right.key) ?? 0);
+  });
+}
+
+/** «확인 필요» first, «조치 불필요» last; an unread row sorts with the former. */
+function actionRank(explanation: IssueExplanation | null): number {
+  if (!explanation) return 0;
+  if (explanation.action === '확인 필요') return 0;
+  if (explanation.action === '반복되면 확인') return 1;
+  return 2;
 }
 
 /** «12분 전 기록», or that the reader could not tell when it was written. */
