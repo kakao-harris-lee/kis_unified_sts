@@ -1,0 +1,73 @@
+{
+  "comment": "Redaction cases both sides must agree on. The exporter side is tools/tos_cp3/redact.py (tests/tools/test_cp3_redact.py); the reader side is services/dashboard/routes/_redact.py (tests/unit/dashboard/test_tos_status.py). They cannot share code — services/ may not import tools/, the dashboard image does not carry tools/ at all — so each states the rule itself and both assert this file. The `redacted` cases are the shapes that have actually appeared or can appear: runner `die` messages interpolating $TENANT_CUSTODY_ROOT/$TENANT_LOG/$DATA_LEAF, `f\"{type(exc).__name__}: {exc}\"` from a leaf or calendar open, and account numbers. The `kept` cases are the ones a careless rule breaks: Korean text containing a slash, ratios, session names and trading dates whose digit runs are shorter than an account's. Placeholders: PATH = «<경로>», ACCOUNT = «<계좌>».",
+  "path_placeholder": "<경로>",
+  "account_placeholder": "<계좌>",
+  "redacted": [
+    {
+      "why": "runner die: data leaf (the #1179 reproduction)",
+      "input": "ABORT: cannot create data leaf /home/deploy/.local/state/tos/cp3-setup-d-long-data/20261126-A05612",
+      "expected": "ABORT: cannot create data leaf <경로>"
+    },
+    {
+      "why": "runner die: custody root",
+      "input": "TENANT_CUSTODY_ROOT does not exist: /home/deploy/.local/state/tos/cp3-setup-d-stock-custody",
+      "expected": "TENANT_CUSTODY_ROOT does not exist: <경로>"
+    },
+    {
+      "why": "runner die: a log path at the end of a sentence",
+      "input": "band process exited rc 1 (gate refusal) — see /home/deploy/.local/state/tos/cp3-long.log",
+      "expected": "band process exited rc 1 (gate refusal) — see <경로>"
+    },
+    {
+      "why": "streak error: f\"{type(exc).__name__}: {exc}\" from a missing calendar",
+      "input": "FileNotFoundError: [Errno 2] No such file or directory: '/home/deploy/project/kis_unified_sts/config/tos_runtime/cp3-setup-d-long/calendar.yaml'",
+      "expected": "FileNotFoundError: [Errno 2] No such file or directory: '<경로>'"
+    },
+    {
+      "why": "a ~-rooted path",
+      "input": "transport config missing: ~/.config/kis-probes/kis_mock_transport.yaml",
+      "expected": "transport config missing: <경로>"
+    },
+    {
+      "why": "a path inside parentheses",
+      "input": "런타임 저장소 상태 모름 — (see /home/deploy/.local/state/tos/x)",
+      "expected": "런타임 저장소 상태 모름 — (see <경로>)"
+    },
+    {
+      "why": "a hyphenated account number",
+      "input": "account 12345678-01 refused",
+      "expected": "account <계좌> refused"
+    },
+    {
+      "why": "a bare ten-digit account number",
+      "input": "INVALID_CHECK_ACNO for 5020591501",
+      "expected": "INVALID_CHECK_ACNO for <계좌>"
+    }
+  ],
+  "kept": [
+    {
+      "why": "Korean text with a slash is not a path",
+      "input": "확인/막힘 레벨은 그대로 둔다"
+    },
+    {
+      "why": "a ratio is not a path",
+      "input": "깨끗은 rc 0/143 이다"
+    },
+    {
+      "why": "the real overrun sentence, which the page must keep whole",
+      "input": "MARKETFEED_PASS_OVERRUN 1행 — 최악 pass 1232ms > 창 500ms (tick 1232ms + post-pass 0ms, seq 77038)"
+    },
+    {
+      "why": "a session name: its digit runs are 6 and 8, under the account floor",
+      "input": "세션 stock-000660-r1-20261125 가 rc=0 으로 끝났다"
+    },
+    {
+      "why": "a resident paper session directory name",
+      "input": "2026-11-25-084505-LONG"
+    },
+    {
+      "why": "a KRW figure is far short of an account's digits",
+      "input": "손익 -19000 원"
+    }
+  ]
+}

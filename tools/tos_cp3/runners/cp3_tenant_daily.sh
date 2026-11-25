@@ -1032,6 +1032,38 @@ else
     symbols_rc=$?
     log "=== END SYMBOLS EXPORT rc=$symbols_rc (record: $SESSION/symbols-export.out · this rc does NOT change the session's)"
   fi
+
+  # --- the one-page status board (legibility plan §4 ① 「상태 띠」) ------------
+  #
+  # Same `else`, same discipline as the symbols export above: every guard the
+  # bars export made already holds, it is read-only, `timeout`-wrapped, and its
+  # rc is logged and discarded.
+  #
+  # Like the symbols document it is NOT about this session alone — the board
+  # judges the whole day across all five tenants, so whichever tenant's cron
+  # finishes last writes the most complete one, and rebuilding it whole each
+  # time is what makes that safe.
+  #
+  # ⚠ `export_status.py` exits 0 even when the board has blocks: that verdict is
+  # the document's own `blocked` count, not this exporter's rc. The rc here is
+  # therefore about WRITING the document, which is the only thing that should
+  # ever show up in this log line.
+  #
+  # ⚠ Per-SESSION-END, like the symbols export. The intraday refresh the page
+  # needs is a cron line of its own — `sts tos export-status` is safe to run at
+  # any time — and is an operator decision, not something this wrapper decides
+  # by running more often.
+  if [ ! -f "$WT/tools/tos_cp3/export_status.py" ]; then
+    log "=== STATUS EXPORT SKIPPED — $WT/tools/tos_cp3/export_status.py is absent at this origin/main revision (this does NOT affect the session)"
+  else
+    log "=== STATUS EXPORT -> ${TOS_OPERATOR_PROJECTION_DIR}/status ceiling ${BARS_CEILING_S}s"
+    timeout --kill-after=5s "${BARS_CEILING_S}s" \
+      "$PY" "$WT/tools/tos_cp3/export_status.py" \
+      --out-dir "$TOS_OPERATOR_PROJECTION_DIR" \
+      --state-dir "$STATE" >>"$SESSION/status-export.out" 2>&1
+    status_rc=$?
+    log "=== END STATUS EXPORT rc=$status_rc (record: $SESSION/status-export.out · this rc does NOT change the session's)"
+  fi
 fi
 
 # Exit codes: runbook §7.2-d 「종료 코드」.

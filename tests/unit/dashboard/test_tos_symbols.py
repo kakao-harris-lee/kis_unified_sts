@@ -82,12 +82,83 @@ _VALID_DOCUMENT: dict[str, Any] = {
                 },
                 "flow_counts": {"STAGE_DENIED": 3, "STAGE_UNKNOWN": 9},
             },
+            "kind": "stock",
+            "direction": "LONG",
+            "decision_only": False,
+            "pnl": {
+                "today": {
+                    "pnl_krw": "1400",
+                    "pnl_basis": "EXECUTION",
+                    "closed_round_trips": 1,
+                    "wins": 1,
+                    "buy_fills": 1,
+                    "sell_fills": 1,
+                    "quantity_bought": "1",
+                    "quantity_sold": "1",
+                },
+                "cumulative": {
+                    "pnl_krw": "1400",
+                    "pnl_basis": "EXECUTION",
+                    "closed_round_trips": 1,
+                    "wins": 1,
+                    "buy_fills": 1,
+                    "sell_fills": 1,
+                    "quantity_bought": "1",
+                    "quantity_sold": "1",
+                    "open_quantity": "0",
+                    "open_lots": 0,
+                },
+                "unresolved": {
+                    "count": 1,
+                    "attempts": [
+                        {
+                            "status": "NO_FILL",
+                            "status_label": "비체결 종료",
+                            "side": "BUY",
+                            "quantity": "1",
+                            "order_price_krw": "175800",
+                            "broker_execution_id": None,
+                            "trading_date": "20261123",
+                            "reason": "미접수(마지막 결과 UNKNOWN → 재조회로 확인)",
+                            "observation": "전송되지 않음(체결 없음)",
+                        }
+                    ],
+                },
+            },
             "ticks": 46,
             "error": None,
         },
         {
             "symbol": "000660",
             "tree_id": "cp3-setup-d-stock-000660",
+            "kind": "stock",
+            "direction": "LONG",
+            "decision_only": False,
+            "pnl": {
+                "today": {
+                    "pnl_krw": "0",
+                    "pnl_basis": None,
+                    "closed_round_trips": 0,
+                    "wins": 0,
+                    "buy_fills": 0,
+                    "sell_fills": 0,
+                    "quantity_bought": "0",
+                    "quantity_sold": "0",
+                },
+                "cumulative": {
+                    "pnl_krw": "0",
+                    "pnl_basis": None,
+                    "closed_round_trips": 0,
+                    "wins": 0,
+                    "buy_fills": 0,
+                    "sell_fills": 0,
+                    "quantity_bought": "0",
+                    "quantity_sold": "0",
+                    "open_quantity": "0",
+                    "open_lots": 0,
+                },
+                "unresolved": {"count": 0, "attempts": []},
+            },
             "session": {
                 "name": None,
                 "status": None,
@@ -114,6 +185,9 @@ _VALID_DOCUMENT: dict[str, Any] = {
         {
             "symbol": "005380",
             "tree_id": "cp3-setup-d-stock-005380",
+            "kind": "stock",
+            "direction": "LONG",
+            "decision_only": False,
             "session": {
                 "name": "stock-005380-r5-20261120",
                 "status": "RUNNING",
@@ -124,6 +198,8 @@ _VALID_DOCUMENT: dict[str, Any] = {
             "buy": {"fills": 0, "quantity": "0", "last": None},
             "sell": {"fills": 0, "quantity": "0", "last": None},
             "holding": {"quantity": None, "lots": None, "basis": None},
+            # A leaf that could not be read has UNKNOWN PnL, never zero.
+            "pnl": None,
             "halt": {
                 "error": "OperationalError",
                 "last_flow": None,
@@ -132,6 +208,77 @@ _VALID_DOCUMENT: dict[str, Any] = {
             },
             "ticks": None,
             "error": "OperationalError",
+        },
+        # The two decision-only futures tenants, as measured on the host on
+        # 2026-11-25. Their fill/holding fields are null — never zero — and they
+        # carry no `pnl` at all: entries stop at an independent approval step.
+        {
+            "symbol": "A05612",
+            "tree_id": "cp3-setup-d-long",
+            "kind": "futures",
+            "direction": "LONG",
+            "decision_only": True,
+            "session": {
+                "name": "long-20261120",
+                "status": "ENDED",
+                "boot_at": "08:46:08",
+                "end_at": "15:50:01",
+                "run_rc": 0,
+            },
+            "buy": {"fills": None, "quantity": None, "last": None},
+            "sell": {"fills": None, "quantity": None, "last": None},
+            "holding": {
+                "quantity": None,
+                "lots": None,
+                "basis": "TOS_LEDGER_FIFO_OPEN_LOTS",
+            },
+            "pnl": None,
+            "halt": {
+                "error": None,
+                "last_flow": {
+                    "reason": "STAGE_DENIED",
+                    "step": "CANDIDATE_COMMAND_CONSTRUCTION",
+                    "time_kst": "15:33",
+                },
+                "last_withheld": {
+                    "reason": "TIME_NOT_ADMITTED",
+                    "step": "DECISION_WITHHELD",
+                    "time_kst": "08:45",
+                },
+                "flow_counts": {"STAGE_DENIED": 36, "STAGE_UNKNOWN": 1},
+            },
+            "ticks": 409,
+            "error": None,
+        },
+        {
+            "symbol": None,
+            "tree_id": "cp3-setup-d-short",
+            "kind": "futures",
+            "direction": "SHORT",
+            "decision_only": True,
+            "session": {
+                "name": None,
+                "status": None,
+                "boot_at": None,
+                "end_at": None,
+                "run_rc": None,
+            },
+            "buy": {"fills": None, "quantity": None, "last": None},
+            "sell": {"fills": None, "quantity": None, "last": None},
+            "holding": {
+                "quantity": None,
+                "lots": None,
+                "basis": "TOS_LEDGER_FIFO_OPEN_LOTS",
+            },
+            "pnl": None,
+            "halt": {
+                "error": None,
+                "last_flow": None,
+                "last_withheld": None,
+                "flow_counts": {},
+            },
+            "ticks": None,
+            "error": None,
         },
     ],
 }
@@ -172,7 +319,7 @@ def _get(client: TestClient) -> dict[str, Any]:
 def test_a_valid_document_is_served_with_every_row(
     client: TestClient, document: Path
 ) -> None:
-    """All three symbols reach the body — the plan's acceptance, at the wire."""
+    """All five tenants reach the body — the plan's acceptance, at the wire."""
     _write(document, _VALID_DOCUMENT)
     body = _get(client)
     assert body["available"] is True
@@ -182,6 +329,17 @@ def test_a_valid_document_is_served_with_every_row(
         "005930",
         "000660",
         "005380",
+        "A05612",
+        # The futures tenant that did not run names no contract: the month rolls,
+        # so a derived one could silently be the previous month's.
+        None,
+    ]
+    assert [row["kind"] for row in served["symbols"]] == [
+        "stock",
+        "stock",
+        "stock",
+        "futures",
+        "futures",
     ]
     assert served["date"] == "2026-11-20"
     assert served["holding_basis"] == "TOS_LEDGER_FIFO_OPEN_LOTS"
@@ -360,6 +518,124 @@ def test_every_emitted_reason_prefix_is_in_the_shared_fixture() -> None:
         "schema mismatch",
         "unsupported schema_version",
     }
+
+
+def test_the_realized_pnl_reaches_the_body_with_its_price_basis(
+    client: TestClient, document: Path
+) -> None:
+    """손익은 기준과 함께 간다 — 기준 없는 숫자는 읽는 쪽이 검증할 수 없다."""
+    _write(document, _VALID_DOCUMENT)
+    row = _get(client)["document"]["symbols"][0]
+    assert row["pnl"]["today"]["pnl_krw"] == "1400"
+    assert row["pnl"]["today"]["pnl_basis"] == "EXECUTION"
+    assert row["pnl"]["today"]["closed_round_trips"] == 1
+    assert row["pnl"]["today"]["wins"] == 1
+    assert row["pnl"]["cumulative"]["open_lots"] == 0
+    assert row["pnl"]["cumulative"]["open_quantity"] == "0"
+
+
+def test_an_unresolved_attempt_reaches_the_body_in_the_clis_own_words(
+    client: TestClient, document: Path
+) -> None:
+    """«집계 밖» 주문은 화면에서도 CLI 와 같은 문장이어야 한다."""
+    _write(document, _VALID_DOCUMENT)
+    unresolved = _get(client)["document"]["symbols"][0]["pnl"]["unresolved"]
+    assert unresolved["count"] == 1
+    (attempt,) = unresolved["attempts"]
+    assert attempt["status_label"] == "비체결 종료"
+    assert attempt["side"] == "BUY"
+    assert attempt["order_price_krw"] == "175800"
+    assert attempt["observation"] == "전송되지 않음(체결 없음)"
+
+
+def test_a_decision_only_row_serves_nulls_not_zeros(
+    client: TestClient, document: Path
+) -> None:
+    """선물 줄의 체결·보유·손익은 ``null`` 이다.
+
+    ``0`` 으로 보내면 페이지가 «오늘 아무 것도 안 샀다» 를 그린다. 그 tenant 는
+    애초에 주문을 낼 수 없다(운영자 결정 2026-11-05) — 둘은 다른 사실이다.
+    """
+    _write(document, _VALID_DOCUMENT)
+    row = _get(client)["document"]["symbols"][3]
+    assert row["decision_only"] is True
+    assert row["direction"] == "LONG"
+    assert row["buy"]["fills"] is None
+    assert row["sell"]["quantity"] is None
+    assert row["holding"]["quantity"] is None
+    assert row["pnl"] is None
+    # …while what it DOES know still arrives.
+    assert row["ticks"] == 409
+    assert row["halt"]["flow_counts"] == {"STAGE_DENIED": 36, "STAGE_UNKNOWN": 1}
+
+
+def test_a_document_without_the_new_fields_still_reads(
+    client: TestClient, document: Path
+) -> None:
+    """현장 호환: 아직 옛 내보내기가 쓴 문서여도 줄은 그대로 나온다.
+
+    내보내기는 origin/main 워크트리에서 매일 아침 새로 뜨지만 대시보드 컨테이너는
+    손으로 다시 빌드한다. 두 쪽이 한동안 어긋나므로, 새 키가 없는 문서가 빈 화면이
+    되면 안 된다 — 그래서 스키마 판은 1 그대로다.
+    """
+    legacy = json.loads(json.dumps(_VALID_DOCUMENT))
+    legacy["symbols"] = legacy["symbols"][:1]
+    for key in ("kind", "direction", "decision_only", "pnl"):
+        legacy["symbols"][0].pop(key)
+    _write(document, legacy)
+
+    body = _get(client)
+    assert body["available"] is True
+    row = body["document"]["symbols"][0]
+    assert row["symbol"] == "005930"
+    assert row["kind"] is None
+    assert row["pnl"] is None
+    assert row["buy"]["fills"] == 1
+
+
+def test_an_unresolved_attempt_sentence_carrying_a_path_does_not_pass_through(
+    client: TestClient, document: Path
+) -> None:
+    """``reason``/``observation`` 은 런타임이 쓴 **자유 텍스트**다.
+
+    ``perf`` 가 골라 오기만 할 뿐 내용을 통제하지 않으므로, 언제든 경로를 물고 올
+    수 있다. #1179 에서 자매 라우트(상태판)가 바로 그렇게 샜다.
+    """
+    payload = json.loads(json.dumps(_VALID_DOCUMENT))
+    attempt = payload["symbols"][0]["pnl"]["unresolved"]["attempts"][0]
+    attempt["reason"] = (
+        "미전송 종료(cannot open /home/deploy/.local/state/tos/"
+        "cp3-setup-d-stock-005930-data/005930/evidence.sqlite3)"
+    )
+    attempt["observation"] = "see ~/.local/state/tos/cp3-stock.log"
+    payload["symbols"][0]["error"] = "OperationalError: /home/deploy/x"
+    _write(document, payload)
+
+    body = _get(client)
+    assert body["available"] is True
+    assert body["redacted"] is True
+    rendered = json.dumps(body, ensure_ascii=False)
+    for needle in ("/home", "~/", "state/tos"):
+        assert needle not in rendered, needle
+    # 사유는 남는다.
+    assert "미전송 종료" in rendered
+    assert "OperationalError" in rendered
+
+
+def test_a_broker_order_number_still_reaches_the_body(
+    client: TestClient, document: Path
+) -> None:
+    """``broker_execution_id`` 는 주문번호다 — 가리면 브로커에서 찾을 길이 없다.
+
+    10자리라 계좌 패턴에 걸리지만, 구조화된 그 키에서는 패턴 추측을 적용하지
+    않는다. 같은 숫자가 **문장 안**에 있으면 그때는 지운다.
+    """
+    _write(document, _VALID_DOCUMENT)
+    body = _get(client)
+    assert body["redacted"] is False
+    row = body["document"]["symbols"][0]
+    assert row["buy"]["last"]["broker_execution_id"] == "0000027053"
+    assert row["sell"]["last"]["broker_execution_id"] == "0000029505"
 
 
 def test_the_route_imports_nothing_from_tos() -> None:

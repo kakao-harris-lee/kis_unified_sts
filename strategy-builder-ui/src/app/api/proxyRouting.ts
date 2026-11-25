@@ -42,7 +42,18 @@ export const exactPathRoots = new Map<string, ReadonlySet<string>>([
   // `tos/sessions` is the bars picker's listing. Exact, so it stays two
   // segments: the proxy must not start forwarding `tos/sessions/<id>` — a path
   // the dashboard does not serve — just because the listing shares the prefix.
-  ["tos", new Set(["tos/projection", "tos/sessions", "tos/symbols/today"])],
+  //
+  // `tos/status` is the one-page status board (export_status.DOCUMENT_NAME is
+  // fixed too), so it is exact for the same reason `tos/symbols/today` is.
+  [
+    "tos",
+    new Set([
+      "tos/projection",
+      "tos/sessions",
+      "tos/status",
+      "tos/symbols/today",
+    ]),
+  ],
 ]);
 
 // The same allowlist discipline for a surface that carries one caller-supplied
@@ -76,8 +87,9 @@ export function matchesPathPattern(path: string[], pattern: string): boolean {
 // read-only: services/dashboard/routes/tos_projection.py declares
 // `@router.get("/projection")`, tos_bars.py declares
 // `@router.get("/sessions/{session_id}/bars")` and `@router.get("/sessions")`,
-// and tos_symbols.py declares
-// `@router.get("/symbols/today")`, and nothing else, and
+// tos_symbols.py declares
+// `@router.get("/symbols/today")` and tos_status.py declares
+// `@router.get("/status")`, and nothing else, and
 // FastAPI's APIRoute — unlike
 // Starlette's Route — does not add HEAD to a GET route, so the dashboard itself
 // answers 405 to HEAD and to every mutating method there. Refusing them here
