@@ -169,6 +169,19 @@ describe('판단 근거 패널', () => {
     expect(screen.getByText('구간: 08:45 – 15:45')).toBeInTheDocument();
   });
 
+  it('distinguishes a tenant that binds nothing from a document with no bindings', () => {
+    mount();
+    expect(screen.getByText(/바인딩: z_entry_max_x1000=-1800/)).toBeInTheDocument();
+
+    const none = { ...futuresBarsDocument(), bindings: { values: {} } };
+    mount({ document: none });
+    expect(screen.getByText('바인딩: 없음')).toBeInTheDocument();
+
+    const unknown = { ...futuresBarsDocument(), bindings: null };
+    mount({ document: unknown });
+    expect(screen.getByText('바인딩: 알 수 없음')).toBeInTheDocument();
+  });
+
   it('says the record is written once, at session end', () => {
     mount();
     expect(screen.getByText(/장중에는 직전 세션을 보고 있을 수 있습니다/)).toBeInTheDocument();

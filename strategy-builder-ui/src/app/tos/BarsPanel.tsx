@@ -110,11 +110,16 @@ export default function BarsPanel({ requested, read }: BarsPanelProps) {
             </span>
             <span>전략 sha256: {document.strategy?.sha256?.slice(0, 12) ?? '알 수 없음'}</span>
             <span>
+              {/* Three different facts, three different words: a tenant that
+                  binds nothing (005380) reports 「없음」, and only a document
+                  with no bindings block at all is 「알 수 없음」. */}
               바인딩:{' '}
               {document.bindings?.values
-                ? Object.entries(document.bindings.values)
-                    .map(([key, value]) => `${key}=${value}`)
-                    .join(' · ')
+                ? Object.entries(document.bindings.values).length
+                  ? Object.entries(document.bindings.values)
+                      .map(([key, value]) => `${key}=${value}`)
+                      .join(' · ')
+                  : '없음'
                 : '알 수 없음'}
             </span>
           </div>
