@@ -6,6 +6,14 @@ repo. `docs/plans/` and `docs/superpowers/` hold the rationale for what runs
 (`git log --diff-filter=D -- docs/`), not in a kept file. Keep this file focused
 on current runtime rules.
 
+**History squash (2026-11-25).** `main` was squashed to one root commit
+(`c0662d01`). Everything this repo's docs call «git history» — every
+`git log --diff-filter=D -- …` pointer and the tag `legacy-final`
+(`6fc17c0f8d25`) — now lives in the pre-squash bundle on the deploy host:
+`~/archive/kis_unified_sts-pre-squash-20261125-1945.bundle`. Clone the bundle
+(`git clone <bundle> kis-history`) and run those commands there; they return
+nothing in this repository.
+
 If the deploy-host memory file exists at
 `/home/deploy/.claude/projects/-home-deploy-project-kis-unified-sts/memory/MEMORY.md`,
 read it as supplemental operational memory. Local checkouts may not have it.

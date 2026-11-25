@@ -3,6 +3,11 @@
 기준: 2026-11-20. `docs/` 는 **지금 도는 것**만 담는다. 끝난 일의 서사는 git 이력에 있다:
 `git log --diff-filter=D -- docs/`.
 
+> **2026-11-25 — 이력 squash.** `main` 을 루트 커밋 하나(`c0662d01`)로 합쳤다. 이 문서들이
+> «git 이력» 이라 부르는 것 — `git log --diff-filter=D -- …` 와 태그 `legacy-final` — 은 이제
+> 배포 호스트의 번들 `~/archive/kis_unified_sts-pre-squash-20261125-1945.bundle` 에 있다.
+> 번들을 clone 한 곳(`git clone <번들> kis-history`)에서 그 명령을 돌린다 — 이 저장소에서는 빈 결과다.
+
 > **2026-11-20 — 역사 문서 정리.** 레거시 런타임 처분표(`migration/legacy-disposition.md`) ·
 > CP-0~CP-4 통합 계획 · superpowers 계획 색인 · `reports/` 의 폐기된 전략 연구 4건을
 > 지우고, 큰 런북 넷(paper boot 이력 · 콜드 백업 · RCL 마이그레이션 · CI 병렬 노트)에서
