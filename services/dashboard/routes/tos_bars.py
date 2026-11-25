@@ -1,4 +1,11 @@
-"""Read-only reader for one recorded session's exported per-bar inspection.
+"""Read-only reader for the exported per-bar inspections: one, and the list.
+
+Two routes over the same directory — ``GET /api/tos/sessions/{id}/bars`` reads
+one document, ``GET /api/tos/sessions`` names the documents that exist so the
+panel can offer a picker instead of asking the operator to type a directory
+name. They share :func:`_bars_dir`, :data:`_SESSION_ID_PATTERN` and
+:data:`LATEST` on purpose: a second copy of any of the three would drift, and
+the list would then offer an id the reader refuses (or hide one it accepts).
 
 Roadmap ``docs/plans/2026-11-11-tos-platform-roadmap.md`` §P1, second item. This
 is a **read model**, not an authority source, and it is the exact sibling of
@@ -40,6 +47,20 @@ at all. Three consequences, all deliberate:
   them, and this body reaches a browser that holds the dashboard API key in its
   bundle — the same reasoning that keeps the projection's own path out of its
   response.
+
+**The listing opens no document.** Every value it returns is derived from a
+*file name* that already passed :data:`_SESSION_ID_PATTERN` — the id itself, the
+trading date in its tail, and the tenant shape in its head — plus that file's
+mtime. It therefore exposes nothing the bars route does not already echo for the
+same session, which matters because ``/tos`` is reachable from the internet
+behind Cloudflare Access. Reading all thirteen-odd documents to answer a picker
+would also mean a megabyte each, per page load, for one string apiece.
+
+A name the pattern refuses is skipped rather than reported: naming it would echo
+a caller-independent but still file-derived string, and the operator cannot act
+on it from the browser anyway. The listing is bounded by
+``TOS_BARS_SESSION_LIST_MAX`` (:data:`_DEFAULT_SESSION_LIST_MAX`) so a directory
+nobody prunes cannot grow the response — or the dropdown — without bound.
 """
 
 from __future__ import annotations
@@ -49,7 +70,9 @@ import logging
 import os
 import re
 import time
+from datetime import datetime
 from pathlib import Path
+from stat import S_ISREG
 
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -76,9 +99,50 @@ _SUPPORTED_SCHEMA_VERSION = 1
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 #: The sentinel that means "whichever session was exported most recently". The
-#: panel opens on it, so an operator sees today's session without first knowing
-#: its name, and it needs no second listing endpoint.
+#: panel still opens on it, so the first paint needs no listing round trip and
+#: survives a listing that fails.
 LATEST = "latest"
+
+#: A session name split into the tenant label and its trading day —
+#: ``<label>-YYYYMMDD``, the shape ``tools/tos_cp3/runners/cp3_tenant_daily.sh``
+#: composes and ``tools/tos_cp3/status_board.py::_SESSION_DIR_RE`` parses. It is
+#: restated rather than imported for the reason the whole module restates the
+#: exporter's constants: this container carries no ``tools/`` at all.
+#:
+#: The label is non-greedy so the EIGHT trailing digits win: ``stock-000660-r1``
+#: keeps its own digits and ``20261125`` is the day, not the other way round.
+_SESSION_NAME_RE = re.compile(r"^(?P<label>[A-Za-z0-9][A-Za-z0-9_-]*?)-(?P<day>\d{8})$")
+
+#: The futures labels, which carry the side and no instrument: the tenant tree
+#: (``config/tos_runtime/cp3-setup-d-long``) names the contract, the session
+#: directory does not, and this route refuses to invent one.
+_FUTURES_DIRECTIONS = {"long": "LONG", "short": "SHORT"}
+
+#: The stock labels: ``stock-r<N>`` for the tenant that was there before the
+#: others (its symbol is not in the name) and ``stock-<symbol>-r<N>`` for every
+#: one since. ``r<N>`` is the run — cron is always ``r1``, an operator restart
+#: is ``r2`` — and it is part of the name, so the picker can tell two sessions
+#: of one day apart.
+_STOCK_LABEL_RE = re.compile(
+    r"^stock(?:-(?P<instrument>[0-9A-Za-z]+))?-r(?P<run>\d{1,3})$"
+)
+
+#: Session kinds. ``other`` is not a failure: it is a name this route can list
+#: and the bars reader can open, whose shape it will not claim to recognise.
+KIND_FUTURES = "futures"
+KIND_STOCK = "stock"
+KIND_OTHER = "other"
+
+#: How many sessions the listing returns, newest first. Overridable as
+#: ``TOS_BARS_SESSION_LIST_MAX`` rather than being a literal in a branch.
+#:
+#: The default is the paper window the clean-day count is already judged over —
+#: ``config/tos_status_board.yaml::clean_streak.window_days`` is 40 calendar
+#: days — times the five tenant trees that export one document a day. So every
+#: session inside the window that decides ``TOS_PAPER_READY`` is reachable from
+#: the picker, and a directory nobody prunes still cannot grow the body without
+#: bound.
+_DEFAULT_SESSION_LIST_MAX = 200
 
 
 def _bars_dir() -> Path:
@@ -94,6 +158,33 @@ def _bars_dir() -> Path:
     if not path.is_absolute():
         path = _REPO_ROOT / path
     return path.parent / _BARS_SUBDIR
+
+
+def _session_list_max() -> int:
+    """How many sessions the listing may return, from the environment.
+
+    A value that is not a positive integer falls back to the default and says
+    so once per request at ``WARNING``: a silently ignored cap and a silently
+    applied one look identical in the response, and the operator who set it
+    would have no way to tell which happened.
+    """
+    raw = os.environ.get("TOS_BARS_SESSION_LIST_MAX", "").strip()
+    if not raw:
+        # Unset, or set empty by compose's own `${VAR:-}` pass-through, which is
+        # how the knob is REACHABLE without restating its default in the compose
+        # file. An empty value is "no opinion", not a bad one, so it is silent.
+        return _DEFAULT_SESSION_LIST_MAX
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        logger.warning(
+            "TOS_BARS_SESSION_LIST_MAX is not a positive integer; using %d",
+            _DEFAULT_SESSION_LIST_MAX,
+        )
+        return _DEFAULT_SESSION_LIST_MAX
+    return value
 
 
 class BarsCompare(BaseModel):
@@ -303,6 +394,146 @@ class TosBarsResponse(BaseModel):
     # server log line in `_unavailable` instead.
 
 
+class TosSessionEntry(BaseModel):
+    """One exported session, as its FILE NAME describes it.
+
+    Every field is derived from the name or the file's mtime; none is read from
+    the document. ``kind``-specific fields are ``None`` rather than absent, and
+    a field the name does not carry stays ``None`` rather than being guessed —
+    ``instrument`` on a futures session, or on the stock tenant whose name
+    predates the per-symbol convention, is unknown HERE even though the tenant
+    tree knows it.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    #: The id to pass back to ``/sessions/{session_id}/bars``, verbatim.
+    session: str
+    #: The trading day in ``YYYY-MM-DD``, or ``None`` when the tail of the name
+    #: is eight digits that are not a date (``20261345``).
+    date: str | None = None
+    kind: str = KIND_OTHER
+    #: ``LONG``/``SHORT`` on a futures session, ``None`` otherwise.
+    direction: str | None = None
+    #: The symbol when the name carries it (``stock-000660-r1-…``).
+    instrument: str | None = None
+    #: The run number on a stock session: cron is 1, an operator restart is 2.
+    run: int | None = None
+    #: Seconds since the export replaced this document, for an "is today's
+    #: session already out?" read without opening it.
+    age_seconds: float | None = None
+
+
+class TosSessionsResponse(BaseModel):
+    """Response DTO for ``GET /api/tos/sessions``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    available: bool
+    reason: str | None = None
+    sessions: list[TosSessionEntry] = Field(default_factory=list)
+    #: True when the cap dropped older sessions. The newest are kept, so the
+    #: picker is never missing today's — and a UI can say the list is partial
+    #: instead of letting an operator conclude a session was never exported.
+    truncated: bool = False
+
+
+def _describe_session(session: str, age_seconds: float | None) -> TosSessionEntry:
+    """Derive one entry from a session name. Never opens the document."""
+    entry = TosSessionEntry(session=session, age_seconds=age_seconds)
+    match = _SESSION_NAME_RE.match(session)
+    if match is None:
+        return entry
+
+    day = match.group("day")
+    try:
+        entry.date = datetime.strptime(day, "%Y%m%d").date().isoformat()
+    except ValueError:
+        # Eight digits that are not a date. The session is still listed — the
+        # document opens fine — it just sorts and groups as undated.
+        entry.date = None
+
+    label = match.group("label")
+    direction = _FUTURES_DIRECTIONS.get(label)
+    if direction is not None:
+        entry.kind = KIND_FUTURES
+        entry.direction = direction
+        return entry
+
+    stock = _STOCK_LABEL_RE.match(label)
+    if stock is not None:
+        entry.kind = KIND_STOCK
+        entry.instrument = stock.group("instrument")
+        entry.run = int(stock.group("run"))
+    return entry
+
+
+def _sessions_unavailable(
+    reason: str, bars_dir: Path, level: int = logging.WARNING
+) -> TosSessionsResponse:
+    """The one unavailable shape for the listing, logged to match the cause."""
+    logger.log(level, "tos bars directory unavailable (%s): %s", reason, bars_dir)
+    return TosSessionsResponse(available=False, reason=reason, sessions=[])
+
+
+def _list_sessions(bars_dir: Path, limit: int) -> TosSessionsResponse:
+    """Name every exported session, newest day first, bounded by ``limit``.
+
+    An empty but readable directory is ``available=true`` with no sessions:
+    "nothing exported yet" is a fact this route established, not a failure to
+    establish one. Only a directory it could not list at all is unavailable.
+    """
+    now = time.time()
+    entries: list[TosSessionEntry] = []
+    try:
+        for entry in bars_dir.iterdir():
+            if entry.suffix != ".json":
+                continue
+            session = entry.stem
+            # The sentinel is not a session. A file literally named
+            # `latest.json` would otherwise produce a second option carrying
+            # the same value as the picker's "most recent" one, and selecting
+            # either would resolve by mtime rather than to that file.
+            if session == LATEST or not _SESSION_ID_PATTERN.match(session):
+                continue
+            try:
+                # Inside the loop's own try for the reason `_resolve_latest`
+                # gives: an export replacing a document between `iterdir` and
+                # `stat` makes this entry vanish, and that is "the exporter ran
+                # while the page was loading", not a 500.
+                status = entry.stat()
+            except OSError:
+                continue
+            if not S_ISREG(status.st_mode):
+                continue
+            delta = now - status.st_mtime
+            entries.append(_describe_session(session, delta if delta >= 0 else None))
+    except FileNotFoundError:
+        # Normal before the first export ever ran, and the same words the bars
+        # reader uses for one absent document.
+        return _sessions_unavailable("bars directory absent", bars_dir, logging.INFO)
+    except NotADirectoryError:
+        return _sessions_unavailable("bars directory absent", bars_dir)
+    except OSError as exc:
+        # NOT "nothing exported": a 0700 directory or a uid mismatch on the
+        # mount, which sends the operator to permissions rather than to the
+        # exporter's output.
+        return _sessions_unavailable(
+            f"cannot list bars directory: {type(exc).__name__}", bars_dir
+        )
+
+    # Two stable passes, so the order is day-descending with a deterministic
+    # order inside each day — a single reversed sort would also reverse the
+    # names, putting `stock-r1` above `long` for no reason anyone could state.
+    # Undated names sort last: `""` is below every ISO date.
+    entries.sort(key=lambda item: item.session)
+    entries.sort(key=lambda item: item.date or "", reverse=True)
+    truncated = len(entries) > limit
+    return TosSessionsResponse(
+        available=True, reason=None, sessions=entries[:limit], truncated=truncated
+    )
+
+
 def _unavailable(
     reason: str,
     path: Path,
@@ -440,6 +671,23 @@ def _read_document(bars_dir: Path, session_id: str) -> TosBarsResponse:
         session=session_id,
         document=document,
     )
+
+
+@router.get("/sessions", response_model=TosSessionsResponse)
+async def list_tos_sessions(response: Response) -> TosSessionsResponse:
+    """Name the sessions that have an exported bars document, newest day first.
+
+    Two path segments, where the reader below takes four, so the two routes
+    cannot shadow each other and ``latest`` stays what it has always been: a
+    sentinel the READER resolves, never an id this listing returns.
+
+    Read-only, and it opens no document: every value is derived from a file name
+    that passed :data:`_SESSION_ID_PATTERN` and from that file's mtime. An
+    unlistable directory reports ``available=false`` with a ``reason`` rather
+    than raising; an empty one is ``available=true`` with no sessions.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return _list_sessions(_bars_dir(), _session_list_max())
 
 
 @router.get("/sessions/{session_id}/bars", response_model=TosBarsResponse)

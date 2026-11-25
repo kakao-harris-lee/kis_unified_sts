@@ -31,6 +31,11 @@ services:
       # the two are a pair, and one wrong value looks exactly like no value at
       # all (`available=false, reason="projection file absent"`).
       TOS_OPERATOR_PROJECTION_PATH: "${TOS_OPERATOR_PROJECTION_PATH:-/app/data/tos_runtime/operator_projection.json}"
+      # How many sessions GET /api/tos/sessions names for the bars picker,
+      # newest first. Passed through EMPTY on purpose: the route's own default
+      # (tos_bars._DEFAULT_SESSION_LIST_MAX) then applies, so the number is not
+      # restated here where it would drift. Set it in the env file to override.
+      TOS_BARS_SESSION_LIST_MAX: "${TOS_BARS_SESSION_LIST_MAX:-}"
     volumes:
       # Read-only throughout: the nested rw bind on config/strategies/built
       # existed for POST /api/kis-builder/register-paper, which L4 deleted along
