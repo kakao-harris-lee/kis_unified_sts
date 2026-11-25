@@ -1,20 +1,14 @@
 "use client";
 
-import { useState, type FormEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { isAxiosError } from 'axios';
+import { useState } from 'react';
+import type { BarsState } from '@/lib/dashboard/tosBars';
+import { latestCountedBar } from '@/lib/dashboard/tosDecision';
 import BarsChart from './BarsChart';
-import BarsRuleBands from './BarsRuleBands';
-import BarsSummaryTable from './BarsSummaryTable';
-import {
-  LATEST_SESSION,
-  barsState,
-  groupSessionsByDate,
-  isAcceptedBarsDocument,
-  sessionOptionLabel,
-  tosBarsApi,
-  type BarsState,
-} from '@/lib/dashboard/tosBars';
+import BlockingConditions from './BlockingConditions';
+import DecisionEvidence from './DecisionEvidence';
+import VerdictTimeline from './VerdictTimeline';
+import { AsOf, ageLabel } from './marks';
+import type { BarsRead } from './queries';
 
 const labels: Record<BarsState, string> = {
   loading: '바 기록을 불러오는 중',
@@ -40,150 +34,44 @@ const hints: Record<BarsState, string> = {
   ready: '',
 };
 
+interface BarsPanelProps {
+  /** The session id the operator asked for. */
+  requested: string;
+  read: BarsRead;
+}
+
 /**
- * Read-only per-bar panel: «왜 이 바에서 이 결정이었나» (roadmap §P1).
+ * «왜 진입했나 / 안 했나» — the evidence one session's decisions rest on.
  *
- * The document is produced on the host by `sts tos export-bars` and read by the
- * Control Plane purely as a file — this panel never reaches the kernel, the
- * session stores, or any authority surface. Nothing here can issue a command.
+ * The document is produced on the host by `sts tos export-bars` and read by
+ * the Control Plane purely as a file — this panel never reaches the kernel,
+ * the session stores, or any authority surface, and nothing here can issue a
+ * command. The chart, the checklist and the timeline are three views of the
+ * same selected bar, so an operator can move between «언제» and «왜» without
+ * re-finding their place.
+ *
+ * The bar it opens on is the last one the engine actually JUDGED, not the last
+ * one in the file: a withheld tail would otherwise greet the operator with a
+ * bar that has no conditions to show.
  */
-export default function BarsPanel() {
-  const [requested, setRequested] = useState(LATEST_SESSION);
-  const [draft, setDraft] = useState('');
-  const query = useQuery({
-    queryKey: ['tos-session-bars', requested],
-    queryFn: () => tosBarsApi.getBars(requested),
-    retry: false,
-  });
-  // The picker's own listing. It never gates the bars query: the panel opens on
-  // `latest` either way, so a listing that fails or is still in flight costs
-  // the operator the dropdown, never the session they came to read.
-  const sessions = useQuery({
-    queryKey: ['tos-sessions'],
-    queryFn: tosBarsApi.listSessions,
-    retry: false,
-  });
-  // `available` AND a real array: a body that lost its `sessions` key (a proxy
-  // error page, a future route revision) must send the panel to its text box,
-  // not throw while grouping.
-  const listed =
-    sessions.data?.available && Array.isArray(sessions.data.sessions)
-      ? sessions.data.sessions
-      : [];
-  const groups = groupSessionsByDate(listed);
-  // Falling back to the text box is what keeps a session reachable when the
-  // listing cannot be had — a dropdown with nothing in it would be a dead end.
-  const picker = groups.length > 0;
-  const unlisted =
-    requested !== LATEST_SESSION && !listed.some((entry) => entry.session === requested);
-
-  const response = query.data;
-  const state = barsState(response, query.isError || query.fetchStatus === 'paused');
-  // The same acceptance predicate the banner uses — see isAcceptedBarsDocument.
-  const document =
-    response?.available && isAcceptedBarsDocument(response.document)
-      ? response.document
-      : null;
-  const httpStatus = isAxiosError(query.error) ? query.error.response?.status : undefined;
-  const authError = httpStatus === 401 || httpStatus === 403;
+export default function BarsPanel({ requested, read }: BarsPanelProps) {
+  const { state, document, response, authError } = read;
+  const bars = document?.bars ?? [];
+  const defaultIndex = Math.max(0, bars.indexOf(latestCountedBar(bars) ?? bars[bars.length - 1]));
+  const [chosen, setChosen] = useState<number | null>(null);
+  const selectedIndex = chosen == null ? defaultIndex : Math.min(chosen, Math.max(0, bars.length - 1));
   const warning = state !== 'ready' && state !== 'loading';
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    setRequested(draft.trim() || LATEST_SESSION);
-  };
-
-  // The one text box, rendered under two different ids: it IS the «세션»
-  // control when there is no listing, and a second, separately labelled one
-  // beside the picker when the cap cut the list. One definition, so the two
-  // cannot drift into behaving differently.
-  const manualBox = (id: string) => (
-    <>
-      <input
-        id={id}
-        name="session"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        placeholder={LATEST_SESSION}
-        className="w-48 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950"
-      />
-      <button
-        type="submit"
-        disabled={query.isFetching}
-        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-slate-700"
-      >
-        조회
-      </button>
-    </>
-  );
 
   return (
     <section
-      aria-label="바별 결정 점검"
+      aria-label="판단 근거"
       className="min-w-0 space-y-4 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900"
     >
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="font-semibold">바별 결정 점검 · 읽기 전용</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            기록된 세션의 봉마다 엔진이 평가한 값 · 규칙별 통과 · 결정과 정지를 봅니다.
-          </p>
-        </div>
-        <form onSubmit={submit} className="flex flex-wrap items-center justify-end gap-2">
-          <label htmlFor="bars-session" className="text-sm text-slate-500 dark:text-slate-400">
-            세션
-          </label>
-          {picker ? (
-            <select
-              id="bars-session"
-              name="session"
-              value={requested}
-              onChange={(event) => setRequested(event.target.value)}
-              className="max-w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950"
-            >
-              <option value={LATEST_SESSION}>최신 세션 ({LATEST_SESSION})</option>
-              {/* A session the operator asked for that the listing does not
-                  carry — typed before the listing arrived, or exported and then
-                  removed. Without its own option the select would show blank
-                  while the panel below renders that very session. */}
-              {unlisted && (
-                <option value={requested} title={requested}>
-                  {requested}
-                </option>
-              )}
-              {groups.map((group) => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.sessions.map((entry) => (
-                    <option key={entry.session} value={entry.session} title={entry.session}>
-                      {sessionOptionLabel(entry)}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          ) : (
-            manualBox('bars-session')
-          )}
-          {/* The cap keeps the newest sessions, so an older one is in the
-              directory and readable but not in the dropdown. Without a box to
-              name it, the cap would make it unreachable from the UI entirely —
-              so the picker and the box stand side by side here. */}
-          {picker && sessions.data?.truncated && (
-            <div className="flex w-full flex-wrap items-center justify-end gap-2">
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                최근 {listed.length}개 세션만 목록에 있습니다. 더 오래된 세션은 이름으로 조회해
-                주세요.
-              </p>
-              <label
-                htmlFor="bars-session-id"
-                className="text-sm text-slate-500 dark:text-slate-400"
-              >
-                직접 입력
-              </label>
-              {manualBox('bars-session-id')}
-            </div>
-          )}
-        </form>
+      <div className="min-w-0">
+        <h2 className="font-semibold">판단 근거</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          왜 진입했나 / 안 했나 — 고른 봉에서 어떤 조건이 서고 무엇이 막았는지 봅니다.
+        </p>
       </div>
 
       <div
@@ -194,9 +82,7 @@ export default function BarsPanel() {
             : 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950'
         }`}
       >
-        <p className="font-semibold">
-          {authError ? '조회 인증을 확인해 주세요' : labels[state]}
-        </p>
+        <p className="font-semibold">{authError ? '조회 인증을 확인해 주세요' : labels[state]}</p>
         {(authError || hints[state]) && (
           <p className="mt-1">
             {authError ? 'API 키 또는 접근 권한을 확인한 후 다시 조회해 주세요.' : hints[state]}
@@ -207,9 +93,7 @@ export default function BarsPanel() {
           {response?.session && response.session !== requested
             ? ` · 조회된 세션: ${response.session}`
             : ''}
-          {response?.age_seconds != null
-            ? ` · 내보낸 뒤 ${Math.floor(response.age_seconds)}초`
-            : ''}
+          {response?.age_seconds != null ? ` · ${ageLabel(response.age_seconds)}` : ''}
         </p>
       </div>
 
@@ -218,6 +102,12 @@ export default function BarsPanel() {
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-500 dark:text-slate-400">
             <span>세션: {document.session ?? '알 수 없음'}</span>
             <span>종목: {document.instrument ?? '알 수 없음'}</span>
+            <span>
+              구간:{' '}
+              {bars.length
+                ? `${bars[0].time_kst ?? '알 수 없음'} – ${bars[bars.length - 1].time_kst ?? '알 수 없음'}`
+                : '알 수 없음'}
+            </span>
             <span>전략 sha256: {document.strategy?.sha256?.slice(0, 12) ?? '알 수 없음'}</span>
             <span>
               바인딩:{' '}
@@ -228,12 +118,16 @@ export default function BarsPanel() {
                 : '알 수 없음'}
             </span>
           </div>
-          <BarsChart bars={document.bars ?? []} />
-          <BarsRuleBands
-            bars={document.bars ?? []}
-            rules={document.summary?.rules ?? []}
-          />
-          {document.summary && <BarsSummaryTable summary={document.summary} />}
+
+          <BarsChart bars={bars} selectedIndex={selectedIndex} onSelect={setChosen} />
+          <DecisionEvidence bar={bars[selectedIndex] ?? null} summary={document.summary} />
+          <BlockingConditions summary={document.summary} />
+          <VerdictTimeline bars={bars} selectedIndex={selectedIndex} onSelect={setChosen} />
+
+          <AsOf>
+            이 기록은 세션이 끝난 뒤 한 번 내보낸 것입니다. 장중에는 직전 세션을 보고 있을 수
+            있습니다.
+          </AsOf>
         </div>
       )}
     </section>

@@ -6,6 +6,7 @@ import {
   type TosBarsBar,
   type TosBarsSummaryRule,
 } from '@/lib/dashboard/tosBars';
+import { glossaryLabel } from '@/lib/dashboard/tosGlossary';
 
 interface BarsRuleBandsProps {
   bars: TosBarsBar[];
@@ -15,13 +16,6 @@ interface BarsRuleBandsProps {
 const WIDTH = 1000;
 const ROW_HEIGHT = 18;
 const GAP = 4;
-
-const FLAG_LABELS: Record<string, string> = {
-  V: 'V · 엔진 값이 journal 과 다름',
-  D: 'D · 결정이 엔진 결과와 다름',
-  W: 'W · 보류(평가 안 함)',
-  U: 'U · journal 로 대체(분모 밖)',
-};
 
 /**
  * One strip per rule showing where its guard held, plus one per flag.
@@ -53,8 +47,8 @@ export default function BarsRuleBands({ bars, rules }: BarsRuleBandsProps) {
               className="flex items-center truncate"
             >
               {row.kind === 'rule'
-                ? `${row.rule.label ?? '?'} · ${row.rule.rule_id ?? '알 수 없음'}`
-                : FLAG_LABELS[row.flag]}
+                ? `${glossaryLabel(row.rule.rule_id)} · ${row.rule.rule_id ?? '알 수 없음'}`
+                : `${row.flag} · ${glossaryLabel(row.flag)}`}
             </li>
           ))}
         </ul>

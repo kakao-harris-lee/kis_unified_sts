@@ -1,10 +1,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { AxiosError } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TosPage from './page';
-import { isAcceptedProjection, tosApi, type TosProjection, type TosProjectionResponse } from '@/lib/dashboard/tos';
+import {
+  isAcceptedProjection,
+  tosApi,
+  type TosProjection,
+  type TosProjectionResponse,
+} from '@/lib/dashboard/tos';
+import { tosBarsApi, type TosSessionEntry } from '@/lib/dashboard/tosBars';
+import { tosSymbolsApi } from '@/lib/dashboard/tosSymbols';
 import { tosFixture } from '@/test/tosFixture';
+import { futuresBarsDocument, stockBarsDocument, symbolsDocument } from '@/test/tosBarsFixture';
 const fixture = tosFixture();
 const unknown = tosFixture(true);
 import config from '@/config/tos-control-plane.json';
@@ -20,58 +29,153 @@ vi.mock('@/lib/dashboard/tos', async () => {
     isAcceptedProjection: (p: unknown) => (shared.accept ?? actual.isAcceptedProjection)(p as TosProjection),
   };
 });
-// The bar panel and the symbols panel are SEPARATE read models, each with its
-// own query, its own banner (`role=status`/`alert`) and its own suite
-// (BarsPanel.test.tsx, SymbolsPanel.test.tsx). Both are stubbed here so this
-// file keeps asserting the projection page: without them `findByRole('status')`,
-// `getAllByRole('button')` and any whole-screen text query below match several
-// independent components and fail on ambiguity rather than on anything about
-// the projection. The symbols panel made that concrete — its connection-error
-// hint also contains 「마지막 조회 기록」, which is what the retained-data test
-// asserts, so the two matched and that test failed for an unrelated reason.
-//
-// The stubs render NOTHING but count their own mounts, so the page can still be
-// asserted to CARRY both panels. A stub that merely returned null would let a
-// refactor drop a panel from the page with the whole suite staying green — and
-// for the symbols panel that panel IS the acceptance («세 종목이 한 화면»).
-const mounted = vi.hoisted(() => ({ bars: 0, symbols: 0 }));
-vi.mock('./BarsPanel', () => ({ default: () => { mounted.bars += 1; return null; } }));
-vi.mock('./SymbolsPanel', () => ({ default: () => { mounted.symbols += 1; return null; } }));
+vi.mock('@/lib/dashboard/tosBars', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/dashboard/tosBars')>(
+    '@/lib/dashboard/tosBars',
+  );
+  return { ...actual, tosBarsApi: { getBars: vi.fn(), listSessions: vi.fn() } };
+});
+vi.mock('@/lib/dashboard/tosSymbols', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/dashboard/tosSymbols')>(
+    '@/lib/dashboard/tosSymbols',
+  );
+  return { ...actual, tosSymbolsApi: { getSymbolsToday: vi.fn() } };
+});
+
+function entry(overrides: Partial<TosSessionEntry> & { session: string }): TosSessionEntry {
+  return {
+    date: '2026-11-25',
+    kind: 'other',
+    direction: null,
+    instrument: null,
+    run: null,
+    age_seconds: 600,
+    ...overrides,
+  };
+}
 
 let client: QueryClient;
-function mount(response?: Partial<TosProjectionResponse>) {
-  if (response) vi.mocked(tosApi.getProjection).mockImplementation(async () => ({
-    requestedAt: performance.now(), response: { available: true, reason: null, age_seconds: 0, projection: fixture, ...response },
-  }));
-  client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  render(<QueryClientProvider client={client}><TosPage /></QueryClientProvider>);
-}
-beforeEach(() => vi.resetAllMocks());
-afterEach(() => { client?.clear(); vi.useRealTimers(); shared.accept = null; });
 
-describe('TOS read-only page', () => {
-  it('renders producer fixture, preserves false/zero, and has no command buttons', async () => {
+function mount(response?: Partial<TosProjectionResponse>) {
+  // Only when a response is asked for: a test that set its own rejection on
+  // `getProjection` must keep it.
+  if (response) {
+    vi.mocked(tosApi.getProjection).mockImplementation(async () => ({
+      requestedAt: performance.now(),
+      response: {
+        available: true,
+        reason: null,
+        age_seconds: 0,
+        projection: fixture,
+        ...response,
+      },
+    }));
+  }
+  vi.mocked(tosBarsApi.listSessions).mockResolvedValue({
+    available: true,
+    reason: null,
+    truncated: false,
+    sessions: [
+      entry({ session: 'long-20261125', kind: 'futures', direction: 'LONG' }),
+      entry({ session: 'stock-r1-20261125', kind: 'stock', run: 1 }),
+    ],
+  });
+  vi.mocked(tosBarsApi.getBars).mockImplementation(async (session: string) => {
+    const resolved = session === 'latest' ? 'long-20261125' : session;
+    const document = resolved.startsWith('long') ? futuresBarsDocument() : stockBarsDocument();
+    return { available: true, reason: null, age_seconds: 12, session: resolved, document };
+  });
+  vi.mocked(tosSymbolsApi.getSymbolsToday).mockResolvedValue({
+    available: true,
+    reason: null,
+    age_seconds: 30,
+    document: symbolsDocument(),
+  });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  render(
+    <QueryClientProvider client={client}>
+      <TosPage />
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-11-25T06:00:00Z')); // 15:00 KST
+});
+afterEach(() => {
+  client?.clear();
+  vi.useRealTimers();
+  shared.accept = null;
+});
+
+describe('TOS 운영 페이지', () => {
+  it('asks its four questions in order, each with a plain-Korean subtitle', async () => {
     mount({});
     await screen.findByText('최근 상태를 조회했습니다');
-    expect(within(screen.getByRole('region', { name: '위험 원장과 증거' })).getByText('0')).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: '릴리스 상태' })).getByText('거부')).toBeInTheDocument();
-    expect(screen.getAllByRole('button').map(b => b.textContent)).toEqual(['새로고침']);
+    const sections = screen
+      .getAllByRole('region')
+      .map((region) => region.getAttribute('aria-label'));
+    expect(sections.slice(0, 5)).toEqual([
+      '지금 상태',
+      'tenant 현황',
+      '판단 근거',
+      '거래 현황',
+      '사건 기록',
+    ]);
+    expect(screen.getByText(/왜 진입했나 \/ 안 했나/)).toBeInTheDocument();
+    expect(screen.getByText(/무엇을 사고팔았나/)).toBeInTheDocument();
+    expect(screen.getByText(/무슨 일이 있었나/)).toBeInTheDocument();
   });
-  it('carries both read-model panels, so neither can be dropped silently', async () => {
+
+  it('puts the machinery last and collapsed, labelled as the paper cell', async () => {
     mount({});
     await screen.findByText('최근 상태를 조회했습니다');
-    // Each panel owns its own suite; what this file guards is that the page
-    // still mounts them at all. The symbols panel is the usage plan §5
-    // acceptance («세 종목이 한 화면»), which no other test can see from here.
-    expect(mounted.symbols).toBeGreaterThan(0);
-    expect(mounted.bars).toBeGreaterThan(0);
+    const details = document.querySelector('details') as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(details).toHaveTextContent('paper 셀 상태와 기록 검증');
+    // The five fact cards are still there, whole — just no longer the page.
+    expect(within(details).getByText('릴리스 상태')).toBeInTheDocument();
   });
+
+  it('opens on the newest session and lets a tenant card change it', async () => {
+    mount({});
+    await screen.findByText('최근 상태를 조회했습니다');
+    await waitFor(() => expect(tosBarsApi.getBars).toHaveBeenCalledWith('latest'));
+    // The resolved id is what marks a card, so `latest` does not leave every
+    // card unselected while the panel below renders one of them.
+    await waitFor(() => expect(screen.getByText('선물 LONG')).toBeInTheDocument());
+    await userEvent.click(screen.getAllByRole('radio', { name: /주식 005930/ })[0]);
+    await waitFor(() => expect(tosBarsApi.getBars).toHaveBeenCalledWith('stock-r1-20261125'));
+  });
+
+  it('offers exactly one command-shaped control, and it only re-reads', async () => {
+    mount({});
+    await screen.findByText('최근 상태를 조회했습니다');
+    // 조회 belongs to the session fallback box and is absent while the listing
+    // fills the dropdown. Everything else selects rather than acts.
+    expect(screen.getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['새로고침']);
+  });
+
+  it('renders producer fixture values, preserving false and zero', async () => {
+    mount({});
+    await screen.findByText('최근 상태를 조회했습니다');
+    const internals = document.querySelector('details') as HTMLElement;
+    expect(within(internals).getByRole('region', { name: '위험 원장과 증거' })).toHaveTextContent('0');
+    expect(within(internals).getByRole('region', { name: '릴리스 상태' })).toHaveTextContent('거부');
+  });
+
   it('renders whole null groups as unknown, including alert counts', async () => {
     mount({ projection: unknown });
     await screen.findByText('최근 상태를 조회했습니다');
-    expect(screen.getAllByText('알 수 없음').length).toBeGreaterThan(10);
-    expect(within(screen.getByRole('region', { name: '백업과 알림' })).queryByText('없음')).not.toBeInTheDocument();
+    const internals = document.querySelector('details') as HTMLElement;
+    expect(within(internals).getAllByText('알 수 없음').length).toBeGreaterThan(10);
+    expect(
+      within(within(internals).getByRole('region', { name: '백업과 알림' })).queryByText('없음'),
+    ).not.toBeInTheDocument();
   });
+
   it.each([
     ['projection file absent', '아직 상태 파일이 없습니다'],
     ['invalid json: /private/secret-path', '상태 데이터 형식 오류'],
@@ -83,6 +187,7 @@ describe('TOS read-only page', () => {
     expect(screen.queryByText(/private/)).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: '릴리스 상태' })).not.toBeInTheDocument();
   });
+
   it('reports authentication failure without treating it as missing data', async () => {
     const error = new AxiosError('Unauthorized');
     error.response = { status: 401 } as AxiosError['response'];
@@ -90,25 +195,30 @@ describe('TOS read-only page', () => {
     mount();
     expect(await screen.findByText('조회 인증을 확인해 주세요')).toBeInTheDocument();
   });
+
   it('marks retained data as a connection error after a failed refetch', async () => {
     mount({});
     await screen.findByText('최근 상태를 조회했습니다');
     vi.mocked(tosApi.getProjection).mockRejectedValue(new Error('offline'));
     await act(() => client.refetchQueries({ queryKey: ['tos-operator-projection'] }));
     expect(await screen.findByText('상태 조회 연결 오류')).toBeInTheDocument();
-    expect(screen.getByText(/마지막 조회 기록/)).toBeInTheDocument();
   });
+
   it('shows an absent reason list as unknown, never as none', async () => {
     mount({ projection: { ...fixture, recovery: { readiness_verdict: 'READY', reasons: null } } });
+    await screen.findByText('최근 상태를 조회했습니다');
     const card = within(await screen.findByRole('region', { name: '복구와 실행 상태' }));
     expect(card.getByText('알 수 없음')).toBeInTheDocument();
     expect(card.queryByText('없음')).not.toBeInTheDocument();
   });
+
   it('still shows an empty reason list as none', async () => {
     mount({ projection: { ...fixture, recovery: { readiness_verdict: 'READY', reasons: [] } } });
+    await screen.findByText('최근 상태를 조회했습니다');
     const card = within(await screen.findByRole('region', { name: '복구와 실행 상태' }));
     expect(card.getByText('없음')).toBeInTheDocument();
   });
+
   it.each([
     ['accepted document', (p: TosProjection) => p],
     ['future schema version', (p: TosProjection) => ({ ...p, schema_version: 2 })],
@@ -116,11 +226,13 @@ describe('TOS read-only page', () => {
   ])('renders fact cards exactly when the shared predicate accepts: %s', async (_name, mutate) => {
     const projection = mutate(fixture);
     mount({ projection });
-    await screen.findByRole('status').catch(() => screen.findByRole('alert'));
     await waitFor(() =>
-      expect(screen.queryByRole('region', { name: '릴리스 상태' }) !== null)
-        .toBe(isAcceptedProjection(projection)));
+      expect(screen.queryByRole('region', { name: '릴리스 상태' }) !== null).toBe(
+        isAcceptedProjection(projection),
+      ),
+    );
   });
+
   it.each([
     ['refuses the document', false, false],
     ['accepts the document', true, true],
@@ -132,6 +244,7 @@ describe('TOS read-only page', () => {
     await screen.findByText('최근 상태를 조회했습니다');
     expect(screen.queryByRole('region', { name: '릴리스 상태' }) !== null).toBe(rendered);
   });
+
   it('ages into stale while the next request is still pending', async () => {
     mount({ age_seconds: config.staleAfterSeconds - 1 });
     await screen.findByText('최근 상태를 조회했습니다');
@@ -139,7 +252,9 @@ describe('TOS read-only page', () => {
     const started = performance.now();
     vi.spyOn(performance, 'now').mockReturnValue(started + 2000);
     vi.mocked(tosApi.getProjection).mockImplementation(() => new Promise(() => {}));
-    await waitFor(() => expect(screen.getByText('오래된 상태')).toBeInTheDocument(), { timeout: config.clockTickMs * 3 });
+    await waitFor(() => expect(screen.getByText('오래된 상태')).toBeInTheDocument(), {
+      timeout: config.clockTickMs * 3,
+    });
     vi.restoreAllMocks();
   });
 });

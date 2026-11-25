@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import { AxiosError } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SymbolsPanel from './SymbolsPanel';
+import { useSymbolsDocument } from './queries';
 import {
   tosSymbolsApi,
   type TosSymbolRow,
@@ -136,11 +137,20 @@ function response(overrides: Partial<TosSymbolsResponse> = {}): TosSymbolsRespon
   return { available: true, reason: null, age_seconds: 12, document: fixture(), ...overrides };
 }
 
+/**
+ * The panel is presentational — the page owns the query so the status strip and
+ * the tenant cards read the same document. This harness calls the real hook, so
+ * the suite still exercises the acceptance and banner paths end to end.
+ */
+function Harness() {
+  return <SymbolsPanel read={useSymbolsDocument()} />;
+}
+
 function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <SymbolsPanel />
+      <Harness />
     </QueryClientProvider>,
   );
 }
@@ -241,9 +251,11 @@ describe('SymbolsPanel', () => {
     mocked.mockResolvedValue(response());
     renderPanel();
     await screen.findByRole('rowheader', { name: '005930' });
-    const row = within(rowFor('005930'));
-    expect(row.getByText(/STAGE_DENIED · 15:18/)).toBeInTheDocument();
-    expect(row.getByText(/보류 TIME_NOT_ADMITTED · 14:33/)).toBeInTheDocument();
+    const row = rowFor('005930');
+    // The codes are replaced by their plain-Korean names; the codes themselves
+    // stay reachable through each term's own description.
+    expect(row).toHaveTextContent('단계에서 거절 · 15:18 · 주문서 작성');
+    expect(row).toHaveTextContent('보류 시간 미인정 · 14:33');
   });
 
   it('marks a tenant that did not run today instead of dropping its row', async () => {
@@ -293,7 +305,7 @@ describe('SymbolsPanel', () => {
     );
     renderPanel();
     const banner = await screen.findByRole('alert');
-    expect(banner).toHaveTextContent('아직 종목 현황이 내보내지지 않았습니다');
+    expect(banner).toHaveTextContent('아직 거래 현황이 내보내지지 않았습니다');
     expect(banner).toHaveTextContent('sts tos export-symbols');
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
@@ -304,7 +316,7 @@ describe('SymbolsPanel', () => {
     );
     renderPanel();
     const banner = await screen.findByRole('alert');
-    expect(banner).toHaveTextContent('종목 현황 파일을 열지 못했습니다');
+    expect(banner).toHaveTextContent('거래 현황 파일을 열지 못했습니다');
     expect(banner).toHaveTextContent('접근 권한');
   });
 
@@ -332,6 +344,24 @@ describe('SymbolsPanel', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     // Banner and body must agree: a rejected document never renders rows.
     expect(screen.queryByRole('rowheader', { name: '005930' })).not.toBeInTheDocument();
+  });
+
+  it('says why the futures tenants are not in the table at all', async () => {
+    mocked.mockResolvedValue(response());
+    renderPanel();
+    await screen.findByRole('rowheader', { name: '005930' });
+    expect(screen.getByText(/선물 tenant 는 주문 없음/)).toBeInTheDocument();
+    expect(screen.getByText(/선물 tenant 는 판단만 기록하므로 체결도 보유도 없고/))
+      .toBeInTheDocument();
+  });
+
+  it('omits PnL rather than showing an empty column for it', async () => {
+    // The document carries no PnL. A 「—」 column would be read as 「0」 inside a
+    // week; it arrives when the exporter does.
+    mocked.mockResolvedValue(response());
+    renderPanel();
+    await screen.findByRole('rowheader', { name: '005930' });
+    expect(screen.queryByRole('columnheader', { name: /손익|PnL/ })).not.toBeInTheDocument();
   });
 
   it('says so when no tenant is declared at all', async () => {
