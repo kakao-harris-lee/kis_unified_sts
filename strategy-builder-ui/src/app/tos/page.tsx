@@ -84,9 +84,12 @@ export default function TosPage() {
   const sessions = useSessionsList();
   const symbols = useSymbolsDocument();
   const bars = useBarsDocument(session);
-  // Which card is highlighted: the id the route RESOLVED, so `latest` marks the
-  // tenant actually on screen instead of leaving every card unselected.
-  const active = bars.response?.session ?? session;
+  // Which card is highlighted. A session the operator named is itself, so the
+  // card responds to the click rather than to the megabyte that follows it;
+  // only the `latest` sentinel waits for the route to say which session it
+  // resolved, which is what keeps a card selected on first paint.
+  const active =
+    session === LATEST_SESSION ? (bars.response?.session ?? session) : session;
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 text-slate-900 dark:text-slate-100">
