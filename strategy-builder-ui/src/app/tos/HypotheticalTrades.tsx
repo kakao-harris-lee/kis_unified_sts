@@ -1,10 +1,27 @@
 "use client";
 
-import { hasHypotheticalPnl, type TosBarsDocument } from '@/lib/dashboard/tosBars';
+import {
+  excludedDecisionCount,
+  hasHypotheticalPnl,
+  hypotheticalError,
+  type TosBarsDocument,
+} from '@/lib/dashboard/tosBars';
 import { glossaryLabel } from '@/lib/dashboard/tosGlossary';
 import { PNL_CLASSES, PNL_WORDS, countLabel, pnlFigure, pointsLabel } from '@/lib/dashboard/tosMoney';
-import { Badge } from './marks';
+import { AttentionMark, Badge } from './marks';
 import Term from './Term';
+
+/**
+ * What a session with no countable trade should say.
+ *
+ * «진입 없음» is a claim that the strategy never decided. It is only true when
+ * nothing was left out either — a session whose decisions were all skipped or
+ * unpriced DID decide, and saying it did not would hide exactly the thing the
+ * operator came to see.
+ */
+export function emptyTradesPhrase(excluded: number): string {
+  return excluded > 0 ? `셀 수 있는 거래 없음 (뺀 판단 ${excluded}건)` : '진입 없음';
+}
 
 /** A would-have-been figure. Outlined, never beside a realized one. */
 function Money({ krw }: { krw: string | null | undefined }) {
@@ -46,13 +63,34 @@ function points(value: string | null | undefined): string {
  * money number from a chart.
  */
 export default function HypotheticalTrades({ document }: { document: TosBarsDocument | null }) {
-  if (!hasHypotheticalPnl(document)) return null;
+  if (!hasHypotheticalPnl(document)) {
+    // No figure, but the exporter said why: show the reason rather than an
+    // empty space that reads as «this tenant decided nothing».
+    const error = hypotheticalError(document);
+    if (!error) return null;
+    return (
+      <div
+        role="group"
+        aria-label="가상 거래"
+        className="min-w-0 space-y-2 rounded-lg border border-dashed border-slate-400 p-3 dark:border-slate-500"
+      >
+        <h4 className="text-sm font-semibold">
+          <Term name="hypothetical_pnl">가상 손익(체결 가정)</Term>
+        </h4>
+        <p className="text-sm">
+          <AttentionMark>계산하지 못했습니다</AttentionMark>
+        </p>
+        <p className="text-xs text-slate-600 dark:text-slate-300">{error}</p>
+      </div>
+    );
+  }
   const block = document?.hypothetical_pnl;
   const totals = block?.totals;
   const trades = block?.trades ?? [];
   const skipped = block?.skipped_decisions ?? [];
   const unpriced = block?.unpriced_decisions ?? [];
   const assumptions = block?.assumptions ?? [];
+  const excluded = excludedDecisionCount(block);
 
   // Reasons, counted — «엔진 판단이 아님 1 · 시험 진입 3» says more than «4건».
   const byReason = new Map<string, number>();
@@ -95,7 +133,11 @@ export default function HypotheticalTrades({ document }: { document: TosBarsDocu
       </p>
 
       {trades.length === 0 ? (
-        <p className="text-sm font-medium">진입 없음 — 이 세션은 진입 판단을 내지 않았습니다.</p>
+        <p className="text-sm font-medium">
+          {excluded > 0
+            ? `${emptyTradesPhrase(excluded)} — 판단은 있었으나 아래 사유로 합계에서 뺐습니다.`
+            : '진입 없음 — 이 세션은 진입 판단을 내지 않았습니다.'}
+        </p>
       ) : (
         <div className="min-w-0 overflow-x-auto">
           <table className="w-full min-w-[44rem] text-left text-sm">
@@ -154,7 +196,7 @@ export default function HypotheticalTrades({ document }: { document: TosBarsDocu
       <p className="flex flex-wrap items-baseline gap-x-3 text-sm">
         <span className="text-slate-500 dark:text-slate-400">합계</span>
         {totals?.trades === 0 || totals?.hypothetical_pnl_krw == null ? (
-          <span className="font-medium">진입 없음</span>
+          <span className="font-medium">{emptyTradesPhrase(excluded)}</span>
         ) : (
           <>
             <span className="tabular-nums font-medium">{pointsLabel(totals?.points)}</span>

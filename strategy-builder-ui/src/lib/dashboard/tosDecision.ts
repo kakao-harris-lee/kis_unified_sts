@@ -721,6 +721,14 @@ export interface ProbeTally {
   passed: number;
   /** Where the rest stopped, commonest first. */
   gates: { code: string; label: string; count: number }[];
+  /**
+   * The probe rule ids that actually fired, first appearance first.
+   *
+   * The caller names THESE rather than a literal: which rule is the probe is
+   * the document's assertion (`explain.probe`), so a tenant whose probe is
+   * named something else must not be captioned with 005930's rule id.
+   */
+  ruleIds: string[];
 }
 
 /**
@@ -736,11 +744,14 @@ export function probeTally(
   isProbe: ProbePredicate = isProbeRule,
 ): ProbeTally {
   const counts = new Map<string, { label: string; count: number }>();
+  const ruleIds: string[] = [];
   let fired = 0;
   let passed = 0;
   for (const bar of bars ?? []) {
     if (!isProbe(bar.decision_rule_id)) continue;
     fired += 1;
+    const ruleId = bar.decision_rule_id;
+    if (ruleId != null && !ruleIds.includes(ruleId)) ruleIds.push(ruleId);
     const gate = barGate(bar);
     if (!gate) {
       passed += 1;
@@ -754,7 +765,7 @@ export function probeTally(
   const gates = [...counts.entries()]
     .map(([code, value]) => ({ code, label: value.label, count: value.count }))
     .sort((a, b) => b.count - a.count);
-  return { fired, passed, gates };
+  return { fired, passed, gates, ruleIds };
 }
 
 export interface RuleSentence {

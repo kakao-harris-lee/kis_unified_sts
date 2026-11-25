@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TenantCards from './TenantCards';
 import type { SessionsRead, SymbolsRead } from './queries';
-import { tosBarsApi, type TosSessionEntry } from '@/lib/dashboard/tosBars';
+import { tosBarsApi, type TosBarsDocument, type TosSessionEntry } from '@/lib/dashboard/tosBars';
 import type { TosSymbolsDocument } from '@/lib/dashboard/tosSymbols';
 import {
   futuresBarsDocument,
@@ -234,21 +234,70 @@ describe('tenant 카드', () => {
     expect(futures.getByText(/가상 손익은 실현 손익과\s*합산하지 않습니다/)).toBeInTheDocument();
   });
 
-  it('says 진입 없음 — never 0원 — for a session that decided nothing', async () => {
+  /** Serve one bars document for every session in this test. */
+  function serveBars(mutate: (document: TosBarsDocument) => void) {
     vi.mocked(tosBarsApi.getBars).mockImplementation(async (session: string) => {
       const document = futuresBarsDocument();
+      mutate(document);
+      return { available: true, reason: null, age_seconds: 1, session, document };
+    });
+  }
+
+  it('says 진입 없음 — never 0원 — when nothing was decided at all', async () => {
+    serveBars((document) => {
       document.hypothetical_pnl = {
         ...document.hypothetical_pnl,
         trades: [],
         totals: { trades: 0, wins: 0, points: null, hypothetical_pnl_krw: null, forced_closes: 0 },
+        skipped_decisions: [],
+        unpriced_decisions: [],
       };
-      return { available: true, reason: null, age_seconds: 1, session, document };
     });
     mount();
     await screen.findByText('선물 LONG');
     const futures = within(card('선물 LONG'));
     expect(await futures.findByText('진입 없음')).toBeInTheDocument();
     expect(futures.queryByText('0원')).not.toBeInTheDocument();
+  });
+
+  it('does not call a session with excluded decisions «진입 없음»', async () => {
+    // It DID decide; the decisions were left out of the total. Saying it
+    // decided nothing hides exactly what the operator came to see.
+    serveBars((document) => {
+      document.hypothetical_pnl = {
+        ...document.hypothetical_pnl,
+        trades: [],
+        totals: { trades: 0, wins: 0, points: null, hypothetical_pnl_krw: null, forced_closes: 0 },
+      };
+    });
+    mount();
+    await screen.findByText('선물 LONG');
+    const futures = within(card('선물 LONG'));
+    expect(await futures.findByText('셀 수 있는 거래 없음 (뺀 판단 1건)')).toBeInTheDocument();
+    expect(futures.queryByText('진입 없음')).not.toBeInTheDocument();
+  });
+
+  it('shows why the figure is missing rather than an empty card', async () => {
+    serveBars((document) => {
+      document.hypothetical_pnl = null;
+      document.hypothetical_pnl_error = 'contract multiplier unknown for A05612';
+    });
+    mount();
+    await screen.findByText('선물 LONG');
+    const futures = within(card('선물 LONG'));
+    expect(await futures.findByText(/계산하지 못함/)).toBeInTheDocument();
+    expect(futures.getByText('contract multiplier unknown for A05612')).toBeInTheDocument();
+  });
+
+  it('reads «판단 전용» off the row’s own flag, not off the session name', async () => {
+    // The shared predicate ④ uses. A stock-named session the exporter marks
+    // decision-only must lose its fill cells here too.
+    const flagged = symbolsDocument();
+    const stockRow = flagged.symbols!.find((row) => row.session?.name === 'stock-r1-20261125')!;
+    stockRow.decision_only = true;
+    mount({}, symbols(flagged));
+    await screen.findByText('주식 005930');
+    expect(within(card('주식 005930')).queryByText('매수')).not.toBeInTheDocument();
   });
 
   it('reports the selection without acting on anything', async () => {

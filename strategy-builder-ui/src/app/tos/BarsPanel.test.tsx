@@ -363,3 +363,51 @@ describe('가상 거래', () => {
     for (const mark of hollow) expect(mark.getAttribute('fill')).toBe('none');
   });
 });
+
+describe('가상 거래 — 셀 수 없는 세션', () => {
+  it('does not claim a session with excluded decisions decided nothing', () => {
+    const document = futuresBarsDocument();
+    document.hypothetical_pnl = {
+      ...document.hypothetical_pnl,
+      trades: [],
+      totals: { trades: 0, wins: 0, points: null, hypothetical_pnl_krw: null, forced_closes: 0 },
+    };
+    mount({ document });
+    const block = within(screen.getByRole('group', { name: '가상 거래' }));
+    // Once in the body line, once in the totals line.
+    expect(block.getAllByText(/셀 수 있는 거래 없음 \(뺀 판단 1건\)/)).toHaveLength(2);
+    expect(block.queryByText(/이 세션은 진입 판단을 내지 않았습니다/)).not.toBeInTheDocument();
+  });
+
+  it('keeps 진입 없음 when nothing was decided and nothing was excluded', () => {
+    const document = futuresBarsDocument();
+    document.hypothetical_pnl = {
+      ...document.hypothetical_pnl,
+      trades: [],
+      totals: { trades: 0, wins: 0, points: null, hypothetical_pnl_krw: null, forced_closes: 0 },
+      skipped_decisions: [],
+      unpriced_decisions: [],
+    };
+    mount({ document });
+    const block = within(screen.getByRole('group', { name: '가상 거래' }));
+    expect(block.getByText(/진입 없음 — 이 세션은 진입 판단을 내지 않았습니다/)).toBeInTheDocument();
+  });
+
+  it('renders the exporter’s reason when the figure could not be computed', () => {
+    const document = futuresBarsDocument();
+    document.hypothetical_pnl = null;
+    document.hypothetical_pnl_error = 'contract multiplier unknown for A05612';
+    mount({ document });
+    const block = within(screen.getByRole('group', { name: '가상 거래' }));
+    expect(block.getByText('계산하지 못했습니다')).toBeInTheDocument();
+    expect(block.getByText('contract multiplier unknown for A05612')).toBeInTheDocument();
+  });
+
+  it('still renders nothing for a tenant that has no hypothetical at all', () => {
+    const document = futuresBarsDocument();
+    document.hypothetical_pnl = null;
+    document.hypothetical_pnl_error = null;
+    mount({ document });
+    expect(screen.queryByRole('group', { name: '가상 거래' })).not.toBeInTheDocument();
+  });
+});

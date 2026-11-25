@@ -2,8 +2,10 @@
 
 import { useQueries } from '@tanstack/react-query';
 import {
+  excludedDecisionCount,
   groupSessionsByDate,
   hasHypotheticalPnl,
+  hypotheticalError,
   isAcceptedBarsDocument,
   sessionKindLabel,
   type TosBarsDocument,
@@ -26,8 +28,14 @@ import {
   pnlFigure,
   pointsLabel,
 } from '@/lib/dashboard/tosMoney';
-import { sessionPhase, type TosSymbolPnl, type TosSymbolRow } from '@/lib/dashboard/tosSymbols';
-import { AsOf, Badge, ageLabel, type Tone } from './marks';
+import {
+  isDecisionOnlyRow,
+  sessionPhase,
+  type TosSymbolPnl,
+  type TosSymbolRow,
+} from '@/lib/dashboard/tosSymbols';
+import { emptyTradesPhrase } from './HypotheticalTrades';
+import { AsOf, AttentionMark, Badge, ageLabel, type Tone } from './marks';
 import Term from './Term';
 import { barsQueryOptions, type SessionsRead, type SymbolsRead } from './queries';
 
@@ -164,10 +172,24 @@ function TodayPnl({ pnl }: { pnl: TosSymbolPnl | null | undefined }) {
  * «0원», which would read as «traded and broke even».
  */
 function HypotheticalPnl({ document }: { document: TosBarsDocument | null }) {
-  if (!hasHypotheticalPnl(document)) return null;
+  if (!hasHypotheticalPnl(document)) {
+    // Same rule as the ③ block: a reason beats an empty space, which an
+    // operator reads as «this tenant decided nothing».
+    const error = hypotheticalError(document);
+    if (!error) return null;
+    return (
+      <p className="mt-3 text-xs">
+        <AttentionMark>
+          <Term name="hypothetical_pnl">가상 손익</Term> 계산하지 못함
+        </AttentionMark>
+        <span className="mt-1 block text-slate-600 dark:text-slate-300">{error}</span>
+      </p>
+    );
+  }
   const block = document?.hypothetical_pnl;
   const totals = block?.totals;
   const assumptions = (block?.assumptions ?? []).map((code) => glossaryLabel(code)).join(' · ');
+  const excluded = excludedDecisionCount(block);
   const empty = totals == null || totals.trades === 0 || totals.hypothetical_pnl_krw == null;
   return (
     <div className="mt-3">
@@ -181,7 +203,7 @@ function HypotheticalPnl({ document }: { document: TosBarsDocument | null }) {
           <Term name="hypothetical_pnl">가상 손익(체결 가정)</Term>
         </span>
         {empty ? (
-          <span className="font-medium">진입 없음</span>
+          <span className="font-medium">{emptyTradesPhrase(excluded)}</span>
         ) : (
           <>
             <span className="tabular-nums font-medium">{pointsLabel(totals?.points)}</span>
@@ -233,7 +255,11 @@ interface CardProps {
  * card would answer a question nobody asked.
  */
 function TenantCard({ entry, row, document, loading, selected, onSelect }: CardProps) {
-  const futures = entry.kind === 'futures';
+  // The same predicate ④ uses, flag first — one answer to «can this tenant
+  // trade at all», so a card and its row can never disagree. The session's
+  // kind is the fallback only while the per-symbol document has no row for it
+  // (a session exported before the tenant appeared in that document).
+  const futures = row != null ? isDecisionOnlyRow(row) : (document?.decision_only ?? entry.kind === 'futures');
   const bars = document?.bars ?? null;
   // The document's own probe flags when it carries them — see probePredicate.
   const isProbe = probePredicate(document);
@@ -277,10 +303,12 @@ function TenantCard({ entry, row, document, loading, selected, onSelect }: CardP
           )}
           {/* Both numbers, always: the probe fired 325 times on 005930 and one
               order left. 「325회」 alone reads as 325 trades. */}
+          {/* The rule id that actually fired, from the tally — not a literal:
+              which rule is the probe is the document's assertion, and a tenant
+              whose probe is named differently must not wear 005930's id. */}
           {probes.fired > 0 && (
-            <Badge tone="warn" title="R4-M2-PROBE-ENTRY-LONG">
-              <Term name="R4-M2-PROBE-ENTRY-LONG" /> 발화 {probes.fired}봉 · 게이트 통과{' '}
-              {probes.passed}
+            <Badge tone="warn" title={probes.ruleIds.join(' · ')}>
+              <Term name={probes.ruleIds[0]} /> 발화 {probes.fired}봉 · 게이트 통과 {probes.passed}
             </Badge>
           )}
           {/* Orders the FIFO could not account for. They are NOT in the PnL

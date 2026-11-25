@@ -18,6 +18,7 @@ import {
   type TosSymbolSide,
   type TosSymbolUnresolvedAttempt,
 } from '@/lib/dashboard/tosSymbols';
+import { glossaryLabel } from '@/lib/dashboard/tosGlossary';
 import {
   PNL_CLASSES,
   PNL_WORDS,
@@ -311,6 +312,11 @@ function TotalsRow({ rows }: { rows: TosSymbolRow[] }) {
   const total = known ? figures.reduce((sum, figure) => sum + (figure?.amount ?? 0), 0) : null;
   const trips = rows.map((row) => row.pnl?.today?.closed_round_trips);
   const wins = rows.map((row) => row.pnl?.today?.wins);
+  // A total built on two different price bases is a different claim from one
+  // built on the broker's fills alone, so the row says which it is rather than
+  // inheriting the first row's basis silently.
+  const bases = [...new Set(rows.map((row) => row.pnl?.today?.pnl_basis ?? null))];
+  const mixedBasis = bases.length > 1;
   const sum = (values: (number | null | undefined)[]) =>
     values.every((value) => value != null)
       ? (values as number[]).reduce((a, b) => a + b, 0)
@@ -328,6 +334,12 @@ function TotalsRow({ rows }: { rows: TosSymbolRow[] }) {
       </td>
       <td className="py-3 pr-3">
         <Money krw={total == null ? null : String(total)} />
+        {mixedBasis && (
+          <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">
+            <Term name="MIXED">기준 섞임</Term>{' '}
+            {bases.map((basis) => (basis == null ? '기준 없음' : glossaryLabel(basis))).join(' · ')}
+          </span>
+        )}
       </td>
       <td className="py-3 pr-3 text-xs text-slate-500 dark:text-slate-400">—</td>
       <td className="py-3 pr-3 tabular-nums">{countLabel(sum(trips))}</td>

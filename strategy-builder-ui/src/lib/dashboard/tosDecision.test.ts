@@ -359,7 +359,13 @@ describe('the probe, counted honestly', () => {
   });
 
   it('reports nothing for a tenant that runs no probe', () => {
-    expect(probeTally(bars)).toEqual({ fired: 0, passed: 0, gates: [] });
+    expect(probeTally(bars)).toEqual({ fired: 0, passed: 0, gates: [], ruleIds: [] });
+  });
+
+  it('names the rule ids it actually counted, so no caller hardcodes one', () => {
+    // The probe rule id is tenant content; a caption built from a literal
+    // would put 005930's id on another tenant's card.
+    expect(probeTally(stock.bars!).ruleIds).toEqual(['R4-M2-PROBE-ENTRY-LONG']);
   });
 });
 

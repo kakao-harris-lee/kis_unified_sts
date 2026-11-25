@@ -483,6 +483,40 @@ describe('SymbolsPanel', () => {
     expect(totals.getByText(/주식 tenant 3개/)).toBeInTheDocument();
   });
 
+  it('says so when the summed rows do not share one price basis', async () => {
+    // 005930 is priced on the broker's fills and 005380 on a sealed limit:
+    // a total that inherited the first row's basis would overstate what is
+    // known about the other.
+    const quiet = idle();
+    quiet.pnl = {
+      today: { pnl_krw: '0', pnl_basis: 'EXECUTION', closed_round_trips: 0, wins: 0 },
+      cumulative: { pnl_krw: '0', pnl_basis: 'EXECUTION', closed_round_trips: 0, wins: 0 },
+      unresolved: { count: 0, attempts: [] },
+    };
+    mocked.mockResolvedValue(
+      response({ document: fixture({ symbols: [traded(), quiet, holding()] }) }),
+    );
+    renderPanel();
+    await screen.findByRole('rowheader', { name: /005930/ });
+    const totals = within(screen.getByRole('rowheader', { name: /합계/ }).closest('tr')!);
+    expect(totals.getByText(/기준 섞임/)).toBeInTheDocument();
+    expect(totals.getByText(/체결가 기준 · 지정가 기준/)).toBeInTheDocument();
+  });
+
+  it('says nothing about the basis when every summed row shares one', async () => {
+    const quiet = idle();
+    quiet.pnl = {
+      today: { pnl_krw: '0', pnl_basis: 'EXECUTION', closed_round_trips: 0, wins: 0 },
+      cumulative: { pnl_krw: '0', pnl_basis: 'EXECUTION', closed_round_trips: 0, wins: 0 },
+      unresolved: { count: 0, attempts: [] },
+    };
+    mocked.mockResolvedValue(response({ document: fixture({ symbols: [traded(), quiet] }) }));
+    renderPanel();
+    await screen.findByRole('rowheader', { name: /005930/ });
+    const totals = within(screen.getByRole('rowheader', { name: /합계/ }).closest('tr')!);
+    expect(totals.queryByText(/기준 섞임/)).not.toBeInTheDocument();
+  });
+
   it('lists the orders the PnL could not account for, outside it', async () => {
     mocked.mockResolvedValue(response());
     renderPanel();
