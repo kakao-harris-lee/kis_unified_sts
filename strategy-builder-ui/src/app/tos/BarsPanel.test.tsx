@@ -159,9 +159,11 @@ describe('판단 근거 패널', () => {
         document,
       },
     });
-    const summary = screen.getByText(/봉 중 게이트 통과/).closest('p') as HTMLElement;
-    expect(summary).toHaveTextContent('2봉 중 게이트 통과 1');
-    expect(summary).toHaveTextContent('독립 승인 — 단계 결과 모름 1');
+    const summary = screen.getByText(/시험 진입 2봉/).closest('p') as HTMLElement;
+    // Firings and the orders that left are different numbers, on one line, for
+    // every kind the session produced.
+    expect(summary).toHaveTextContent('시험 진입 2봉 (게이트 통과 1)');
+    expect(summary).toHaveTextContent('청산 신호 1봉 (게이트 통과 0)');
   });
 
   it('names the window the document covers', () => {

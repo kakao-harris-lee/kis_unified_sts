@@ -21,6 +21,8 @@ interface EventRun {
   firstTime: string | null;
   lastTime: string | null;
   count: number;
+  /** The decision of the first bar of the run — a close denies differently. */
+  decisionKind: string | null;
 }
 
 /**
@@ -58,6 +60,7 @@ export function eventRuns(bars: TosBarsBar[]): EventRun[] {
       firstTime: bar.time_kst ?? null,
       lastTime: bar.time_kst ?? null,
       count: 1,
+      decisionKind: bar.decision_kind ?? null,
     });
   }
   return runs;
@@ -74,7 +77,7 @@ export function eventRuns(bars: TosBarsBar[]): EventRun[] {
  */
 /** One stop, led by what it meant and followed by the evidence's own words. */
 function EventRow({ run }: { run: EventRun }) {
-  const explanation = haltExplanation(run.reason, run.step);
+  const explanation = haltExplanation(run.reason, run.step, run.detail, run.decisionKind);
   return (
     <li className="min-w-0 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

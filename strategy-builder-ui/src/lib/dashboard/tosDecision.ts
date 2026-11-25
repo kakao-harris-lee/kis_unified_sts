@@ -478,6 +478,18 @@ export interface TimelineEntry {
 }
 
 /**
+ * Whether a row is one the operator came here for.
+ *
+ * Entries, exits and probes are what the session DID; «신호 없음», withheld and
+ * unjoined are the quiet background between them. Only the background may ever
+ * be trimmed, and even then only with its count stated — a trade that happened
+ * must never be unreachable on a page whose job is to explain the day.
+ */
+export function isSignalVerdict(kind: VerdictKind): boolean {
+  return kind === 'entry' || kind === 'exit' || kind === 'probe';
+}
+
+/**
  * The session as a list of CHANGES, not of bars.
  *
  * A 380-bar session with four distinct verdicts is four lines here. The run
@@ -498,6 +510,97 @@ export function verdictTimeline(bars: TosBarsBar[]): TimelineEntry[] {
     entries.push({ index, timeKst: bar.time_kst ?? null, verdict, run: 1 });
   });
   return entries;
+}
+
+export interface SignalCount {
+  /** Bars whose decision was of this kind. */
+  bars: number;
+  /** Of those, the ones no kernel gate stopped. */
+  passed: number;
+}
+
+export interface TimelineSummary {
+  entry: SignalCount;
+  exit: SignalCount;
+  probe: SignalCount;
+  /** How many stretches of «신호 없음» the day had. */
+  quietRuns: number;
+  withheldRuns: number;
+  unjoinedRuns: number;
+}
+
+/**
+ * What the session did, in counts, before a single row is read.
+ *
+ * Signals are counted in BARS (a collapsed run of three identical gated exits
+ * is three), the quiet stretches in runs — which is how an operator says it:
+ * «진입 신호 6번, 그중 1번만 나갔고, 그 사이 조용한 구간이 40개».
+ */
+export function timelineSummary(entries: TimelineEntry[]): TimelineSummary {
+  const summary: TimelineSummary = {
+    entry: { bars: 0, passed: 0 },
+    exit: { bars: 0, passed: 0 },
+    probe: { bars: 0, passed: 0 },
+    quietRuns: 0,
+    withheldRuns: 0,
+    unjoinedRuns: 0,
+  };
+  for (const row of entries) {
+    const { kind, gate } = row.verdict;
+    if (kind === 'entry' || kind === 'exit' || kind === 'probe') {
+      summary[kind].bars += row.run;
+      if (!gate) summary[kind].passed += row.run;
+    } else if (kind === 'none') summary.quietRuns += 1;
+    else if (kind === 'withheld') summary.withheldRuns += 1;
+    else summary.unjoinedRuns += 1;
+  }
+  return summary;
+}
+
+export interface OmittedRows {
+  kind: VerdictKind;
+  count: number;
+}
+
+export interface TimelinePlan {
+  /** Every row the page will render, in the document's order. */
+  shown: TimelineEntry[];
+  /** The quiet rows left out, by kind, so the page can name them exactly. */
+  omitted: OmittedRows[];
+}
+
+/**
+ * Which rows to render, when there are more than a page can hold.
+ *
+ * **Every signal row is kept, always.** The cap applies only to the quiet
+ * background, and what it drops is reported by kind rather than as a total —
+ * «신호 없음 31구간을 접었습니다» is actionable, «65줄 생략» is not.
+ *
+ * This replaces a flat cap that dropped rows off the end of the list. On
+ * `stock-005380-r1-20261125` that cap fell at row 40 and the day's actual
+ * entry (11:18, ungated) was row 41: the page showed the fill in 거래 현황 and
+ * refused to show the decision behind it, even under «더 보기».
+ */
+export function planTimeline(entries: TimelineEntry[], quietMax: number): TimelinePlan {
+  const shown: TimelineEntry[] = [];
+  const dropped = new Map<VerdictKind, number>();
+  let quietKept = 0;
+  for (const row of entries) {
+    if (isSignalVerdict(row.verdict.kind)) {
+      shown.push(row);
+      continue;
+    }
+    if (quietKept < quietMax) {
+      shown.push(row);
+      quietKept += 1;
+      continue;
+    }
+    dropped.set(row.verdict.kind, (dropped.get(row.verdict.kind) ?? 0) + 1);
+  }
+  return {
+    shown,
+    omitted: [...dropped.entries()].map(([kind, count]) => ({ kind, count })),
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,14 @@ interface StatusStripProps {
   projection: TosProjection | null;
   projectionAgeSeconds: number | null;
   symbols: SymbolsRead;
+  /**
+   * The page's own wording for a projection state that is not «recent».
+   *
+   * It used to head a full-width banner; now that a stale paper cell no longer
+   * earns one, the specific sentence («아직 상태 파일이 없습니다», …) lands here
+   * so the operator still sees WHICH kind of absence it is.
+   */
+  stateLabel: string;
 }
 
 interface Fact {
@@ -49,6 +57,7 @@ export default function StatusStrip({
   projection,
   projectionAgeSeconds,
   symbols,
+  stateLabel,
 }: StatusStripProps) {
   const facts: Fact[] = [];
 
@@ -79,7 +88,7 @@ export default function StatusStrip({
             ? `${config.staleAfterSeconds}초 넘게 새 상태 없음`
             : projectionState === 'loading'
               ? '불러오는 중'
-              : '상태 확인 불가',
+              : stateLabel,
     tone: projectionTone,
   });
 

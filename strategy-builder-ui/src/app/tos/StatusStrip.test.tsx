@@ -29,6 +29,7 @@ function mount(
       projection={overrides === null ? null : { ...projection, ...overrides }}
       projectionAgeSeconds={3}
       symbols={symbolsRead}
+      stateLabel="아직 상태 파일이 없습니다"
     />,
   );
 }

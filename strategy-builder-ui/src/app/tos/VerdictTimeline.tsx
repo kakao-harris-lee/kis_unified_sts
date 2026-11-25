@@ -1,12 +1,17 @@
 "use client";
 
+import { useState } from 'react';
 import config from '@/config/tos-control-plane.json';
 import type { TosBarsBar } from '@/lib/dashboard/tosBars';
 import {
-  probeTally,
+  isSignalVerdict,
+  planTimeline,
+  timelineSummary,
   verdictTimeline,
   type BarVerdict,
+  type SignalCount,
   type TimelineEntry,
+  type VerdictKind,
 } from '@/lib/dashboard/tosDecision';
 import { glossaryLabel } from '@/lib/dashboard/tosGlossary';
 import { Badge, GateMark, type Tone } from './marks';
@@ -27,6 +32,15 @@ const VERDICT_TONES: Record<BarVerdict['kind'], Tone> = {
   unjoined: 'warn',
 };
 
+const OMITTED_LABELS: Record<VerdictKind, string> = {
+  entry: '진입',
+  exit: '청산',
+  probe: '시험 진입',
+  none: '신호 없음',
+  withheld: '평가 보류',
+  unjoined: '대조 불가',
+};
+
 /** The sentence a row says, including the explicit non-trade case. */
 function sentence(verdict: BarVerdict): string {
   if (verdict.kind === 'none') {
@@ -42,15 +56,12 @@ function sentence(verdict: BarVerdict): string {
     : `${verdict.headline} — ${rule}`;
 }
 
-/**
- * «판단 타임라인» — the session as the handful of moments something changed.
- *
- * A 380-bar session is four to forty lines here: consecutive bars carrying the
- * same verdict, the same rule and the same gate collapse into one row with a
- * run length. Nothing is dropped — a run of 300 quiet bars is one line that
- * says 300 — and picking a row moves the chart and the checklist to the first
- * bar of that run.
- */
+/** «진입 신호 6봉 (게이트 통과 1)», or nothing when the kind never fired. */
+function countPhrase(label: string, count: SignalCount): string | null {
+  if (count.bars === 0) return null;
+  return `${label} ${count.bars}봉 (게이트 통과 ${count.passed})`;
+}
+
 function Row({
   entry,
   selected,
@@ -98,16 +109,29 @@ function Row({
   );
 }
 
+/**
+ * «판단 타임라인» — the session as the handful of moments something changed.
+ *
+ * Consecutive bars carrying the same verdict, the same rule, the same gate and
+ * the same failing conditions collapse into one row with a run length.
+ *
+ * **A row that records a trade is never dropped and never hidden without a
+ * count.** An earlier revision capped the list at forty rows, which on
+ * `stock-005380-r1-20261125` fell between the quiet morning and the day's
+ * actual entry at 11:18: 거래 현황 showed the fill and this panel refused to
+ * show the decision behind it, even under «더 보기». So the cap now applies to
+ * the quiet background only, what it drops is named by kind, and a filter
+ * lists every entry, exit and probe with no cap at all.
+ */
 export default function VerdictTimeline({ bars, selectedIndex, onSelect }: VerdictTimelineProps) {
+  const [tradesOnly, setTradesOnly] = useState(false);
   const entries = verdictTimeline(bars);
-  const shown = entries.slice(0, config.timelineMaxRows);
-  // Opened at a glance, the rest one click away: a probe session alternates
-  // «시험 진입» and «게이트 차단» for hundreds of bars, and forty rows of it
-  // pushed the page past nine thousand pixels — the sections below became
-  // unreachable by scrolling.
-  const head = shown.slice(0, config.timelineHeadRows);
-  const rest = shown.slice(config.timelineHeadRows);
-  const probes = probeTally(bars);
+  const summary = timelineSummary(entries);
+  const signals = entries.filter((entry) => isSignalVerdict(entry.verdict.kind));
+  const plan = planTimeline(entries, config.timelineQuietMaxRows);
+  const list = tradesOnly ? signals : plan.shown;
+  const head = tradesOnly ? list : list.slice(0, config.timelineHeadRows);
+  const rest = tradesOnly ? [] : list.slice(config.timelineHeadRows);
 
   if (!entries.length) {
     return <p className="text-sm text-slate-500 dark:text-slate-400">판단 기록이 없습니다.</p>;
@@ -122,20 +146,38 @@ export default function VerdictTimeline({ bars, selectedIndex, onSelect }: Verdi
     />
   );
 
+  const counts = [
+    countPhrase('진입 신호', summary.entry),
+    countPhrase('청산 신호', summary.exit),
+    countPhrase('시험 진입', summary.probe),
+    summary.quietRuns ? `신호 없음 ${summary.quietRuns}구간` : null,
+    summary.withheldRuns ? `평가 보류 ${summary.withheldRuns}구간` : null,
+    summary.unjoinedRuns ? `대조 불가 ${summary.unjoinedRuns}구간` : null,
+  ].filter((part): part is string => part !== null);
+
   return (
     <div className="min-w-0 space-y-2">
       <h4 className="text-sm font-semibold">판단 타임라인</h4>
       <p className="text-xs text-slate-500 dark:text-slate-400">
         판단이 바뀐 지점만 모았습니다. 줄을 고르면 그 봉으로 이동합니다.
       </p>
-      {/* One line that answers the probe session before any row is read. */}
-      {probes.fired > 0 && (
-        <p className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm dark:border-slate-800">
-          <Term name="R4-M2-PROBE-ENTRY-LONG" /> {probes.fired}봉 중 게이트 통과{' '}
-          <span className="font-medium">{probes.passed}</span>
-          {probes.gates.map((gate) => ` · ${gate.label} ${gate.count}`).join('')}
-        </p>
+
+      {/* The whole session in one line, for every tenant — not only probe ones. */}
+      <p className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm dark:border-slate-800">
+        {counts.length ? counts.join(' · ') : '판단이 바뀐 지점이 없습니다'}
+      </p>
+
+      {signals.length > 0 && (
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={tradesOnly}
+            onChange={(event) => setTradesOnly(event.target.checked)}
+          />
+          <span>진입 · 청산만 보기 ({signals.length}줄)</span>
+        </label>
       )}
+
       <ul role="radiogroup" aria-label="판단이 바뀐 지점" className="min-w-0 space-y-1">
         {head.map(row)}
       </ul>
@@ -149,9 +191,12 @@ export default function VerdictTimeline({ bars, selectedIndex, onSelect }: Verdi
           </ul>
         </details>
       )}
-      {entries.length > shown.length && (
+      {!tradesOnly && plan.omitted.length > 0 && (
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          바뀐 지점 {entries.length}개 중 앞의 {shown.length}개만 보여 줍니다.
+          {plan.omitted
+            .map((omitted) => `${OMITTED_LABELS[omitted.kind]} ${omitted.count}구간`)
+            .join(' · ')}
+          은 접었습니다. 진입 · 청산 · 시험 진입은 모두 위에 있습니다.
         </p>
       )}
     </div>

@@ -48,6 +48,21 @@ describe('사건 기록', () => {
     expect(within(denial).getByText(ZERO_POSITION_DETAIL)).toBeInTheDocument();
   });
 
+  it('does not call every construction denial a missing position', () => {
+    // The step denies for roughly two dozen reasons; sizing on an ENTRY is the
+    // common one. The generic sentence plus the verbatim detail says which.
+    const bar = (futures.bars as TosBarsBar[])[2];
+    const sizing: TosBarsBar = {
+      ...bar,
+      decision_kind: 'ACTION',
+      evidence: { ...bar.evidence, halt_detail: 'risk sizing produced zero quantity' },
+    };
+    render(<EventLog bars={[sizing]} summary={{ withheld_bars: 0, substituted_bars: 0 }} />);
+    expect(screen.getByText('수량·가격을 정하지 못해 주문서를 만들지 못했습니다.')).toBeInTheDocument();
+    expect(screen.queryByText(/닫을 보유가 없어/)).not.toBeInTheDocument();
+    expect(screen.getByText('risk sizing produced zero quantity')).toBeInTheDocument();
+  });
+
   it('shows the evidence’s own sentence rather than paraphrasing it', () => {
     mount();
     // Two runs carry the zero-position denial — the VWAP exit and the EOD one.

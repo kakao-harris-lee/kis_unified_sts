@@ -161,11 +161,18 @@ export const GLOSSARY: Record<string, GlossaryTerm> = {
   },
   VENUE_ADMISSIBILITY_DECISION: {
     label: '거래소 수용 판정',
-    meaning: '그 시각에 그 주문을 거래소가 받을 수 있는지 보는 단계입니다.',
+    meaning:
+      '거래소 규칙상 그 시각에 그 주문을 낼 수 있는지 TOS 가 스스로 보는 단계입니다. 거래소에 물어본 결과가 아니라 TOS 의 판정입니다.',
+  },
+  AGGREGATE_RISK_DECISION: {
+    label: '총 위험 한도 판정',
+    meaning:
+      '진행 중인 주문과 이미 보유한 수량까지 합쳐 한도를 넘지 않는지 보는 단계입니다.',
   },
   CANDIDATE_COMMAND_CONSTRUCTION: {
     label: '주문서 작성',
-    meaning: '수량·가격을 넣어 실제 주문서를 만드는 단계입니다. 닫을 보유가 없으면 여기서 멈춥니다.',
+    meaning:
+      '수량·가격을 넣어 실제 주문서를 만드는 단계입니다. 수량을 정하지 못하는 사유가 스무 가지쯤 되며, 닫을 보유가 없는 경우는 그중 하나입니다.',
   },
   TIME_NOT_ADMITTED: {
     label: '시간 미인정',
@@ -263,17 +270,53 @@ export function haltPairLabel(reason: string | null, step: string | null): strin
  * glossary meanings it already has, rather than a sentence nobody wrote.
  */
 const HALT_EXPLANATIONS: Record<string, string> = {
-  'STAGE_DENIED@CANDIDATE_COMMAND_CONSTRUCTION':
-    '닫을 보유가 없어 주문서를 만들지 못했습니다. 보유를 모르는 채로 수량을 가정해 내보내지 않습니다.',
   'STAGE_DENIED@VENUE_ADMISSIBILITY_DECISION':
-    '그 시각에 거래소가 이 주문을 받지 않는다고 판정했습니다.',
+    '거래소 규칙상 그 시각에 받을 수 없는 주문이라고 TOS 가 판정했습니다.',
+  'STAGE_DENIED@AGGREGATE_RISK_DECISION':
+    '총 위험 한도 판정에서 거절했습니다 — 진행 중이거나 이미 보유한 수량과 합치면 한도를 넘습니다.',
   'STAGE_UNKNOWN@INDEPENDENT_APPROVAL':
     '승인 단계가 결과를 돌려주지 않았습니다. 모르는 것은 허가로 치지 않으므로 주문은 나가지 않았습니다.',
   TIME_NOT_ADMITTED: '그 봉의 시각을 커널이 인정하지 않아 아예 평가하지 않았습니다.',
 };
 
-export function haltExplanation(reason: string | null, step: string | null): string | null {
+/** The one construction denial this page can name from the code alone. */
+const ZERO_POSITION_MARKER = 'ZERO_POSITION';
+
+const ZERO_POSITION_SENTENCE =
+  '닫을 보유가 없어 주문서를 만들지 못했습니다. 보유를 모르는 채로 수량을 가정해 내보내지 않습니다.';
+
+const CONSTRUCTION_SENTENCE = '수량·가격을 정하지 못해 주문서를 만들지 못했습니다.';
+
+/**
+ * What a stop MEANT, in one Korean sentence.
+ *
+ * The evidence writes its own English sentence into `halt_detail`, and the page
+ * still shows it verbatim — it is the authoritative record, and a translation
+ * would be this bundle's claim about it rather than the kernel's. This leads
+ * only so that an operator does not have to parse English first.
+ *
+ * `CANDIDATE_COMMAND_CONSTRUCTION` takes `detail` and `decisionKind` because
+ * the step denies for roughly two dozen distinct reasons (sizing, rounding,
+ * price bands, …) and only one of them is «closing with no position». Naming
+ * that one for all of them was wrong on most of an entry-heavy day, so the
+ * close sentence is used only when the evidence says ZERO_POSITION or the
+ * decision was a close; everything else gets the generic sentence and relies on
+ * the verbatim detail beneath it to say which.
+ *
+ * Null for a pair this page has not seen: the caller then shows the two
+ * glossary meanings it already has, rather than a sentence nobody wrote.
+ */
+export function haltExplanation(
+  reason: string | null,
+  step: string | null,
+  detail?: string | null,
+  decisionKind?: string | null,
+): string | null {
   if (!reason) return null;
+  if (step === 'CANDIDATE_COMMAND_CONSTRUCTION') {
+    const closing = detail?.includes(ZERO_POSITION_MARKER) === true || decisionKind === 'FLAT';
+    return closing ? ZERO_POSITION_SENTENCE : CONSTRUCTION_SENTENCE;
+  }
   const pair = step ? `${reason}@${step}` : reason;
   return HALT_EXPLANATIONS[pair] ?? HALT_EXPLANATIONS[reason] ?? null;
 }

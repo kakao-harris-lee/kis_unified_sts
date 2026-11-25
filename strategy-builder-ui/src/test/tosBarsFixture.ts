@@ -565,6 +565,50 @@ export function quietBar(time: string, env: Env = {}): TosBarsBar {
   );
 }
 
+/**
+ * A long quiet morning, then the day's one real trade — the 005380 shape.
+ *
+ * `quietChanges` distinct «신호 없음» rows (the failing set alternates, so each
+ * is its own row) followed by an UNGATED entry and an ungated exit. With a flat
+ * cap of forty rows the two that matter fell off the end: 거래 현황 showed the
+ * fill while the timeline refused to show the decision behind it. Any future
+ * trimming has to keep them reachable.
+ */
+export function quietThenTradeDocument(quietChanges = 42): TosBarsDocument {
+  const bars: TosBarsBar[] = [];
+  for (let index = 0; index < quietChanges; index += 1) {
+    const minute = (index % 60).toString().padStart(2, '0');
+    const hour = (9 + Math.floor(index / 60)).toString().padStart(2, '0');
+    // Alternating the volatility gate makes every bar a change of its own.
+    bars.push(quietBar(`${hour}:${minute}`, { entry_window: true, hi_vol: index % 2 === 0 }));
+  }
+  bars.push(
+    makeBar(
+      {
+        time: '11:18',
+        env: ENTRY,
+        evaluation: 'engine_view',
+        decisionKind: 'ACTION',
+        decisionRuleId: 'R1-ENTRY-LONG',
+        outcomeType: 'Proposal',
+      },
+      -1800,
+    ),
+    makeBar(
+      {
+        time: '11:26',
+        env: { ...REVERTED, entry_window: true },
+        evaluation: 'engine_view',
+        decisionKind: 'FLAT',
+        decisionRuleId: 'R2-EXIT-VWAP-REVERTED',
+        outcomeType: 'Proposal',
+      },
+      -1800,
+    ),
+  );
+  return { ...futuresBarsDocument(), session: 'quiet-then-trade-20261125', bars };
+}
+
 /** The RSI/%R entry rule 005380 runs instead of Setup D's. */
 function rsiEntry(env: Env): TosBarsRule {
   const compares = [

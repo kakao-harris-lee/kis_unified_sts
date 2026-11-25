@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { GLOSSARY, glossaryKey, glossaryLabel, glossaryTerm, haltPairLabel } from './tosGlossary';
+import {
+  GLOSSARY,
+  glossaryKey,
+  glossaryLabel,
+  glossaryTerm,
+  haltExplanation,
+  haltPairLabel,
+} from './tosGlossary';
 import { parseCompare } from './tosDecision';
 import { futuresBarsDocument, rsiStockBarsDocument, stockBarsDocument } from '@/test/tosBarsFixture';
 
@@ -63,6 +70,44 @@ describe('the glossary', () => {
       '거래소 수용 판정 — 단계에서 거절',
     );
     expect(haltPairLabel('TIME_NOT_ADMITTED', null)).toBe('시간 미인정');
+  });
+
+  describe('주문서 작성 단계의 거절', () => {
+    const STEP = 'CANDIDATE_COMMAND_CONSTRUCTION';
+
+    it('names the zero-position case only when the evidence says so', () => {
+      expect(
+        haltExplanation('STAGE_DENIED', STEP, "quantity_basis 'ZERO_POSITION' closes a position…"),
+      ).toMatch(/닫을 보유가 없어/);
+      expect(haltExplanation('STAGE_DENIED', STEP, null, 'FLAT')).toMatch(/닫을 보유가 없어/);
+    });
+
+    it('stays generic for the other denials of the same step', () => {
+      // tos/src/tos/egressgw/construction.py denies here for roughly two dozen
+      // reasons, most of them sizing on an ENTRY. Calling all of them
+      // «닫을 보유가 없어» was wrong on most of an entry-heavy day.
+      const sizing = haltExplanation('STAGE_DENIED', STEP, 'risk sizing produced zero quantity', 'ACTION');
+      expect(sizing).toBe('수량·가격을 정하지 못해 주문서를 만들지 못했습니다.');
+      expect(haltExplanation('STAGE_DENIED', STEP, null, 'ACTION')).toBe(sizing);
+    });
+  });
+
+  it('puts TOS, not the exchange, behind the venue verdict', () => {
+    // The web tier never calls KIS and neither does this stage: it is TOS's
+    // own check against the venue's rules.
+    expect(haltExplanation('STAGE_DENIED', 'VENUE_ADMISSIBILITY_DECISION')).toMatch(
+      /TOS 가 판정했습니다/,
+    );
+  });
+
+  it('explains the aggregate-risk stage that older documents carry', () => {
+    expect(glossaryTerm('AGGREGATE_RISK_DECISION')).not.toBeNull();
+    expect(haltExplanation('STAGE_DENIED', 'AGGREGATE_RISK_DECISION')).toMatch(/한도를 넘습니다/);
+  });
+
+  it('offers no sentence for a stop this page has never seen', () => {
+    expect(haltExplanation('STAGE_DENIED', 'SOME_FUTURE_STAGE')).toBeNull();
+    expect(haltExplanation(null, null)).toBeNull();
   });
 
   it('keeps every meaning a sentence, not a label repeated', () => {

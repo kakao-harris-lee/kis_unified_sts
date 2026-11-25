@@ -75,7 +75,14 @@ export default function TosPage() {
     response?.available && isAcceptedProjection(response.projection) ? response.projection : null;
   const httpStatus = isAxiosError(query.error) ? query.error.response?.status : undefined;
   const authError = httpStatus === 401 || httpStatus === 403;
-  const warning = state !== 'recent' && state !== 'loading';
+  // A full-width alert above everything is for a request that did not land:
+  // a connection failure or a rejected key, which makes the WHOLE page
+  // untrustworthy. A stale or absent projection document is neither — the
+  // paper cell stops writing when it stops at 15:45, so an amber banner would
+  // dominate the page every single evening while the tenant sections below it
+  // are perfectly current. That fact belongs to the paper cell, and the status
+  // strip and 시스템 내부 are where the page says so.
+  const fetchFailed = authError || state === 'error';
 
   // The session the four lower sections describe. It opens on the sentinel so
   // the first paint needs no listing round trip and survives a listing that
@@ -112,42 +119,28 @@ export default function TosPage() {
         </button>
       </div>
 
-      <div
-        role={warning ? 'alert' : 'status'}
-        className={`rounded-xl border p-4 ${
-          warning
-            ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100'
-            : 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900'
-        }`}
-      >
-        <p className="font-semibold">{authError ? '조회 인증을 확인해 주세요' : labels[state]}</p>
-        <p className="mt-1 text-sm">
-          {authError
-            ? 'API 키 또는 접근 권한을 확인한 후 다시 조회해 주세요.'
-            : state === 'error'
-              ? '연결을 확인한 후 다시 조회해 주세요. 남아 있는 값은 마지막 조회 기록입니다.'
-              : state === 'stale'
-                ? '새 상태가 도착하지 않았습니다. 아래 값으로 현재 런타임의 동작 여부를 판단하지 마세요.'
-                : state === 'missing'
-                  ? '런타임의 상태 내보내기 경로와 조회 서비스 연결을 확인해 주세요.'
-                  : state === 'unreadable'
-                    ? '상태 파일의 경로와 접근 권한을 확인해 주세요. 파일 내용의 문제가 아닙니다.'
-                    : state === 'invalid' || state === 'unsupported'
-                      ? '런타임과 조회 서비스의 상태 형식을 확인해 주세요.'
-                      : '값이 없으면 알 수 없음으로 표시합니다. 최근 조회 여부와 시스템 정상 여부는 별개입니다.'}
-        </p>
-        <p className="mt-2 text-xs">
-          paper 셀 상태 경과: {age === null ? '알 수 없음' : `${Math.floor(age)}초`} ·{' '}
-          {config.staleAfterSeconds}초부터 오래된 상태로 표시 · {config.pollIntervalMs / 1000}초마다
-          조회
-        </p>
-      </div>
+      {fetchFailed && (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+        >
+          <p className="font-semibold">
+            {authError ? '조회 인증을 확인해 주세요' : '상태 조회 연결 오류'}
+          </p>
+          <p className="mt-1 text-sm">
+            {authError
+              ? 'API 키 또는 접근 권한을 확인한 후 다시 조회해 주세요.'
+              : '연결을 확인한 후 다시 조회해 주세요. 남아 있는 값은 마지막 조회 기록입니다.'}
+          </p>
+        </div>
+      )}
 
       <StatusStrip
         projectionState={state}
         projection={projection}
         projectionAgeSeconds={age}
         symbols={symbols}
+        stateLabel={labels[state]}
       />
 
       <TenantCards sessions={sessions} symbols={symbols} selected={active} onSelect={setSession} />
