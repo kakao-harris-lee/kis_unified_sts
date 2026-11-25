@@ -827,3 +827,216 @@ def test_the_sentinel_still_reads_through_the_reader(
     """The listing does not replace ``latest``; the panel opens on it."""
     _write(bars_dir, "stock-r1-20261125", _VALID_DOCUMENT)
     assert _get(client, tos_bars.LATEST)["session"] == "stock-r1-20261125"
+
+
+# --------------------------------------------------------------------------- #
+# The explanation blocks — legibility plan §6 P2, items four and five
+# --------------------------------------------------------------------------- #
+
+#: The two blocks ``tools/tos_cp3/export_bars.py`` adds, as measured on the host
+#: on 2026-11-25 against ``long-20261125`` (the single R1 entry at 09:14 and its
+#: R2 exit at 09:50, +2.94 points on the mini contract). The exporter's own
+#: tests build the same shape, so neither side can drift alone.
+_EXPLAIN: dict[str, Any] = {
+    "schema": "tos-bars-explain/1",
+    "probe_basis": "OPERATOR_RULE_MAP",
+    "rules": [
+        {
+            "label": "R1",
+            "rule_id": "R1-ENTRY-LONG",
+            "decision_kind": "ACTION",
+            "rationale": "R1-ENTRY-LONG: entry window open, high-volatility regime…",
+            "target_rationale": "R1-ENTRY-LONG: open a new long…",
+            "probe": False,
+            "fields": ["entry_window", "hi_vol", "z_x1000"],
+            "bindings": ["z_entry_max_x1000"],
+        },
+        {
+            "label": "R4",
+            "rule_id": "R4-M2-PROBE-ENTRY-LONG",
+            "decision_kind": "ACTION",
+            "rationale": "R4-M2-PROBE-ENTRY-LONG: M2 boundary probe, NOT a signal…",
+            "target_rationale": None,
+            "probe": True,
+            "fields": ["entry_window"],
+            "bindings": [],
+        },
+    ],
+    "default": {
+        "label": None,
+        "rule_id": "R0-DEFAULT-NO-ACTION",
+        "decision_kind": "NO_ACTION",
+        "rationale": "R0-DEFAULT-NO-ACTION: no rule fired — hold exposure unchanged.",
+        "probe": None,
+        "fields": None,
+        "bindings": None,
+    },
+    "fields": {
+        "z_x1000": {
+            "field": "z",
+            "op": "ratio_z",
+            "inputs": ["close", "vwap", "atr"],
+            "params": None,
+            "scale": {"mult": 1000, "round": "toward_zero"},
+            "published_as": "z_x1000",
+            "known": True,
+        },
+        "ghost": {"field": "ghost", "op": None, "known": False},
+    },
+}
+
+_HYPOTHETICAL: dict[str, Any] = {
+    "hypothetical": True,
+    "direction": "LONG",
+    "instrument": "A05612",
+    "contract": "kospi200_mini",
+    "multiplier_krw_per_point": 50000,
+    "price_field": "close_x100",
+    "price_scale": 100,
+    "assumptions": [
+        "FILL_AT_DECISION_BAR_CLOSE",
+        "FILL_ALWAYS_ASSUMED",
+        "NO_FEES",
+        "NO_SLIPPAGE",
+        "ONE_CONTRACT",
+        "ONE_POSITION_AT_A_TIME",
+    ],
+    "trades": [
+        {
+            "entry_time_kst": "09:14",
+            "entry_rule_id": "R1-ENTRY-LONG",
+            "entry_price_points": "735.64",
+            "exit_time_kst": "09:50",
+            "exit_rule_id": "R2-EXIT-VWAP-REVERTED",
+            "exit_price_points": "738.58",
+            "points": "2.94",
+            "hypothetical_pnl_krw": "147000",
+            "forced_close": False,
+            "forced_close_reason": None,
+        }
+    ],
+    "totals": {
+        "trades": 1,
+        "wins": 1,
+        "points": "2.94",
+        "hypothetical_pnl_krw": "147000",
+        "forced_closes": 0,
+    },
+    "unpriced_decisions": [],
+}
+
+
+def _explained(**overrides: Any) -> dict[str, Any]:
+    return {
+        **_VALID_DOCUMENT,
+        "market": "futures",
+        "decision_only": True,
+        "explain": _EXPLAIN,
+        "hypothetical_pnl": _HYPOTHETICAL,
+        **overrides,
+    }
+
+
+def test_each_rules_sentence_and_probe_marker_reach_the_body(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """식별자 대신 문장 — 그리고 «시험 진입» 과 신호가 다른 줄이 되게."""
+    _write(bars_dir, SESSION, _explained())
+    explain = _get(client)["document"]["explain"]
+    assert explain["schema"] == "tos-bars-explain/1"
+    assert explain["probe_basis"] == "OPERATOR_RULE_MAP"
+    assert [rule["probe"] for rule in explain["rules"]] == [False, True]
+    assert explain["rules"][0]["rationale"].startswith("R1-ENTRY-LONG:")
+    assert explain["rules"][0]["bindings"] == ["z_entry_max_x1000"]
+    assert explain["default"]["rule_id"] == "R0-DEFAULT-NO-ACTION"
+
+
+def test_the_field_block_keeps_the_name_fields_not_fields_underscore(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """DTO 안에서만 ``fields_`` 다 — 몸통은 내보내기가 쓴 이름 그대로여야 한다."""
+    _write(bars_dir, SESSION, _explained())
+    explain = _get(client)["document"]["explain"]
+    assert "fields_" not in explain
+    assert "schema_" not in explain
+    assert explain["fields"]["z_x1000"]["op"] == "ratio_z"
+    assert explain["fields"]["z_x1000"]["scale"] == {
+        "mult": 1000,
+        "round": "toward_zero",
+    }
+    # A name the catalog did not define says so rather than claiming an op.
+    assert explain["fields"]["ghost"]["known"] is False
+    assert explain["fields"]["ghost"]["op"] is None
+
+
+def test_the_hypothetical_block_arrives_with_its_assumptions(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """수만 떼어 그릴 수 없게, 가정이 값과 함께 간다."""
+    _write(bars_dir, SESSION, _explained())
+    document = _get(client)["document"]
+    assert document["decision_only"] is True
+    assert document["market"] == "futures"
+    block = document["hypothetical_pnl"]
+    assert block["hypothetical"] is True
+    assert "FILL_ALWAYS_ASSUMED" in block["assumptions"]
+    assert block["multiplier_krw_per_point"] == 50000
+    assert block["trades"][0]["points"] == "2.94"
+    assert block["totals"]["hypothetical_pnl_krw"] == "147000"
+
+
+def test_no_hypothetical_key_is_named_like_a_realized_one(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """실현 손익과 같은 키 이름이면 언젠가 합산된다 — DTO 에 그 이름이 없다.
+
+    ``symbols/today.json`` 의 실현 손익은 ``pnl_krw`` 다. 이 블록의 수는 전부
+    ``hypothetical_`` 를 달고 있어, 두 문서를 한 화면에서 합치는 코드가 이름만
+    보고 섞을 수 없다.
+    """
+    assert "pnl_krw" not in tos_bars.HypotheticalTotals.model_fields
+    assert "pnl_krw" not in tos_bars.HypotheticalTrade.model_fields
+    _write(bars_dir, SESSION, _explained())
+    block = _get(client)["document"]["hypothetical_pnl"]
+    assert "pnl_krw" not in block["totals"]
+    assert "pnl_krw" not in block["trades"][0]
+
+
+def test_a_document_without_the_new_blocks_still_reads(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """현장 호환: 아직 옛 내보내기가 쓴 문서여도 바 패널은 그대로 뜬다."""
+    _write(bars_dir, SESSION, _VALID_DOCUMENT)
+    document = _get(client)["document"]
+    assert document["explain"] is None
+    assert document["hypothetical_pnl"] is None
+    assert document["decision_only"] is None
+    assert document["bars"]
+
+
+def test_a_document_that_could_not_be_explained_says_why(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """설명이 없는 것과 «왜 없는지 모르는 것» 은 다르다."""
+    _write(
+        bars_dir,
+        SESSION,
+        _explained(explain=None, explain_error="fields.yaml 을 읽지 못했다: OSError"),
+    )
+    document = _get(client)["document"]
+    assert document["explain"] is None
+    assert document["explain_error"].startswith("fields.yaml")
+    assert document["bars"]
+
+
+def test_the_explanation_blocks_never_carry_a_path(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """두 블록은 브라우저로 간다. 문서가 경로를 들고 와도 DTO 가 모른다."""
+    polluted = _explained()
+    polluted["explain"] = {**_EXPLAIN, "source_path": "/home/deploy/secret.yaml"}
+    _write(bars_dir, SESSION, polluted)
+    body = json.dumps(_get(client), ensure_ascii=False)
+    assert "/home/deploy/secret.yaml" not in body
+    # The document's own pre-existing host paths stay dropped too.
+    assert _VALID_DOCUMENT["data_dir"] not in body

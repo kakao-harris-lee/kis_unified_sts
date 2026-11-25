@@ -103,16 +103,126 @@ export interface TosBarsSummary {
   value_view_refused?: Record<string, number> | null;
 }
 
+/**
+ * What one authored rule means, in the words its author wrote.
+ *
+ * `rationale` is the strategy YAML's own sentence — the page shows it instead
+ * of the bare `R1-ENTRY-LONG`. `probe` says the rule is an order-path exercise
+ * rather than a strategy signal, and it is NOT parsed out of that sentence: it
+ * comes from an operator-side map (config/tos_bars_explain.yaml), because the
+ * strategy DSL forbids extra keys and the strategy's digest is a replay input.
+ */
+export interface TosBarsExplainRule {
+  label?: string | null;
+  rule_id?: string | null;
+  decision_kind?: string | null;
+  rationale?: string | null;
+  target_rationale?: string | null;
+  probe?: boolean | null;
+  /** The published field names this rule compares, in the order it reads them. */
+  fields?: string[] | null;
+  /** The binding keys it compares against; their values are in `bindings`. */
+  bindings?: string[] | null;
+}
+
+/** One field's definition from the tenant's `fields.yaml`. */
+export interface TosBarsExplainField {
+  /** The catalog's internal name (`z` for the published `z_x1000`). */
+  field?: string | null;
+  op?: string | null;
+  inputs?: string[] | null;
+  params?: Record<string, boolean | number | string> | null;
+  scale?: Record<string, boolean | number | string> | null;
+  published_as?: string | null;
+  /** False when the catalog did not define this name — not an invented op. */
+  known?: boolean | null;
+}
+
+export interface TosBarsExplain {
+  schema?: string | null;
+  rules?: TosBarsExplainRule[] | null;
+  default?: TosBarsExplainRule | null;
+  /** Keyed by the name the rules reference, plus every field those stand on. */
+  fields?: Record<string, TosBarsExplainField> | null;
+  probe_basis?: string | null;
+}
+
+/** One would-have-been trade. Never a fill, and never a realized figure. */
+export interface TosHypotheticalTrade {
+  entry_time_kst?: string | null;
+  entry_rule_id?: string | null;
+  entry_price_points?: string | null;
+  exit_time_kst?: string | null;
+  /** Null on a forced close: no rule said to exit, the session just ended. */
+  exit_rule_id?: string | null;
+  exit_price_points?: string | null;
+  points?: string | null;
+  hypothetical_pnl_krw?: string | null;
+  forced_close?: boolean | null;
+  forced_close_reason?: string | null;
+}
+
+export interface TosHypotheticalTotals {
+  trades?: number | null;
+  wins?: number | null;
+  points?: string | null;
+  /** Deliberately not named `pnl_krw` — it must never be summed with one. */
+  hypothetical_pnl_krw?: string | null;
+  forced_closes?: number | null;
+}
+
+/** A decision bar whose close could not be read, so it is outside the total. */
+export interface TosHypotheticalDecision {
+  time_kst?: string | null;
+  decision_kind?: string | null;
+  rule_id?: string | null;
+}
+
+/**
+ * What a decision-only tenant's decisions WOULD have earned, had they filled.
+ *
+ * Present only for the futures tenants, which decide but never order (operator
+ * decision 2026-11-05). The page labels every one of these numbers «가상
+ * 손익(체결 가정)» and never adds them to a realized PnL: the three assumptions
+ * (a guaranteed fill, no fees, no slippage) all push the figure the same,
+ * flattering way.
+ */
+export interface TosBarsHypotheticalPnl {
+  hypothetical?: boolean | null;
+  direction?: string | null;
+  instrument?: string | null;
+  contract?: string | null;
+  multiplier_krw_per_point?: number | null;
+  price_field?: string | null;
+  price_scale?: number | null;
+  assumptions?: string[] | null;
+  trades?: TosHypotheticalTrade[] | null;
+  totals?: TosHypotheticalTotals | null;
+  unpriced_decisions?: TosHypotheticalDecision[] | null;
+}
+
 export interface TosBarsDocument {
   schema_version: number;
   session?: string | null;
   instrument?: string | null;
+  /** `stock`/`futures`, from the tenant tree the session actually ran. */
+  market?: string | null;
+  /**
+   * True on a tenant that decides but never orders. The page must not draw an
+   * absent order as "ordered nothing".
+   */
+  decision_only?: boolean | null;
   strategy?: { sha256?: string | null } | null;
   bindings?: { values?: Record<string, boolean | number | string> | null } | null;
   window?: { from?: string | null; to?: string | null } | null;
   default?: { rule_id?: string | null; decision_kind?: string | null } | null;
   bars?: TosBarsBar[] | null;
   summary?: TosBarsSummary | null;
+  explain?: TosBarsExplain | null;
+  /** Why there is no explanation. A bars document is still good without one. */
+  explain_error?: string | null;
+  hypothetical_pnl?: TosBarsHypotheticalPnl | null;
+  hypothetical_pnl_error?: string | null;
 }
 
 export interface TosBarsResponse {
@@ -195,6 +305,44 @@ export function barValue(bar: TosBarsBar, key: string): number | null {
     if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   }
   return null;
+}
+
+/**
+ * One rule's explanation, by the id a bar names.
+ *
+ * Matched on `rule_id`, never on `label`: `label` is the rule's POSITION in the
+ * policy (`R1`, `R2`) while a bar's `decision_rule_id` is the authored id
+ * (`R1-ENTRY-LONG`). Two tenants' policies put different rules at the same
+ * position, so matching on label would caption a 005380 bar with 005930's
+ * sentence — and the whole point of this block is that the caption is true.
+ *
+ * Also covers the default rule, which fires on most bars and is not in `rules`.
+ */
+export function ruleExplanation(
+  document: TosBarsDocument | null | undefined,
+  ruleId: string | null | undefined,
+): TosBarsExplainRule | null {
+  if (!ruleId) return null;
+  const explain = document?.explain;
+  if (!explain) return null;
+  const found = explain.rules?.find((rule) => rule.rule_id === ruleId);
+  if (found) return found;
+  return explain.default?.rule_id === ruleId ? explain.default : null;
+}
+
+/**
+ * Whether this document carries a hypothetical PnL that may be shown.
+ *
+ * Guarded on `hypothetical === true` rather than on the block merely existing:
+ * a block whose own flag is missing has not asserted what it is, and a page
+ * that shows it anyway is one label away from presenting an assumed fill as
+ * money. It is never summed with a realized figure — there is no realized
+ * figure on a decision-only tenant to sum it with.
+ */
+export function hasHypotheticalPnl(
+  document: TosBarsDocument | null | undefined,
+): boolean {
+  return document?.decision_only === true && document?.hypothetical_pnl?.hypothetical === true;
 }
 
 // ---------------------------------------------------------------------------
