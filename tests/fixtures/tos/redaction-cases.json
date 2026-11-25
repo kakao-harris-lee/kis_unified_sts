@@ -137,6 +137,36 @@
       "why": "a URL whose path IS a host path",
       "input": "open https://h/home/deploy/.local/state/x",
       "expected": "open https://h<경로>"
+    },
+    {
+      "why": "userinfo is a credential and never survives, even on a kept URL",
+      "input": "open https://user:pw@h/x",
+      "expected": "open https://h/x"
+    },
+    {
+      "why": "userinfo stripped AND the host path masked",
+      "input": "open https://user:pw@h/home/deploy/x",
+      "expected": "open https://h<경로>"
+    },
+    {
+      "why": "a dot-directory segment vetoes the route exemption",
+      "input": "see /api/tos/x/.local/state/tos/a",
+      "expected": "see <경로>"
+    },
+    {
+      "why": "the known-root check does not care about case",
+      "input": "see /API/TOS/../HOME/deploy/x",
+      "expected": "see <경로>"
+    },
+    {
+      "why": "/srv is a filesystem root like the others",
+      "input": "dump /srv/tos/state/x",
+      "expected": "dump <경로>"
+    },
+    {
+      "why": "/data is a filesystem root like the others",
+      "input": "leaf /data/tos/state/x",
+      "expected": "leaf <경로>"
     }
   ],
   "kept": [
@@ -195,6 +225,14 @@
     {
       "why": "an ordinary web URL keeps its path and query",
       "input": "see https://example.com/a/b?c=1 for details"
+    },
+    {
+      "why": "a route path with a dot in its FILENAME is still a route",
+      "input": "see /api/tos/status.json now"
+    },
+    {
+      "why": "the bars route carries a session id and stays whole",
+      "input": "see /api/tos/sessions/long-20261125/bars"
     }
   ]
 }

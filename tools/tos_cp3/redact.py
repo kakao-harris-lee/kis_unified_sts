@@ -53,17 +53,23 @@ ACCOUNT_PLACEHOLDER = "<계좌>"
 _URL = r"(?P<url>https?://[^\s'\"<>]*)"
 
 #: 매치한 URL 을 ``scheme://host`` 와 그 뒤 경로로 가른다.
-_URL_PARTS = re.compile(r"(?P<origin>https?://[^/\s'\"<>]*)(?P<path>.*)")
+_URL_PARTS = re.compile(
+    r"(?P<scheme>https?://)(?:(?P<userinfo>[^/@\s'\"<>]*)@)?"
+    r"(?P<host>[^/\s'\"<>]*)(?P<path>.*)"
+)
 
 #: 대시보드 라우트 경로. 그대로 둔다 — ``/api/tos/status`` 는 이 서비스의 공개
 #: 표면이고, 가리면 안내 문장이 «<경로>» 가 된다.
 #:
 #: SAFETY: 실제 표면(``/api/tos/``)에만 걸고 뒤에 상위 이동이나 알려진 루트가 있으면 면제를 거둔다 — ``/api/../home/deploy/x`` 는 라우트가 아니라 호스트 경로인데 이전 ``/api/`` 접두 면제가 통째로 내보냈다
-_ROUTE = r"(?P<route>(?<![A-Za-z0-9_./])/api/tos/[A-Za-z0-9_\-/]*)"
+_ROUTE = r"(?P<route>(?<![A-Za-z0-9_./])/api/tos/[A-Za-z0-9_.\-/]*)"
 
 #: 면제를 잃게 하는 모양: 상위 이동(``..``) 또는 파일시스템 루트 구획.
 #: 라우트 꼬리와 URL 경로에 같은 규칙을 쓴다.
-_UNSAFE_IN_EXEMPT = re.compile(r"\.\.|/(?:home|tmp|var|mnt|root|etc|usr|opt)(?:/|$)")
+_UNSAFE_IN_EXEMPT = re.compile(
+    r"\.\.|/\.|/(?:home|tmp|var|mnt|root|etc|usr|opt|srv|data)(?:/|$)",
+    re.IGNORECASE,
+)
 
 #: 상위 이동 묶음 — ``root/api/../../home/…`` 의 호스트 경로를 상위 이동부터
 #: 잘라, 화면에 ``../..`` 만 남지 않게 한다.
@@ -72,7 +78,10 @@ _TRAVERSAL = r"(?P<traversal>(?:/\.\.)+/[A-Za-z0-9_./@%+\-]*)"
 #: ASCII 단어에 바로 붙은 절대 경로(``data_leaf/home/…``). POSIX 규칙의
 #: lookbehind 가 거부하는 모양이라 따로 받는다. 잘 알려진 루트만 — 단어 뒤의
 #: 평범한 두 구획 경로까지 쓸어 담지 않기 위해서다.
-_GLUED_ROOT = r"(?P<glued>/(?:home|tmp|var|mnt|root|etc|usr|opt)/[A-Za-z0-9_./@%+\-]*)"
+_GLUED_ROOT = (
+    r"(?P<glued>/(?i:home|tmp|var|mnt|root|etc|usr|opt|srv|data)"
+    r"/[A-Za-z0-9_./@%+\-]*)"
+)
 
 #: 윈도 경로. ``C:\...`` · ``C:/...`` 와 ``\\wsl$\...`` 같은 UNC.
 _WINDOWS = (
@@ -175,10 +184,13 @@ def _replace_path_token(match: re.Match[str]) -> str:
         parts = _URL_PARTS.fullmatch(token)
         if parts is None:  # pragma: no cover - 매치했으면 반드시 쪼개진다
             return token
+        # SAFETY: userinfo 는 자격증명이다 — 주소를 살리려고 `user:pw@` 까지 내보내면 그게 유출이다
+        origin = f"{parts.group('scheme')}{parts.group('host')}"
         path = parts.group("path")
         if path and _UNSAFE_IN_EXEMPT.search(path):
-            return f"{parts.group('origin')}{PATH_PLACEHOLDER}"
-        return token
+            return f"{origin}{PATH_PLACEHOLDER}"
+        return token if parts.group("userinfo") is None else f"{origin}{path}"
+
     # SAFETY: 「3 /378」 처럼 숫자뿐인 덩어리는 비율이지 경로가 아니다 — 지우면 측정값이 사라진다
     if match.lastgroup == "posix" and not _ASCII_LETTER.search(token):
         return token
