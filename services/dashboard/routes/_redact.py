@@ -34,9 +34,20 @@ __all__ = ["ACCOUNT_PLACEHOLDER", "PATH_PLACEHOLDER", "redact_payload"]
 PATH_PLACEHOLDER = "<경로>"
 ACCOUNT_PLACEHOLDER = "<계좌>"
 
-#: A URL, matched only so it can be handed back **unchanged**: without it the
-#: path rule eats ``//host/path`` and serves half an address.
-_URL = r"(?P<url>[A-Za-z][A-Za-z0-9+.\-]*://[^\s'\"<>]*)"
+#: A web URL, matched only so it can be handed back **unchanged**: without it
+#: the path rule eats ``//host/path`` and serves half an address.
+#:
+#: SAFETY: http(s) only — ``file:///home/…`` and ``sqlite:////home/…`` are host paths wearing a scheme, and a generic ``\w+://`` carve-out would hand them through untouched
+_URL = r"(?P<url>https?://[^\s'\"<>]*)"
+
+#: A dashboard route path. Kept as-is: ``/api/tos/status`` is this service's
+#: own public surface, and masking it turns an instruction into «<경로>».
+_ROUTE = r"(?P<route>/api/[A-Za-z0-9_./\-]*)"
+
+#: An absolute path glued straight onto an ASCII word (``data_leaf/home/…``),
+#: which the POSIX rule's lookbehind refuses. Only well-known roots, so a word
+#: followed by an ordinary two-segment path is not swept up with it.
+_GLUED_ROOT = r"(?P<glued>/(?:home|tmp|var|mnt|root|etc|usr|opt)/[A-Za-z0-9_./@%+\-]*)"
 
 #: Windows shapes — ``C:\…``, ``C:/…`` and ``\\wsl$\…`` UNC.
 _WINDOWS = (
@@ -56,10 +67,16 @@ _POSIX = (
     r"(?:~/[A-Za-z0-9_./@%+\-]*|/[A-Za-z0-9_.@%+\-]+(?:/[A-Za-z0-9_.@%+\-]*)+))"
 )
 
-#: A relative state path: ``.local/state/tos/…``.
-_RELATIVE = r"(?P<rel>(?<![A-Za-z0-9_./~])\.[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_.@%+\-]+)+)"
+#: A relative state path: ``.local/state/tos/…``. The first segment must carry
+#: a letter, or ``.5/2`` reads as one and a decimal pair is masked.
+_RELATIVE = (
+    r"(?P<rel>(?<![A-Za-z0-9_./~])"
+    r"\.[A-Za-z0-9_\-]*[A-Za-z][A-Za-z0-9_\-]*(?:/[A-Za-z0-9_.@%+\-]+)+)"
+)
 
-_PATH_TOKEN = re.compile("|".join((_URL, _WINDOWS, _SHELL, _POSIX, _RELATIVE)))
+_PATH_TOKEN = re.compile(
+    "|".join((_URL, _WINDOWS, _SHELL, _ROUTE, _GLUED_ROOT, _POSIX, _RELATIVE))
+)
 
 #: A quoted path is redacted to its closing quote, so the tail of a path with a
 #: space in it (``'/home/deploy/my data/x.yaml'``) does not survive the token
@@ -79,7 +96,9 @@ _BARE_ACCOUNT = re.compile(r"(?<!\d)\d{10,12}(?!\d)")
 #:
 #: SAFETY: a bare eight-digit run is never masked — that is the trading date (20261125), and masking it blanks every session name on the page
 _LABELLED_ACCOUNT = re.compile(
-    r"((?:CANO|ACNO|ACCT|ACCOUNT|계좌)[A-Za-z0-9_]*\s*[:=]?\s*)(\d{8})(?![\d-])",
+    r"((?:CANO|ACNO|ACCT|ACCOUNT|계좌)[A-Za-z0-9_가-힣]*"  # label, Korean tail included
+    r"(?:\s*(?:no|num|number)\.?)?"  # «acct no», «Account No.»
+    r"\s*[:=]?\s*)(\d{8})(?![\d-])",
     re.IGNORECASE,
 )
 
@@ -91,9 +110,9 @@ _IDENTIFIER_KEYS = frozenset({"broker_execution_id"})
 
 
 def _replace_path_token(match: re.Match[str]) -> str:
-    """One token, masked — except a URL and a digits-only run, which are kept."""
+    """One token, masked — except a URL, a route and a digits-only run."""
     token = match.group(0)
-    if match.lastgroup == "url":
+    if match.lastgroup in {"url", "route"}:
         return token
     # SAFETY: «3 /378» is a ratio, not a path — masking it deletes the measurement the sentence exists to report
     if match.lastgroup == "posix" and not _ASCII_LETTER.search(token):

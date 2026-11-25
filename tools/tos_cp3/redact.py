@@ -46,9 +46,20 @@ PATH_PLACEHOLDER = "<경로>"
 #: 계좌로 보이는 수가 있던 자리.
 ACCOUNT_PLACEHOLDER = "<계좌>"
 
-#: URL — 매치하면 **그대로 둔다**. 경로 규칙이 ``//host/path`` 를 잘라 주소를
+#: 웹 URL — 매치하면 **그대로 둔다**. 경로 규칙이 ``//host/path`` 를 잘라 주소를
 #: 반쪽으로 만들지 않게, 같은 훑기에서 먼저 잡아 두고 원문을 돌려준다.
-_URL = r"(?P<url>[A-Za-z][A-Za-z0-9+.\-]*://[^\s'\"<>]*)"
+#:
+#: SAFETY: http(s) 만이다 — ``file:///home/…`` · ``sqlite:////home/…`` 는 스킴을 쓴 호스트 경로이고, 일반 ``\w+://`` 면제는 그걸 그대로 내보낸다
+_URL = r"(?P<url>https?://[^\s'\"<>]*)"
+
+#: 대시보드 라우트 경로. 그대로 둔다 — ``/api/tos/status`` 는 이 서비스의 공개
+#: 표면이고, 가리면 안내 문장이 «<경로>» 가 된다.
+_ROUTE = r"(?P<route>/api/[A-Za-z0-9_./\-]*)"
+
+#: ASCII 단어에 바로 붙은 절대 경로(``data_leaf/home/…``). POSIX 규칙의
+#: lookbehind 가 거부하는 모양이라 따로 받는다. 잘 알려진 루트만 — 단어 뒤의
+#: 평범한 두 구획 경로까지 쓸어 담지 않기 위해서다.
+_GLUED_ROOT = r"(?P<glued>/(?:home|tmp|var|mnt|root|etc|usr|opt)/[A-Za-z0-9_./@%+\-]*)"
 
 #: 윈도 경로. ``C:\...`` · ``C:/...`` 와 ``\\wsl$\...`` 같은 UNC.
 _WINDOWS = (
@@ -70,10 +81,16 @@ _POSIX = (
     r"(?:~/[A-Za-z0-9_./@%+\-]*|/[A-Za-z0-9_.@%+\-]+(?:/[A-Za-z0-9_.@%+\-]*)+))"
 )
 
-#: ``.local/state/tos/...`` 처럼 숨은 디렉터리로 시작하는 상대 경로.
-_RELATIVE = r"(?P<rel>(?<![A-Za-z0-9_./~])\.[A-Za-z0-9_\-]+(?:/[A-Za-z0-9_.@%+\-]+)+)"
+#: ``.local/state/tos/...`` 처럼 숨은 디렉터리로 시작하는 상대 경로. 첫 구획에
+#: 글자가 있어야 한다 — 아니면 ``.5/2`` 가 경로로 읽혀 소수 쌍이 가려진다.
+_RELATIVE = (
+    r"(?P<rel>(?<![A-Za-z0-9_./~])"
+    r"\.[A-Za-z0-9_\-]*[A-Za-z][A-Za-z0-9_\-]*(?:/[A-Za-z0-9_.@%+\-]+)+)"
+)
 
-_PATH_TOKEN = re.compile("|".join((_URL, _WINDOWS, _SHELL, _POSIX, _RELATIVE)))
+_PATH_TOKEN = re.compile(
+    "|".join((_URL, _WINDOWS, _SHELL, _ROUTE, _GLUED_ROOT, _POSIX, _RELATIVE))
+)
 
 #: 따옴표 안이 경로로 시작하면 **닫는 따옴표까지** 지운다 — 공백이 든 경로의
 #: 꼬리(``'/home/deploy/my data/x.yaml'`` 의 ``my data/x.yaml``)가 남지 않게.
@@ -95,7 +112,9 @@ _BARE_ACCOUNT = re.compile(r"(?<!\d)\d{10,12}(?!\d)")
 #:
 #: SAFETY: 이름표 없는 8자리는 절대 지우지 않는다 — 거래일(20261125)이 전부 가려진다
 _LABELLED_ACCOUNT = re.compile(
-    r"((?:CANO|ACNO|ACCT|ACCOUNT|계좌)[A-Za-z0-9_]*\s*[:=]?\s*)(\d{8})(?![\d-])",
+    r"((?:CANO|ACNO|ACCT|ACCOUNT|계좌)[A-Za-z0-9_가-힣]*"  # 「계좌번호」 까지
+    r"(?:\s*(?:no|num|number)\.?)?"  # 「acct no」 · 「Account No.」
+    r"\s*[:=]?\s*)(\d{8})(?![\d-])",
     re.IGNORECASE,
 )
 
@@ -129,9 +148,9 @@ def account_values_from_env(
 
 
 def _replace_path_token(match: re.Match[str]) -> str:
-    """한 토큰을 자리 표시로 — URL 과 숫자뿐인 비율은 원문 그대로 돌려준다."""
+    """한 토큰을 자리 표시로 — URL·라우트·숫자뿐인 비율은 원문 그대로 돌려준다."""
     token = match.group(0)
-    if match.lastgroup == "url":
+    if match.lastgroup in {"url", "route"}:
         return token
     # SAFETY: 「3 /378」 처럼 숫자뿐인 덩어리는 비율이지 경로가 아니다 — 지우면 측정값이 사라진다
     if match.lastgroup == "posix" and not _ASCII_LETTER.search(token):

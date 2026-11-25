@@ -82,6 +82,36 @@
       "why": "eight digits after the Korean account label",
       "input": "계좌 50205915 연결 실패",
       "expected": "계좌 <계좌> 연결 실패"
+    },
+    {
+      "why": "a file:// URL is a host path wearing a scheme, not a web address",
+      "input": "opened file:///home/deploy/.local/state/tos/x.db?mode=ro",
+      "expected": "opened file://<경로>?mode=ro"
+    },
+    {
+      "why": "a sqlite DSN is a host path too",
+      "input": "dsn sqlite:////home/deploy/x.db",
+      "expected": "dsn sqlite:///<경로>"
+    },
+    {
+      "why": "an absolute path glued onto an ASCII word, under a known root",
+      "input": "data_leaf/home/deploy/.local/state/x 를 만들지 못했다",
+      "expected": "data_leaf<경로> 를 만들지 못했다"
+    },
+    {
+      "why": "the Korean label with its own noun tail",
+      "input": "계좌번호 50205915 조회 실패",
+      "expected": "계좌번호 <계좌> 조회 실패"
+    },
+    {
+      "why": "«acct no», the way a probe log writes it",
+      "input": "acct no 50205915 refused",
+      "expected": "acct no <계좌> refused"
+    },
+    {
+      "why": "«Account No.», with the dot",
+      "input": "Account No. 50205915 refused",
+      "expected": "Account No. <계좌> refused"
     }
   ],
   "kept": [
@@ -124,6 +154,18 @@
     {
       "why": "a bare eight-digit run is a trading date, not an account",
       "input": "20261125 세션은 rc=0 으로 끝났다"
+    },
+    {
+      "why": "a route path is this service's own public surface, not a host path",
+      "input": "see /api/tos/status for the board"
+    },
+    {
+      "why": "a decimal pair is not a relative path",
+      "input": "0.5 .5/2 비율"
+    },
+    {
+      "why": "a two-letter ratio is not a path",
+      "input": "a/b 는 경로가 아니다"
     }
   ]
 }
