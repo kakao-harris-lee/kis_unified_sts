@@ -178,7 +178,10 @@ export default function StatusStrip({
       key: 'tenants',
       label: `tenant ${tenants.length}개`,
       value: parts.join(' · ') || '알 수 없음',
-      tone: phases.some((phase) => phase === 'unknown') ? 'warn' : 'good',
+      // «시작 안 함» is amber beside «확인 필요», as it was in P1: a tenant the
+      // board lists and that never booted is an absence, and the one thing
+      // this page must never do is draw an absence as «이상 없음».
+      tone: phases.some((phase) => phase === 'unknown' || phase === 'none') ? 'warn' : 'good',
     });
   }
 

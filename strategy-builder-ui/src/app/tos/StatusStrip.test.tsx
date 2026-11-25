@@ -157,6 +157,17 @@ describe('상태 띠', () => {
   it('counts the tenant sessions from the board, which covers all five trees', () => {
     mount();
     expect(chip('tenant 2개')).toHaveTextContent('종료 2');
+    expect(chip('tenant 2개').querySelector('span')?.className).toContain('emerald');
+  });
+
+  it('does not draw a tenant that never booted as 이상 없음', () => {
+    // An absence is not a clean run: the board lists the tenant and it has no
+    // session at all.
+    const idle = statusDocument();
+    idle.tenants = idle.tenants!.map((tenant) => ({ ...tenant, status: null }));
+    mount('recent', {}, { status: status(idle) });
+    expect(chip('tenant 2개')).toHaveTextContent('시작 안 함 2');
+    expect(chip('tenant 2개').querySelector('span')?.className).toContain('amber');
   });
 
   it('drops P1’s day-wide gate count, which the board now answers for', () => {
