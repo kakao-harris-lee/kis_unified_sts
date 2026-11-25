@@ -10,6 +10,7 @@ import {
   type BarsState,
   type TosBarsDocument,
   type TosBarsResponse,
+  type TosSessionEntry,
   type TosSessionsResponse,
 } from '@/lib/dashboard/tosBars';
 import {
@@ -22,9 +23,12 @@ import {
 } from '@/lib/dashboard/tosStatus';
 import {
   isAcceptedSymbolsDocument,
+  kstToday,
+  sessionPhase,
   symbolsState,
   tosSymbolsApi,
   type SymbolsState,
+  type TosSymbolRow,
   type TosSymbolsDocument,
   type TosSymbolsResponse,
 } from '@/lib/dashboard/tosSymbols';
@@ -53,16 +57,42 @@ export function barsKey(session: string) {
  * The options every bars reader must pass, so the cards and the panels below
  * them share one fetch per session rather than one each.
  */
-export function barsQueryOptions(session: string): UseQueryOptions<TosBarsResponse> & { queryKey: readonly unknown[] } {
+export function barsQueryOptions(
+  session: string,
+  refetchMs?: number,
+): UseQueryOptions<TosBarsResponse> & { queryKey: readonly unknown[] } {
   return {
     queryKey: barsKey(session),
     queryFn: () => tosBarsApi.getBars(session),
     retry: false,
-    // A bars document is written once, at session end. Re-reading a megabyte
-    // because a component remounted would cost the operator a visible stall
-    // for a document that cannot have changed.
+    // A finished session's bars document never changes again, so re-reading a
+    // megabyte because a component remounted would cost the operator a
+    // visible stall for nothing.
     staleTime: config.pollIntervalMs * 4,
+    // A session still running is the exception: the host rewrites its document
+    // on the intraday cron, so the panel polls — but only then, and only this
+    // one session, because each poll is about a megabyte.
+    refetchInterval: refetchMs ?? false,
   };
+}
+
+/**
+ * Whether this session's document can still change.
+ *
+ * Two conditions, and both have to hold: the session is today's (yesterday's
+ * document is final whatever its row says), and nothing says it has settled.
+ * A row that reports ENDED stops the polling immediately rather than at
+ * midnight; no row at all leaves today's session polling, because «the
+ * per-symbol export has not seen it yet» is not «it is over».
+ */
+export function isLiveSession(
+  entry: TosSessionEntry | null | undefined,
+  row: TosSymbolRow | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!entry?.date) return false;
+  if (entry.date !== kstToday(now)) return false;
+  return sessionPhase(row?.session) !== 'settled';
 }
 
 function authFailed(error: unknown): boolean {
@@ -79,8 +109,8 @@ export interface BarsRead {
 }
 
 /** One session's per-bar document, already judged acceptable or not. */
-export function useBarsDocument(session: string): BarsRead {
-  const query = useQuery(barsQueryOptions(session));
+export function useBarsDocument(session: string, refetchMs?: number): BarsRead {
+  const query = useQuery(barsQueryOptions(session, refetchMs));
   const response = query.data;
   const state = barsState(response, query.isError || query.fetchStatus === 'paused');
   return {

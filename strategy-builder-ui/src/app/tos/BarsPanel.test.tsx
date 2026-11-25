@@ -184,9 +184,18 @@ describe('판단 근거 패널', () => {
     expect(screen.getByText('바인딩: 알 수 없음')).toBeInTheDocument();
   });
 
-  it('says the record is written once, at session end', () => {
+  it('states when the document was actually written, not when exports happen', () => {
+    // The old line claimed «written once, after the session ended» for every
+    // document. Since the intraday export (plan §P3) that is a claim the page
+    // cannot make: it says the file's own age instead.
     mount();
-    expect(screen.getByText(/장중에는 직전 세션을 보고 있을 수 있습니다/)).toBeInTheDocument();
+    expect(screen.getByText(/마지막으로 내보낸 시각 12초 전 내보냄/)).toBeInTheDocument();
+    expect(screen.getByText(/끝난 세션이라 더 바뀌지 않습니다/)).toBeInTheDocument();
+  });
+
+  it('says a running session is being re-read, and how often', () => {
+    render(<BarsPanel requested="long-20261125" read={read()} refetchMs={60000} />);
+    expect(screen.getAllByText(/진행 중인 세션이라 60초마다 다시 읽습니다/).length).toBeGreaterThan(0);
   });
 
   it.each([
