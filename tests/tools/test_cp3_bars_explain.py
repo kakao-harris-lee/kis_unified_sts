@@ -277,6 +277,58 @@ def test_an_unreadable_probe_map_is_a_refusal_not_an_empty_set(
         be.load_probe_rule_ids(tmp_path / "missing.yaml")
 
 
+def test_a_rule_that_is_not_a_mapping_is_an_empty_row_not_a_crash() -> None:
+    """설명 하나가 모양이 틀렸다고 바 문서 전체를 잃으면 안 된다."""
+    explain = be.build_explain(
+        {"policy": {"rules": ["문자열", None], "default": {"rationale": "R0: x"}}},
+        FIELDS,
+        probe_rule_ids=frozenset(),
+    )
+    assert [rule["label"] for rule in explain["rules"]] == ["R1", "R2"]
+    assert all(rule["rule_id"] is None for rule in explain["rules"])
+    assert all(rule["fields"] == [] for rule in explain["rules"])
+    assert all(rule["probe"] is False for rule in explain["rules"])
+
+
+def test_a_null_or_list_parameter_survives_into_the_explanation() -> None:
+    """``when_missing: null`` 같은 값이 설명을 깨면 안 된다 — route DTO 까지 간다."""
+    fields = dict(FIELDS)
+    fields["fields"] = [
+        *FIELDS["fields"],
+        {
+            "name": "odd",
+            "op": "permissive",
+            "params": {"when_missing": None, "choices": [1, 2], "nested": {"a": 1}},
+        },
+    ]
+    explain = be.build_explain(
+        {
+            "policy": {
+                "rules": [
+                    {
+                        "all_of": [
+                            {
+                                "left": {"ref": ["capsule", "resolved_values", "odd"]},
+                                "op": "EQ",
+                                "right": {"const": True},
+                            }
+                        ],
+                        "decision": {"kind": "ACTION", "rationale": "RX: x"},
+                    }
+                ],
+                "default": {"kind": "NO_ACTION", "rationale": "R0: y"},
+            }
+        },
+        fields,
+        probe_rule_ids=frozenset(),
+    )
+    assert explain["fields"]["odd"]["params"] == {
+        "when_missing": None,
+        "choices": [1, 2],
+        "nested": {"a": 1},
+    }
+
+
 def test_the_shipped_probe_map_loads() -> None:
     """내보내기가 매일 아침 읽는 그 파일이 실제로 읽히는지."""
     assert be.load_probe_rule_ids() == {"R4-M2-PROBE-ENTRY-LONG"}

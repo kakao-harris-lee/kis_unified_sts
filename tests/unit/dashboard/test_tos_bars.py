@@ -1029,6 +1029,100 @@ def test_a_document_that_could_not_be_explained_says_why(
     assert document["bars"]
 
 
+def test_a_null_or_list_field_parameter_never_takes_the_bars_down(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """``fields.yaml`` 은 저작 콘텐츠다 — 새 파라미터 모양이 설명만 상하게 해야 한다.
+
+    좁게 타이핑하면 ``when_missing: null`` 하나로 **문서 전체**가 검증에 실패하고,
+    페이지는 설명이 아니라 **바**를 잃는다. 그건 패널이 없어도 되는 것과 없으면
+    안 되는 것을 맞바꾸는 일이다.
+    """
+    payload = _explained()
+    payload["explain"] = {
+        **_EXPLAIN,
+        "fields": {
+            "odd": {
+                "field": "odd",
+                "op": "permissive",
+                "params": {
+                    "when_missing": None,
+                    "choices": [1, 2],
+                    "nested": {"a": 1},
+                },
+                "scale": {"mult": None},
+                "known": True,
+            }
+        },
+    }
+    _write(bars_dir, SESSION, payload)
+
+    body = _get(client)
+    assert body["available"] is True
+    document = body["document"]
+    assert document["bars"], "the bars must survive a parameter shape nobody typed"
+    assert document["explain"]["fields"]["odd"]["params"] == {
+        "when_missing": None,
+        "choices": [1, 2],
+        "nested": {"a": 1},
+    }
+    assert document["explain"]["fields"]["odd"]["scale"] == {"mult": None}
+
+
+def test_a_zero_trade_session_serves_no_total_rather_than_zero_won(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """«0원» 은 «오늘 ±0» 으로 읽힌다 — «신호가 없었다» 와 다른 말이다."""
+    payload = _explained()
+    payload["hypothetical_pnl"] = {
+        **_HYPOTHETICAL,
+        "trades": [],
+        "totals": {
+            "trades": 0,
+            "wins": 0,
+            "points": None,
+            "hypothetical_pnl_krw": None,
+            "forced_closes": 0,
+        },
+    }
+    _write(bars_dir, SESSION, payload)
+    totals = _get(client)["document"]["hypothetical_pnl"]["totals"]
+    assert totals["trades"] == 0
+    assert totals["points"] is None
+    assert totals["hypothetical_pnl_krw"] is None
+
+
+def test_the_skipped_decisions_say_what_the_total_left_out(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """합계가 무엇을 빼고 센 것인지 문서만 보고 말할 수 있어야 한다."""
+    payload = _explained()
+    payload["hypothetical_pnl"] = {
+        **_HYPOTHETICAL,
+        "skipped_decisions": [
+            {
+                "time_kst": "15:45",
+                "decision_kind": "FLAT",
+                "rule_id": "R3-EXIT-EOD",
+                "reason": "NOT_ENGINE_COUNTED",
+            },
+            {
+                "time_kst": "09:14",
+                "decision_kind": "ACTION",
+                "rule_id": "R4-M2-PROBE-ENTRY-LONG",
+                "reason": "PROBE_ENTRY",
+            },
+        ],
+    }
+    _write(bars_dir, SESSION, payload)
+    skipped = _get(client)["document"]["hypothetical_pnl"]["skipped_decisions"]
+    assert [entry["reason"] for entry in skipped] == [
+        "NOT_ENGINE_COUNTED",
+        "PROBE_ENTRY",
+    ]
+    assert skipped[0]["time_kst"] == "15:45"
+
+
 def test_the_explanation_blocks_never_carry_a_path(
     client: TestClient, bars_dir: Path
 ) -> None:

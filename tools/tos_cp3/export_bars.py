@@ -35,6 +35,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -86,6 +88,23 @@ CONTRACT_SPEC_CONFIG = REPO_ROOT / "config" / "execution.yaml"
 #: would actually have been priced at.
 CONSTRUCTION_FILE_NAME = "construction.yaml"
 PRICE_FIELD_CONFIG_KEY = "price_field_key"
+
+#: Everything resolving the contract may raise, degraded into "no hypothetical
+#: block" rather than allowed to kill the export. ``ContractSpecRegistry`` is a
+#: plain ``**fields`` constructor over a YAML mapping, so a renamed or extra key
+#: in ``config/execution.yaml`` surfaces as ``TypeError``; the file itself can
+#: fail to parse (``yaml.YAMLError``) or to open (``OSError``);
+#: ``resolve_contract_spec`` raises ``ValueError`` for an unknown symbol.
+_CONTRACT_REFUSALS = (
+    bars_explain.ExplainRefusal,
+    OSError,
+    UnicodeError,
+    ValueError,
+    TypeError,
+    KeyError,
+    AttributeError,
+    yaml.YAMLError,
+)
 
 
 class ExportRefusal(Exception):
@@ -190,7 +209,7 @@ def resolve_contract(
     *,
     price_field: str,
     price_scale: int,
-    config_path: Path = CONTRACT_SPEC_CONFIG,
+    config_path: Path | None = None,
 ) -> hypothetical_pnl.Contract:
     """The contract facts for ``instrument``, all read from config.
 
@@ -198,13 +217,20 @@ def resolve_contract(
     futures contract's multiplier, and it is pure (stdlib + pyyaml). Reading it
     here rather than restating 50,000 is the "Configuration-driven only" rule:
     the mini and the full KOSPI200 contract differ by five times.
+
+    ``config_path`` defaults to :data:`CONTRACT_SPEC_CONFIG` read at CALL time,
+    not bound as a default argument: a default argument is evaluated at import,
+    which would make the module constant unoverridable and the degrade path
+    untestable.
     """
     from shared.instruments.contract_spec import (
         ContractSpecRegistry,
         resolve_contract_spec,
     )
 
-    registry = ContractSpecRegistry.from_yaml(str(config_path))
+    registry = ContractSpecRegistry.from_yaml(
+        str(CONTRACT_SPEC_CONFIG if config_path is None else config_path)
+    )
     spec = resolve_contract_spec(instrument, registry)
     return hypothetical_pnl.Contract(
         name=spec.name,
@@ -222,8 +248,6 @@ def _price_field(render_dir: Path, fields_doc: dict[str, Any]) -> tuple[str, int
     A scale read wrong by a factor of 100 would not look wrong — it would look
     like a very profitable day.
     """
-    import yaml
-
     try:
         raw = yaml.safe_load((render_dir / CONSTRUCTION_FILE_NAME).read_text("utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
@@ -300,7 +324,7 @@ def attach_explanations(
     try:
         field, scale = _price_field(content.render_dir, content.fields_doc)
         contract = resolve_contract(instrument, price_field=field, price_scale=scale)
-    except (bars_explain.ExplainRefusal, OSError, ValueError, KeyError) as exc:
+    except _CONTRACT_REFUSALS as exc:
         document["hypothetical_pnl"] = None
         document["hypothetical_pnl_error"] = type(exc).__name__
         return document
@@ -310,6 +334,13 @@ def attach_explanations(
         direction=content.direction,
         contract=contract,
         instrument=instrument,
+        # The page and the number must agree about what a probe is, so the
+        # flags the explanation already published are the ones used here.
+        probe_rule_ids=frozenset(
+            rule["rule_id"]
+            for rule in document["explain"]["rules"]
+            if rule.get("probe") and rule.get("rule_id")
+        ),
     )
     return document
 

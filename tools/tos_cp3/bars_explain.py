@@ -199,8 +199,13 @@ def _closure(
 def _rule_block(
     rule: Any, *, position: int, probe_rule_ids: frozenset[str]
 ) -> dict[str, Any]:
-    """한 규칙의 설명 — 식별자 · 문장 · 가리키는 필드 · 프로브 여부."""
-    decision = rule.get("decision") if isinstance(rule, dict) else None
+    """한 규칙의 설명 — 식별자 · 문장 · 가리키는 필드 · 프로브 여부.
+
+    규칙이 매핑이 아니면 빈 줄을 낸다. 설명 하나가 모양이 틀렸다고 바 문서 전체를
+    잃는 것이 이 블록이 피하려는 일이다.
+    """
+    rule = rule if isinstance(rule, dict) else {}
+    decision = rule.get("decision")
     decision = decision if isinstance(decision, dict) else {}
     rationale = decision.get("rationale")
     rule_id = rule_id_of(rationale if isinstance(rationale, str) else None)

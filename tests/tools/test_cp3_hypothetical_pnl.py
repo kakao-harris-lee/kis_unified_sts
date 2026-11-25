@@ -28,12 +28,21 @@ def bar(
     *,
     kind: str | None = None,
     rule_id: str | None = None,
+    counted: bool = True,
+    disagrees: bool = False,
 ) -> dict[str, Any]:
+    """실 바 문서의 봉 한 줄 — ``counted`` 까지 포함해서.
+
+    기본이 ``counted=True`` 인 이유: 실제 내보낸 문서에서 결정을 가진 봉은 거의
+    전부 엔진 view 로 평가된 봉이고, 그것이 유일하게 셀 수 있는 결정이다.
+    """
     fields: dict[str, Any] = {} if close_x100 is None else {"close_x100": close_x100}
     return {
         "time_kst": time_kst,
         "decision_kind": kind,
         "decision_rule_id": rule_id,
+        "counted": counted,
+        "decision_disagrees": disagrees,
         "fields": fields,
     }
 
@@ -139,6 +148,52 @@ def test_a_position_still_open_at_the_last_bar_is_closed_and_flagged() -> None:
     assert out["totals"]["forced_closes"] == 1
 
 
+def test_the_forced_close_uses_the_last_bar_not_the_last_decision_bar() -> None:
+    """마지막 **결정** 봉에서 닫으면 그 뒤의 장을 통째로 버린다.
+
+    진입이 그날의 마지막 결정이면(그 뒤는 전부 NO_ACTION) 결정 봉만 보는 코드는
+    진입가 = 청산가로 0 포인트를 내고 «본전» 이라고 적는다. 실제로는 그 뒤 59분
+    동안 20 포인트가 움직였다. 종가는 생산자가 발행한 시장 사실이라, 결정이
+    엔진의 것이 아니어도 마지막 표시로 쓸 수 있다.
+    """
+    out = hp.build_hypothetical_pnl(
+        [
+            bar("10:00", 70_000, kind="ACTION", rule_id="R1-ENTRY-LONG"),
+            bar("10:01", 71_000),
+            bar("10:59", 72_000),
+        ],
+        direction=hp.LONG,
+        contract=MINI,
+    )
+    (trade,) = out["trades"]
+    assert trade["entry_price_points"] == "700"
+    assert trade["exit_time_kst"] == "10:59"
+    assert trade["exit_price_points"] == "720"
+    assert trade["points"] == "20"
+    assert trade["hypothetical_pnl_krw"] == "1000000"
+    assert trade["forced_close"] is True
+
+
+def test_the_last_bar_mark_may_come_from_a_bar_the_engine_did_not_decide() -> None:
+    """표시는 **가격**이고 가격은 참이다 — 결정만 엔진의 것을 요구한다."""
+    out = hp.build_hypothetical_pnl(
+        [
+            bar("10:00", 70_000, kind="ACTION", rule_id="R1-ENTRY-LONG"),
+            bar("10:30", 72_000, kind="FLAT", rule_id="R2", counted=False),
+        ],
+        direction=hp.LONG,
+        contract=MINI,
+    )
+    # 그 FLAT 은 청산으로 세지 않았지만(엔진 결정이 아니다), 그 봉의 종가는
+    # 마지막 표시로 쓰였다.
+    (trade,) = out["trades"]
+    assert trade["forced_close"] is True
+    assert trade["exit_price_points"] == "720"
+    assert [s["reason"] for s in out["skipped_decisions"]] == [
+        hp.SKIP_NOT_ENGINE_COUNTED
+    ]
+
+
 def test_a_decision_bar_without_a_readable_close_is_named_not_guessed() -> None:
     """가격을 모르는 봉은 세지 않고, 세지 않았다는 사실을 문서가 말한다."""
     out = hp.build_hypothetical_pnl(
@@ -166,6 +221,76 @@ def test_a_withheld_bar_carries_no_decision_and_so_no_trade() -> None:
     )
     assert out["trades"] == []
     assert out["unpriced_decisions"] == []
+
+
+def test_a_bar_the_engine_never_decided_is_not_a_trade() -> None:
+    """증거를 잇지 못한 봉의 ``decision_kind`` 는 **점검이 다시 도출한** 값이다.
+
+    그 진입으로 손익을 세면 1,000,000 원이 전략의 성적인 것처럼 나오는데, 엔진은
+    그 주문을 낸 적도 내려 한 적도 없다. 버리고, 버렸다는 사실을 남긴다.
+    """
+    out = hp.build_hypothetical_pnl(
+        [
+            bar("09:14", 70_000, kind="ACTION", rule_id="R1-ENTRY-LONG", counted=False),
+            bar("09:50", 72_000, kind="FLAT", rule_id="R2-EXIT-VWAP-REVERTED"),
+        ],
+        direction=hp.LONG,
+        contract=MINI,
+    )
+    assert out["trades"] == []
+    assert out["totals"]["trades"] == 0
+    assert out["skipped_decisions"] == [
+        {
+            "time_kst": "09:14",
+            "decision_kind": "ACTION",
+            "rule_id": "R1-ENTRY-LONG",
+            "reason": hp.SKIP_NOT_ENGINE_COUNTED,
+        }
+    ]
+
+
+def test_a_bar_whose_decision_disagrees_with_the_engine_is_not_a_trade() -> None:
+    """어느 쪽이 참인지 여기서 정할 수 없다 — 그러면 세지 않는 것이 맞다."""
+    out = hp.build_hypothetical_pnl(
+        [
+            bar("09:14", 70_000, kind="ACTION", rule_id="R1", disagrees=True),
+            bar("09:50", 72_000, kind="FLAT", rule_id="R2"),
+        ],
+        direction=hp.LONG,
+        contract=MINI,
+    )
+    assert out["trades"] == []
+    assert [s["reason"] for s in out["skipped_decisions"]] == [hp.SKIP_ENGINE_DISAGREES]
+
+
+def test_a_probe_entry_is_not_a_strategy_entry() -> None:
+    """``R4-M2-PROBE-ENTRY-LONG`` 은 주문 경로 시험이다 — 성적에 섞이면 거짓이 된다."""
+    bars = [
+        bar("09:14", 70_000, kind="ACTION", rule_id="R4-M2-PROBE-ENTRY-LONG"),
+        bar("09:50", 72_000, kind="FLAT", rule_id="R2-EXIT-VWAP-REVERTED"),
+    ]
+    out = hp.build_hypothetical_pnl(
+        bars,
+        direction=hp.LONG,
+        contract=MINI,
+        probe_rule_ids=frozenset({"R4-M2-PROBE-ENTRY-LONG"}),
+    )
+    assert out["trades"] == []
+    assert [s["reason"] for s in out["skipped_decisions"]] == [hp.SKIP_PROBE_ENTRY]
+
+    # 같은 봉을 프로브로 선언하지 않으면 그대로 거래가 된다 — 분기가 실제로
+    # probe 목록을 보는지 확인한다(공허한 검사 방지).
+    assert hp.build_hypothetical_pnl(bars, direction=hp.LONG, contract=MINI)["trades"]
+
+
+def test_a_session_with_no_trade_reports_no_total_rather_than_zero_won() -> None:
+    """«0원» 은 «오늘 ±0» 으로 읽힌다. «신호가 없었다» 와 전혀 다른 말이다."""
+    out = hp.build_hypothetical_pnl([], direction=hp.SHORT, contract=MINI)
+    assert out["totals"]["trades"] == 0
+    assert out["totals"]["wins"] == 0
+    assert out["totals"]["points"] is None
+    assert out["totals"]["hypothetical_pnl_krw"] is None
+    assert out["totals"]["forced_closes"] == 0
 
 
 def test_every_number_travels_with_its_assumptions() -> None:

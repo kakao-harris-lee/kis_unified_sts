@@ -73,6 +73,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from stat import S_ISREG
+from typing import Any
 
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -392,8 +393,14 @@ class BarsExplainField(BaseModel):
     field: str | None = None
     op: str | None = None
     inputs: list[str] | None = None
-    params: dict[str, bool | int | float | str] | None = None
-    scale: dict[str, bool | int | float | str] | None = None
+    #: Any JSON value, deliberately. The tenant's ``fields.yaml`` is authored
+    #: content and a future operation may take a null (``when_missing: null``),
+    #: a list, or a nested mapping as a parameter. Typed narrowly, one such
+    #: parameter would fail validation of the WHOLE document and the page would
+    #: lose its bars — a new parameter shape must only ever be able to degrade
+    #: the explanation, never the thing the panel cannot do without.
+    params: dict[str, Any] | None = None
+    scale: dict[str, Any] | None = None
     published_as: str | None = None
     known: bool | None = None
 
@@ -443,6 +450,8 @@ class HypotheticalTotals(BaseModel):
 
     trades: int | None = None
     wins: int | None = None
+    #: ``None`` — not ``"0"`` — on a session with no trade at all. A zero would
+    #: render as "±0 today", which is a different claim from "no signal fired".
     points: str | None = None
     hypothetical_pnl_krw: str | None = None
     forced_closes: int | None = None
@@ -456,6 +465,20 @@ class HypotheticalDecision(BaseModel):
     time_kst: str | None = None
     decision_kind: str | None = None
     rule_id: str | None = None
+
+
+class HypotheticalSkipped(HypotheticalDecision):
+    """A decision bar left out of the total on purpose, and why.
+
+    ``NOT_ENGINE_COUNTED``/``ENGINE_DISAGREES`` mean the bar's ``decision_kind``
+    was re-derived by the inspection rather than made by the engine;
+    ``PROBE_ENTRY`` means the rule is an order-path exercise, not a signal.
+    Counting any of them would attribute to the strategy something it did not do.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    reason: str | None = None
 
 
 class BarsHypotheticalPnl(BaseModel):
@@ -481,6 +504,9 @@ class BarsHypotheticalPnl(BaseModel):
     trades: list[HypotheticalTrade] | None = None
     totals: HypotheticalTotals | None = None
     unpriced_decisions: list[HypotheticalDecision] | None = None
+    #: Decision bars deliberately left out, each with its reason — so the page
+    #: can say what the total excluded instead of implying it counted everything.
+    skipped_decisions: list[HypotheticalSkipped] | None = None
 
 
 class TosBarsDocument(BaseModel):

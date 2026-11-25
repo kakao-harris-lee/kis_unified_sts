@@ -6,6 +6,9 @@ import {
   BAR_FLAGS,
   LATEST_SESSION,
   LEGACY_STOCK_INSTRUMENT,
+  SKIP_ENGINE_DISAGREES,
+  SKIP_NOT_ENGINE_COUNTED,
+  SKIP_PROBE_ENTRY,
   SUPPORTED_BARS_SCHEMA_VERSION,
   barValue,
   barsState,
@@ -19,6 +22,8 @@ import {
   type BarsState,
   type TosBarsBar,
   type TosBarsDocument,
+  type TosBarsExplainField,
+  type TosHypotheticalSkipped,
   type TosBarsResponse,
   type TosSessionEntry,
 } from './tosBars';
@@ -306,5 +311,47 @@ describe('hasHypotheticalPnl', () => {
     const totals = explained.hypothetical_pnl?.totals ?? {};
     expect(Object.keys(totals)).not.toContain('pnl_krw');
     expect(totals.hypothetical_pnl_krw).toBe('147000');
+  });
+
+  it('types a zero-trade session as no total rather than zero won', () => {
+    // '0' would render as "±0 today", which is a different claim from "no
+    // signal fired". The exporter sends null; the type must allow it.
+    const quiet: TosBarsDocument = {
+      schema_version: SUPPORTED_BARS_SCHEMA_VERSION,
+      decision_only: true,
+      hypothetical_pnl: {
+        hypothetical: true,
+        totals: { trades: 0, wins: 0, points: null, hypothetical_pnl_krw: null },
+      },
+    };
+    expect(hasHypotheticalPnl(quiet)).toBe(true);
+    expect(quiet.hypothetical_pnl?.totals?.hypothetical_pnl_krw).toBeNull();
+    expect(quiet.hypothetical_pnl?.totals?.trades).toBe(0);
+  });
+
+  it('types the skipped decisions that say what the total left out', () => {
+    const skipped: TosHypotheticalSkipped[] = [
+      { time_kst: '15:45', rule_id: 'R3-EXIT-EOD', reason: SKIP_NOT_ENGINE_COUNTED },
+      { time_kst: '09:14', rule_id: 'R4-M2-PROBE', reason: SKIP_PROBE_ENTRY },
+      { time_kst: '10:00', rule_id: 'R1', reason: SKIP_ENGINE_DISAGREES },
+    ];
+    expect(skipped.map((entry) => entry.reason)).toEqual([
+      'NOT_ENGINE_COUNTED',
+      'PROBE_ENTRY',
+      'ENGINE_DISAGREES',
+    ]);
+  });
+
+  it('accepts a field parameter shape nobody typed', () => {
+    // fields.yaml is authored content: a null, a list or a nested mapping must
+    // only ever degrade the explanation, never fail the document.
+    const field: TosBarsExplainField = {
+      field: 'odd',
+      op: 'permissive',
+      params: { when_missing: null, choices: [1, 2], nested: { a: 1 } },
+      scale: { mult: null },
+    };
+    expect(field.params?.when_missing).toBeNull();
+    expect(field.params?.choices).toEqual([1, 2]);
   });
 });

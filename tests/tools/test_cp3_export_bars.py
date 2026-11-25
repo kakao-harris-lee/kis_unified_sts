@@ -515,12 +515,14 @@ def test_a_decision_only_tenant_gets_one_built_from_its_own_contract(
             "time_kst": "09:14",
             "decision_kind": "ACTION",
             "decision_rule_id": "R1-ENTRY-LONG",
+            "counted": True,
             "fields": {"close_x100": 73_564},
         },
         {
             "time_kst": "09:50",
             "decision_kind": "FLAT",
             "decision_rule_id": "R2-EXIT-VWAP-REVERTED",
+            "counted": True,
             "fields": {"close_x100": 73_858},
         },
     ]
@@ -554,12 +556,14 @@ def test_a_short_tenants_block_is_the_mirror_of_the_longs(
             "time_kst": "09:14",
             "decision_kind": "ACTION",
             "decision_rule_id": "R1-ENTRY-SHORT",
+            "counted": True,
             "fields": {"close_x100": 73_564},
         },
         {
             "time_kst": "09:50",
             "decision_kind": "FLAT",
             "decision_rule_id": "R2-EXIT-VWAP-REVERTED",
+            "counted": True,
             "fields": {"close_x100": 73_858},
         },
     ]
@@ -593,6 +597,90 @@ def test_a_contract_the_registry_does_not_know_is_named_not_guessed(
     assert document["hypothetical_pnl_error"] == "ValueError"
     # …and the explanation, which does not need the contract, is still there.
     assert document["explain"]["rules"]
+
+
+def test_a_probe_rule_the_explanation_marks_is_the_one_the_total_skips(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """화면이 «시험 진입» 이라 그린 규칙과 합계가 뺀 규칙이 **같아야** 한다.
+
+    둘이 갈라지면 운영자가 보는 표시와 숫자가 서로 다른 말을 한다. 그래서 설명
+    블록이 이미 낸 `probe` 플래그를 그대로 필터로 쓴다.
+    """
+    _tenant_content(session_tree, market="futures")
+    render = session_tree / "cp3-sessions" / SESSION / "render"
+    probing = _STRATEGY_YAML.replace(
+        '"R1-ENTRY-LONG: the entry window is open."',
+        '"R4-M2-PROBE-ENTRY-LONG: the M2 boundary probe."',
+    )
+    (render / "strategies" / "d.strategy.yaml").write_text(probing, encoding="utf-8")
+    bars = [
+        {
+            "time_kst": "09:14",
+            "decision_kind": "ACTION",
+            "decision_rule_id": "R4-M2-PROBE-ENTRY-LONG",
+            "counted": True,
+            "fields": {"close_x100": 73_564},
+        },
+        {
+            "time_kst": "09:50",
+            "decision_kind": "FLAT",
+            "decision_rule_id": "R2-EXIT-VWAP-REVERTED",
+            "counted": True,
+            "fields": {"close_x100": 73_858},
+        },
+    ]
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612", "bars": bars},
+        )
+    )
+    marked = [r["rule_id"] for r in document["explain"]["rules"] if r["probe"]]
+    assert marked == ["R4-M2-PROBE-ENTRY-LONG"]
+
+    block = document["hypothetical_pnl"]
+    assert block["trades"] == []
+    assert block["totals"]["hypothetical_pnl_krw"] is None
+    assert [s["reason"] for s in block["skipped_decisions"]] == ["PROBE_ENTRY"]
+
+
+def test_a_contract_spec_file_that_cannot_be_loaded_degrades_the_block(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ContractSpecRegistry.from_yaml`` 의 ``TypeError`` 가 수출을 죽이면 안 된다.
+
+    그 생성자는 YAML 매핑을 ``**fields`` 로 펼치므로, `config/execution.yaml` 에
+    키 하나가 늘거나 이름이 바뀌면 ``TypeError`` 다. 설명 블록 때문에 바를 잃는
+    것은 이 설계가 명시적으로 피한 것이다.
+    """
+    _tenant_content(session_tree, market="futures")
+    spec = tmp_path / "execution.yaml"
+    spec.write_text(
+        "futures_contract_spec:\n"
+        "  kospi200_mini:\n"
+        "    multiplier_krw_per_point: 50000\n"
+        "    tick_size_points: 0.02\n"
+        "    tick_value_krw: 1000\n"
+        "    commission_rate: 0.00003\n"
+        "    symbol_prefix: 'A05'\n"
+        "    a_key_nobody_declared: 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(eb, "CONTRACT_SPEC_CONFIG", spec)
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612"},
+        )
+    )
+    assert document["bars"] == _DOCUMENT["bars"]
+    assert document["hypothetical_pnl"] is None
+    assert document["hypothetical_pnl_error"] == "TypeError"
 
 
 def test_a_publish_scale_that_is_not_a_positive_int_refuses_the_number(

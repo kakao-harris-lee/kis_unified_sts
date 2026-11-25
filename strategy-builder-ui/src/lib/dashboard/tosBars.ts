@@ -131,8 +131,14 @@ export interface TosBarsExplainField {
   field?: string | null;
   op?: string | null;
   inputs?: string[] | null;
-  params?: Record<string, boolean | number | string> | null;
-  scale?: Record<string, boolean | number | string> | null;
+  /**
+   * Any JSON value, deliberately: `fields.yaml` is authored content and a
+   * future operation may take a null (`when_missing: null`), a list, or a
+   * nested mapping. A narrow type here would make one new parameter shape fail
+   * the whole document and take the bars down with it.
+   */
+  params?: Record<string, unknown> | null;
+  scale?: Record<string, unknown> | null;
   published_as?: string | null;
   /** False when the catalog did not define this name — not an invented op. */
   known?: boolean | null;
@@ -165,6 +171,10 @@ export interface TosHypotheticalTrade {
 export interface TosHypotheticalTotals {
   trades?: number | null;
   wins?: number | null;
+  /**
+   * Null — not `'0'` — on a session with no trade at all. A zero renders as
+   * "±0 today", which is a different claim from "no signal fired".
+   */
   points?: string | null;
   /** Deliberately not named `pnl_krw` — it must never be summed with one. */
   hypothetical_pnl_krw?: string | null;
@@ -176,6 +186,23 @@ export interface TosHypotheticalDecision {
   time_kst?: string | null;
   decision_kind?: string | null;
   rule_id?: string | null;
+}
+
+/** Reasons a decision bar was deliberately left out of the total. */
+export const SKIP_NOT_ENGINE_COUNTED = 'NOT_ENGINE_COUNTED';
+export const SKIP_ENGINE_DISAGREES = 'ENGINE_DISAGREES';
+export const SKIP_PROBE_ENTRY = 'PROBE_ENTRY';
+
+/**
+ * A decision bar left out of the total on purpose, and why.
+ *
+ * The first two reasons mean the bar's `decision_kind` was re-derived by the
+ * inspection rather than made by the engine; `PROBE_ENTRY` means the rule is an
+ * order-path exercise, not a signal. Counting any of them would attribute to
+ * the strategy something it did not do.
+ */
+export interface TosHypotheticalSkipped extends TosHypotheticalDecision {
+  reason?: string | null;
 }
 
 /**
@@ -199,6 +226,11 @@ export interface TosBarsHypotheticalPnl {
   trades?: TosHypotheticalTrade[] | null;
   totals?: TosHypotheticalTotals | null;
   unpriced_decisions?: TosHypotheticalDecision[] | null;
+  /**
+   * Decision bars deliberately left out, each with its reason — so the page can
+   * say what the total excluded instead of implying it counted everything.
+   */
+  skipped_decisions?: TosHypotheticalSkipped[] | null;
 }
 
 export interface TosBarsDocument {
