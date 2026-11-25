@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   GLOSSARY,
   glossaryKey,
+  issueExplanation,
+  standingReason,
   glossaryLabel,
   glossaryTerm,
   haltExplanation,
@@ -10,6 +12,7 @@ import {
 import { parseCompare } from './tosDecision';
 import {
   futuresBarsDocument,
+  statusDocument,
   rsiStockBarsDocument,
   stockBarsDocument,
   symbolsDocument,
@@ -44,6 +47,11 @@ function jargon(): string[] {
       if (trade.entry_rule_id) names.add(trade.entry_rule_id);
       if (trade.exit_rule_id) names.add(trade.exit_rule_id);
     }
+  }
+  // …the status board puts its issue codes on screen,
+  for (const issue of statusDocument().issues ?? []) {
+    const reading = issueExplanation(issue.text);
+    if (reading) names.add(reading.code);
   }
   // …and the per-symbol document prints the PnL basis and the status of every
   // order the FIFO could not account for.
@@ -182,5 +190,72 @@ describe('the glossary', () => {
       expect(term.label, key).not.toBe('');
       expect(term.meaning.length, key).toBeGreaterThan(term.label.length);
     }
+  });
+});
+
+describe('상태판 이슈 문장', () => {
+  it('turns the board’s CLI row into one sentence and an action', () => {
+    const overrun = issueExplanation(
+      'MARKETFEED_PASS_OVERRUN 4행 — 최악 pass 7983ms > 창 500ms (tick 1ms + post-pass 7982ms, seq 11010)',
+    );
+    expect(overrun?.code).toBe('MARKETFEED_PASS_OVERRUN');
+    expect(overrun?.sentence).toMatch(/런타임은 이 행으로 아무 것도 결정하지 않습니다/);
+    expect(overrun?.action).toBe('반복되면 확인');
+  });
+
+  it('reads a standing-approval row by its REASON, not by its code', () => {
+    // The routine one and the ones that stop the day share a code. Wording
+    // them alike would teach the operator to ignore the wrong one.
+    const routine = issueExplanation(
+      'APPROVAL_STANDING_NOT_COVERED 1행 (open_over_outstanding_reservation 1)',
+    );
+    expect(routine?.action).toBe('조치 불필요');
+    expect(routine?.sentence).toMatch(/정상 동작입니다/);
+
+    const serious = issueExplanation('APPROVAL_STANDING_NOT_COVERED 1행 (code_digest_mismatch 1)');
+    expect(serious?.action).toBe('확인 필요');
+    expect(serious?.sentence).toMatch(/봐야 하는 상태입니다/);
+  });
+
+  it('explains the release.yaml line without claiming the code differed', () => {
+    const reading = issueExplanation(
+      'release.yaml 의 expected_code_digest 를 찾지 못해 code_digest 를 대조하지 않았다',
+    );
+    expect(reading?.sentence).toMatch(/대조하지 못했습니다/);
+    expect(reading?.sentence).toMatch(/코드가 달랐다는 뜻은 아니고/);
+  });
+
+  it('says nothing about a code this page has never seen', () => {
+    expect(issueExplanation('SOME_FUTURE_CODE 3행 — 무슨 일인가')).toBeNull();
+    expect(issueExplanation('생산자 stale=3')).toBeNull();
+    expect(issueExplanation(null)).toBeNull();
+  });
+});
+
+describe('승인 단계의 standing 사유', () => {
+  const approval = 'INDEPENDENT_APPROVAL';
+
+  it('separates the routine reason from the ones that stop the day', () => {
+    const routine = standingReason('no decision available · standing: open_over_outstanding_reservation');
+    expect(routine?.routine).toBe(true);
+    expect(haltExplanation('STAGE_UNKNOWN', approval, 'x · standing: open_over_outstanding_reservation'))
+      .toMatch(/정상 동작입니다/);
+
+    for (const reason of ['uses_exhausted', 'code_digest_mismatch', 'trading_date_mismatch']) {
+      const reading = standingReason(`x · standing: ${reason}`);
+      expect(reading?.routine, reason).toBe(false);
+      expect(reading?.sentence, reason).not.toMatch(/정상/);
+    }
+  });
+
+  it('carries the action suffix the kernel appends to uses_exhausted', () => {
+    const reading = standingReason('x · standing: uses_exhausted:OPEN-LONG-BUY');
+    expect(reading?.reason).toBe('uses_exhausted');
+  });
+
+  it('keeps today’s wording for a document written before the suffix existed', () => {
+    expect(standingReason('no independent approval decision is available')).toBeNull();
+    expect(haltExplanation('STAGE_UNKNOWN', approval, 'no independent approval decision is available'))
+      .toMatch(/모르는 것은 허가로 치지 않으므로/);
   });
 });

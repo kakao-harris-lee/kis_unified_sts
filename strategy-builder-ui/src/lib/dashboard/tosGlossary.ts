@@ -321,6 +321,64 @@ export const GLOSSARY: Record<string, GlossaryTerm> = {
       '그 값을 무엇으로 계산하는지를 tenant 의 필드 카탈로그(fields.yaml)에서 그대로 가져온 것입니다. 연산 이름과 입력, 설정값 순서로 적혀 있습니다.',
   },
 
+  // --- status-board issue codes -----------------------------------------------------
+  //
+  // Each sentence says what the BOARD says, and no more. Where the board
+  // states a consequence (`tools/tos_cp3/status_board.py`) it is repeated;
+  // where it does not, the sentence stops at what is known rather than
+  // inventing an effect the operator would act on.
+  MARKETFEED_PASS_OVERRUN: {
+    label: '시세 처리 지연',
+    meaning:
+      '시세 처리 한 번이 정해진 창보다 오래 걸렸습니다. 상태판이 남기는 진단 기록이고, 런타임은 이 행으로 아무 것도 결정하지 않습니다. 행이 많거나 초과 폭이 크면 들여다봅니다.',
+  },
+  APPROVAL_STANDING_NOT_COVERED: {
+    label: '상시 승인 미적용',
+    meaning:
+      '상시 세션 승인이 그 제안을 덮지 못해 승인 없이 끝났습니다. 왜 덮지 못했는지는 괄호 안의 사유가 말합니다.',
+  },
+  APPROVAL_STANDING_REFUSED: {
+    label: '상시 승인 거절',
+    meaning: '상시 세션 승인이 그 제안을 명시적으로 거절했습니다. 사유는 괄호 안에 있습니다.',
+  },
+  'release.yaml::expected_code_digest': {
+    label: '코드 대조 생략',
+    meaning:
+      '렌더된 트리의 release.yaml 에 expected_code_digest 가 없어, 지금 도는 코드가 그 트리에 고정된 코드와 같은지 대조하지 못했습니다. 코드가 달랐다는 뜻은 아니고, 그 확인을 하지 못했다는 뜻입니다.',
+  },
+
+  // --- standing-approval reasons ----------------------------------------------------
+  //
+  // From the kernel that writes them
+  // (`tos/runtime/src/tos_runtime/authority/standing.py`). Only the first is
+  // routine; the rest mean the approval did not apply, which is not normal and
+  // must not be worded as if it were.
+  open_over_outstanding_reservation: {
+    label: '보유 중 신규 진입',
+    meaning:
+      '이미 보유(또는 예약)가 있는데 신규 진입 제안이 와서 상시 승인이 적용되지 않았습니다. 어차피 뒤 단계가 거절할 제안이라 승인 횟수를 쓰지 않은 것으로, 정상 동작입니다.',
+  },
+  uses_exhausted: {
+    label: '승인 횟수 소진',
+    meaning:
+      '그 동작에 허용된 상시 승인 횟수를 모두 썼습니다. 남은 제안은 승인 없이 끝나므로 주문이 더 나가지 않습니다.',
+  },
+  code_digest_mismatch: {
+    label: '코드 digest 불일치',
+    meaning:
+      '지금 도는 코드의 digest 가 상시 승인이 묶인 digest 와 다릅니다. 승인이 적용되지 않으므로 주문이 나가지 않습니다 — 봐야 하는 상태입니다.',
+  },
+  trading_date_mismatch: {
+    label: '거래일 불일치',
+    meaning:
+      '상시 승인의 거래일이 지금 거래일과 다릅니다. 승인이 적용되지 않으므로 주문이 나가지 않습니다 — 봐야 하는 상태입니다.',
+  },
+  trading_date_mismatch_or_session_closed: {
+    label: '거래일 불일치 · 세션 닫힘',
+    meaning:
+      '상시 승인의 거래일이 지금과 다르거나 세션이 닫혔습니다. 승인이 적용되지 않으므로 주문이 나가지 않습니다 — 봐야 하는 상태입니다.',
+  },
+
   // --- bases ------------------------------------------------------------------------
   TOS_LEDGER_FIFO_OPEN_LOTS: {
     label: 'TOS 기준 보유',
@@ -353,6 +411,110 @@ export function glossaryTerm(name: string | null | undefined): GlossaryTerm | nu
 export function glossaryLabel(name: string | null | undefined): string {
   if (!name) return '알 수 없음';
   return glossaryTerm(name)?.label ?? name;
+}
+
+/** What the operator should do about one board issue. */
+export type IssueAction = '조치 불필요' | '반복되면 확인' | '확인 필요';
+
+export interface IssueExplanation {
+  /** The key this reading is filed under — a board code, or a prose marker. */
+  code: string;
+  /** What happened, in one plain-Korean sentence. */
+  sentence: string;
+  action: IssueAction;
+}
+
+/** The board's own sentences start with the code they report. */
+const ISSUE_CODE = /^([A-Z][A-Z0-9_]{3,})\b/;
+
+/** The one prose issue this page recognises without a code in front of it. */
+const RELEASE_DIGEST_MARKER = 'expected_code_digest';
+const RELEASE_DIGEST_KEY = 'release.yaml::expected_code_digest';
+
+/** The reason the board prints inside the parentheses of a standing-approval row. */
+const ISSUE_REASON = /\(([a-z][a-z0-9_]*)[^)]*\)/;
+
+const ISSUE_ACTIONS: Record<string, IssueAction> = {
+  MARKETFEED_PASS_OVERRUN: '반복되면 확인',
+  APPROVAL_STANDING_NOT_COVERED: '확인 필요',
+  APPROVAL_STANDING_REFUSED: '확인 필요',
+  [RELEASE_DIGEST_KEY]: '확인 필요',
+};
+
+/**
+ * One board issue in plain Korean, or null when this page has never seen it.
+ *
+ * The board's rows are written for the CLI — `MARKETFEED_PASS_OVERRUN 4행 —
+ * 최악 pass 7983ms > 창 500ms (…)` — and an operator cannot tell from that
+ * whether anything needs doing. This turns the ones we know into a sentence
+ * and an action, and returns null for the rest so the caller shows the
+ * original rather than a guess.
+ *
+ * A standing-approval row is read one level deeper: `NOT_COVERED` with
+ * `open_over_outstanding_reservation` is routine, and the same code with
+ * `code_digest_mismatch` is not. Wording both the same way would teach the
+ * operator to ignore the one that matters.
+ */
+export function issueExplanation(
+  text: string | null | undefined,
+): IssueExplanation | null {
+  if (!text) return null;
+  if (text.includes(RELEASE_DIGEST_MARKER)) {
+    const term = GLOSSARY[RELEASE_DIGEST_KEY];
+    return { code: RELEASE_DIGEST_KEY, sentence: term.meaning, action: ISSUE_ACTIONS[RELEASE_DIGEST_KEY] };
+  }
+  const code = ISSUE_CODE.exec(text)?.[1];
+  if (!code) return null;
+  const term = GLOSSARY[code];
+  if (!term) return null;
+  const reason = ISSUE_REASON.exec(text)?.[1];
+  const reasonTerm = reason ? glossaryTerm(reason) : null;
+  if (reasonTerm) {
+    return {
+      code,
+      sentence: reasonTerm.meaning,
+      // The reason decides the action, not the code: the routine one asks for
+      // nothing and the others are a real stop.
+      action: reason === 'open_over_outstanding_reservation' ? '조치 불필요' : '확인 필요',
+    };
+  }
+  return { code, sentence: term.meaning, action: ISSUE_ACTIONS[code] ?? '확인 필요' };
+}
+
+/** The suffix the kernel appends to an approval halt: `· standing: <reason>`. */
+const STANDING_SUFFIX = /·\s*standing:\s*([a-z][a-z0-9_]*)/;
+
+export interface StandingReading {
+  reason: string;
+  sentence: string;
+  /** True only for the one reason that is expected on an ordinary day. */
+  routine: boolean;
+}
+
+/**
+ * Why the standing approval did not cover a proposal, when the detail says.
+ *
+ * The kernel is adding a `· standing: <reason>` suffix to the halt detail; a
+ * document written before that lands has no suffix and this returns null, so
+ * the page keeps its existing wording rather than inventing a reason.
+ *
+ * `open_over_outstanding_reservation` is the routine one — the proposal would
+ * have been denied downstream anyway, so no use was spent. Every other reason
+ * means the approval did not apply at all, and must not be worded as normal.
+ */
+export function standingReason(detail: string | null | undefined): StandingReading | null {
+  if (!detail) return null;
+  const reason = STANDING_SUFFIX.exec(detail)?.[1];
+  if (!reason) return null;
+  // `uses_exhausted:OPEN-LONG-…` carries the action after a colon.
+  const base = reason.split(':')[0];
+  const term = glossaryTerm(base);
+  if (!term) return null;
+  return {
+    reason: base,
+    sentence: term.meaning,
+    routine: base === 'open_over_outstanding_reservation',
+  };
 }
 
 /**
@@ -421,6 +583,14 @@ export function haltExplanation(
   decisionKind?: string | null,
 ): string | null {
   if (!reason) return null;
+  // The approval stage knows WHY it did not cover the proposal once the
+  // detail carries the reason, and the difference matters: one reason is an
+  // ordinary day, the others are a stop. The generic «승인 결과가 없었다»
+  // sentence words all of them alike.
+  if (step === 'INDEPENDENT_APPROVAL') {
+    const standing = standingReason(detail);
+    if (standing) return standing.sentence;
+  }
   if (step === 'CANDIDATE_COMMAND_CONSTRUCTION') {
     const closing = detail?.includes(ZERO_POSITION_MARKER) === true || decisionKind === 'FLAT';
     return closing ? ZERO_POSITION_SENTENCE : CONSTRUCTION_SENTENCE;

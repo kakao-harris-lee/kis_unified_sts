@@ -17,8 +17,8 @@ import {
   ruleSentence,
   type ConditionRow,
 } from '@/lib/dashboard/tosDecision';
-import { glossaryLabel } from '@/lib/dashboard/tosGlossary';
-import { Badge, GateMark, PassMark } from './marks';
+import { glossaryLabel, standingReason } from '@/lib/dashboard/tosGlossary';
+import { AttentionMark, Badge, GateMark, PassMark } from './marks';
 import Term from './Term';
 
 interface DecisionEvidenceProps {
@@ -123,6 +123,8 @@ export default function DecisionEvidence({ bar, summary, document }: DecisionEvi
   const entryMeaning = ruleSentence(document, roles.entry?.rule_id);
   const probeRule = verdict.ruleId != null && isProbe(verdict.ruleId);
   const explained = ruleExplanation(document, verdict.ruleId);
+  // Only when the halt was the approval stage and the detail names a reason.
+  const standing = verdict.gate?.step === 'INDEPENDENT_APPROVAL' ? standingReason(verdict.gate.detail) : null;
 
   return (
     <div className="min-w-0 space-y-4">
@@ -176,6 +178,19 @@ export default function DecisionEvidence({ bar, summary, document }: DecisionEvi
             <>규칙이 서서 주문 경로로 넘어갔습니다.</>
           )}
         </p>
+        {/* When the approval stage says WHY it did not cover the proposal,
+            that sentence leads; the kernel's own line stays underneath. One
+            reason is an ordinary day and the others are a stop, so they are
+            not worded alike. */}
+        {standing && (
+          <p className="mt-2 text-sm">
+            {standing.routine ? (
+              <Badge tone="neutral">{standing.sentence}</Badge>
+            ) : (
+              <AttentionMark>{standing.sentence}</AttentionMark>
+            )}
+          </p>
+        )}
         {verdict.gate?.detail && (
           <p className="mt-2 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
             {verdict.gate.detail}

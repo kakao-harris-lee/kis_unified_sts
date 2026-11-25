@@ -246,6 +246,39 @@ describe('상태 띠', () => {
     expect(items[1]).toHaveTextContent('확인할 것이 있다');
   });
 
+  it('groups one kind of issue into one row, naming the tenants', () => {
+    // Eleven CLI rows, five of them the same fact about five tenants, is why
+    // the list was unreadable.
+    const many = statusDocument();
+    many.checks = 3;
+    many.issues = [
+      { level: '확인', where: 'long-20261125', text: 'MARKETFEED_PASS_OVERRUN 1행 — 최악 pass 1232ms > 창 500ms (seq 77038)' },
+      { level: '확인', where: 'short-20261125', text: 'MARKETFEED_PASS_OVERRUN 2행 — 최악 pass 765ms > 창 500ms (seq 77292)' },
+      { level: '확인', where: 'stock-r1-20261125', text: 'APPROVAL_STANDING_NOT_COVERED 1행 (open_over_outstanding_reservation 1)' },
+    ];
+    mount('recent', {}, { status: status(many) });
+    const details = within(strip()).getByText(/이슈 3건/).closest('details') as HTMLDetailsElement;
+    const rows = within(details).getAllByRole('listitem');
+    // Two kinds, each with its own verbatim lines underneath.
+    expect(rows.filter((row) => row.className.includes('min-w-0'))).toHaveLength(2);
+    expect(details).toHaveTextContent('2건 · long-20261125, short-20261125');
+    expect(details).toHaveTextContent('런타임은 이 행으로 아무 것도 결정하지 않습니다');
+    expect(details).toHaveTextContent('반복되면 확인');
+    // The routine standing row says so, and the exporter's line survives.
+    expect(details).toHaveTextContent('조치 불필요');
+    expect(details).toHaveTextContent('APPROVAL_STANDING_NOT_COVERED 1행 (open_over_outstanding_reservation 1)');
+  });
+
+  it('keeps an unknown code’s own line as the headline', () => {
+    const odd = statusDocument();
+    odd.issues = [{ level: '확인', where: 'long-20261125', text: 'SOME_FUTURE_CODE 2행 — 무슨 일인가' }];
+    odd.checks = 1;
+    mount('recent', {}, { status: status(odd) });
+    const details = within(strip()).getByText(/이슈 1건/).closest('details') as HTMLDetailsElement;
+    expect(details).toHaveTextContent('SOME_FUTURE_CODE 2행 — 무슨 일인가');
+    expect(details).not.toHaveTextContent('조치 불필요');
+  });
+
   it('says when the reader had to mask part of a sentence', () => {
     mount('recent', {}, { status: status(statusDocument(), { response: { available: true, reason: null, age_seconds: 1, redacted: true, document: statusDocument() } }) });
     expect(within(strip()).getByText(/경로·계좌로 보이는 값이 가려진/)).toBeInTheDocument();
