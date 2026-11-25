@@ -6,7 +6,12 @@ import TenantCards from './TenantCards';
 import type { SessionsRead, SymbolsRead } from './queries';
 import { tosBarsApi, type TosSessionEntry } from '@/lib/dashboard/tosBars';
 import type { TosSymbolsDocument } from '@/lib/dashboard/tosSymbols';
-import { futuresBarsDocument, stockBarsDocument, symbolsDocument } from '@/test/tosBarsFixture';
+import {
+  futuresBarsDocument,
+  quietBar,
+  stockBarsDocument,
+  symbolsDocument,
+} from '@/test/tosBarsFixture';
 
 vi.mock('@/lib/dashboard/tosBars', async () => {
   const actual = await vi.importActual<typeof import('@/lib/dashboard/tosBars')>(
@@ -95,13 +100,34 @@ describe('tenant 카드', () => {
     expect(screen.getAllByRole('radio')).toHaveLength(2);
   });
 
-  it('says how close the last judged bar came to entering, and what was missing', async () => {
+  it('answers «얼마나 가까웠나» with the best in-window bar, not the EOD one', async () => {
     mount();
-    // The futures fixture's last counted bar is 15:45: entry window shut,
-    // volatility fine, stall and reversal false, z short of the threshold.
-    expect(await within(card('선물 LONG')).findByText('진입 조건 1/5 충족')).toBeInTheDocument();
-    expect(within(card('선물 LONG')).getByText(/못 채운 조건: 진입 시간대/)).toBeInTheDocument();
-    expect(within(card('선물 LONG')).getByText('15:45 봉 기준')).toBeInTheDocument();
+    await screen.findByText('선물 LONG');
+    const futures = within(card('선물 LONG'));
+    // 09:14 met everything; 15:45 is an EOD bar whose window is shut. Reading
+    // the last bar would make every card say 1/5 every evening.
+    expect(await futures.findByText('가장 근접')).toBeInTheDocument();
+    expect(futures.getByText('5/5 충족')).toBeInTheDocument();
+    expect(futures.getByText('09:14 봉')).toBeInTheDocument();
+    expect(futures.queryByText(/15:45/)).not.toBeInTheDocument();
+  });
+
+  it('names the conditions missing at the closest bar', async () => {
+    // A day whose window opened but whose other four conditions never stood.
+    const quiet = futuresBarsDocument();
+    quiet.bars = [quietBar('09:30', { entry_window: true }), quietBar('10:00', { entry_window: true })];
+    vi.mocked(tosBarsApi.getBars).mockImplementation(async (session: string) => ({
+      available: true,
+      reason: null,
+      age_seconds: 10,
+      session,
+      document: quiet,
+    }));
+    mount();
+    await screen.findByText('선물 LONG');
+    expect(
+      await within(card('선물 LONG')).findByText(/가장 근접했을 때 못 채운 조건: 변동성 충분/),
+    ).toBeInTheDocument();
   });
 
   it('marks a futures tenant as decision-only and shows it no fills at all', async () => {
@@ -127,7 +153,9 @@ describe('tenant 카드', () => {
     // as an entry would overstate what the day's strategy did.
     await screen.findByText('주식 005930');
     const badge = await within(card('주식 005930')).findByTitle('R4-M2-PROBE-ENTRY-LONG');
-    expect(badge).toHaveTextContent('시험 진입(프로브) 2회');
+    // Firings and orders are different numbers and both are shown: the stock
+    // fixture fires twice and exactly one gets past the gates.
+    expect(badge).toHaveTextContent('시험 진입(프로브) 발화 2봉 · 게이트 통과 1');
     expect(within(card('선물 LONG')).queryByTitle('R4-M2-PROBE-ENTRY-LONG')).not.toBeInTheDocument();
   });
 

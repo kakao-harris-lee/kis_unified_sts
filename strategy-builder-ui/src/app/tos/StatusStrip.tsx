@@ -3,6 +3,7 @@
 import config from '@/config/tos-control-plane.json';
 import type { ProjectionState, TosProjection } from '@/lib/dashboard/tos';
 import { isTodaysDocument, sessionPhase } from '@/lib/dashboard/tosSymbols';
+import { AlertTriangle } from 'lucide-react';
 import { AsOf, Badge, ageLabel, type Tone } from './marks';
 import Term from './Term';
 import type { SymbolsRead } from './queries';
@@ -19,6 +20,8 @@ interface Fact {
   label: string;
   value: string;
   tone: Tone;
+  /** Carries the warning icon, so the one real alarm is not a hue alone. */
+  alert?: boolean;
 }
 
 /**
@@ -50,10 +53,14 @@ export default function StatusStrip({
   const facts: Fact[] = [];
 
   // 1. The resident paper cell, from the polled projection.
+  //
+  // A latched halt shares amber with a stale read rather than taking a red of
+  // its own: red belongs to price on this page. What separates them is the
+  // warning icon and the words 「실행 중단」, which say more than a hue could.
   const halted = projection?.driver?.halt_latched;
   const projectionTone: Tone =
     halted === true
-      ? 'alarm'
+      ? 'warn'
       : projectionState === 'recent'
         ? 'good'
         : projectionState === 'loading'
@@ -62,6 +69,7 @@ export default function StatusStrip({
   facts.push({
     key: 'paper',
     label: 'paper 셀',
+    alert: halted === true,
     value:
       halted === true
         ? `실행 중단${projection?.driver?.halt_reason ? ` · ${projection.driver.halt_reason}` : ''}`
@@ -141,6 +149,7 @@ export default function StatusStrip({
         {facts.map((fact) => (
           <li key={fact.key}>
             <Badge tone={fact.tone}>
+              {fact.alert && <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />}
               <span className="text-slate-500 dark:text-slate-400">{fact.label}</span>
               <span className="font-medium">{fact.value}</span>
             </Badge>

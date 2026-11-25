@@ -11,19 +11,23 @@ import type { ReactNode } from 'react';
 //   an icon AND a word, so the page reads the same in greyscale, at a glance,
 //   and to anyone who cannot separate the hues.
 // * **The profit/loss hues are reserved for price.** `--color-profit` is red
-//   and `--color-loss` is blue here (Korean convention), so a red number on
-//   this page must only ever mean «올랐다» — never «문제». Pass/fail and health
-//   therefore use a different set: emerald for met, amber for attention, rose
-//   for blocked.
+//   and `--color-loss` is blue here (Korean convention), so neither rose nor
+//   sky appears anywhere on this page — not on a gate, not on an exit, not on
+//   a badge. A red number here will mean «올랐다» and nothing else the day the
+//   P2 exporter starts sending PnL, and a reviewer should not have to find and
+//   repaint a blocked-order marker on that day.
+//
+//   What is left is three tones and no more: emerald for a condition that
+//   held, amber for everything the operator should look at (a gate, a
+//   withheld bar, a probe), slate for the rest. The icon and the word carry
+//   the difference between them.
 
-export type Tone = 'good' | 'warn' | 'alarm' | 'neutral' | 'info';
+export type Tone = 'good' | 'warn' | 'neutral';
 
 const TONE_CLASSES: Record<Tone, string> = {
   good: 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100',
   warn: 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100',
-  alarm: 'border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-100',
   neutral: 'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200',
-  info: 'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100',
 };
 
 /** A named chip. The text is the fact; the tone only reinforces it. */
@@ -74,10 +78,16 @@ export function PassMark({ passed }: { passed: boolean | null }) {
   );
 }
 
-/** A kernel gate that stopped a decided bar — the one alarm shape on the page. */
+/**
+ * A kernel gate that stopped a decided bar.
+ *
+ * The 🚫 icon is what separates it from an ordinary attention chip; the hue is
+ * the same amber, because a blocked order is something to look at and not an
+ * outage, and because red belongs to price.
+ */
 export function GateMark({ label, code }: { label: string; code: string }) {
   return (
-    <Badge tone="alarm" title={code}>
+    <Badge tone="warn" title={code}>
       <Ban aria-hidden="true" className="h-3.5 w-3.5" />
       {label}
     </Badge>

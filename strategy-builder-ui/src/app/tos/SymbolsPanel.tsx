@@ -315,7 +315,7 @@ export default function SymbolsPanel({ read }: { read: SymbolsRead }) {
       )}
 
       <p className="text-sm">
-        <Badge tone="info">
+        <Badge tone="neutral">
           <Term name="decision_only" /> — 선물 tenant 는 주문 없음
         </Badge>
       </p>

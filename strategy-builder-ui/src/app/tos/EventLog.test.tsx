@@ -37,6 +37,17 @@ describe('사건 기록', () => {
     expect(denial).toHaveTextContent('STAGE_DENIED@CANDIDATE_COMMAND_CONSTRUCTION');
   });
 
+  it('leads with a Korean explanation and keeps the kernel sentence verbatim', () => {
+    mount();
+    const denial = within(log())
+      .getAllByRole('listitem')
+      .find((row) => row.textContent?.includes('주문서 작성')) as HTMLElement;
+    // The Korean says what it meant; the English stays exactly as the evidence
+    // wrote it, below and smaller.
+    expect(denial).toHaveTextContent('닫을 보유가 없어 주문서를 만들지 못했습니다');
+    expect(within(denial).getByText(ZERO_POSITION_DETAIL)).toBeInTheDocument();
+  });
+
   it('shows the evidence’s own sentence rather than paraphrasing it', () => {
     mount();
     // Two runs carry the zero-position denial — the VWAP exit and the EOD one.
@@ -44,6 +55,34 @@ describe('사건 기록', () => {
     expect(within(log()).getByText(NO_APPROVAL_DETAIL)).toBeInTheDocument();
     mount(stock);
     expect(screen.getAllByText(INADMISSIBLE_DETAIL).length).toBeGreaterThan(0);
+  });
+
+  it('words a non-contiguous run as a span, not as a continuous range', () => {
+    // Quiet bars sit between the stops of one run. 「08:48 – 15:45」 would read
+    // as seven hours of continuous blocking.
+    const bar = (futures.bars as TosBarsBar[])[2];
+    render(
+      <EventLog
+        bars={[bar, (futures.bars as TosBarsBar[])[1], { ...bar, time_kst: '15:45' }]}
+        summary={{ withheld_bars: 0, substituted_bars: 0 }}
+      />,
+    );
+    expect(screen.getByText('08:48~15:45 사이')).toBeInTheDocument();
+  });
+
+  it('opens on a handful of rows and puts the rest one click away', () => {
+    const many = Array.from({ length: 12 }, (_, index) => ({
+      ...(futures.bars as TosBarsBar[])[2],
+      time_kst: `1${index.toString().padStart(2, '0')}:00`.slice(-5),
+      evidence: {
+        ...(futures.bars as TosBarsBar[])[2].evidence,
+        halt_step: index % 2 === 0 ? 'CANDIDATE_COMMAND_CONSTRUCTION' : 'INDEPENDENT_APPROVAL',
+      },
+    }));
+    render(<EventLog bars={many} summary={{ withheld_bars: 0, substituted_bars: 0 }} />);
+    // Eight up front; a disclosure for the remainder, one level only.
+    expect(screen.getAllByRole('listitem')).toHaveLength(12);
+    expect(screen.getByText('4건 더 보기')).toBeInTheDocument();
   });
 
   it('counts the bars of each stop, and the withheld and substituted ones', () => {

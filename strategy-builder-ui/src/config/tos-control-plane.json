@@ -4,5 +4,7 @@
   "clockTickMs": 1000,
   "legacyStockInstrument": "005930",
   "timelineMaxRows": 40,
-  "eventLogMaxRows": 40
+  "timelineHeadRows": 8,
+  "eventLogMaxRows": 40,
+  "eventLogHeadRows": 8
 }

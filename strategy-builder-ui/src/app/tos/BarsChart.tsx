@@ -138,7 +138,7 @@ export default function BarsChart({ bars, selectedIndex, onSelect }: BarsChartPr
           stroke="currentColor"
           strokeWidth={2}
           strokeDasharray="6 4"
-          className="text-sky-500"
+          className="text-slate-400 dark:text-slate-500"
         />
         <polyline
           points={points(closes)}
@@ -154,19 +154,22 @@ export default function BarsChart({ bars, selectedIndex, onSelect }: BarsChartPr
             y={MARK_ROW - 3}
             width={6}
             height={6}
-            className="fill-sky-500"
+            className="fill-slate-500"
           >
             <title>{markerTitle(bars[index])}</title>
           </rect>
         ))}
+        {/* Thin and translucent on purpose: a probe tenant fires on every bar
+            of the window, and a solid 325-wide slab would read as one long
+            fault rather than as "this ran all day". */}
         {probes.map(({ index }) => (
           <rect
             key={`p-${index}`}
-            x={x(index, bars.length) - 2}
-            y={MARK_ROW - 6}
-            width={4}
-            height={12}
-            className="fill-amber-500"
+            x={x(index, bars.length) - 1}
+            y={MARK_ROW - 5}
+            width={2}
+            height={10}
+            className="fill-amber-500/60"
           >
             <title>{markerTitle(bars[index])}</title>
           </rect>
@@ -186,7 +189,7 @@ export default function BarsChart({ bars, selectedIndex, onSelect }: BarsChartPr
           <path
             key={`h-${index}`}
             d={`M ${x(index, bars.length)} ${MARK_ROW + 10} l 4 7 l -8 0 z`}
-            className="fill-rose-500"
+            className="fill-amber-600"
           >
             <title>{markerTitle(bars[index])}</title>
           </path>
@@ -231,11 +234,11 @@ export default function BarsChart({ bars, selectedIndex, onSelect }: BarsChartPr
           종가 {price(low)} – {price(high)}
         </span>
         <span>— 종가</span>
-        <span className="text-sky-600 dark:text-sky-400">- - VWAP</span>
+        <span className="text-slate-500 dark:text-slate-400">- - VWAP</span>
         <span className="text-emerald-600 dark:text-emerald-400">● 진입</span>
-        <span className="text-sky-600 dark:text-sky-400">■ 청산</span>
+        <span className="text-slate-600 dark:text-slate-300">■ 청산</span>
         <span className="text-amber-600 dark:text-amber-400">▌시험 진입 · 평가 보류</span>
-        <span className="text-rose-600 dark:text-rose-400">▲ 게이트 차단</span>
+        <span className="text-amber-700 dark:text-amber-400">▲ 게이트 차단</span>
         <span>{bars.length}개 봉 · 엔진이 평가한 값 기준</span>
       </figcaption>
     </figure>

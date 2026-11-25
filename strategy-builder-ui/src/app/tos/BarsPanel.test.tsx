@@ -144,6 +144,26 @@ describe('판단 근거 패널', () => {
     expect(screen.queryByText('진입 — 매수 진입')).not.toBeInTheDocument();
   });
 
+  it('summarises the probe session in one line above the timeline', async () => {
+    // A probe tenant alternates 시험 진입 and 게이트 차단 for hundreds of bars;
+    // the line answers it before any row is read, and separates firings from
+    // the orders that actually left.
+    const document = stockBarsDocument();
+    mount({
+      document,
+      response: {
+        available: true,
+        reason: null,
+        age_seconds: 5,
+        session: 'stock-r1-20261125',
+        document,
+      },
+    });
+    const summary = screen.getByText(/봉 중 게이트 통과/).closest('p') as HTMLElement;
+    expect(summary).toHaveTextContent('2봉 중 게이트 통과 1');
+    expect(summary).toHaveTextContent('독립 승인 — 단계 결과 모름 1');
+  });
+
   it('names the window the document covers', () => {
     mount();
     expect(screen.getByText('구간: 08:45 – 15:45')).toBeInTheDocument();

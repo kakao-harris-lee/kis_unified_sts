@@ -3,7 +3,7 @@
 import config from '@/config/tos-control-plane.json';
 import type { TosBarsBar, TosBarsSummary } from '@/lib/dashboard/tosBars';
 import { barGate } from '@/lib/dashboard/tosDecision';
-import { glossaryLabel } from '@/lib/dashboard/tosGlossary';
+import { glossaryLabel, haltExplanation } from '@/lib/dashboard/tosGlossary';
 import { AsOf, Badge } from './marks';
 import Term from './Term';
 
@@ -29,6 +29,12 @@ interface EventRun {
  * One row per stretch of the same code rather than one per bar: a stock tenant
  * records 315 bars of the same «승인 없음» in a day, and 315 identical lines
  * would bury the two events that were different.
+ *
+ * A stretch is NOT necessarily contiguous — quiet bars sit between the stops
+ * and do not break it, because breaking on them would put the stock session
+ * back to three hundred rows. `firstTime`/`lastTime` are therefore the ends of
+ * the span this run covers, not a claim that every minute between them was
+ * stopped, and the row words it as 「HH:MM~HH:MM 사이 N봉」 for that reason.
  */
 export function eventRuns(bars: TosBarsBar[]): EventRun[] {
   const runs: EventRun[] = [];
@@ -66,11 +72,48 @@ export function eventRuns(bars: TosBarsBar[]): EventRun[] {
  * either would cost the operator a translation step in one direction or the
  * other.
  */
+/** One stop, led by what it meant and followed by the evidence's own words. */
+function EventRow({ run }: { run: EventRun }) {
+  const explanation = haltExplanation(run.reason, run.step);
+  return (
+    <li className="min-w-0 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="tabular-nums text-sm text-slate-500 dark:text-slate-400">
+          {/* 「사이」, not a dash: the run skips the bars between its stops. */}
+          {run.count > 1 && run.lastTime && run.lastTime !== run.firstTime
+            ? `${run.firstTime ?? '--:--'}~${run.lastTime} 사이`
+            : (run.firstTime ?? '--:--')}
+        </span>
+        <span className="font-medium">
+          <Term name={run.reason}>{glossaryLabel(run.reason)}</Term>
+        </span>
+        {run.step && (
+          <span className="text-sm text-slate-600 dark:text-slate-300">
+            단계: <Term name={run.step} />
+          </span>
+        )}
+        <Badge tone="neutral">{run.count}봉</Badge>
+        <code className="text-xs text-slate-400 dark:text-slate-500">{run.code}</code>
+      </div>
+      {explanation && <p className="mt-2 text-sm">{explanation}</p>}
+      {/* The kernel's own sentence, verbatim and never translated — it is the
+          record. It follows the Korean rather than leading it, because an
+          operator reading the day should not have to parse English first. */}
+      {run.detail && (
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{run.detail}</p>
+      )}
+    </li>
+  );
+}
+
 export default function EventLog({ bars, summary }: EventLogProps) {
   const runs = eventRuns(bars);
   const shown = runs.slice(0, config.eventLogMaxRows);
+  const head = shown.slice(0, config.eventLogHeadRows);
+  const rest = shown.slice(config.eventLogHeadRows);
   const withheld = summary?.withheld_bars ?? null;
   const substituted = summary?.substituted_bars ?? null;
+  const row = (run: EventRun, index: number) => <EventRow key={`${run.code}-${index}`} run={run} />;
 
   return (
     <section
@@ -104,34 +147,17 @@ export default function EventLog({ bars, summary }: EventLogProps) {
           판단을 멈추거나 주문을 막은 기록이 없습니다.
         </p>
       ) : (
-        <ol className="min-w-0 space-y-2">
-          {shown.map((run, index) => (
-            <li
-              key={`${run.code}-${index}`}
-              className="min-w-0 rounded-lg border border-slate-200 p-3 dark:border-slate-800"
-            >
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="tabular-nums text-sm text-slate-500 dark:text-slate-400">
-                  {run.firstTime ?? '--:--'}
-                  {run.lastTime && run.lastTime !== run.firstTime ? ` – ${run.lastTime}` : ''}
-                </span>
-                <span className="font-medium">
-                  <Term name={run.reason}>{glossaryLabel(run.reason)}</Term>
-                </span>
-                {run.step && (
-                  <span className="text-sm text-slate-600 dark:text-slate-300">
-                    단계: <Term name={run.step} />
-                  </span>
-                )}
-                <Badge tone="neutral">{run.count}봉</Badge>
-                <code className="text-xs text-slate-400 dark:text-slate-500">{run.code}</code>
-              </div>
-              {run.detail && (
-                <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{run.detail}</p>
-              )}
-            </li>
-          ))}
-        </ol>
+        <>
+          <ol className="min-w-0 space-y-2">{head.map(row)}</ol>
+          {rest.length > 0 && (
+            <details className="min-w-0">
+              <summary className="cursor-pointer text-xs text-slate-500 dark:text-slate-400">
+                {rest.length}건 더 보기
+              </summary>
+              <ol className="mt-2 min-w-0 space-y-2">{rest.map(row)}</ol>
+            </details>
+          )}
+        </>
       )}
       {runs.length > shown.length && (
         <AsOf>

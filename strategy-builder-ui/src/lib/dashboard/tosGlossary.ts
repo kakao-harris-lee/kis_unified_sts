@@ -63,27 +63,38 @@ export const GLOSSARY: Record<string, GlossaryTerm> = {
   },
   hi_vol: {
     label: '변동성 충분',
-    meaning: 'ATR(14)이 최근 분포(780봉 90퍼센타일)의 0.9배 이상인지 — 너무 조용한 장에서는 진입하지 않습니다.',
+    meaning:
+      '진입 시간대 안에서 ATR(14)이 최근 분포(780봉 90퍼센타일)의 0.9배 이상인지입니다. 시간대 밖에서는 언제나 거짓이고, 기준 분포가 아직 쌓이지 않은 장 초반에는 통과로 봅니다.',
   },
   stall_ok: {
-    label: '추가 하락 멈춤',
-    meaning: '평균가에서 크게 벌어진 뒤 가격이 더 밀리지 않았는지 — 최근 15봉의 고·저에서 ATR 1.5배 안에 있으면 통과입니다.',
+    label: '극단 이탈 뒤 멈춤',
+    meaning:
+      '먼저 「변동성 충분」이 서고 평균가 이탈 z의 절댓값이 1.8 이상이어야 합니다. 그 상태에서 가격이 최근 15봉의 고·저로부터 ATR 1.5배 안에 머물러 더 밀리지 않았으면 통과입니다. 극단까지 벌어지지 않은 평범한 봉에서는 거짓입니다.',
   },
   reversal_ok: {
     label: '반전 확인',
-    meaning: '직전 봉 대비 방향이 돌아섰고, 평균가에서 벌어진 폭이 ATR 0.2배 이상 줄었는지입니다.',
+    meaning:
+      '「극단 이탈 뒤 멈춤」이 선 위에, 직전 봉 대비 방향이 돌아섰고 평균가 이탈 폭이 ATR 0.2배 이상 줄었는지입니다. 직전 종가를 아직 모르면 거짓입니다.',
   },
   vwap_reverted: {
     label: 'VWAP 복귀',
     meaning: '가격이 평균가 근처(이탈 z의 절댓값 0.2 이하)로 돌아왔는지 — 되돌림을 노린 보유를 닫는 신호입니다.',
   },
   eod: { label: '장 마감 시각', meaning: '15:15 이후인지 — 그날 안에 보유를 닫기 위한 시각 조건입니다.' },
-  rsi_oversold: { label: 'RSI 과매도', meaning: 'RSI(14)가 30 이하인지 — 단기 과매도 구간입니다.' },
+  rsi_oversold: {
+    label: 'RSI 과매도',
+    meaning: 'RSI(14)가 30 이하인지 — 단기 과매도 구간입니다. 지표가 아직 충분히 쌓이지 않았으면 거짓입니다.',
+  },
   wr_oversold: {
     label: '윌리엄스 %R 과매도',
-    meaning: '윌리엄스 %R(14)이 −80 이하인지 — 최근 범위의 바닥 쪽에 있다는 뜻입니다.',
+    meaning:
+      '윌리엄스 %R(14)이 −80 이하인지 — 최근 범위의 바닥 쪽이라는 뜻입니다. 지표가 아직 충분히 쌓이지 않았으면 거짓입니다.',
   },
-  rsi_recovered: { label: 'RSI 회복', meaning: 'RSI(14)가 50 이상으로 돌아왔는지 — 과매도 해소로 보는 청산 조건입니다.' },
+  rsi_recovered: {
+    label: 'RSI 회복',
+    meaning:
+      'RSI(14)가 50 이상으로 돌아왔는지 — 과매도 해소로 보는 청산 조건입니다. 지표가 아직 충분히 쌓이지 않았으면 거짓입니다.',
+  },
 
   // --- config bindings (the operator-set numbers a rule compares against) ----
   'config.z_entry_max_x1000': {
@@ -237,4 +248,32 @@ export function haltPairLabel(reason: string | null, step: string | null): strin
   const left = glossaryLabel(reason);
   if (!step) return left;
   return `${glossaryLabel(step)} — ${left}`;
+}
+
+/**
+ * What a stop MEANT, in one Korean sentence, per `REASON@STEP` pair.
+ *
+ * The evidence writes its own English sentence into `halt_detail`, and the
+ * page still shows it verbatim — it is the authoritative record and a
+ * translation would be this bundle's claim about it, not the kernel's. But an
+ * operator reading the day should not have to parse English first, so this
+ * leads and the original follows as secondary text.
+ *
+ * Absent for a pair this page has not seen: the caller then shows the two
+ * glossary meanings it already has, rather than a sentence nobody wrote.
+ */
+const HALT_EXPLANATIONS: Record<string, string> = {
+  'STAGE_DENIED@CANDIDATE_COMMAND_CONSTRUCTION':
+    '닫을 보유가 없어 주문서를 만들지 못했습니다. 보유를 모르는 채로 수량을 가정해 내보내지 않습니다.',
+  'STAGE_DENIED@VENUE_ADMISSIBILITY_DECISION':
+    '그 시각에 거래소가 이 주문을 받지 않는다고 판정했습니다.',
+  'STAGE_UNKNOWN@INDEPENDENT_APPROVAL':
+    '승인 단계가 결과를 돌려주지 않았습니다. 모르는 것은 허가로 치지 않으므로 주문은 나가지 않았습니다.',
+  TIME_NOT_ADMITTED: '그 봉의 시각을 커널이 인정하지 않아 아예 평가하지 않았습니다.',
+};
+
+export function haltExplanation(reason: string | null, step: string | null): string | null {
+  if (!reason) return null;
+  const pair = step ? `${reason}@${step}` : reason;
+  return HALT_EXPLANATIONS[pair] ?? HALT_EXPLANATIONS[reason] ?? null;
 }

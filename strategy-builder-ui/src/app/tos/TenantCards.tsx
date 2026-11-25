@@ -8,7 +8,14 @@ import {
   type TosBarsDocument,
   type TosSessionEntry,
 } from '@/lib/dashboard/tosBars';
-import { entryProgress, isProbeRule, latestCountedBar } from '@/lib/dashboard/tosDecision';
+import {
+  bestEntryProgress,
+  entryProgress,
+  latestCountedBar,
+  latestInWindowProgress,
+  probeTally,
+  type ProgressAt,
+} from '@/lib/dashboard/tosDecision';
 import { sessionPhase, type TosSymbolRow } from '@/lib/dashboard/tosSymbols';
 import { AsOf, Badge, ageLabel, type Tone } from './marks';
 import Term from './Term';
@@ -60,12 +67,20 @@ function runStateOf(row: TosSymbolRow | null): {
   return { state: 'attention', label: '대기 · 차단', detail: row.session?.status ?? null };
 }
 
-function probeFires(document: TosBarsDocument | null): number {
-  const decisions = document?.summary?.decisions ?? null;
-  if (!decisions) return 0;
-  return Object.entries(decisions)
-    .filter(([ruleId]) => isProbeRule(ruleId))
-    .reduce((total, [, count]) => total + count, 0);
+/** «n/m 충족 · HH:MM», or null when the tenant has no judged in-window bar. */
+function ProgressLine({ at, label }: { at: ProgressAt | null; label: string }) {
+  if (!at) return null;
+  return (
+    <p className="mt-1 text-sm">
+      <span className="text-slate-500 dark:text-slate-400">{label} </span>
+      <span className="font-medium">
+        {at.progress.passed}/{at.progress.total} 충족
+      </span>
+      <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+        {at.timeKst ? `${at.timeKst} 봉` : '시각 알 수 없음'}
+      </span>
+    </p>
+  );
 }
 
 interface CardProps {
@@ -78,18 +93,26 @@ interface CardProps {
 }
 
 /**
- * One tenant, answering «진입에 얼마나 가까운가» before any chart is read.
+ * One tenant, answering «진입에 얼마나 가까웠나» before any chart is read.
  *
- * The progress is taken from the LAST bar the engine actually judged, not from
- * the last bar in the file: a withheld tail would otherwise report 「0/5」 for a
- * tenant whose final judged bar met four conditions.
+ * Two numbers, both over the bars the engine actually JUDGED and whose entry
+ * window was open: the closest the day ever came, with the time it came
+ * closest, and where the last in-window bar stood. Reporting the last bar of
+ * the file instead would mean every card reads the same 1/5 every evening —
+ * after 15:15 the session ends on EOD bars whose entry window is shut, and the
+ * card would answer a question nobody asked.
  */
 function TenantCard({ entry, row, document, loading, selected, onSelect }: CardProps) {
   const futures = entry.kind === 'futures';
-  const bar = latestCountedBar(document?.bars);
-  const progress = entryProgress(bar);
+  const bars = document?.bars ?? null;
+  const best = bestEntryProgress(bars);
+  const latest = latestInWindowProgress(bars);
+  // Nothing inside the window was ever judged (a session that never opened, or
+  // a tenant that publishes no window): fall back to the last judged bar, and
+  // say that is what it is.
+  const fallback = best ? null : entryProgress(latestCountedBar(bars));
   const run = runStateOf(row);
-  const probes = probeFires(document);
+  const probes = probeTally(bars);
 
   return (
     <li className="min-w-0">
@@ -111,17 +134,20 @@ function TenantCard({ entry, row, document, loading, selected, onSelect }: CardP
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold">{sessionKindLabel(entry)}</span>
           {futures ? (
-            <Badge tone="info">
+            <Badge tone="neutral">
               <Term name="decision_only" />
             </Badge>
           ) : (
-            <Badge tone="info">
+            <Badge tone="neutral">
               <Term name="mock_account" />
             </Badge>
           )}
-          {probes > 0 && (
+          {/* Both numbers, always: the probe fired 325 times on 005930 and one
+              order left. 「325회」 alone reads as 325 trades. */}
+          {probes.fired > 0 && (
             <Badge tone="warn" title="R4-M2-PROBE-ENTRY-LONG">
-              <Term name="R4-M2-PROBE-ENTRY-LONG" /> {probes}회
+              <Term name="R4-M2-PROBE-ENTRY-LONG" /> 발화 {probes.fired}봉 · 게이트 통과{' '}
+              {probes.passed}
             </Badge>
           )}
         </div>
@@ -133,25 +159,32 @@ function TenantCard({ entry, row, document, loading, selected, onSelect }: CardP
           </Badge>
         </p>
 
-        <p className="mt-3 text-sm">
+        <div className="mt-3">
           {loading ? (
-            <span className="text-slate-500 dark:text-slate-400">진입 조건 불러오는 중</span>
-          ) : progress ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400">진입 조건 불러오는 중</p>
+          ) : best ? (
             <>
-              <span className="font-medium">
-                진입 조건 {progress.passed}/{progress.total} 충족
-              </span>
-              <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
-                {bar?.time_kst ? `${bar.time_kst} 봉 기준` : '시각 알 수 없음'}
-              </span>
+              <ProgressLine at={best} label="가장 근접" />
+              {/* Only when it differs: on a day whose closest bar IS the last
+                  one, a second identical line is noise. */}
+              {latest && latest.timeKst !== best.timeKst && (
+                <ProgressLine at={latest} label="마지막 진입 시간대" />
+              )}
             </>
+          ) : fallback ? (
+            <p className="text-sm">
+              <span className="text-slate-500 dark:text-slate-400">진입 시간대 봉 없음 · 마지막 판단 </span>
+              <span className="font-medium">
+                {fallback.passed}/{fallback.total} 충족
+              </span>
+            </p>
           ) : (
-            <span className="text-slate-500 dark:text-slate-400">진입 조건 알 수 없음</span>
+            <p className="text-sm text-slate-500 dark:text-slate-400">진입 조건 알 수 없음</p>
           )}
-        </p>
-        {progress && progress.failing.length > 0 && (
+        </div>
+        {best && best.progress.failing.length > 0 && (
           <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-            못 채운 조건: {progress.failing.join(' · ')}
+            가장 근접했을 때 못 채운 조건: {best.progress.failing.join(' · ')}
           </p>
         )}
 
