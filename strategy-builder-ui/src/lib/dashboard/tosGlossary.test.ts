@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { GLOSSARY, glossaryKey, glossaryLabel, glossaryTerm, haltPairLabel } from './tosGlossary';
 import { parseCompare } from './tosDecision';
-import { futuresBarsDocument, stockBarsDocument } from '@/test/tosBarsFixture';
+import { futuresBarsDocument, rsiStockBarsDocument, stockBarsDocument } from '@/test/tosBarsFixture';
 
-const documents = [futuresBarsDocument(), stockBarsDocument()];
+// All three tenant shapes, because they do NOT share a vocabulary: 005380
+// publishes rsi/wr fields and its own rule ids, and a glossary that covered
+// only Setup D would pass on four tenants and leave that one in raw English.
+const documents = [futuresBarsDocument(), stockBarsDocument(), rsiStockBarsDocument()];
 
 /** Every raw string the two fixtures would put on screen as a term. */
 function jargon(): string[] {
