@@ -1,0 +1,32 @@
+# config/tos_bars_explain.yaml — `/tos` 바 문서의 규칙 설명에 붙는 운영자 측 표
+#
+# 읽는 쪽: tools/tos_cp3/bars_explain.py (`sts tos export-bars` 가 부른다).
+# 계획: docs/plans/2026-11-25-tos-operator-page-legibility-plan.md §6 P2 넷째 항목.
+#
+# **왜 tenant YAML 이 아니라 여기인가.** 계획은 프로브 표시를 «전략 YAML 의 명시
+# 필드» 로 하라고 했지만, 그 길은 막혀 있다. 전략 DSL 의 모델은
+# `tos/src/tos/canonical/_base.py::FrozenModel` 이 `extra="forbid"` 이므로 모르는
+# 키 하나로 전략이 **적재 거부**된다. 거부를 피해 통과하더라도
+# `AuthoredStrategy.canonical_digest` 가 바뀌고, 그 digest 는 증거에 적히는
+# `strategy_digest` (`tos/src/tos/engine/admission.py`) 라서 지속 잎의 부팅 재연이
+# 어긋난다 — `EngineReplayDiverged` 는 그 잎을 **영구히** 막는다. 그래서 프로브
+# 표시는 커널이 읽지 않는 이 파일에 둔다. 전략 YAML 은 한 글자도 건드리지 않는다.
+#
+# 이것은 판정 장치가 아니다. 커널은 이 파일을 읽지 않고, 이 값은 무엇도 허가하거나
+# 막지 않는다. 화면이 «시험 진입» 과 «Setup D 신호» 를 다른 줄로 그릴 수 있게 하는
+# 표시일 뿐이다.
+
+schema: tos-bars-explain/1
+
+# 규칙 id = 전략 YAML 의 `decision.rationale` 에서 콜론 앞 토큰
+# (`tos/runtime/cp3/strategy.py::_rule_id` 와 같은 도출).
+#
+# 여기 적힌 id 는 **주문 경로 시험**이다 — 전략 신호가 아니다. 적히지 않은 규칙은
+# 전부 신호로 본다. 새 프로브 규칙을 tenant 에 넣고 여기 적지 않으면
+# `tests/tools/test_cp3_bars_explain.py` 가 빨개진다(그 테스트가 tenant 트리의
+# 전략 YAML 을 훑어 프로브로 보이는 규칙이 전부 여기 있는지 본다).
+probe_rule_ids:
+  # M2 경계 프로브 — 승인/예약/검증/kis_mock 전송/결과/finality 를 끝까지 한 번
+  # 지나 보는 주문이다. Setup D 진입 신호가 아니므로 화면이 손익·승률을 그릴 때
+  # 신호와 섞으면 전략 성적이 거짓이 된다.
+  - R4-M2-PROBE-ENTRY-LONG

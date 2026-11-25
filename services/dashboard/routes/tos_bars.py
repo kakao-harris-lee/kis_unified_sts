@@ -73,6 +73,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from stat import S_ISREG
+from typing import Any
 
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -354,6 +355,160 @@ class BarsDefault(BaseModel):
     decision_kind: str | None = None
 
 
+class BarsExplainRule(BaseModel):
+    """What one authored rule means, in the words its author wrote.
+
+    ``rationale`` is the strategy YAML's own sentence; the page shows it instead
+    of the bare ``R1-ENTRY-LONG``. ``probe`` says the rule is an order-path
+    exercise rather than a strategy signal — and it is NOT parsed out of that
+    sentence: it comes from an operator-side map
+    (``config/tos_bars_explain.yaml``), because the strategy DSL forbids extra
+    keys and the strategy's digest is a replay input.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    label: str | None = None
+    rule_id: str | None = None
+    decision_kind: str | None = None
+    rationale: str | None = None
+    target_rationale: str | None = None
+    probe: bool | None = None
+    #: The published field names this rule compares, in the order it reads them.
+    fields: list[str] | None = None
+    #: The binding keys it compares against; their values are in ``bindings``.
+    bindings: list[str] | None = None
+
+
+class BarsExplainField(BaseModel):
+    """One field's definition from the tenant's ``fields.yaml``.
+
+    ``known=false`` means the catalog did not define this name — the exporter
+    says so rather than inventing an operation.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    #: The catalog's internal name (``z`` for the published ``z_x1000``).
+    field: str | None = None
+    op: str | None = None
+    inputs: list[str] | None = None
+    #: Any JSON value, deliberately. The tenant's ``fields.yaml`` is authored
+    #: content and a future operation may take a null (``when_missing: null``),
+    #: a list, or a nested mapping as a parameter. Typed narrowly, one such
+    #: parameter would fail validation of the WHOLE document and the page would
+    #: lose its bars — a new parameter shape must only ever be able to degrade
+    #: the explanation, never the thing the panel cannot do without.
+    params: dict[str, Any] | None = None
+    scale: dict[str, Any] | None = None
+    published_as: str | None = None
+    known: bool | None = None
+
+
+class BarsExplain(BaseModel):
+    """The rule and field explanations, from the tenant content THIS session ran.
+
+    ``schema`` and ``fields`` are aliased rather than the exported document
+    renamed around them: ``fields`` would shadow a pydantic v1 ``BaseModel``
+    attribute name and ``schema_`` keeps the response body saying ``fields``,
+    which is what the page and the exporter both call it. Same reasoning as
+    :class:`BarsWindow`'s ``from``.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    schema_: str | None = Field(default=None, alias="schema")
+    rules: list[BarsExplainRule] | None = None
+    default: BarsExplainRule | None = None
+    #: Keyed by the name the rules reference, plus every field those stand on.
+    fields_: dict[str, BarsExplainField] | None = Field(default=None, alias="fields")
+    probe_basis: str | None = None
+
+
+class HypotheticalTrade(BaseModel):
+    """One would-have-been trade. Never a fill, and never a realized figure."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    entry_time_kst: str | None = None
+    entry_rule_id: str | None = None
+    entry_price_points: str | None = None
+    exit_time_kst: str | None = None
+    #: ``None`` on a forced close: no rule said to exit, the session just ended.
+    exit_rule_id: str | None = None
+    exit_price_points: str | None = None
+    points: str | None = None
+    hypothetical_pnl_krw: str | None = None
+    forced_close: bool | None = None
+    forced_close_reason: str | None = None
+
+
+class HypotheticalTotals(BaseModel):
+    """The session's would-have-been total. Deliberately not named ``pnl_krw``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    trades: int | None = None
+    wins: int | None = None
+    #: ``None`` — not ``"0"`` — on a session with no trade at all. A zero would
+    #: render as "±0 today", which is a different claim from "no signal fired".
+    points: str | None = None
+    hypothetical_pnl_krw: str | None = None
+    forced_closes: int | None = None
+
+
+class HypotheticalDecision(BaseModel):
+    """A decision bar whose close could not be read, so it is outside the total."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    time_kst: str | None = None
+    decision_kind: str | None = None
+    rule_id: str | None = None
+
+
+class HypotheticalSkipped(HypotheticalDecision):
+    """A decision bar left out of the total on purpose, and why.
+
+    ``NOT_ENGINE_COUNTED``/``ENGINE_DISAGREES`` mean the bar's ``decision_kind``
+    was re-derived by the inspection rather than made by the engine;
+    ``PROBE_ENTRY`` means the rule is an order-path exercise, not a signal.
+    Counting any of them would attribute to the strategy something it did not do.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    reason: str | None = None
+
+
+class BarsHypotheticalPnl(BaseModel):
+    """What a decision-only tenant's decisions WOULD have earned, had they filled.
+
+    Present only for the futures tenants, which decide but never order (operator
+    decision 2026-11-05). Every field name here carries ``hypothetical``, the
+    ``assumptions`` list travels with the numbers, and none of it is ever added
+    to a realized PnL: the three assumptions (a guaranteed fill, no fees, no
+    slippage) all push the figure the same, flattering way.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    hypothetical: bool | None = None
+    direction: str | None = None
+    instrument: str | None = None
+    contract: str | None = None
+    multiplier_krw_per_point: int | None = None
+    price_field: str | None = None
+    price_scale: int | None = None
+    assumptions: list[str] | None = None
+    trades: list[HypotheticalTrade] | None = None
+    totals: HypotheticalTotals | None = None
+    unpriced_decisions: list[HypotheticalDecision] | None = None
+    #: Decision bars deliberately left out, each with its reason — so the page
+    #: can say what the total excluded instead of implying it counted everything.
+    skipped_decisions: list[HypotheticalSkipped] | None = None
+
+
 class TosBarsDocument(BaseModel):
     """Mirrors the exporter's document (``tools/tos_cp3/export_bars.py``).
 
@@ -370,12 +525,23 @@ class TosBarsDocument(BaseModel):
     schema_version: int
     session: str | None = None
     instrument: str | None = None
+    #: ``stock``/``futures``, from the tenant tree the session actually ran.
+    market: str | None = None
+    #: True on a tenant that decides but never orders. The page must not draw
+    #: an absent order as "ordered nothing".
+    decision_only: bool | None = None
     strategy: BarsStrategy | None = None
     bindings: BarsBindings | None = None
     window: BarsWindow | None = None
     default: BarsDefault | None = None
     bars: list[BarsBar] | None = None
     summary: BarsSummary | None = None
+    explain: BarsExplain | None = None
+    #: Why no explanation, when there is none. A document can lose its rule
+    #: sentences and still be a perfectly good bars document.
+    explain_error: str | None = None
+    hypothetical_pnl: BarsHypotheticalPnl | None = None
+    hypothetical_pnl_error: str | None = None
 
 
 class TosBarsResponse(BaseModel):

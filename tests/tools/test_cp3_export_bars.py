@@ -394,3 +394,361 @@ def test_the_pattern_admits_the_names_the_runner_really_writes(
             tmp_path, session_tree, monkeypatch, document={**_DOCUMENT, "session": name}
         )
         assert path.name == f"{name}.json"
+
+
+# --------------------------------------------------------------------------- #
+# The explanation blocks — legibility plan §6 P2, items four and five
+# --------------------------------------------------------------------------- #
+
+_STRATEGY_YAML = """
+policy:
+  rules:
+    - all_of:
+        - left: {ref: [capsule, resolved_values, entry_window]}
+          op: EQ
+          right: {const: true}
+      decision:
+        kind: ACTION
+        rationale: "R1-ENTRY-LONG: the entry window is open."
+    - all_of:
+        - left: {ref: [capsule, resolved_values, vwap_reverted]}
+          op: EQ
+          right: {const: true}
+      decision:
+        kind: FLAT
+        rationale: "R2-EXIT-VWAP-REVERTED: price is back in the band."
+  default:
+    kind: NO_ACTION
+    rationale: "R0-DEFAULT-NO-ACTION: no rule fired."
+"""
+
+_FIELDS_YAML = """
+fields:
+  - {name: close, op: bar.close}
+  - {name: mso, op: session.minutes_since_open}
+  - {name: entry_window, op: between, inputs: [mso], params: {lo: 15, hi: 345}}
+  - {name: vwap_reverted, op: le, inputs: [close], params: {const: 0.2}}
+publish:
+  - {field: close, as: close_x100, scale: {mult: 100, round: half_up}}
+  - {field: entry_window, as: entry_window}
+  - {field: vwap_reverted, as: vwap_reverted}
+"""
+
+_CONSTRUCTION_YAML = 'price_field_key: "close_x100"\n'
+
+
+def _tenant_content(
+    session_tree: Path, *, market: str, direction: str = "LONG"
+) -> None:
+    """Give the stub session the tenant files the explanation reads."""
+    render = session_tree / "cp3-sessions" / SESSION / "render"
+    (render / "strategies" / "d.strategy.yaml").write_text(
+        _STRATEGY_YAML, encoding="utf-8"
+    )
+    (render / "fields.yaml").write_text(_FIELDS_YAML, encoding="utf-8")
+    (render / "construction.yaml").write_text(_CONSTRUCTION_YAML, encoding="utf-8")
+    (render / "RENDER.yaml").write_text(
+        f'tree_id: "t"\nmarket: "{market}"\ndirection:\n  value: "{direction}"\n',
+        encoding="utf-8",
+    )
+
+
+def _exported(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_each_rules_own_sentence_rides_along_with_the_bars(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """식별자 대신 문장을 — 그 세션이 실제로 쓴 트리에서 읽어서."""
+    _tenant_content(session_tree, market="stock")
+    document = _exported(_export(tmp_path, session_tree, monkeypatch))
+
+    explain = document["explain"]
+    assert document.get("explain_error") is None
+    assert [rule["rule_id"] for rule in explain["rules"]] == [
+        "R1-ENTRY-LONG",
+        "R2-EXIT-VWAP-REVERTED",
+    ]
+    assert explain["rules"][0]["rationale"].endswith("the entry window is open.")
+    assert explain["rules"][0]["fields"] == ["entry_window"]
+    assert explain["default"]["rule_id"] == "R0-DEFAULT-NO-ACTION"
+    # The field the rule reads, and the one THAT field stands on.
+    assert explain["fields"]["entry_window"]["op"] == "between"
+    assert explain["fields"]["mso"]["op"] == "session.minutes_since_open"
+
+
+def test_a_tenant_tree_it_cannot_read_costs_the_explanation_not_the_bars(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """설명이 없어도 바 문서는 나간다 — 페이지가 못 하는 건 바가 없을 때다.
+
+    ``session_tree`` 는 ``fields.yaml`` 을 갖고 있지 않다(기본 상태). 그래도
+    문서는 쓰이고, 왜 설명이 없는지를 문서가 스스로 말한다.
+    """
+    path = _export(tmp_path, session_tree, monkeypatch)
+    document = _exported(path)
+    assert document["bars"] == _DOCUMENT["bars"]
+    assert document["explain"] is None
+    assert "fields.yaml" in document["explain_error"]
+    assert document.get("hypothetical_pnl") is None
+
+
+def test_a_stock_tenant_gets_no_hypothetical_pnl(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실제로 거래하는 tenant 에 «또 하나의 손익» 을 두면 잘못 읽힌다."""
+    _tenant_content(session_tree, market="stock")
+    document = _exported(_export(tmp_path, session_tree, monkeypatch))
+    assert document["market"] == "stock"
+    assert document["decision_only"] is False
+    assert "hypothetical_pnl" not in document
+
+
+def test_a_decision_only_tenant_gets_one_built_from_its_own_contract(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """배수는 설정에서, 가격 필드와 배율은 그 tenant 의 렌더 트리에서 읽는다."""
+    _tenant_content(session_tree, market="futures")
+    bars = [
+        {
+            "time_kst": "09:14",
+            "decision_kind": "ACTION",
+            "decision_rule_id": "R1-ENTRY-LONG",
+            "counted": True,
+            "fields": {"close_x100": 73_564},
+        },
+        {
+            "time_kst": "09:50",
+            "decision_kind": "FLAT",
+            "decision_rule_id": "R2-EXIT-VWAP-REVERTED",
+            "counted": True,
+            "fields": {"close_x100": 73_858},
+        },
+    ]
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612", "bars": bars},
+        )
+    )
+    block = document["hypothetical_pnl"]
+    assert document["decision_only"] is True
+    assert block["hypothetical"] is True
+    assert block["direction"] == "LONG"
+    assert block["contract"] == "kospi200_mini"
+    assert block["multiplier_krw_per_point"] == 50_000
+    assert block["price_field"] == "close_x100"
+    assert block["price_scale"] == 100
+    assert block["totals"]["hypothetical_pnl_krw"] == "147000"
+    assert "FILL_AT_DECISION_BAR_CLOSE" in block["assumptions"]
+
+
+def test_a_short_tenants_block_is_the_mirror_of_the_longs(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """방향은 렌더 매니페스트가 말한다 — LONG 으로 떨어지면 SHORT 성적이 뒤집힌다."""
+    _tenant_content(session_tree, market="futures", direction="SHORT")
+    bars = [
+        {
+            "time_kst": "09:14",
+            "decision_kind": "ACTION",
+            "decision_rule_id": "R1-ENTRY-SHORT",
+            "counted": True,
+            "fields": {"close_x100": 73_564},
+        },
+        {
+            "time_kst": "09:50",
+            "decision_kind": "FLAT",
+            "decision_rule_id": "R2-EXIT-VWAP-REVERTED",
+            "counted": True,
+            "fields": {"close_x100": 73_858},
+        },
+    ]
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612", "bars": bars},
+        )
+    )
+    block = document["hypothetical_pnl"]
+    assert block["direction"] == "SHORT"
+    assert block["totals"]["hypothetical_pnl_krw"] == "-147000"
+
+
+def test_a_contract_the_registry_does_not_know_is_named_not_guessed(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """모르는 월물에 배수를 추측해 붙이면 그 수는 조용히 틀린다."""
+    _tenant_content(session_tree, market="futures")
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "ZZZ999"},
+        )
+    )
+    assert document["hypothetical_pnl"] is None
+    assert document["hypothetical_pnl_error"] == "ValueError"
+    # …and the explanation, which does not need the contract, is still there.
+    assert document["explain"]["rules"]
+
+
+def test_a_probe_rule_the_explanation_marks_is_the_one_the_total_skips(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """화면이 «시험 진입» 이라 그린 규칙과 합계가 뺀 규칙이 **같아야** 한다.
+
+    둘이 갈라지면 운영자가 보는 표시와 숫자가 서로 다른 말을 한다. 그래서 설명
+    블록이 이미 낸 `probe` 플래그를 그대로 필터로 쓴다.
+    """
+    _tenant_content(session_tree, market="futures")
+    render = session_tree / "cp3-sessions" / SESSION / "render"
+    probing = _STRATEGY_YAML.replace(
+        '"R1-ENTRY-LONG: the entry window is open."',
+        '"R4-M2-PROBE-ENTRY-LONG: the M2 boundary probe."',
+    )
+    (render / "strategies" / "d.strategy.yaml").write_text(probing, encoding="utf-8")
+    bars = [
+        {
+            "time_kst": "09:14",
+            "decision_kind": "ACTION",
+            "decision_rule_id": "R4-M2-PROBE-ENTRY-LONG",
+            "counted": True,
+            "fields": {"close_x100": 73_564},
+        },
+        {
+            "time_kst": "09:50",
+            "decision_kind": "FLAT",
+            "decision_rule_id": "R2-EXIT-VWAP-REVERTED",
+            "counted": True,
+            "fields": {"close_x100": 73_858},
+        },
+    ]
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612", "bars": bars},
+        )
+    )
+    marked = [r["rule_id"] for r in document["explain"]["rules"] if r["probe"]]
+    assert marked == ["R4-M2-PROBE-ENTRY-LONG"]
+
+    block = document["hypothetical_pnl"]
+    assert block["trades"] == []
+    assert block["totals"]["hypothetical_pnl_krw"] is None
+    assert [s["reason"] for s in block["skipped_decisions"]] == ["PROBE_ENTRY"]
+
+
+def test_a_contract_spec_file_that_cannot_be_loaded_degrades_the_block(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ContractSpecRegistry.from_yaml`` 의 ``TypeError`` 가 수출을 죽이면 안 된다.
+
+    그 생성자는 YAML 매핑을 ``**fields`` 로 펼치므로, `config/execution.yaml` 에
+    키 하나가 늘거나 이름이 바뀌면 ``TypeError`` 다. 설명 블록 때문에 바를 잃는
+    것은 이 설계가 명시적으로 피한 것이다.
+    """
+    _tenant_content(session_tree, market="futures")
+    spec = tmp_path / "execution.yaml"
+    spec.write_text(
+        "futures_contract_spec:\n"
+        "  kospi200_mini:\n"
+        "    multiplier_krw_per_point: 50000\n"
+        "    tick_size_points: 0.02\n"
+        "    tick_value_krw: 1000\n"
+        "    commission_rate: 0.00003\n"
+        "    symbol_prefix: 'A05'\n"
+        "    a_key_nobody_declared: 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(eb, "CONTRACT_SPEC_CONFIG", spec)
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612"},
+        )
+    )
+    assert document["bars"] == _DOCUMENT["bars"]
+    assert document["hypothetical_pnl"] is None
+    assert document["hypothetical_pnl_error"] == "TypeError"
+
+
+def test_a_publish_scale_that_is_not_a_positive_int_refuses_the_number(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """배수를 모를 때 1 로 떨어지면 가상 손익이 **100배**가 된다.
+
+    그리고 그것은 틀려 보이지 않는다 — 아주 좋은 날처럼 보인다. 그래서 떨어지지
+    않고 거부하고, 수 대신 사유를 낸다.
+    """
+    _tenant_content(session_tree, market="futures")
+    render = session_tree / "cp3-sessions" / SESSION / "render"
+    (render / "fields.yaml").write_text(
+        _FIELDS_YAML.replace("{mult: 100, round: half_up}", '{mult: "100"}'),
+        encoding="utf-8",
+    )
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612"},
+        )
+    )
+    assert document["hypothetical_pnl"] is None
+    assert document["hypothetical_pnl_error"] == "ExplainRefusal"
+    assert document["explain"]["rules"]
+
+
+def test_an_unparseable_construction_file_never_fails_the_export(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``yaml.YAMLError`` 가 밖으로 새면 바 문서가 통째로 안 써진다."""
+    _tenant_content(session_tree, market="futures")
+    render = session_tree / "cp3-sessions" / SESSION / "render"
+    (render / "construction.yaml").write_text("price_field_key: [\n", encoding="utf-8")
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612"},
+        )
+    )
+    assert document["bars"] == _DOCUMENT["bars"]
+    assert document["hypothetical_pnl"] is None
+    assert document["hypothetical_pnl_error"] == "ExplainRefusal"
+
+
+def test_no_explanation_block_carries_a_host_path(
+    tmp_path: Path, session_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """두 블록은 브라우저로 간다 — 읽은 파일의 경로가 어느 키에도 없어야 한다."""
+    _tenant_content(session_tree, market="futures")
+    document = _exported(
+        _export(
+            tmp_path,
+            session_tree,
+            monkeypatch,
+            document={**_DOCUMENT, "instrument": "A05612"},
+        )
+    )
+    added = json.dumps(
+        {
+            key: document.get(key)
+            for key in ("explain", "hypothetical_pnl", "market", "decision_only")
+        },
+        ensure_ascii=False,
+    )
+    assert str(tmp_path) not in added
+    assert str(session_tree) not in added
