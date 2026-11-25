@@ -904,17 +904,19 @@ def _live_outcome_kind(block: DecisionBlock) -> str:
     return OUTCOME_TYPE_TO_KIND.get(str(outcome_type), PROPOSAL_KIND)
 
 
-def _flow_halt(block: DecisionBlock) -> tuple[str | None, str | None]:
-    """This block's first ``FLOW_HALTED`` row as ``(halt_reason, step)``."""
+def _flow_halt(block: DecisionBlock) -> tuple[str | None, str | None, str | None]:
+    """This block's first ``FLOW_HALTED`` row as ``(halt_reason, step, detail)``."""
     for kind, payload in block.flow:
         if kind == "FLOW_HALTED":
             reason = payload.get("halt_reason")
             step = payload.get("step")
+            detail = payload.get("detail")
             return (
                 None if reason is None else str(reason),
                 None if step is None else str(step),
+                None if detail is None else str(detail),
             )
-    return None, None
+    return None, None, None
 
 
 @dataclass(frozen=True)
@@ -1179,7 +1181,7 @@ def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
                 "the marketfeed store does not hold. The tick was admitted and "
                 "its snapshot is gone, so the bar it was about is not knowable"
             )
-        flow_halt, flow_halt_step = _flow_halt(block)
+        flow_halt, flow_halt_step, flow_halt_detail = _flow_halt(block)
         records.append(
             {
                 "raw_event_id": snapshot.raw_event_id,
@@ -1190,6 +1192,7 @@ def live_decision_records(data_dir: Path) -> list[dict[str, Any]]:
                 "pipeline_halt_reason": block.payload.get("halt_reason"),
                 "flow_halt_reason": flow_halt,
                 "flow_halt_step": flow_halt_step,
+                "flow_halt_detail": flow_halt_detail,
                 "capacity_denied": flow_halt == CAPACITY_DENIAL_HALT_REASON,
                 "handed_off": any(kind == "SEND_HANDED_OFF" for kind, _ in block.flow),
                 "attributed_by": how,
