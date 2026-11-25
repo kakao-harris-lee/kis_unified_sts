@@ -46,15 +46,28 @@ PATH_PLACEHOLDER = "<경로>"
 #: 계좌로 보이는 수가 있던 자리.
 ACCOUNT_PLACEHOLDER = "<계좌>"
 
-#: 웹 URL — 매치하면 **그대로 둔다**. 경로 규칙이 ``//host/path`` 를 잘라 주소를
-#: 반쪽으로 만들지 않게, 같은 훑기에서 먼저 잡아 두고 원문을 돌려준다.
+#: 웹 URL. 스킴과 호스트는 그대로 돌려주되(경로 규칙이 ``//host/path`` 를 잘라
+#: 주소를 반쪽으로 만들지 않게) **호스트 뒤의 경로는 아래에서 다시 본다**.
 #:
 #: SAFETY: http(s) 만이다 — ``file:///home/…`` · ``sqlite:////home/…`` 는 스킴을 쓴 호스트 경로이고, 일반 ``\w+://`` 면제는 그걸 그대로 내보낸다
 _URL = r"(?P<url>https?://[^\s'\"<>]*)"
 
+#: 매치한 URL 을 ``scheme://host`` 와 그 뒤 경로로 가른다.
+_URL_PARTS = re.compile(r"(?P<origin>https?://[^/\s'\"<>]*)(?P<path>.*)")
+
 #: 대시보드 라우트 경로. 그대로 둔다 — ``/api/tos/status`` 는 이 서비스의 공개
 #: 표면이고, 가리면 안내 문장이 «<경로>» 가 된다.
-_ROUTE = r"(?P<route>/api/[A-Za-z0-9_./\-]*)"
+#:
+#: SAFETY: 실제 표면(``/api/tos/``)에만 걸고 뒤에 상위 이동이나 알려진 루트가 있으면 면제를 거둔다 — ``/api/../home/deploy/x`` 는 라우트가 아니라 호스트 경로인데 이전 ``/api/`` 접두 면제가 통째로 내보냈다
+_ROUTE = r"(?P<route>(?<![A-Za-z0-9_./])/api/tos/[A-Za-z0-9_\-/]*)"
+
+#: 면제를 잃게 하는 모양: 상위 이동(``..``) 또는 파일시스템 루트 구획.
+#: 라우트 꼬리와 URL 경로에 같은 규칙을 쓴다.
+_UNSAFE_IN_EXEMPT = re.compile(r"\.\.|/(?:home|tmp|var|mnt|root|etc|usr|opt)(?:/|$)")
+
+#: 상위 이동 묶음 — ``root/api/../../home/…`` 의 호스트 경로를 상위 이동부터
+#: 잘라, 화면에 ``../..`` 만 남지 않게 한다.
+_TRAVERSAL = r"(?P<traversal>(?:/\.\.)+/[A-Za-z0-9_./@%+\-]*)"
 
 #: ASCII 단어에 바로 붙은 절대 경로(``data_leaf/home/…``). POSIX 규칙의
 #: lookbehind 가 거부하는 모양이라 따로 받는다. 잘 알려진 루트만 — 단어 뒤의
@@ -89,7 +102,9 @@ _RELATIVE = (
 )
 
 _PATH_TOKEN = re.compile(
-    "|".join((_URL, _WINDOWS, _SHELL, _ROUTE, _GLUED_ROOT, _POSIX, _RELATIVE))
+    "|".join(
+        (_URL, _WINDOWS, _SHELL, _ROUTE, _TRAVERSAL, _GLUED_ROOT, _POSIX, _RELATIVE)
+    )
 )
 
 #: 따옴표 안이 경로로 시작하면 **닫는 따옴표까지** 지운다 — 공백이 든 경로의
@@ -148,9 +163,21 @@ def account_values_from_env(
 
 
 def _replace_path_token(match: re.Match[str]) -> str:
-    """한 토큰을 자리 표시로 — URL·라우트·숫자뿐인 비율은 원문 그대로 돌려준다."""
+    """한 토큰을 자리 표시로 — URL·라우트·숫자뿐인 비율은 원문 그대로.
+
+    두 면제는 조건부다: 꼬리에 상위 이동이나 파일시스템 루트가 있으면 라우트·
+    URL 을 쓴 호스트 경로이므로 그 꼬리는 면제를 잃는다.
+    """
     token = match.group(0)
-    if match.lastgroup in {"url", "route"}:
+    if match.lastgroup == "route":
+        return PATH_PLACEHOLDER if _UNSAFE_IN_EXEMPT.search(token) else token
+    if match.lastgroup == "url":
+        parts = _URL_PARTS.fullmatch(token)
+        if parts is None:  # pragma: no cover - 매치했으면 반드시 쪼개진다
+            return token
+        path = parts.group("path")
+        if path and _UNSAFE_IN_EXEMPT.search(path):
+            return f"{parts.group('origin')}{PATH_PLACEHOLDER}"
         return token
     # SAFETY: 「3 /378」 처럼 숫자뿐인 덩어리는 비율이지 경로가 아니다 — 지우면 측정값이 사라진다
     if match.lastgroup == "posix" and not _ASCII_LETTER.search(token):

@@ -112,6 +112,31 @@
       "why": "«Account No.», with the dot",
       "input": "Account No. 50205915 refused",
       "expected": "Account No. <계좌> refused"
+    },
+    {
+      "why": "a traversal wearing the route prefix is a host path, not a route",
+      "input": "/api/../home/deploy/x",
+      "expected": "<경로>"
+    },
+    {
+      "why": "the route prefix glued into a host path",
+      "input": "x/api/home/deploy/.local/state/x",
+      "expected": "x/api<경로>"
+    },
+    {
+      "why": "a double traversal behind the route prefix",
+      "input": "root/api/../../home/deploy/.kis_token_x",
+      "expected": "root/api<경로>"
+    },
+    {
+      "why": "a URL whose path traverses out to a host path",
+      "input": "open http://localhost/../home/deploy/x",
+      "expected": "open http://localhost<경로>"
+    },
+    {
+      "why": "a URL whose path IS a host path",
+      "input": "open https://h/home/deploy/.local/state/x",
+      "expected": "open https://h<경로>"
     }
   ],
   "kept": [
@@ -166,6 +191,10 @@
     {
       "why": "a two-letter ratio is not a path",
       "input": "a/b 는 경로가 아니다"
+    },
+    {
+      "why": "an ordinary web URL keeps its path and query",
+      "input": "see https://example.com/a/b?c=1 for details"
     }
   ]
 }
