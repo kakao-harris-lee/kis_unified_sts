@@ -213,6 +213,114 @@ export const GLOSSARY: Record<string, GlossaryTerm> = {
     meaning: '엔진이 실제로 값을 보고 규칙을 따져 본 봉의 수입니다. 보류된 봉과 기록으로 대체한 봉은 빠집니다.',
   },
 
+  // --- money: what each figure is, and is not ---------------------------------------
+  realized_pnl: {
+    label: '실현 손익',
+    meaning:
+      '그날 실제로 사고팔아 닫힌 수량의 손익입니다. FIFO 로 짝지어 계산하며 수수료·세금·슬리피지는 빼지 않았습니다. 아직 들고 있는 수량의 평가 손익은 들어 있지 않습니다.',
+  },
+  hypothetical_pnl: {
+    label: '가상 손익(체결 가정)',
+    meaning:
+      '실제 손익이 아닙니다. 주문을 내지 않는 tenant 의 판단만 모아, 그대로 체결됐다면 얼마였을지를 계산한 값입니다. 실현 손익과 더하지 않습니다.',
+  },
+  fill_assumption: {
+    label: '체결 가정',
+    meaning:
+      '가상 손익이 서 있는 가정들입니다 — 판단 봉의 종가에 반드시 체결되고, 수수료와 슬리피지가 없으며, 한 번에 한 계약만 들고 있다고 봅니다. 셋 다 숫자를 좋은 쪽으로 밀어 줍니다.',
+  },
+  round_trip: {
+    label: '왕복',
+    meaning:
+      '사서 다시 판 한 쌍입니다. FIFO 로 닫힌 lot 조각마다 세므로, 매수 둘을 한 번에 턴 매도는 왕복 2 입니다.',
+  },
+  unresolved_order: {
+    label: '미해결 주문',
+    meaning:
+      '손익 집계에 넣지 못한 주문 시도입니다. 브로커가 받지 않았거나(비체결 종료), 결과를 끝내 확인하지 못했습니다(미해결). 체결이 아니므로 손익에 들어가지 않습니다.',
+  },
+  EXECUTION: {
+    label: '체결가 기준',
+    meaning: '브로커가 찍은 평균 체결가로 계산한 손익입니다.',
+  },
+  ORDER_PRICE: {
+    label: '지정가 기준',
+    meaning:
+      '체결가를 얻지 못해 보낸 주문의 지정가로 계산한 손익입니다. 실제 체결가와 다를 수 있습니다.',
+  },
+  MIXED: {
+    label: '기준 섞임',
+    meaning: '한쪽 다리는 체결가, 다른 쪽은 지정가로 계산된 손익입니다.',
+  },
+  UNRESOLVED: {
+    label: '미해결',
+    meaning: '주문을 보낸 뒤 결과를 끝내 확인하지 못했습니다. 체결로도 비체결로도 세지 않습니다.',
+  },
+  NO_FILL: {
+    label: '비체결 종료',
+    meaning: '브로커가 받지 않아 체결 없이 끝난 주문입니다.',
+  },
+
+  // --- the hypothetical total's assumptions, as the document names them --------------
+  FILL_AT_DECISION_BAR_CLOSE: {
+    label: '판단 봉 종가 체결',
+    meaning: '판단이 선 그 1분봉의 종가에 들어가고 나왔다고 봅니다.',
+  },
+  FILL_ALWAYS_ASSUMED: {
+    label: '체결 보장 가정',
+    meaning: '주문이 언제나 체결됐다고 봅니다. 호가가 비어 못 샀을 경우를 세지 않습니다.',
+  },
+  NO_FEES: { label: '수수료 없음', meaning: '수수료와 세금을 빼지 않았습니다.' },
+  NO_SLIPPAGE: {
+    label: '슬리피지 없음',
+    meaning: '주문이 원하는 가격 그대로 체결됐다고 봅니다.',
+  },
+  ONE_CONTRACT: { label: '1계약', meaning: '언제나 한 계약만 거래했다고 봅니다.' },
+  ONE_POSITION_AT_A_TIME: {
+    label: '동시 보유 1건',
+    meaning: '이미 들고 있는 동안의 새 진입 판단은 세지 않습니다.',
+  },
+
+  // --- why a decision bar is outside the hypothetical total -------------------------
+  NOT_ENGINE_COUNTED: {
+    label: '엔진 판단이 아님',
+    meaning:
+      '엔진이 실제로 판단한 봉이 아니라 점검이 되짚어 본 봉입니다. 전략의 성과로 치면 하지 않은 일을 센 것이 됩니다.',
+  },
+  ENGINE_DISAGREES: {
+    label: '엔진과 불일치',
+    meaning: '기록된 결정이 엔진이 낸 결과와 달랐던 봉이라 합계에서 뺐습니다.',
+  },
+  PROBE_ENTRY: {
+    label: '시험 진입',
+    meaning: '주문 경로 점검용 진입이라 전략의 성과로 세지 않습니다.',
+  },
+
+  // --- the status board's vocabulary ------------------------------------------------
+  clean_streak: {
+    label: '깨끗한 날 누적',
+    meaning:
+      '막힘 없이 끝난 거래일이 연달아 몇 날인지입니다. paper 승격 기준(목표 일수)까지 세며, 하루라도 막히면 처음부터 다시 셉니다.',
+  },
+  level_blocked: {
+    label: '막힘',
+    meaning: '그 세션이 멈췄거나 더 진행할 수 없는 상태입니다. 먼저 볼 줄입니다.',
+  },
+  level_check: {
+    label: '확인',
+    meaning: '돌긴 했지만 사람이 한 번 봐야 하는 일이 있었다는 뜻입니다. 멈춘 것은 아닙니다.',
+  },
+  resident_paper: {
+    label: '상주 paper',
+    meaning:
+      '장중 내내 떠 있는 모의 운영 셀입니다. 런타임과 드라이버 두 프로세스가 살아 있어야 「상주 중」이며, 지난 날짜의 상태판은 이를 확인하지 않습니다.',
+  },
+  field_definition: {
+    label: '필드 정의',
+    meaning:
+      '그 값을 무엇으로 계산하는지를 tenant 의 필드 카탈로그(fields.yaml)에서 그대로 가져온 것입니다. 연산 이름과 입력, 설정값 순서로 적혀 있습니다.',
+  },
+
   // --- bases ------------------------------------------------------------------------
   TOS_LEDGER_FIFO_OPEN_LOTS: {
     label: 'TOS 기준 보유',

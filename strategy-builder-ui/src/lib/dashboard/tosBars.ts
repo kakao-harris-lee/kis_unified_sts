@@ -363,6 +363,43 @@ export function ruleExplanation(
 }
 
 /**
+ * One published field's definition, by the name a comparison names it.
+ *
+ * `explain.fields` is keyed by BOTH the catalog's internal name and the
+ * published alias (`z` and `z_x1000` both resolve), so a lookup by the name the
+ * rule compared finds it without this side re-deriving the scale suffix.
+ */
+export function explainField(
+  document: TosBarsDocument | null | undefined,
+  name: string | null | undefined,
+): TosBarsExplainField | null {
+  if (!name) return null;
+  return document?.explain?.fields?.[name] ?? null;
+}
+
+/**
+ * A field definition as one short line: `between(mso) · lo=15 · hi=345`.
+ *
+ * The operation and its inputs are the tenant's own `fields.yaml` words, kept
+ * verbatim: translating `ratio_z` into prose here would be this bundle's claim
+ * about what the catalog computes, and the sentence beside it (the rule's
+ * `rationale`) is already the authored explanation. Null when the document
+ * does not define the field, or defines it without an operation — an invented
+ * «알 수 없음(…)» line would read as a definition.
+ */
+export function fieldDefinitionLabel(
+  field: TosBarsExplainField | null | undefined,
+): string | null {
+  if (!field?.op) return null;
+  const inputs = (field.inputs ?? []).join(', ');
+  const params = Object.entries(field.params ?? {})
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(' · ');
+  const head = `${field.op}(${inputs})`;
+  return params ? `${head} · ${params}` : head;
+}
+
+/**
  * Whether this document carries a hypothetical PnL that may be shown.
  *
  * Guarded on `hypothetical === true` rather than on the block merely existing:

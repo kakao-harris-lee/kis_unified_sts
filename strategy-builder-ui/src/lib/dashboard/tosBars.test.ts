@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import config from '@/config/tos-control-plane.json';
+import { futuresBarsDocument } from '@/test/tosBarsFixture';
 import {
   BAR_FLAGS,
   LATEST_SESSION,
@@ -12,6 +13,8 @@ import {
   SUPPORTED_BARS_SCHEMA_VERSION,
   barValue,
   barsState,
+  explainField,
+  fieldDefinitionLabel,
   groupSessionsByDate,
   hasFlag,
   hasHypotheticalPnl,
@@ -353,5 +356,30 @@ describe('hasHypotheticalPnl', () => {
     };
     expect(field.params?.when_missing).toBeNull();
     expect(field.params?.choices).toEqual([1, 2]);
+  });
+});
+
+describe('필드 정의', () => {
+  const document = futuresBarsDocument();
+
+  it('resolves a published alias as well as the catalog name', () => {
+    expect(explainField(document, 'z_x1000')?.op).toBe('ratio_z');
+    expect(explainField(document, 'entry_window')?.op).toBe('between');
+  });
+
+  it('writes the operation and its inputs as the catalog has them', () => {
+    expect(fieldDefinitionLabel(explainField(document, 'entry_window'))).toBe(
+      'between(mso) · hi=345 · lo=15',
+    );
+    expect(fieldDefinitionLabel(explainField(document, 'z_x1000'))).toBe(
+      'ratio_z(close, vwap, atr)',
+    );
+  });
+
+  it('offers nothing rather than an invented definition', () => {
+    expect(explainField(document, 'a_brand_new_field')).toBeNull();
+    expect(explainField(null, 'z_x1000')).toBeNull();
+    expect(fieldDefinitionLabel(null)).toBeNull();
+    expect(fieldDefinitionLabel({ field: 'x', op: null })).toBeNull();
   });
 });

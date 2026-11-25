@@ -122,6 +122,13 @@ export interface TosStatusResponse {
   available: boolean;
   reason: string | null;
   age_seconds: number | null;
+  /**
+   * True when the READER had to strip a path or an account-shaped value on the
+   * way out — which means the exporter regressed. The body is safe either way,
+   * so this is not an error state; the page says a sentence was altered rather
+   * than presenting a scrubbed broken export as normal.
+   */
+  redacted?: boolean;
   document: TosStatusDocument | null;
 }
 
@@ -208,6 +215,53 @@ export function boardVerdict(
   if (blocked > 0) return 'blocked';
   if (checks > 0) return 'check';
   return 'clear';
+}
+
+/**
+ * The issues, blocks first — the board's own level words, not a literal here.
+ *
+ * The order is the one an operator reads in: what is stopped comes before what
+ * wants a look. Inside a level the exporter's order is preserved, because it is
+ * already the order `sts tos status` prints (tenant by tenant, then paper), and
+ * re-sorting would make the page and the CLI disagree about the same day.
+ *
+ * A level the document did not name sorts last rather than being dropped: an
+ * unrecognised level is still an issue somebody raised.
+ */
+export function orderedIssues(
+  document: TosStatusDocument | null | undefined,
+): TosStatusIssue[] {
+  const issues = document?.issues ?? [];
+  const blocked = document?.levels?.blocked ?? null;
+  const check = document?.levels?.check ?? null;
+  const rank = (issue: TosStatusIssue): number => {
+    if (blocked != null && issue.level === blocked) return 0;
+    if (check != null && issue.level === check) return 1;
+    return 2;
+  };
+  return [...issues].sort((left, right) => rank(left) - rank(right));
+}
+
+/** Whether the resident paper cell was running when the board was taken. */
+export type PaperLiveness = 'alive' | 'partial' | 'stopped' | 'not-checked' | 'unknown';
+
+/**
+ * The resident paper cell's liveness, from the board alone.
+ *
+ * `not-checked` is its own answer and not a synonym for «stopped»: the
+ * exporter reads /proc only for today, so on a past date both flags are false
+ * and say nothing at all. Rendering that as «꺼짐» would report an outage for
+ * every board older than this morning.
+ */
+export function paperLiveness(paper: TosStatusPaper | null | undefined): PaperLiveness {
+  if (!paper) return 'unknown';
+  if (paper.live_check !== true) return 'not-checked';
+  const runtime = paper.runtime_alive;
+  const driver = paper.driver_alive;
+  if (runtime == null || driver == null) return 'unknown';
+  if (runtime && driver) return 'alive';
+  if (runtime || driver) return 'partial';
+  return 'stopped';
 }
 
 export const tosStatusApi = {

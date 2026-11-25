@@ -8,16 +8,53 @@ import {
   haltPairLabel,
 } from './tosGlossary';
 import { parseCompare } from './tosDecision';
-import { futuresBarsDocument, rsiStockBarsDocument, stockBarsDocument } from '@/test/tosBarsFixture';
+import {
+  futuresBarsDocument,
+  rsiStockBarsDocument,
+  stockBarsDocument,
+  symbolsDocument,
+} from '@/test/tosBarsFixture';
 
 // All three tenant shapes, because they do NOT share a vocabulary: 005380
 // publishes rsi/wr fields and its own rule ids, and a glossary that covered
 // only Setup D would pass on four tenants and leave that one in raw English.
 const documents = [futuresBarsDocument(), stockBarsDocument(), rsiStockBarsDocument()];
 
-/** Every raw string the two fixtures would put on screen as a term. */
+/** Every raw string the fixtures would put on screen as a term. */
 function jargon(): string[] {
   const names = new Set<string>();
+  // The P2 blocks put three more families of raw code on screen: the rule ids
+  // and field names the explanation carries, the assumption codes beside the
+  // hypothetical total, and the reason each skipped decision was left out.
+  for (const document of documents) {
+    for (const rule of document.explain?.rules ?? []) {
+      if (rule.rule_id) names.add(rule.rule_id);
+      if (rule.decision_kind) names.add(rule.decision_kind);
+      for (const field of rule.fields ?? []) names.add(field);
+    }
+    if (document.explain?.default?.rule_id) names.add(document.explain.default.rule_id);
+    const hypothetical = document.hypothetical_pnl;
+    for (const code of hypothetical?.assumptions ?? []) names.add(code);
+    for (const skipped of hypothetical?.skipped_decisions ?? []) {
+      if (skipped.reason) names.add(skipped.reason);
+      if (skipped.rule_id) names.add(skipped.rule_id);
+      if (skipped.decision_kind) names.add(skipped.decision_kind);
+    }
+    for (const trade of hypothetical?.trades ?? []) {
+      if (trade.entry_rule_id) names.add(trade.entry_rule_id);
+      if (trade.exit_rule_id) names.add(trade.exit_rule_id);
+    }
+  }
+  // …and the per-symbol document prints the PnL basis and the status of every
+  // order the FIFO could not account for.
+  for (const row of symbolsDocument().symbols ?? []) {
+    for (const period of [row.pnl?.today, row.pnl?.cumulative]) {
+      if (period?.pnl_basis) names.add(period.pnl_basis);
+    }
+    for (const attempt of row.pnl?.unresolved?.attempts ?? []) {
+      if (attempt.status) names.add(attempt.status);
+    }
+  }
   for (const document of documents) {
     for (const bar of document.bars ?? []) {
       if (bar.decision_rule_id) names.add(bar.decision_rule_id);
@@ -56,6 +93,36 @@ describe('the glossary', () => {
     expect(glossaryKey('z_x1000')).toBe('z');
     expect(glossaryKey('entry_window')).toBe('entry_window');
     expect(glossaryTerm('close_x100')).toBe(glossaryTerm('close'));
+  });
+
+  it('guards the harvest itself, so the check above cannot be vacuous', () => {
+    // If the fixtures ever stop carrying the P2 blocks, the loop above would
+    // pass by inspecting nothing.
+    const names = jargon();
+    expect(names).toContain('R4-M2-PROBE-ENTRY-LONG');
+    expect(names).toContain('FILL_AT_DECISION_BAR_CLOSE');
+    expect(names).toContain('NOT_ENGINE_COUNTED');
+    expect(names).toContain('EXECUTION');
+    expect(names).toContain('NO_FILL');
+  });
+
+  it('explains every word the money columns add', () => {
+    // Requirement 6 of the legibility plan: a new term on screen gets a
+    // sentence, or this job fails rather than the operator guessing.
+    for (const key of [
+      'realized_pnl',
+      'hypothetical_pnl',
+      'fill_assumption',
+      'round_trip',
+      'unresolved_order',
+      'clean_streak',
+      'level_blocked',
+      'level_check',
+      'resident_paper',
+      'field_definition',
+    ]) {
+      expect(glossaryTerm(key), key).not.toBeNull();
+    }
   });
 
   it('shows a term this page has never seen as itself, rather than hiding it', () => {

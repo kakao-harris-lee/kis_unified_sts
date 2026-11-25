@@ -16,13 +16,15 @@
 //    so it reports neither a passing nor a failing condition.
 
 import {
+  ruleExplanation,
   type TosBarsBar,
   type TosBarsCompare,
+  type TosBarsDocument,
   type TosBarsRule,
   type TosBarsSummary,
   type TosBarsSummaryRule,
 } from './tosBars';
-import { glossaryKey, glossaryLabel } from './tosGlossary';
+import { glossaryKey, glossaryLabel, glossaryTerm } from './tosGlossary';
 
 /** Rule ids that carry this marker are probes, not strategy signals. */
 const PROBE_MARKER = 'PROBE';
@@ -118,6 +120,12 @@ export interface ConditionRow {
   name: string;
   /** Glossary key for the term tooltip, or null when the name is raw. */
   termKey: string | null;
+  /**
+   * The published name the comparison read, exactly as the document wrote it
+   * (`z_x1000`, not `z`) — the key `explain.fields` is looked up by, which is
+   * why the scaled alias is kept rather than normalised away like `termKey`.
+   */
+  field: string | null;
   /** The condition in one short phrase, for the formula line. */
   short: string;
   /** What this bar actually had, in human units. */
@@ -169,6 +177,7 @@ export function conditionRow(compare: TosBarsCompare, position: number): Conditi
       index,
       name,
       termKey,
+      field: leftName || null,
       short: name,
       actual,
       threshold: parsed ? rightLabel : null,
@@ -200,6 +209,7 @@ export function conditionRow(compare: TosBarsCompare, position: number): Conditi
     index,
     name,
     termKey,
+    field: leftName || null,
     short: `${name} ${symbol} ${threshold}`,
     actual,
     threshold: `${symbol} ${threshold}`,
@@ -231,17 +241,53 @@ export function isProbeRule(ruleId: string | null | undefined): boolean {
   return ruleId != null && ruleId.includes(PROBE_MARKER);
 }
 
+/** How a caller decides whether a rule id is an order-path probe. */
+export type ProbePredicate = (ruleId: string | null | undefined) => boolean;
+
+/**
+ * The probe test this document authorises, falling back to the id marker.
+ *
+ * `explain.rules[].probe` is an operator-side assertion
+ * (`config/tos_bars_explain.yaml`), which is the only place that actually
+ * KNOWS: the marker heuristic reads «PROBE» out of a rule id and would call a
+ * future `R5-PROBE-EXIT` a probe, or miss a probe named without the word. So
+ * when the document explains a rule, the document decides; a rule it does not
+ * mention keeps the heuristic rather than silently becoming a strategy signal.
+ */
+export function probePredicate(document: TosBarsDocument | null | undefined): ProbePredicate {
+  const rules = document?.explain?.rules;
+  if (!rules?.length) return isProbeRule;
+  const ids = (predicate: (rule: { probe?: boolean | null }) => boolean) =>
+    new Set(
+      rules
+        .filter(predicate)
+        .map((rule) => rule.rule_id)
+        .filter((id): id is string => id != null),
+    );
+  const flagged = ids((rule) => rule.probe === true);
+  const explained = ids(() => true);
+  return (ruleId) => {
+    if (!ruleId) return false;
+    if (flagged.has(ruleId)) return true;
+    if (explained.has(ruleId)) return false;
+    return isProbeRule(ruleId);
+  };
+}
+
 /**
  * Sort a bar's rules into the roles the page talks about.
  *
- * By `decision_kind` and the probe marker in the id, never by position: a
- * tenant may declare its rules in any order, and 005380 already runs a
- * different rule set (RSI/%R) from the Setup D trees.
+ * By `decision_kind` and the probe test, never by position: a tenant may
+ * declare its rules in any order, and 005380 already runs a different rule set
+ * (RSI/%R) from the Setup D trees.
  */
-export function ruleRoles(rules: TosBarsRule[] | null | undefined): RuleRoles {
+export function ruleRoles(
+  rules: TosBarsRule[] | null | undefined,
+  isProbe: ProbePredicate = isProbeRule,
+): RuleRoles {
   const roles: RuleRoles = { entry: null, probe: null, exits: [] };
   for (const rule of rules ?? []) {
-    if (isProbeRule(rule.rule_id)) {
+    if (isProbe(rule.rule_id)) {
       roles.probe ??= rule;
     } else if (rule.decision_kind === 'ACTION') {
       roles.entry ??= rule;
@@ -266,8 +312,11 @@ export interface EntryProgress {
  * Null when the bar carries no entry rule at all, which is what a withheld bar
  * looks like: it was never judged, so it has no score to report.
  */
-export function entryProgress(bar: TosBarsBar | null | undefined): EntryProgress | null {
-  const entry = ruleRoles(bar?.rules).entry;
+export function entryProgress(
+  bar: TosBarsBar | null | undefined,
+  isProbe: ProbePredicate = isProbeRule,
+): EntryProgress | null {
+  const entry = ruleRoles(bar?.rules, isProbe).entry;
   const compares = entry?.compares ?? [];
   if (!entry || compares.length === 0) return null;
   const rows = conditionRows(entry);
@@ -299,8 +348,8 @@ export interface ProgressAt {
   timeKst: string | null;
 }
 
-function progressAt(bar: TosBarsBar): ProgressAt | null {
-  const progress = entryProgress(bar);
+function progressAt(bar: TosBarsBar, isProbe: ProbePredicate): ProgressAt | null {
+  const progress = entryProgress(bar, isProbe);
   return progress ? { progress, timeKst: bar.time_kst ?? null } : null;
 }
 
@@ -319,10 +368,13 @@ function inWindowBars(bars: TosBarsBar[] | null | undefined): TosBarsBar[] {
  * reached it is the one reported so the time means "from here on it never got
  * better".
  */
-export function bestEntryProgress(bars: TosBarsBar[] | null | undefined): ProgressAt | null {
+export function bestEntryProgress(
+  bars: TosBarsBar[] | null | undefined,
+  isProbe: ProbePredicate = isProbeRule,
+): ProgressAt | null {
   let best: ProgressAt | null = null;
   for (const bar of inWindowBars(bars)) {
-    const at = progressAt(bar);
+    const at = progressAt(bar, isProbe);
     if (!at) continue;
     if (!best || at.progress.passed > best.progress.passed) best = at;
   }
@@ -330,10 +382,13 @@ export function bestEntryProgress(bars: TosBarsBar[] | null | undefined): Progre
 }
 
 /** The last judged bar whose entry window was still open. */
-export function latestInWindowProgress(bars: TosBarsBar[] | null | undefined): ProgressAt | null {
+export function latestInWindowProgress(
+  bars: TosBarsBar[] | null | undefined,
+  isProbe: ProbePredicate = isProbeRule,
+): ProgressAt | null {
   const inside = inWindowBars(bars);
   for (let index = inside.length - 1; index >= 0; index -= 1) {
-    const at = progressAt(inside[index]);
+    const at = progressAt(inside[index], isProbe);
     if (at) return at;
   }
   return null;
@@ -415,7 +470,7 @@ const HEADLINES: Record<VerdictKind, string> = {
  * «신호 없음», because that phrase claims the conditions were checked and came
  * out false. `evaluation` says which of the two it was.
  */
-export function barVerdict(bar: TosBarsBar): BarVerdict {
+export function barVerdict(bar: TosBarsBar, isProbe: ProbePredicate = isProbeRule): BarVerdict {
   const gate = barGate(bar);
   if (bar.evaluation === 'withheld') {
     return { kind: 'withheld', headline: HEADLINES.withheld, ruleId: null, failing: [], gate, blocked: false };
@@ -424,7 +479,7 @@ export function barVerdict(bar: TosBarsBar): BarVerdict {
     return { kind: 'unjoined', headline: HEADLINES.unjoined, ruleId: null, failing: [], gate, blocked: false };
   }
   const ruleId = bar.decision_rule_id ?? null;
-  const kind: VerdictKind = isProbeRule(ruleId)
+  const kind: VerdictKind = isProbe(ruleId)
     ? 'probe'
     : bar.decision_kind === 'ACTION'
       ? 'entry'
@@ -432,7 +487,7 @@ export function barVerdict(bar: TosBarsBar): BarVerdict {
         ? 'exit'
         : 'none';
   if (kind === 'none') {
-    const progress = entryProgress(bar);
+    const progress = entryProgress(bar, isProbe);
     return {
       kind,
       headline: HEADLINES.none,
@@ -496,11 +551,14 @@ export function isSignalVerdict(kind: VerdictKind): boolean {
  * length carries what the collapsed bars would have said, so nothing is hidden
  * — only repeated.
  */
-export function verdictTimeline(bars: TosBarsBar[]): TimelineEntry[] {
+export function verdictTimeline(
+  bars: TosBarsBar[],
+  isProbe: ProbePredicate = isProbeRule,
+): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
   let lastKey: string | null = null;
   bars.forEach((bar, index) => {
-    const verdict = barVerdict(bar);
+    const verdict = barVerdict(bar, isProbe);
     const key = verdictKey(verdict);
     if (key === lastKey && entries.length) {
       entries[entries.length - 1].run += 1;
@@ -624,9 +682,12 @@ export interface BlockingCondition {
  * journal-substituted bars are already excluded upstream and must not be
  * reintroduced here.
  */
-export function entryBlockers(summary: TosBarsSummary | null | undefined): BlockingCondition[] {
+export function entryBlockers(
+  summary: TosBarsSummary | null | undefined,
+  isProbe: ProbePredicate = isProbeRule,
+): BlockingCondition[] {
   const rules = summary?.rules ?? [];
-  const entry = rules.find((rule) => !isProbeRule(rule.rule_id) && /ENTRY/.test(rule.rule_id ?? ''));
+  const entry = rules.find((rule) => !isProbe(rule.rule_id) && /ENTRY/.test(rule.rule_id ?? ''));
   if (!entry) return [];
   return (entry.compares ?? [])
     .map((compare) => {
@@ -645,9 +706,12 @@ export function entryBlockers(summary: TosBarsSummary | null | undefined): Block
 }
 
 /** The summary row for the entry rule, for «오늘 진입 신호 n회». */
-export function entrySummaryRule(summary: TosBarsSummary | null | undefined): TosBarsSummaryRule | null {
+export function entrySummaryRule(
+  summary: TosBarsSummary | null | undefined,
+  isProbe: ProbePredicate = isProbeRule,
+): TosBarsSummaryRule | null {
   const rules = summary?.rules ?? [];
-  return rules.find((rule) => !isProbeRule(rule.rule_id) && /ENTRY/.test(rule.rule_id ?? '')) ?? null;
+  return rules.find((rule) => !isProbe(rule.rule_id) && /ENTRY/.test(rule.rule_id ?? '')) ?? null;
 }
 
 export interface ProbeTally {
@@ -667,12 +731,15 @@ export interface ProbeTally {
  * Printing only 「325회」 invites the reading that the day placed 325 trades,
  * which is wrong by two orders of magnitude.
  */
-export function probeTally(bars: TosBarsBar[] | null | undefined): ProbeTally {
+export function probeTally(
+  bars: TosBarsBar[] | null | undefined,
+  isProbe: ProbePredicate = isProbeRule,
+): ProbeTally {
   const counts = new Map<string, { label: string; count: number }>();
   let fired = 0;
   let passed = 0;
   for (const bar of bars ?? []) {
-    if (!isProbeRule(bar.decision_rule_id)) continue;
+    if (!isProbe(bar.decision_rule_id)) continue;
     fired += 1;
     const gate = barGate(bar);
     if (!gate) {
@@ -688,6 +755,32 @@ export function probeTally(bars: TosBarsBar[] | null | undefined): ProbeTally {
     .map(([code, value]) => ({ code, label: value.label, count: value.count }))
     .sort((a, b) => b.count - a.count);
   return { fired, passed, gates };
+}
+
+export interface RuleSentence {
+  text: string;
+  /** `document` when the export explained it, `glossary` when this page did. */
+  source: 'document' | 'glossary';
+}
+
+/**
+ * What a rule MEANS, preferring the sentence its author wrote.
+ *
+ * `explain.rules[].rationale` is the strategy YAML's own line, exported with
+ * the bars; the glossary is this bundle's standing explanation. The document
+ * wins whenever it has one, because a tenant that repoints a threshold changes
+ * its rationale and not this bundle — and bars exported before the explain
+ * block existed (everything written before 2026-11-25) carry none at all,
+ * which is exactly when the glossary has to answer.
+ */
+export function ruleSentence(
+  document: TosBarsDocument | null | undefined,
+  ruleId: string | null | undefined,
+): RuleSentence | null {
+  const explained = ruleExplanation(document, ruleId)?.rationale;
+  if (explained) return { text: explained, source: 'document' };
+  const meaning = glossaryTerm(ruleId)?.meaning;
+  return meaning ? { text: meaning, source: 'glossary' } : null;
 }
 
 /** The last bar the engine actually judged — what «지금» means for a tenant. */
