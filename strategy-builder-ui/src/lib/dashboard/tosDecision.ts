@@ -182,10 +182,14 @@ export function conditionRow(compare: TosBarsCompare, position: number): Conditi
   const right = Number(compare.right_value);
   const scale = fieldScale(leftName);
   const threshold = formatFieldValue(leftName, compare.right_value) ?? '알 수 없음';
-  const gap = Math.abs(left - right) / scale;
+  // Only an ordered comparison has a direction to travel. EQ/NE would have to
+  // claim 「올라가야」 or 「내려가야」 about a value that merely has to differ, so
+  // they report no distance and the row says 「값이 바뀌어야 충족」 instead.
+  const ordered = parsed.op === 'LE' || parsed.op === 'LT' || parsed.op === 'GE' || parsed.op === 'GT';
   const needsLower = parsed.op === 'LE' || parsed.op === 'LT';
+  const gap = Math.abs(left - right) / scale;
   const distance =
-    compare.passed === false && gap > 0
+    ordered && compare.passed === false && gap > 0
       ? {
           amount: gap.toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }),
           direction: (needsLower ? 'down' : 'up') as 'up' | 'down',
@@ -273,6 +277,66 @@ export function entryProgress(bar: TosBarsBar | null | undefined): EntryProgress
     failing: rows.filter((row) => row.passed === false).map((row) => row.name),
     ruleId: entry.rule_id ?? null,
   };
+}
+
+/** The published field every tenant uses to say the entry window is open. */
+const ENTRY_WINDOW_FIELD = 'entry_window';
+
+/**
+ * Whether this bar fell inside the tenant's entry window.
+ *
+ * `null` when the tenant publishes no such field — unknown stays unknown, and
+ * the callers below then treat every judged bar as eligible rather than
+ * silently reporting 「해당 봉 없음」 for a tenant whose window they cannot see.
+ */
+export function entryWindowOpen(bar: TosBarsBar): boolean | null {
+  const raw = bar.env_values?.[ENTRY_WINDOW_FIELD] ?? bar.fields?.[ENTRY_WINDOW_FIELD];
+  return typeof raw === 'boolean' ? raw : null;
+}
+
+export interface ProgressAt {
+  progress: EntryProgress;
+  timeKst: string | null;
+}
+
+function progressAt(bar: TosBarsBar): ProgressAt | null {
+  const progress = entryProgress(bar);
+  return progress ? { progress, timeKst: bar.time_kst ?? null } : null;
+}
+
+/** Every judged bar inside the entry window, in the document's order. */
+function inWindowBars(bars: TosBarsBar[] | null | undefined): TosBarsBar[] {
+  return (bars ?? []).filter((bar) => bar.counted === true && entryWindowOpen(bar) !== false);
+}
+
+/**
+ * The closest the day ever came to entering, and when.
+ *
+ * Not the last bar: after 15:15 every session ends on an EOD bar whose entry
+ * window is shut, so «마지막 봉 기준» reports the same 1/5 for every tenant
+ * every evening and answers nothing. The question the card asks is «얼마나
+ * 가까웠나», which is a maximum over the window, and the earliest bar that
+ * reached it is the one reported so the time means "from here on it never got
+ * better".
+ */
+export function bestEntryProgress(bars: TosBarsBar[] | null | undefined): ProgressAt | null {
+  let best: ProgressAt | null = null;
+  for (const bar of inWindowBars(bars)) {
+    const at = progressAt(bar);
+    if (!at) continue;
+    if (!best || at.progress.passed > best.progress.passed) best = at;
+  }
+  return best;
+}
+
+/** The last judged bar whose entry window was still open. */
+export function latestInWindowProgress(bars: TosBarsBar[] | null | undefined): ProgressAt | null {
+  const inside = inWindowBars(bars);
+  for (let index = inside.length - 1; index >= 0; index -= 1) {
+    const at = progressAt(inside[index]);
+    if (at) return at;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -385,10 +449,23 @@ export function barVerdict(bar: TosBarsBar): BarVerdict {
  * The identity of a verdict, for collapsing a run of identical bars.
  *
  * Two bars share a key when an operator reading the timeline would learn
- * nothing from the second — same verdict, same rule, same gate.
+ * nothing from the second — same verdict, same rule, same gate, **and the same
+ * failing conditions**.
+ *
+ * The failing set is part of the identity because the row PRINTS it. Without
+ * it, a run that starts «미충족: 진입 시간대, RSI 과매도» and continues after the
+ * window opens with only «RSI 과매도» collapses into the first bar's wording,
+ * and the page then states the entry window was shut on bars where it was
+ * open. That is a wrong claim about a real session, not a cosmetic merge.
  */
 export function verdictKey(verdict: BarVerdict): string {
-  return [verdict.kind, verdict.ruleId ?? '', verdict.gate?.reason ?? '', verdict.gate?.step ?? ''].join('|');
+  return [
+    verdict.kind,
+    verdict.ruleId ?? '',
+    verdict.gate?.reason ?? '',
+    verdict.gate?.step ?? '',
+    verdict.failing.join(','),
+  ].join('|');
 }
 
 export interface TimelineEntry {
@@ -468,6 +545,46 @@ export function entryBlockers(summary: TosBarsSummary | null | undefined): Block
 export function entrySummaryRule(summary: TosBarsSummary | null | undefined): TosBarsSummaryRule | null {
   const rules = summary?.rules ?? [];
   return rules.find((rule) => !isProbeRule(rule.rule_id) && /ENTRY/.test(rule.rule_id ?? '')) ?? null;
+}
+
+export interface ProbeTally {
+  /** Bars whose decision was the probe rule. */
+  fired: number;
+  /** Of those, the ones no kernel gate stopped — the orders that were sent. */
+  passed: number;
+  /** Where the rest stopped, commonest first. */
+  gates: { code: string; label: string; count: number }[];
+}
+
+/**
+ * How often the order-path probe fired, and how often an order actually left.
+ *
+ * The two numbers are far apart and the difference is the point: on
+ * 2026-11-25 the 005930 tree fired 325 probe decisions and sent one order.
+ * Printing only 「325회」 invites the reading that the day placed 325 trades,
+ * which is wrong by two orders of magnitude.
+ */
+export function probeTally(bars: TosBarsBar[] | null | undefined): ProbeTally {
+  const counts = new Map<string, { label: string; count: number }>();
+  let fired = 0;
+  let passed = 0;
+  for (const bar of bars ?? []) {
+    if (!isProbeRule(bar.decision_rule_id)) continue;
+    fired += 1;
+    const gate = barGate(bar);
+    if (!gate) {
+      passed += 1;
+      continue;
+    }
+    const code = gate.step ? `${gate.reason}@${gate.step}` : gate.reason;
+    const entry = counts.get(code);
+    if (entry) entry.count += 1;
+    else counts.set(code, { label: gate.label, count: 1 });
+  }
+  const gates = [...counts.entries()]
+    .map(([code, value]) => ({ code, label: value.label, count: value.count }))
+    .sort((a, b) => b.count - a.count);
+  return { fired, passed, gates };
 }
 
 /** The last bar the engine actually judged — what «지금» means for a tenant. */

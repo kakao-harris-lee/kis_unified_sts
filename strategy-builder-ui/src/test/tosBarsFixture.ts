@@ -29,7 +29,7 @@ export const NO_APPROVAL_DETAIL =
 /** The sentence the evidence writes when the venue refused the order. */
 export const INADMISSIBLE_DETAIL = 'venue admissibility is INADMISSIBLE';
 
-type Env = Record<string, boolean | number | string>;
+export type Env = Record<string, boolean | number | string>;
 
 function bool(value: boolean): string {
   return value ? 'true' : 'false';
@@ -538,6 +538,146 @@ export function stockBarsDocument(): TosBarsDocument {
         'STAGE_UNKNOWN@INDEPENDENT_APPROVAL': 1,
         'STAGE_DENIED@VENUE_ADMISSIBILITY_DECISION': 1,
       },
+      unjoined: {},
+      value_view_refused: {},
+    },
+  };
+}
+
+/**
+ * A quiet NO_ACTION bar, with `env` overriding the baseline.
+ *
+ * For the case the timeline gets wrong if its run key forgets the failing
+ * set: two adjacent bars that are both «신호 없음» but fail different
+ * conditions, because the entry window opened between them.
+ */
+export function quietBar(time: string, env: Env = {}): TosBarsBar {
+  return makeBar(
+    {
+      time,
+      env: { ...QUIET, ...env },
+      evaluation: 'engine_view',
+      decisionKind: 'NO_ACTION',
+      decisionRuleId: 'R0-DEFAULT-NO-ACTION',
+      outcomeType: 'NoActionOutcome',
+    },
+    -1800,
+  );
+}
+
+/** The RSI/%R entry rule 005380 runs instead of Setup D's. */
+function rsiEntry(env: Env): TosBarsRule {
+  const compares = [
+    { index: 1, field: 'entry_window' },
+    { index: 2, field: 'rsi_oversold' },
+    { index: 3, field: 'wr_oversold' },
+  ].map(({ index, field }) => ({
+    index,
+    expression: `${field} EQ true`,
+    left_value: bool(env[field] === true),
+    right_value: 'true',
+    passed: env[field] === true,
+  }));
+  return {
+    label: 'R1',
+    rule_id: 'R1-ENTRY-LONG-RSI-WR',
+    decision_kind: 'ACTION',
+    fired: compares.every((compare) => compare.passed),
+    compares,
+  };
+}
+
+/**
+ * The 005380 tenant, whose rule set is NOT Setup D's.
+ *
+ * It exists in the suite because every "the entry rule is R1-ENTRY-LONG"
+ * shortcut this page could take would pass on the other four tenants and be
+ * wrong here. The published fields are its own
+ * (`config/tos_runtime/cp3-setup-d-stock-005380/fields.yaml`): no z, no
+ * hi_vol, no stall_ok.
+ */
+export function rsiStockBarsDocument(): TosBarsDocument {
+  const base: Env = {
+    atr14_x100: 21000,
+    close_x100: 26650000,
+    entry_window: false,
+    eod: false,
+    high_x100: 26700000,
+    low_x100: 26600000,
+    open_x100: 26650000,
+    rsi_oversold: false,
+    rsi_recovered: false,
+    session_token: '2026-11-25',
+    volume: 1200,
+    vwap_x100: 26700000,
+    wr_oversold: false,
+  };
+  const bar = (time: string, env: Env, kind: string | null, ruleId: string | null): TosBarsBar => {
+    const values = { ...base, ...env };
+    const built = makeBar(
+      {
+        time,
+        env: values,
+        evaluation: 'engine_view',
+        decisionKind: kind,
+        decisionRuleId: ruleId,
+        outcomeType: kind === 'NO_ACTION' ? 'NoActionOutcome' : 'Proposal',
+      },
+      -1800,
+    );
+    return {
+      ...built,
+      rules: [
+        rsiEntry(values),
+        booleanRule('R2', 'R2-EXIT-RSI-RECOVERED', 'FLAT', 'rsi_recovered', values),
+        booleanRule('R3', 'R3-EXIT-EOD', 'FLAT', 'eod', values),
+      ],
+    };
+  };
+
+  const bars = [
+    // 09:03 — window shut AND both oversold gates false.
+    bar('09:03', {}, 'NO_ACTION', 'R0-DEFAULT-NO-ACTION'),
+    // 09:15 — the window has opened; only the two indicators still fail.
+    bar('09:15', { entry_window: true }, 'NO_ACTION', 'R0-DEFAULT-NO-ACTION'),
+    bar('09:21', { entry_window: true, rsi_oversold: true, wr_oversold: true }, 'ACTION', 'R1-ENTRY-LONG-RSI-WR'),
+  ];
+
+  return {
+    schema_version: 1,
+    session: 'stock-005380-r1-20261125',
+    instrument: '005380',
+    strategy: { sha256: '0f0e8b6d6c3a4e5f8a9b0c1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f7' },
+    bindings: { values: {} },
+    window: { from: null, to: null },
+    default: { rule_id: 'R0-DEFAULT-NO-ACTION', decision_kind: 'NO_ACTION' },
+    bars,
+    summary: {
+      bars: 3,
+      counted_bars: 3,
+      withheld_bars: 0,
+      substituted_bars: 0,
+      view_diff_bars: 0,
+      view_diff_fields: {},
+      disagreement_bars: 0,
+      not_comparable_bars: 0,
+      rules: [
+        {
+          label: 'R1',
+          rule_id: 'R1-ENTRY-LONG-RSI-WR',
+          fired_bars: 1,
+          bars: 3,
+          fired_pct: 33.3333,
+          compares: [
+            { index: 1, expression: 'entry_window EQ true', failed_bars: 1, bars: 3, failed_pct: 33.3333 },
+            { index: 2, expression: 'rsi_oversold EQ true', failed_bars: 2, bars: 3, failed_pct: 66.6667 },
+            { index: 3, expression: 'wr_oversold EQ true', failed_bars: 2, bars: 3, failed_pct: 66.6667 },
+          ],
+        },
+      ],
+      decisions: { 'R0-DEFAULT-NO-ACTION': 2, 'R1-ENTRY-LONG-RSI-WR': 1 },
+      evidence_outcomes: { NoActionOutcome: 2, Proposal: 1 },
+      evidence_halts: {},
       unjoined: {},
       value_view_refused: {},
     },

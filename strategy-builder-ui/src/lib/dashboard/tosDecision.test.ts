@@ -2,16 +2,20 @@ import { describe, expect, it } from 'vitest';
 import {
   barGate,
   barVerdict,
+  bestEntryProgress,
   conditionRow,
   conditionRows,
   entryBlockers,
   entryProgress,
+  entryWindowOpen,
   fieldScale,
   formatFieldValue,
   gateTally,
   isProbeRule,
   latestCountedBar,
+  latestInWindowProgress,
   parseCompare,
+  probeTally,
   ruleRoles,
   verdictTimeline,
 } from './tosDecision';
@@ -20,6 +24,8 @@ import {
   NO_APPROVAL_DETAIL,
   ZERO_POSITION_DETAIL,
   futuresBarsDocument,
+  quietBar,
+  rsiStockBarsDocument,
   stockBarsDocument,
 } from '@/test/tosBarsFixture';
 
@@ -154,7 +160,7 @@ describe('which rule is which', () => {
     expect(quietProgress?.failing).toEqual([
       '진입 시간대',
       '변동성 충분',
-      '추가 하락 멈춤',
+      '극단 이탈 뒤 멈춤',
       '반전 확인',
       'VWAP 이탈 z',
     ]);
@@ -251,6 +257,25 @@ describe('the timeline', () => {
     expect(timeline[1]).toMatchObject({ timeKst: '09:14', run: 1 });
   });
 
+  it('does NOT collapse two «신호 없음» bars that failed different conditions', () => {
+    // The 005380 run 09:03–09:21: the entry window opens mid-run, so from
+    // 09:15 only the two indicator gates still fail. Collapsing them printed
+    // the 09:03 wording — «미충족: 진입 시간대, …» — over bars whose window was
+    // open, which is a false statement about a real session.
+    const shut = quietBar('09:03');
+    const open = quietBar('09:15', { entry_window: true });
+    const timeline = verdictTimeline([shut, open]);
+    expect(timeline).toHaveLength(2);
+    expect(timeline[0].verdict.failing).toContain('진입 시간대');
+    expect(timeline[1].verdict.failing).not.toContain('진입 시간대');
+  });
+
+  it('still collapses two bars that failed the SAME conditions', () => {
+    const timeline = verdictTimeline([quietBar('09:03'), quietBar('09:04')]);
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0].run).toBe(2);
+  });
+
   it('separates a gated decision from the same decision ungated', () => {
     // The probe fires twice on 005930: once through, once into the approval
     // gate. Collapsing them would hide the only interesting difference.
@@ -284,5 +309,127 @@ describe('the day in aggregate', () => {
     expect(latestCountedBar(bars)?.time_kst).toBe('15:45');
     expect(latestCountedBar([withheld])).toBeNull();
     expect(latestCountedBar([])).toBeNull();
+  });
+});
+
+describe('how close the day came', () => {
+  it('answers with the best in-window bar, not the EOD one', () => {
+    // 15:45 is an EOD bar whose entry window is shut; 09:14 is the one that
+    // met everything. Reporting the last bar makes every card read 1/5 every
+    // evening and answers nothing.
+    expect(bestEntryProgress(bars)).toMatchObject({
+      timeKst: '09:14',
+      progress: { passed: 5, total: 5 },
+    });
+    expect(latestInWindowProgress(bars)?.timeKst).toBe('09:14');
+  });
+
+  it('reads the entry window off the bar, and admits when there is none', () => {
+    expect(entryWindowOpen(entry)).toBe(true);
+    expect(entryWindowOpen(quiet)).toBe(false);
+    expect(entryWindowOpen({ env_values: {}, fields: {} })).toBeNull();
+  });
+
+  it('treats a tenant that publishes no window as all-eligible', () => {
+    // Unknown must not silently mean 「해당 봉 없음」 for a tenant whose window
+    // this page cannot see — the bar still carries a judged entry rule.
+    const windowless = { ...quiet, env_values: {}, fields: {} };
+    expect(entryWindowOpen(windowless)).toBeNull();
+    expect(bestEntryProgress([windowless])).toMatchObject({ timeKst: '08:46' });
+  });
+
+  it('excludes a judged bar whose window was shut', () => {
+    expect(bestEntryProgress([quiet])).toBeNull();
+    expect(latestInWindowProgress([quiet])).toBeNull();
+  });
+});
+
+describe('the probe, counted honestly', () => {
+  it('separates probe firings from orders that actually left', () => {
+    // 005930 on 2026-11-25: the probe fired on every in-window bar and one
+    // order was sent. 「325회」 alone reads as 325 trades.
+    const tally = probeTally(stock.bars as TosBarsBar[]);
+    expect(tally.fired).toBe(2);
+    expect(tally.passed).toBe(1);
+    expect(tally.gates).toEqual([
+      { code: 'STAGE_UNKNOWN@INDEPENDENT_APPROVAL', label: '독립 승인 — 단계 결과 모름', count: 1 },
+    ]);
+  });
+
+  it('reports nothing for a tenant that runs no probe', () => {
+    expect(probeTally(bars)).toEqual({ fired: 0, passed: 0, gates: [] });
+  });
+});
+
+describe('a tenant whose rule set is not Setup D', () => {
+  const rsi = rsiStockBarsDocument();
+
+  it('picks the RSI·%R rule as the entry rule', () => {
+    const roles = ruleRoles(rsi.bars?.[0].rules);
+    expect(roles.entry?.rule_id).toBe('R1-ENTRY-LONG-RSI-WR');
+    expect(roles.probe).toBeNull();
+    expect(roles.exits.map((rule) => rule.rule_id)).toEqual([
+      'R2-EXIT-RSI-RECOVERED',
+      'R3-EXIT-EOD',
+    ]);
+  });
+
+  it("scores it n/3, with that tenant's own condition names", () => {
+    expect(entryProgress(rsi.bars?.[1])).toEqual({
+      passed: 1,
+      total: 3,
+      failing: ['RSI 과매도', '윌리엄스 %R 과매도'],
+      ruleId: 'R1-ENTRY-LONG-RSI-WR',
+    });
+  });
+
+  it('ranks ITS blockers, not Setup D field names', () => {
+    expect(entryBlockers(rsi.summary).map((blocker) => blocker.name)).toEqual([
+      'RSI 과매도',
+      '윌리엄스 %R 과매도',
+      '진입 시간대',
+    ]);
+  });
+});
+
+describe('values this page refuses to guess at', () => {
+  it('says 알 수 없음 for an absent left value, and offers no distance', () => {
+    const row = conditionRow(
+      {
+        index: 5,
+        expression: 'z_x1000 LE config.z_entry_max_x1000',
+        left_value: null,
+        right_value: '-1800',
+        passed: null,
+      },
+      0,
+    );
+    expect(row.actual).toBe('알 수 없음');
+    expect(row.passed).toBeNull();
+    expect(row.distance).toBeNull();
+  });
+
+  it('points a SHORT threshold the other way', () => {
+    // R1-ENTRY-SHORT compares with GE: the value has to rise to pass.
+    const row = conditionRow(
+      {
+        index: 5,
+        expression: 'z_x1000 GE config.z_entry_min_x1000',
+        left_value: '-451',
+        right_value: '1800',
+        passed: false,
+      },
+      0,
+    );
+    expect(row.threshold).toBe('≥ 1.8');
+    expect(row.distance).toEqual({ amount: '2.25', direction: 'up' });
+  });
+
+  it('offers no direction for an equality that merely has to differ', () => {
+    const row = conditionRow(
+      { index: 1, expression: 'volume EQ 500', left_value: '480', right_value: '500', passed: false },
+      0,
+    );
+    expect(row.distance).toBeNull();
   });
 });
