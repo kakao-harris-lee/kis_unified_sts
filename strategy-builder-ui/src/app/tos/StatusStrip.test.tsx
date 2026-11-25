@@ -159,19 +159,13 @@ describe('상태 띠', () => {
     expect(chip('tenant 2개')).toHaveTextContent('종료 2');
   });
 
-  it('counts gated decisions without colouring an ordinary day as an incident', () => {
-    // Every tenant records STAGE_DENIED on exits it has no position to close.
+  it('drops P1’s day-wide gate count, which the board now answers for', () => {
+    // It read in the hundreds on every ordinary day — every tenant records
+    // STAGE_DENIED on exits it has no position to close — so it cost the first
+    // screen a chip row to say nothing an operator could act on. The counts
+    // stay where they have context: ③ per bar, ⑤ per stretch, ④ per tenant.
     mount();
-    const gates = chip('게이트가 막은 판단');
-    expect(gates).toHaveTextContent('378건');
-    expect(gates.querySelector('span')?.className).toContain('slate');
-  });
-
-  it('says 알 수 없음 rather than zero when the counts are absent', () => {
-    const blank = symbolsDocument();
-    for (const row of blank.symbols ?? []) row.halt!.flow_counts = null;
-    mount('recent', {}, { symbols: symbols(blank) });
-    expect(chip('게이트가 막은 판단')).toHaveTextContent('알 수 없음');
+    expect(within(strip()).queryByText('게이트가 막은 판단')).not.toBeInTheDocument();
   });
 
   it('warns about the symbols document’s day only when it is not today’s', () => {

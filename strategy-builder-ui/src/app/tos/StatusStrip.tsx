@@ -234,24 +234,15 @@ export default function StatusStrip({
               : 'warn',
   });
 
-  // 5. How many decisions a kernel gate stopped today, across all tenants.
-  //    `flow_counts` is null when the exporter had no source for it, which is
-  //    not the same fact as zero.
-  const rows = symbols.document?.symbols ?? [];
-  if (rows.length) {
-    const counted = rows
-      .map((row) => row.halt?.flow_counts)
-      .filter((flow): flow is Record<string, number> => flow != null)
-      .map((flow) => Object.values(flow).reduce((total, n) => total + n, 0));
-    facts.push({
-      key: 'gates',
-      label: '게이트가 막은 판단',
-      value: counted.length === 0 ? '알 수 없음' : `${counted.reduce((a, b) => a + b, 0)}건`,
-      tone: 'neutral',
-    });
-  }
+  // P1 also carried a day-wide «게이트가 막은 판단 n건» chip here. It is gone:
+  // the board is now the thing that says whether the day is in trouble, and a
+  // count that reads in the hundreds on every ordinary day (every tenant
+  // records STAGE_DENIED on exits it has no position to close) said nothing an
+  // operator could act on while costing the first screen a chip row at phone
+  // width. The same counts are still on screen where they have context — per
+  // bar in ③ 커널 게이트, per stretch in ⑤ 사건 기록, per tenant in ④.
 
-  // 6. The symbols document's own day — shown only when it is NOT today's,
+  // 5. The symbols document's own day — shown only when it is NOT today's,
   //    because sections ② and ④ read it and an operator must not take a
   //    yesterday's row for this morning's trading. On a normal day the chip is
   //    absent rather than repeating what the board already said.
@@ -278,7 +269,10 @@ export default function StatusStrip({
           호스트의 상태판이 내린 판정을 그대로 옮깁니다. 주문을 내리거나 멈출 수 있는 화면이 아닙니다.
         </p>
       </div>
-      <ul className="mt-3 flex flex-wrap gap-2">
+      {/* The issue list rides IN the chip row rather than under it: the first
+          screen is ① + ②, and a disclosure on its own line costs it a row on
+          every single load for something that is collapsed by default. */}
+      <ul className="mt-3 flex flex-wrap items-center gap-2">
         {facts.map((fact) => (
           <li key={fact.key}>
             <Badge tone={fact.tone}>
@@ -291,30 +285,34 @@ export default function StatusStrip({
             </Badge>
           </li>
         ))}
+        {issues.length > 0 && (
+          <li className="min-w-0">
+            <details className="text-sm">
+              <summary className="cursor-pointer text-xs text-slate-600 dark:text-slate-300">
+                이슈 {issues.length}건 — {blockedLevel} 먼저
+              </summary>
+              <ul className="mt-2 space-y-1">
+                {issues.map((issue, index) => (
+                  <li
+                    key={`${issue.where ?? ''}-${index}`}
+                    className="flex flex-wrap items-baseline gap-x-2"
+                  >
+                    <Badge tone={issue.level === blockedLevel ? 'warn' : 'neutral'}>
+                      <Term name={issue.level === blockedLevel ? 'level_blocked' : 'level_check'}>
+                        {issue.level ?? '알 수 없음'}
+                      </Term>
+                    </Badge>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      {issue.where ?? '어디인지 알 수 없음'}
+                    </span>
+                    <span className="min-w-0 break-words">{issue.text ?? '내용 없음'}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </li>
+        )}
       </ul>
-
-      {issues.length > 0 && (
-        <details className="mt-3 text-sm">
-          <summary className="cursor-pointer text-slate-600 dark:text-slate-300">
-            이슈 {issues.length}건 — {blockedLevel} 먼저
-          </summary>
-          <ul className="mt-2 space-y-1">
-            {issues.map((issue, index) => (
-              <li key={`${issue.where ?? ''}-${index}`} className="flex flex-wrap items-baseline gap-x-2">
-                <Badge tone={issue.level === blockedLevel ? 'warn' : 'neutral'}>
-                  <Term name={issue.level === blockedLevel ? 'level_blocked' : 'level_check'}>
-                    {issue.level ?? '알 수 없음'}
-                  </Term>
-                </Badge>
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  {issue.where ?? '어디인지 알 수 없음'}
-                </span>
-                <span className="min-w-0 break-words">{issue.text ?? '내용 없음'}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
 
       {redacted && (
         <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">

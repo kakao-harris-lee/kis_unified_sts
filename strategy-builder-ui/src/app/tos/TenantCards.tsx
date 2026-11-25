@@ -113,7 +113,7 @@ function Money({ krw, className }: { krw: string | null | undefined; className?:
 function RealizedPnl({ pnl }: { pnl: TosSymbolPnl | null | undefined }) {
   if (!pnl) {
     return (
-      <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
         <Term name="realized_pnl">실현 손익</Term> 기록 없음
       </p>
     );
@@ -121,32 +121,36 @@ function RealizedPnl({ pnl }: { pnl: TosSymbolPnl | null | undefined }) {
   const today = pnl.today;
   const cumulative = pnl.cumulative;
   const basis = today?.pnl_basis;
+  // One line, because this sits above the fold: the day's figure beside the
+  // fills it came from, and the running total in the small line under it.
   return (
-    <dl className="mt-3 space-y-1 text-sm">
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <dt className="text-xs text-slate-500 dark:text-slate-400">
-          오늘 <Term name="realized_pnl">실현 손익</Term>
-        </dt>
-        <dd>
-          <Money krw={today?.pnl_krw} />
-          {basis != null && basis !== 'EXECUTION' && (
-            <span className="ml-1 text-xs text-slate-500 dark:text-slate-400">
-              <Term name={basis} />
-            </span>
-          )}
-        </dd>
-      </div>
-      <div className="flex flex-wrap items-baseline gap-x-2 text-xs">
-        <dt className="text-slate-500 dark:text-slate-400">누적</dt>
-        <dd className="flex flex-wrap items-baseline gap-x-2">
-          <Money krw={cumulative?.pnl_krw} />
-          <span className="text-slate-500 dark:text-slate-400">
-            <Term name="round_trip">왕복</Term> {countLabel(cumulative?.closed_round_trips)} · 승{' '}
-            {countLabel(cumulative?.wins, '')}
-          </span>
-        </dd>
-      </div>
-    </dl>
+    <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs">
+      <span className="text-slate-500 dark:text-slate-400">누적</span>
+      <Money krw={cumulative?.pnl_krw} />
+      <span className="text-slate-500 dark:text-slate-400">
+        <Term name="round_trip">왕복</Term> {countLabel(cumulative?.closed_round_trips)} · 승{' '}
+        {countLabel(cumulative?.wins, '')}
+      </span>
+      {basis != null && basis !== 'EXECUTION' && (
+        <span className="text-slate-500 dark:text-slate-400">
+          <Term name={basis} />
+        </span>
+      )}
+    </p>
+  );
+}
+
+/** Today's realized figure, as the fourth cell of the card's fills row. */
+function TodayPnl({ pnl }: { pnl: TosSymbolPnl | null | undefined }) {
+  return (
+    <div>
+      <dt className="text-slate-500 dark:text-slate-400">
+        오늘 <Term name="realized_pnl">손익</Term>
+      </dt>
+      <dd>
+        <Money krw={pnl?.today?.pnl_krw} />
+      </dd>
+    </div>
   );
 }
 
@@ -166,27 +170,28 @@ function HypotheticalPnl({ document }: { document: TosBarsDocument | null }) {
   const assumptions = (block?.assumptions ?? []).map((code) => glossaryLabel(code)).join(' · ');
   const empty = totals == null || totals.trades === 0 || totals.hypothetical_pnl_krw == null;
   return (
-    <div
-      className="mt-3 rounded-lg border border-dashed border-slate-400 p-2 dark:border-slate-500"
-      title={assumptions ? `체결 가정: ${assumptions}` : undefined}
-    >
-      <p className="text-xs text-slate-500 dark:text-slate-400">
-        <Term name="hypothetical_pnl">가상 손익(체결 가정)</Term>
-      </p>
-      {empty ? (
-        <p className="mt-0.5 text-sm font-medium">진입 없음</p>
-      ) : (
-        <p className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-sm">
-          <span className="tabular-nums font-medium">{pointsLabel(totals?.points)}</span>
-          <Money krw={totals?.hypothetical_pnl_krw} />
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            <Term name="round_trip">왕복</Term> {countLabel(totals?.trades)} · 승{' '}
-            {countLabel(totals?.wins, '')}
-          </span>
-        </p>
-      )}
-      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-        실현 손익이 아니며 합산하지 않습니다.
+    <div className="mt-3">
+      {/* Dashed outline, its own label and the assumptions on hover: never the
+          same visual language as the realized figure on a stock card. */}
+      <p
+        className="inline-flex flex-wrap items-baseline gap-x-2 rounded-lg border border-dashed border-slate-400 px-2 py-1 text-sm dark:border-slate-500"
+        title={assumptions ? `체결 가정: ${assumptions}` : undefined}
+      >
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          <Term name="hypothetical_pnl">가상 손익(체결 가정)</Term>
+        </span>
+        {empty ? (
+          <span className="font-medium">진입 없음</span>
+        ) : (
+          <>
+            <span className="tabular-nums font-medium">{pointsLabel(totals?.points)}</span>
+            <Money krw={totals?.hypothetical_pnl_krw} />
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              <Term name="round_trip">왕복</Term> {countLabel(totals?.trades)} · 승{' '}
+              {countLabel(totals?.wins, '')}
+            </span>
+          </>
+        )}
       </p>
     </div>
   );
@@ -331,14 +336,21 @@ function TenantCard({ entry, row, document, loading, selected, onSelect }: CardP
 
         {futures ? (
           <>
-            <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-              주문을 내지 않는 tenant 입니다 — 체결도 보유도 없습니다.
-            </p>
+            {/* The chip appears only when the export carried the block; the
+                sentence always does, because «판단 전용» is true of this tenant
+                whether or not the figure could be computed. */}
             <HypotheticalPnl document={document} />
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              주문을 내지 않는 tenant 입니다 — 체결도 보유도 없고, 가상 손익은 실현 손익과
+              합산하지 않습니다.
+            </p>
           </>
         ) : (
           <>
-            <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
+            {/* Today's realized figure sits in the fills row rather than under
+                it: this card is above the fold, and the day's PnL belongs
+                beside the orders that produced it. */}
+            <dl className="mt-3 grid grid-cols-4 gap-2 text-xs">
               <div>
                 <dt className="text-slate-500 dark:text-slate-400">매수</dt>
                 <dd>{row?.buy?.fills == null ? '알 수 없음' : `${row.buy.fills}건`}</dd>
@@ -353,6 +365,7 @@ function TenantCard({ entry, row, document, loading, selected, onSelect }: CardP
                 </dt>
                 <dd>{row?.holding?.quantity == null ? '알 수 없음' : `${row.holding.quantity}주`}</dd>
               </div>
+              <TodayPnl pnl={row?.pnl} />
             </dl>
             <RealizedPnl pnl={row?.pnl} />
           </>

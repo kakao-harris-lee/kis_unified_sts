@@ -231,7 +231,7 @@ describe('tenant 카드', () => {
     expect(await futures.findByText(/가상 손익\(체결 가정\)/)).toBeInTheDocument();
     expect(futures.getByText('+2.94 pt')).toBeInTheDocument();
     expect(futures.getByText('+147,000원')).toBeInTheDocument();
-    expect(futures.getByText(/실현 손익이 아니며 합산하지 않습니다/)).toBeInTheDocument();
+    expect(futures.getByText(/가상 손익은 실현 손익과\s*합산하지 않습니다/)).toBeInTheDocument();
   });
 
   it('says 진입 없음 — never 0원 — for a session that decided nothing', async () => {
