@@ -1,11 +1,20 @@
 "use client";
 
-import type { TosBarsBar, TosBarsSummary } from '@/lib/dashboard/tosBars';
+import {
+  explainField,
+  fieldDefinitionLabel,
+  ruleExplanation,
+  type TosBarsBar,
+  type TosBarsDocument,
+  type TosBarsSummary,
+} from '@/lib/dashboard/tosBars';
 import {
   barVerdict,
   conditionRows,
   gateTally,
+  probePredicate,
   ruleRoles,
+  ruleSentence,
   type ConditionRow,
 } from '@/lib/dashboard/tosDecision';
 import { glossaryLabel } from '@/lib/dashboard/tosGlossary';
@@ -15,6 +24,12 @@ import Term from './Term';
 interface DecisionEvidenceProps {
   bar: TosBarsBar | null;
   summary: TosBarsSummary | null | undefined;
+  /**
+   * The whole document, for its `explain` block: the rule sentences and field
+   * definitions its author wrote. Absent — every bars document written before
+   * 2026-11-25 — and every caption falls back to the static glossary.
+   */
+  document?: TosBarsDocument | null;
 }
 
 /** The formula, with each term marked by its truth on this bar. */
@@ -43,12 +58,20 @@ function Formula({ name, rows }: { name: string; rows: ConditionRow[] }) {
   );
 }
 
-function ChecklistRow({ row }: { row: ConditionRow }) {
+function ChecklistRow({ row, definition }: { row: ConditionRow; definition: string | null }) {
   return (
     <tr className="border-t border-slate-200 align-top dark:border-slate-800">
       <th scope="row" className="py-2 pr-3 text-left font-normal">
         <Term name={row.termKey}>{row.name}</Term>
         <span className="block text-xs text-slate-500 dark:text-slate-400">{row.expression}</span>
+        {/* What the tenant's own field catalog computes, when the export
+            carried it. Verbatim: a translation here would be this bundle's
+            claim about the catalog rather than the catalog's. */}
+        {definition && (
+          <span className="block text-xs text-slate-500 dark:text-slate-400">
+            <Term name="field_definition">정의</Term> {definition}
+          </span>
+        )}
       </th>
       <td className="py-2 pr-3 tabular-nums">{row.actual}</td>
       <td className="py-2 pr-3 tabular-nums">{row.threshold ?? '예'}</td>
@@ -83,16 +106,23 @@ function ChecklistRow({ row }: { row: ConditionRow }) {
  * denied stage are different failures: one means the strategy saw nothing, the
  * other means it decided and was stopped. They never share a strip.
  */
-export default function DecisionEvidence({ bar, summary }: DecisionEvidenceProps) {
+export default function DecisionEvidence({ bar, summary, document }: DecisionEvidenceProps) {
   if (!bar) {
     return <p className="text-sm text-slate-500 dark:text-slate-400">고른 봉이 없습니다.</p>;
   }
 
-  const verdict = barVerdict(bar);
-  const roles = ruleRoles(bar.rules);
+  const isProbe = probePredicate(document);
+  const verdict = barVerdict(bar, isProbe);
+  const roles = ruleRoles(bar.rules, isProbe);
   const entryRows = conditionRows(roles.entry);
   const firedExit = roles.exits.find((rule) => rule.fired === true) ?? null;
   const gates = gateTally(summary);
+  // What the rule MEANS: the strategy author's own sentence when the export
+  // carried one, this page's standing explanation otherwise.
+  const meaning = ruleSentence(document, verdict.ruleId);
+  const entryMeaning = ruleSentence(document, roles.entry?.rule_id);
+  const probeRule = verdict.ruleId != null && isProbe(verdict.ruleId);
+  const explained = ruleExplanation(document, verdict.ruleId);
 
   return (
     <div className="min-w-0 space-y-4">
@@ -107,8 +137,28 @@ export default function DecisionEvidence({ bar, summary }: DecisionEvidenceProps
               <Term name={verdict.ruleId} />
             </Badge>
           )}
+          {/* «Probe» is the document's assertion when it makes one
+              (explain.probe), not a word read out of the rule id. */}
+          {probeRule && (
+            <Badge
+              tone="warn"
+              title={explained?.probe === true ? '문서가 프로브로 표시한 규칙' : verdict.ruleId ?? undefined}
+            >
+              시험 진입 — 전략 신호 아님
+            </Badge>
+          )}
           {verdict.gate && <GateMark label={verdict.gate.label} code={verdict.gate.reason} />}
         </div>
+        {meaning && (
+          <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">
+            {meaning.text}
+            {meaning.source === 'document' && (
+              <span className="ml-1 text-xs text-slate-500 dark:text-slate-400">
+                — 전략 파일의 설명
+              </span>
+            )}
+          </p>
+        )}
         <p className="mt-2 text-sm">
           {verdict.kind === 'none' ? (
             verdict.failing.length ? (
@@ -141,6 +191,11 @@ export default function DecisionEvidence({ bar, summary }: DecisionEvidenceProps
       {entryRows.length > 0 ? (
         <div className="min-w-0 space-y-2">
           <Formula name={glossaryLabel(roles.entry?.rule_id)} rows={entryRows} />
+          {/* The entry rule's own sentence, when it is not the one already
+              printed above for the bar's decision. */}
+          {entryMeaning && entryMeaning.text !== meaning?.text && (
+            <p className="text-xs text-slate-600 dark:text-slate-300">{entryMeaning.text}</p>
+          )}
           <div className="min-w-0 overflow-x-auto">
             <table className="w-full min-w-[34rem] text-left text-sm">
               <caption className="sr-only">고른 봉의 진입 조건별 실제 값과 기준</caption>
@@ -155,7 +210,11 @@ export default function DecisionEvidence({ bar, summary }: DecisionEvidenceProps
               </thead>
               <tbody>
                 {entryRows.map((row) => (
-                  <ChecklistRow key={row.index} row={row} />
+                  <ChecklistRow
+                    key={row.index}
+                    row={row}
+                    definition={fieldDefinitionLabel(explainField(document, row.field))}
+                  />
                 ))}
               </tbody>
             </table>

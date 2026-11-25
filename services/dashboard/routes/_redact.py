@@ -34,14 +34,73 @@ __all__ = ["ACCOUNT_PLACEHOLDER", "PATH_PLACEHOLDER", "redact_payload"]
 PATH_PLACEHOLDER = "<경로>"
 ACCOUNT_PLACEHOLDER = "<계좌>"
 
-#: An absolute (or ``~``-rooted) path token. The lookbehind keeps Korean text
-#: and ratios — «확인/막힘», ``0/143`` — from reading as paths.
-_ABSOLUTE_PATH = re.compile(r"(?<![\w.])~?/[\w./@%+-]+")
+#: A web URL, matched only so it can be handed back **unchanged**: without it
+#: the path rule eats ``//host/path`` and serves half an address.
+#:
+#: SAFETY: http(s) only — ``file:///home/…`` and ``sqlite:////home/…`` are host paths wearing a scheme, and a generic ``\w+://`` carve-out would hand them through untouched
+_URL = r"(?P<url>https?://[^\s'\"<>]*)"
+
+#: A dashboard route path. Kept as-is: ``/api/tos/status`` is this service's
+#: own public surface, and masking it turns an instruction into «<경로>».
+_ROUTE = r"(?P<route>/api/[A-Za-z0-9_./\-]*)"
+
+#: An absolute path glued straight onto an ASCII word (``data_leaf/home/…``),
+#: which the POSIX rule's lookbehind refuses. Only well-known roots, so a word
+#: followed by an ordinary two-segment path is not swept up with it.
+_GLUED_ROOT = r"(?P<glued>/(?:home|tmp|var|mnt|root|etc|usr|opt)/[A-Za-z0-9_./@%+\-]*)"
+
+#: Windows shapes — ``C:\…``, ``C:/…`` and ``\\wsl$\…`` UNC.
+_WINDOWS = (
+    r"(?P<win>(?<![A-Za-z0-9_])"
+    r"(?:[A-Za-z]:[\\/]|\\\\[A-Za-z0-9_.$-]+\\)[^\s'\"<>]*)"
+)
+
+#: ``$HOME/…`` / ``${TENANT_CUSTODY_ROOT}/…``, as the runners interpolate them.
+_SHELL = r"(?P<shell>\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/[A-Za-z0-9_./@%+\-]*)"
+
+#: An absolute (or ``~``-rooted) path token: ``~/…``, or two or more segments.
+#: The lookbehind is ASCII-only on purpose — Hangul must NOT shield a path, or
+#: ``잎/home/deploy/x`` ships whole (#1179 review LOW) — and the two-segment
+#: floor is what keeps «확인/막힘» and «손익/pnl» from reading as paths.
+_POSIX = (
+    r"(?P<posix>(?<![A-Za-z0-9_.])"
+    r"(?:~/[A-Za-z0-9_./@%+\-]*|/[A-Za-z0-9_.@%+\-]+(?:/[A-Za-z0-9_.@%+\-]*)+))"
+)
+
+#: A relative state path: ``.local/state/tos/…``. The first segment must carry
+#: a letter, or ``.5/2`` reads as one and a decimal pair is masked.
+_RELATIVE = (
+    r"(?P<rel>(?<![A-Za-z0-9_./~])"
+    r"\.[A-Za-z0-9_\-]*[A-Za-z][A-Za-z0-9_\-]*(?:/[A-Za-z0-9_.@%+\-]+)+)"
+)
+
+_PATH_TOKEN = re.compile(
+    "|".join((_URL, _WINDOWS, _SHELL, _ROUTE, _GLUED_ROOT, _POSIX, _RELATIVE))
+)
+
+#: A quoted path is redacted to its closing quote, so the tail of a path with a
+#: space in it (``'/home/deploy/my data/x.yaml'``) does not survive the token
+#: rule, which stops at the space.
+_QUOTED_PATH = re.compile(
+    r"""(['"])((?:~?/|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/|[A-Za-z]:[\\/]|\\\\)[^'"]*)\1"""
+)
+
+_ASCII_LETTER = re.compile(r"[A-Za-z]")
 
 #: Account-number shapes. The 10-digit floor is why session names
 #: (``…-20261125``) and symbols (``000660``) survive.
 _HYPHENATED_ACCOUNT = re.compile(r"(?<!\d)\d{8}-\d{2}(?!\d)")
 _BARE_ACCOUNT = re.compile(r"(?<!\d)\d{10,12}(?!\d)")
+
+#: Eight digits that an account-ish label introduces (``CANO=…``, ``계좌 …``).
+#:
+#: SAFETY: a bare eight-digit run is never masked — that is the trading date (20261125), and masking it blanks every session name on the page
+_LABELLED_ACCOUNT = re.compile(
+    r"((?:CANO|ACNO|ACCT|ACCOUNT|계좌)[A-Za-z0-9_가-힣]*"  # label, Korean tail included
+    r"(?:\s*(?:no|num|number)\.?)?"  # «acct no», «Account No.»
+    r"\s*[:=]?\s*)(\d{8})(?![\d-])",
+    re.IGNORECASE,
+)
 
 #: Keys whose value is a structured identifier, exempt from the account
 #: *pattern* rule only.
@@ -50,10 +109,27 @@ _BARE_ACCOUNT = re.compile(r"(?<!\d)\d{10,12}(?!\d)")
 _IDENTIFIER_KEYS = frozenset({"broker_execution_id"})
 
 
+def _replace_path_token(match: re.Match[str]) -> str:
+    """One token, masked — except a URL, a route and a digits-only run."""
+    token = match.group(0)
+    if match.lastgroup in {"url", "route"}:
+        return token
+    # SAFETY: «3 /378» is a ratio, not a path — masking it deletes the measurement the sentence exists to report
+    if match.lastgroup == "posix" and not _ASCII_LETTER.search(token):
+        return token
+    return PATH_PLACEHOLDER
+
+
 def _redact_text(text: str, *, mask_account_pattern: bool = True) -> str:
-    out = _ABSOLUTE_PATH.sub(PATH_PLACEHOLDER, text)
+    # Quotes first: the token rule stops at a space, which would close the
+    # quote around the tail of a path instead of around the placeholder.
+    out = _QUOTED_PATH.sub(
+        lambda m: f"{m.group(1)}{PATH_PLACEHOLDER}{m.group(1)}", text
+    )
+    out = _PATH_TOKEN.sub(_replace_path_token, out)
     if mask_account_pattern:
         out = _HYPHENATED_ACCOUNT.sub(ACCOUNT_PLACEHOLDER, out)
+        out = _LABELLED_ACCOUNT.sub(rf"\1{ACCOUNT_PLACEHOLDER}", out)
         out = _BARE_ACCOUNT.sub(ACCOUNT_PLACEHOLDER, out)
     return out
 

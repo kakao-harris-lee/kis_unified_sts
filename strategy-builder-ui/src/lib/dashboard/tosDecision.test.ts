@@ -15,8 +15,10 @@ import {
   latestCountedBar,
   latestInWindowProgress,
   parseCompare,
+  probePredicate,
   probeTally,
   ruleRoles,
+  ruleSentence,
   verdictTimeline,
 } from './tosDecision';
 import type { TosBarsBar } from './tosBars';
@@ -357,7 +359,13 @@ describe('the probe, counted honestly', () => {
   });
 
   it('reports nothing for a tenant that runs no probe', () => {
-    expect(probeTally(bars)).toEqual({ fired: 0, passed: 0, gates: [] });
+    expect(probeTally(bars)).toEqual({ fired: 0, passed: 0, gates: [], ruleIds: [] });
+  });
+
+  it('names the rule ids it actually counted, so no caller hardcodes one', () => {
+    // The probe rule id is tenant content; a caption built from a literal
+    // would put 005930's id on another tenant's card.
+    expect(probeTally(stock.bars!).ruleIds).toEqual(['R4-M2-PROBE-ENTRY-LONG']);
   });
 });
 
@@ -431,5 +439,77 @@ describe('values this page refuses to guess at', () => {
       0,
     );
     expect(row.distance).toBeNull();
+  });
+});
+
+describe('프로브 판정', () => {
+  const probeId = 'R4-M2-PROBE-ENTRY-LONG';
+
+  it('believes the document over the rule id’s spelling', () => {
+    // The marker heuristic reads «PROBE» out of an id. The operator map is the
+    // only thing that actually knows, so when the document explains a rule the
+    // document decides — in both directions.
+    const flagged = probePredicate({
+      schema_version: 1,
+      explain: { rules: [{ rule_id: 'R9-QUIET-ENTRY', probe: true }] },
+    });
+    expect(flagged('R9-QUIET-ENTRY')).toBe(true);
+
+    const cleared = probePredicate({
+      schema_version: 1,
+      explain: { rules: [{ rule_id: probeId, probe: false }] },
+    });
+    expect(cleared(probeId)).toBe(false);
+  });
+
+  it('keeps the id heuristic for a rule the explanation does not mention', () => {
+    const partial = probePredicate({
+      schema_version: 1,
+      explain: { rules: [{ rule_id: 'R1-ENTRY-LONG', probe: false }] },
+    });
+    expect(partial(probeId)).toBe(true);
+    expect(partial('R1-ENTRY-LONG')).toBe(false);
+  });
+
+  it('falls back entirely on a document with no explanation', () => {
+    // Every bars document written before 2026-11-25 carries none.
+    expect(probePredicate(null)(probeId)).toBe(true);
+    expect(probePredicate({ schema_version: 1 })('R1-ENTRY-LONG')).toBe(false);
+    expect(probePredicate({ schema_version: 1, explain: { rules: [] } })(probeId)).toBe(true);
+  });
+
+  it('answers false for no rule at all', () => {
+    expect(probePredicate(null)(null)).toBe(false);
+  });
+
+  it('reaches the readers that classify a bar', () => {
+    const bar = stockBarsDocument().bars!.find((row) => row.decision_rule_id === probeId)!;
+    expect(barVerdict(bar).kind).toBe('probe');
+    // The document says this one is NOT a probe: the verdict follows it.
+    const cleared = probePredicate({
+      schema_version: 1,
+      explain: { rules: [{ rule_id: probeId, probe: false, decision_kind: 'ACTION' }] },
+    });
+    expect(barVerdict(bar, cleared).kind).toBe('entry');
+  });
+});
+
+describe('규칙의 뜻', () => {
+  it('prefers the sentence the strategy author wrote', () => {
+    const document = futuresBarsDocument();
+    const sentence = ruleSentence(document, 'R1-ENTRY-LONG');
+    expect(sentence?.source).toBe('document');
+    expect(sentence?.text).toContain('entry window open');
+  });
+
+  it('falls back to the glossary when the export carried no explanation', () => {
+    const sentence = ruleSentence({ schema_version: 1 }, 'R1-ENTRY-LONG');
+    expect(sentence?.source).toBe('glossary');
+    expect(sentence?.text).toContain('매수를 제안합니다');
+  });
+
+  it('offers nothing for a rule neither side knows', () => {
+    expect(ruleSentence({ schema_version: 1 }, 'R9-NOT-A-RULE')).toBeNull();
+    expect(ruleSentence(null, null)).toBeNull();
   });
 });

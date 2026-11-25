@@ -3,17 +3,30 @@
 import {
   ORDER_BAR_TIME_BASIS,
   TOS_LEDGER_HOLDING_BASIS,
+  isDecisionOnlyRow,
   isTodaysDocument,
   sessionPhase,
+  tradingRows,
   type SessionPhase,
   type SymbolsState,
   type TosSymbolFill,
   type TosSymbolHalt,
   type TosSymbolHolding,
+  type TosSymbolPnlPeriod,
   type TosSymbolRow,
   type TosSymbolSession,
   type TosSymbolSide,
+  type TosSymbolUnresolvedAttempt,
 } from '@/lib/dashboard/tosSymbols';
+import { glossaryLabel } from '@/lib/dashboard/tosGlossary';
+import {
+  PNL_CLASSES,
+  PNL_WORDS,
+  UNKNOWN,
+  countLabel,
+  pnlFigure,
+  quantityLabel,
+} from '@/lib/dashboard/tosMoney';
 import { AsOf, Badge, ageLabel } from './marks';
 import Term from './Term';
 import type { SymbolsRead } from './queries';
@@ -178,18 +191,72 @@ function SessionCell({
   );
 }
 
+/**
+ * One realized figure — sign, hue, word.
+ *
+ * `null` is «알 수 없음» and never 0: an unreadable leaf and a tenant that
+ * cannot trade both send null, and a zero would read as «traded and broke
+ * even» for either of them.
+ */
+function Money({ krw }: { krw: string | null | undefined }) {
+  const figure = pnlFigure(krw);
+  if (!figure) return <span className="text-slate-500 dark:text-slate-400">{UNKNOWN}</span>;
+  return (
+    <span className={PNL_CLASSES[figure.direction]}>
+      <span className="font-semibold tabular-nums">{figure.signed}원</span>{' '}
+      <span className="text-xs">{PNL_WORDS[figure.direction]}</span>
+    </span>
+  );
+}
+
+/** The PnL cell, naming its basis whenever it is not the broker's fill price. */
+function PnlCell({ period }: { period: TosSymbolPnlPeriod | null | undefined }) {
+  if (!period) return <span className="text-slate-500 dark:text-slate-400">{UNKNOWN}</span>;
+  const basis = period.pnl_basis;
+  return (
+    <div className="space-y-0.5">
+      <Money krw={period.pnl_krw} />
+      {basis != null && basis !== 'EXECUTION' && (
+        <div className="text-xs text-slate-500 dark:text-slate-400">
+          <Term name={basis} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SymbolRowCells({ row }: { row: TosSymbolRow }) {
+  const decisionOnly = isDecisionOnlyRow(row);
+  const today = row.pnl?.today;
+  const cumulative = row.pnl?.cumulative;
   return (
     <tr className="border-t border-slate-200 align-top dark:border-slate-800">
       <th scope="row" className="py-3 pr-3 text-left font-semibold">
         {row.symbol ?? '알 수 없음'}
+        {row.direction ? (
+          <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">
+            {row.direction}
+          </span>
+        ) : null}
       </th>
       <td className="py-3 pr-3">
         <SessionCell session={row.session} ticks={row.ticks} />
       </td>
       {row.error != null ? (
-        <td className="py-3 pr-3 text-amber-700 dark:text-amber-300" colSpan={4}>
+        <td className="py-3 pr-3 text-amber-700 dark:text-amber-300" colSpan={7}>
           기록을 읽지 못했습니다 · {row.error}
+        </td>
+      ) : decisionOnly ? (
+        // One cell, not six «해당 없음»: this tenant stops at an independent
+        // approval step and has no order, no fill and no realized figure to
+        // report. Six zeros would read as «traded nothing today».
+        <td className="py-3 pr-3" colSpan={7}>
+          <Badge tone="neutral">
+            <Term name="decision_only" />
+          </Badge>
+          <span className="ml-2 text-slate-500 dark:text-slate-400">
+            주문·체결·손익 해당 없음 — 판단만 기록합니다
+          </span>
         </td>
       ) : (
         <>
@@ -202,12 +269,120 @@ function SymbolRowCells({ row }: { row: TosSymbolRow }) {
           <td className="py-3 pr-3">
             <HoldingCell holding={row.holding} />
           </td>
-          <td className="py-3">
-            <HaltCell halt={row.halt} />
+          <td className="py-3 pr-3">
+            <PnlCell period={today} />
+          </td>
+          <td className="py-3 pr-3">
+            <PnlCell period={cumulative} />
+          </td>
+          <td className="py-3 pr-3 tabular-nums">
+            {countLabel(today?.closed_round_trips)}
+            <span className="block text-xs text-slate-500 dark:text-slate-400">
+              누적 {countLabel(cumulative?.closed_round_trips)}
+            </span>
+          </td>
+          <td className="py-3 pr-3 tabular-nums">
+            {countLabel(today?.wins, '')}
+            <span className="block text-xs text-slate-500 dark:text-slate-400">
+              누적 {countLabel(cumulative?.wins, '')}
+            </span>
           </td>
         </>
       )}
+      {/* The halt column is the one cell every shape keeps: a tenant that
+          cannot order still records what the kernel refused. */}
+      <td className="py-3">{row.error == null ? <HaltCell halt={row.halt} /> : null}</td>
     </tr>
+  );
+}
+
+/**
+ * The day's realized total — stocks only, and only when every figure is known.
+ *
+ * A decision-only tenant is not in it (there is nothing to add), and neither
+ * is a hypothetical figure: the three assumptions behind one all push it the
+ * same flattering way, so a total mixing them would overstate the day. One
+ * unreadable row makes the total «알 수 없음» rather than a sum that silently
+ * treats that row as zero.
+ */
+function TotalsRow({ rows }: { rows: TosSymbolRow[] }) {
+  if (rows.length === 0) return null;
+  const figures = rows.map((row) => pnlFigure(row.pnl?.today?.pnl_krw));
+  const known = figures.every((figure) => figure !== null);
+  const total = known ? figures.reduce((sum, figure) => sum + (figure?.amount ?? 0), 0) : null;
+  const trips = rows.map((row) => row.pnl?.today?.closed_round_trips);
+  const wins = rows.map((row) => row.pnl?.today?.wins);
+  // A total built on two different price bases is a different claim from one
+  // built on the broker's fills alone, so the row says which it is rather than
+  // inheriting the first row's basis silently.
+  const bases = [...new Set(rows.map((row) => row.pnl?.today?.pnl_basis ?? null))];
+  const mixedBasis = bases.length > 1;
+  const sum = (values: (number | null | undefined)[]) =>
+    values.every((value) => value != null)
+      ? (values as number[]).reduce((a, b) => a + b, 0)
+      : null;
+  return (
+    <tr className="border-t-2 border-slate-300 font-medium dark:border-slate-600">
+      <th scope="row" className="py-3 pr-3 text-left">
+        합계
+        <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">
+          주식 tenant {rows.length}개
+        </span>
+      </th>
+      <td className="py-3 pr-3 text-xs text-slate-500 dark:text-slate-400" colSpan={4}>
+        판단 전용 tenant 와 가상 손익은 합계에 들어가지 않습니다.
+      </td>
+      <td className="py-3 pr-3">
+        <Money krw={total == null ? null : String(total)} />
+        {mixedBasis && (
+          <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">
+            <Term name="MIXED">기준 섞임</Term>{' '}
+            {bases.map((basis) => (basis == null ? '기준 없음' : glossaryLabel(basis))).join(' · ')}
+          </span>
+        )}
+      </td>
+      <td className="py-3 pr-3 text-xs text-slate-500 dark:text-slate-400">—</td>
+      <td className="py-3 pr-3 tabular-nums">{countLabel(sum(trips))}</td>
+      <td className="py-3 pr-3 tabular-nums">{countLabel(sum(wins), '')}</td>
+      <td className="py-3" />
+    </tr>
+  );
+}
+
+/** The rows that carry at least one unaccounted order attempt. */
+function unresolvedRows(document: { symbols?: TosSymbolRow[] | null }): TosSymbolRow[] {
+  return (document.symbols ?? []).filter(
+    (row) => (row.pnl?.unresolved?.attempts ?? []).length > 0,
+  );
+}
+
+/** One order the FIFO could not account for, in the sentence `perf` prints. */
+function UnresolvedItem({ attempt }: { attempt: TosSymbolUnresolvedAttempt }) {
+  const parts = [
+    attempt.side === 'BUY' ? '매수' : attempt.side === 'SELL' ? '매도' : (attempt.side ?? '방향 모름'),
+    quantityLabel(attempt.quantity, '주'),
+    attempt.order_price_krw == null
+      ? '지정가 모름'
+      : `지정가 ${Number(attempt.order_price_krw).toLocaleString('ko-KR')}원`,
+    attempt.status_label ?? attempt.status ?? '상태 모름',
+  ];
+  return (
+    <li className="text-sm">
+      <span className="font-medium">{parts.join(' · ')}</span>
+      {attempt.reason ? (
+        <span className="block text-xs text-slate-600 dark:text-slate-300">{attempt.reason}</span>
+      ) : null}
+      {attempt.observation ? (
+        <span className="block text-xs text-slate-500 dark:text-slate-400">
+          브로커 확인: {attempt.observation}
+        </span>
+      ) : null}
+      {attempt.trading_date ? (
+        <span className="block text-xs text-slate-500 dark:text-slate-400">
+          거래일 {attempt.trading_date}
+        </span>
+      ) : null}
+    </li>
   );
 }
 
@@ -222,8 +397,11 @@ function SymbolRowCells({ row }: { row: TosSymbolRow }) {
  * 보유 is labelled «TOS 기준» on purpose: it is the FIFO open lot from TOS's own
  * evidence, not an account balance. The web tier never calls KIS.
  *
- * There is no PnL column, because the document carries no PnL. An empty column
- * reading 「—」 would be read as 「0」 within a week.
+ * The PnL columns are the exporter's own figures (`tools/tos_cp3/perf.py`),
+ * never re-derived here, and three rules hold across every one of them: an
+ * absent figure is «알 수 없음» and never 0; a decision-only tenant has no PnL
+ * cell at all rather than a row of zeros; and the totals row sums the stock
+ * tenants only — a hypothetical figure is never added to a realized one.
  */
 export default function SymbolsPanel({ read }: { read: SymbolsRead }) {
   const { state, document, response, authError } = read;
@@ -240,8 +418,8 @@ export default function SymbolsPanel({ read }: { read: SymbolsRead }) {
       <div className="min-w-0">
         <h2 className="font-semibold">거래 현황</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          무엇을 사고팔았나 — 종목마다 그날의 매수 · 매도 체결, TOS 원장이 아는 보유, 마지막 차단
-          사유를 봅니다.
+          무엇을 사고팔았나 — 종목마다 그날의 매수 · 매도 체결, TOS 원장이 아는 보유, 실현 손익과
+          누적, 그리고 마지막 차단 사유를 봅니다.
         </p>
       </div>
 
@@ -277,9 +455,10 @@ export default function SymbolsPanel({ read }: { read: SymbolsRead }) {
 
       {document && (
         <div className="min-w-0 overflow-x-auto">
-          <table className="w-full min-w-[46rem] text-left text-sm">
+          <table className="w-full min-w-[64rem] text-left text-sm">
             <caption className="sr-only">
-              종목별 오늘 매수 · 매도 · 보유(TOS 기준) · 마지막 차단 사유
+              종목별 오늘 매수 · 매도 · 보유(TOS 기준) · 실현 손익 · 누적 · 왕복 · 승 · 마지막 차단
+              사유
             </caption>
             <thead className="text-xs uppercase text-slate-500 dark:text-slate-400">
               <tr>
@@ -297,6 +476,14 @@ export default function SymbolsPanel({ read }: { read: SymbolsRead }) {
                     `보유 (${document.holding_basis ?? '기준 모름'})`
                   )}
                 </th>
+                <th scope="col" className="py-2 pr-3">
+                  오늘 <Term name="realized_pnl">실현 손익</Term>
+                </th>
+                <th scope="col" className="py-2 pr-3">누적</th>
+                <th scope="col" className="py-2 pr-3">
+                  <Term name="round_trip">왕복</Term>
+                </th>
+                <th scope="col" className="py-2 pr-3">승</th>
                 <th scope="col" className="py-2">마지막 차단 사유</th>
               </tr>
             </thead>
@@ -304,6 +491,7 @@ export default function SymbolsPanel({ read }: { read: SymbolsRead }) {
               {(document.symbols ?? []).map((row, index) => (
                 <SymbolRowCells key={row.tree_id ?? row.symbol ?? index} row={row} />
               ))}
+              <TotalsRow rows={tradingRows(document)} />
             </tbody>
           </table>
           {(document.symbols ?? []).length === 0 && (
@@ -314,16 +502,32 @@ export default function SymbolsPanel({ read }: { read: SymbolsRead }) {
         </div>
       )}
 
-      <p className="text-sm">
-        <Badge tone="neutral">
-          <Term name="decision_only" /> — 선물 tenant 는 주문 없음
-        </Badge>
-      </p>
+      {document && unresolvedRows(document).length > 0 && (
+        <div className="min-w-0 space-y-2 rounded-lg border border-amber-300 p-3 dark:border-amber-800">
+          <h3 className="text-sm font-semibold">
+            <Term name="unresolved_order">미해결 주문</Term>
+          </h3>
+          <p className="text-xs text-slate-600 dark:text-slate-300">
+            손익 집계 밖입니다 — 체결로 확정되지 않았으므로 위의 손익에 들어 있지 않습니다.
+          </p>
+          {unresolvedRows(document).map((row) => (
+            <div key={row.tree_id ?? row.symbol}>
+              <p className="text-sm font-medium">{row.symbol ?? '알 수 없음'}</p>
+              <ul className="ml-4 list-disc space-y-1">
+                {(row.pnl?.unresolved?.attempts ?? []).map((attempt, index) => (
+                  <UnresolvedItem key={attempt.broker_execution_id ?? index} attempt={attempt} />
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
 
       <AsOf>
-        선물 tenant 는 판단만 기록하므로 체결도 보유도 없고 이 표에 나오지 않습니다. 보유는 브로커
-        잔고 조회가 아니라 TOS 증거에서 아직 닫히지 않은 수량이며, 체결 시각은 브로커 체결 시각이
-        아니라 그 주문을 낸 결정 봉의 시각입니다.
+        선물 tenant 는 판단만 기록하므로 체결도 보유도 손익도 없습니다 — 그 결과는 ③ 의 가상
+        손익(체결 가정)으로만 보고, 위 합계에 더하지 않습니다. 보유는 브로커 잔고 조회가 아니라 TOS
+        증거에서 아직 닫히지 않은 수량이며, 체결 시각은 브로커 체결 시각이 아니라 그 주문을 낸 결정
+        봉의 시각입니다. 손익은 수수료·세금 전이고, 왕복과 승은 FIFO 로 닫힌 lot 조각마다 셉니다.
       </AsOf>
     </section>
   );

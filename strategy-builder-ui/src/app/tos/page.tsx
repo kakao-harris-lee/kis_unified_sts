@@ -20,7 +20,13 @@ import StatusStrip from './StatusStrip';
 import SymbolsPanel from './SymbolsPanel';
 import SystemInternals from './SystemInternals';
 import TenantCards from './TenantCards';
-import { PROJECTION_KEY, useBarsDocument, useSessionsList, useSymbolsDocument } from './queries';
+import {
+  PROJECTION_KEY,
+  useBarsDocument,
+  useSessionsList,
+  useStatusDocument,
+  useSymbolsDocument,
+} from './queries';
 
 const labels: Record<ProjectionState, string> = {
   loading: '상태를 불러오는 중',
@@ -89,6 +95,7 @@ export default function TosPage() {
   // fails; picking a tenant card or the dropdown replaces it.
   const [session, setSession] = useState(LATEST_SESSION);
   const sessions = useSessionsList();
+  const status = useStatusDocument();
   const symbols = useSymbolsDocument();
   const bars = useBarsDocument(session);
   // Which card is highlighted. A session the operator named is itself, so the
@@ -139,6 +146,7 @@ export default function TosPage() {
         projectionState={state}
         projection={projection}
         projectionAgeSeconds={age}
+        status={status}
         symbols={symbols}
         stateLabel={labels[state]}
       />

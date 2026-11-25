@@ -13,6 +13,14 @@ import {
   type TosSessionsResponse,
 } from '@/lib/dashboard/tosBars';
 import {
+  isAcceptedStatusDocument,
+  statusState,
+  tosStatusApi,
+  type StatusState,
+  type TosStatusDocument,
+  type TosStatusResponse,
+} from '@/lib/dashboard/tosStatus';
+import {
   isAcceptedSymbolsDocument,
   symbolsState,
   tosSymbolsApi,
@@ -21,7 +29,7 @@ import {
   type TosSymbolsResponse,
 } from '@/lib/dashboard/tosSymbols';
 
-// The four read models of /tos behind one key per model.
+// The five read models of /tos behind one key per model.
 //
 // They are separate reads with separate freshness stories — the projection is
 // polled, the symbols document is written at session end, a bars document is
@@ -32,6 +40,7 @@ import {
 // about whether a document is usable would render half a page over it.
 
 export const PROJECTION_KEY = ['tos-operator-projection'] as const;
+export const STATUS_KEY = ['tos-status-board'] as const;
 export const SYMBOLS_KEY = ['tos-symbols-today'] as const;
 export const SESSIONS_KEY = ['tos-sessions'] as const;
 
@@ -103,6 +112,38 @@ export function useSymbolsDocument(): SymbolsRead {
   return {
     state: symbolsState(response, query.isError || query.fetchStatus === 'paused'),
     document: response?.available && isAcceptedSymbolsDocument(response.document) ? response.document : null,
+    response,
+    authError: authFailed(query.error),
+  };
+}
+
+export interface StatusRead {
+  state: StatusState;
+  document: TosStatusDocument | null;
+  response: TosStatusResponse | undefined;
+  authError: boolean;
+}
+
+/**
+ * The one-page status board: what `sts tos status` judged, as a document.
+ *
+ * Polled on the same interval as the projection, because it is the answer to
+ * «지금 괜찮은가» and it is small — the exporter writes it beside the symbols
+ * document, so a board that stops being rewritten is itself the signal the
+ * strip reports (its date, against the viewer's KST today).
+ */
+export function useStatusDocument(): StatusRead {
+  const query = useQuery({
+    queryKey: STATUS_KEY,
+    queryFn: tosStatusApi.getStatus,
+    refetchInterval: config.pollIntervalMs,
+    retry: false,
+  });
+  const response = query.data;
+  return {
+    state: statusState(response, query.isError || query.fetchStatus === 'paused'),
+    // The same acceptance predicate the banner uses — see isAcceptedStatusDocument.
+    document: response?.available && isAcceptedStatusDocument(response.document) ? response.document : null,
     response,
     authError: authFailed(query.error),
   };

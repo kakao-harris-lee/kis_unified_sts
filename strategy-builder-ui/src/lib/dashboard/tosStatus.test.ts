@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest';
 import {
   SUPPORTED_STATUS_SCHEMA_VERSION,
   boardVerdict,
+  insideExportWindow,
   isAcceptedStatusDocument,
+  kstClock,
+  orderedIssues,
+  paperLiveness,
   statusState,
   type TosStatusDocument,
   type TosStatusResponse,
@@ -131,5 +135,142 @@ describe('boardVerdict', () => {
     expect(boardVerdict(today(), onTheDay)).toBe('unknown');
     expect(boardVerdict(today({ blocked: 0, checks: null }), onTheDay)).toBe('unknown');
     expect(boardVerdict(null, onTheDay)).toBe('unknown');
+  });
+});
+
+describe('이슈 정렬', () => {
+  function board(issues: { level: string; text: string }[]): TosStatusDocument {
+    return document({ levels: { blocked: '막힘', check: '확인' }, issues });
+  }
+
+  it('puts blocks before checks, using the board’s own level words', () => {
+    const sorted = orderedIssues(
+      board([
+        { level: '확인', text: '두 번째' },
+        { level: '막힘', text: '첫 번째' },
+      ]),
+    );
+    expect(sorted.map((issue) => issue.text)).toEqual(['첫 번째', '두 번째']);
+  });
+
+  it('keeps the exporter’s order inside a level, so the page and the CLI agree', () => {
+    const sorted = orderedIssues(
+      board([
+        { level: '확인', text: 'a' },
+        { level: '확인', text: 'b' },
+        { level: '확인', text: 'c' },
+      ]),
+    );
+    expect(sorted.map((issue) => issue.text)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('keeps a level it does not recognise, last rather than dropped', () => {
+    const sorted = orderedIssues(
+      board([
+        { level: '미래등급', text: '모르는 등급' },
+        { level: '막힘', text: '막힘' },
+      ]),
+    );
+    expect(sorted.map((issue) => issue.text)).toEqual(['막힘', '모르는 등급']);
+  });
+
+  it('does not mutate the document it was given', () => {
+    const original = board([
+      { level: '확인', text: 'a' },
+      { level: '막힘', text: 'b' },
+    ]);
+    orderedIssues(original);
+    expect(original.issues?.map((issue) => issue.text)).toEqual(['a', 'b']);
+  });
+
+  it('is empty, not a throw, for a board with no issue list', () => {
+    expect(orderedIssues(document())).toEqual([]);
+    expect(orderedIssues(null)).toEqual([]);
+  });
+});
+
+describe('상주 paper 판정', () => {
+  it('separates «was not checked» from «was checked and is down»', () => {
+    // The exporter reads /proc only for today. On any past date both flags are
+    // false and say nothing at all, so reading them as «꺼짐» would report an
+    // outage for every board older than this morning.
+    expect(paperLiveness({ live_check: false, runtime_alive: false, driver_alive: false })).toBe(
+      'not-checked',
+    );
+    expect(paperLiveness({ live_check: true, runtime_alive: false, driver_alive: false })).toBe(
+      'stopped',
+    );
+  });
+
+  it('needs both processes for «상주 중»', () => {
+    expect(paperLiveness({ live_check: true, runtime_alive: true, driver_alive: true })).toBe(
+      'alive',
+    );
+    expect(paperLiveness({ live_check: true, runtime_alive: true, driver_alive: false })).toBe(
+      'partial',
+    );
+  });
+
+  it('stays unknown when a flag is absent, rather than assuming it is down', () => {
+    expect(paperLiveness({ live_check: true, runtime_alive: null, driver_alive: true })).toBe(
+      'unknown',
+    );
+    expect(paperLiveness(null)).toBe('unknown');
+  });
+});
+
+describe('내보내기가 멈춘 상태판', () => {
+  // 2026-11-25 is a Wednesday. 02:00Z = 11:00 KST (inside the window),
+  // 11:00Z = 20:00 KST (outside it).
+  const inWindow = new Date('2026-11-25T02:00:00Z');
+  const afterHours = new Date('2026-11-25T11:00:00Z');
+  const weekend = new Date('2026-11-28T02:00:00Z'); // Saturday 11:00 KST
+  const todaysClean = () => document({ date: '2026-11-25', blocked: 0, checks: 0 });
+
+  it('reads the KST wall clock, not the viewer’s', () => {
+    expect(kstClock(inWindow)).toEqual({ hour: 11, weekday: 3 });
+    expect(kstClock(afterHours)).toEqual({ hour: 20, weekday: 3 });
+    expect(insideExportWindow(inWindow)).toBe(true);
+    expect(insideExportWindow(afterHours)).toBe(false);
+    expect(insideExportWindow(weekend)).toBe(false);
+  });
+
+  it('refuses «이상 없음» for a board that stopped being rewritten at 10:00', () => {
+    // The real failure: the */5 export cron dies, the document keeps today's
+    // date and its «0 blocks», and at 15:00 the strip is still green.
+    expect(boardVerdict(todaysClean(), inWindow, 18000)).toBe('stopped');
+  });
+
+  it('leaves the same board alone once the session is over', () => {
+    // Nothing rewrites it overnight, and that is correct — flagging it would
+    // make every evening look like an outage.
+    expect(boardVerdict(todaysClean(), afterHours, 18000)).toBe('clear');
+    // Saturday: the window's weekday list excludes it, so a board dated that
+    // day is judged on its counts alone however old it is.
+    const saturday = document({ date: '2026-11-28', blocked: 0, checks: 0 });
+    expect(boardVerdict(saturday, weekend, 18000)).toBe('clear');
+  });
+
+  it('says clear while the age is still inside the bound', () => {
+    expect(boardVerdict(todaysClean(), inWindow, 300)).toBe('clear');
+    expect(boardVerdict(todaysClean(), inWindow, 899)).toBe('clear');
+    expect(boardVerdict(todaysClean(), inWindow, 901)).toBe('stopped');
+  });
+
+  it('treats an age the reader could not measure as «not clear» in the window', () => {
+    expect(boardVerdict(todaysClean(), inWindow, null)).toBe('stopped');
+    // …and a caller that does not measure age at all keeps the old answer.
+    expect(boardVerdict(todaysClean(), inWindow)).toBe('clear');
+  });
+
+  it('wins over the counts, which the caller still has', () => {
+    const noisy = document({ date: '2026-11-25', blocked: 2, checks: 11 });
+    expect(boardVerdict(noisy, inWindow, 18000)).toBe('stopped');
+    expect(noisy.blocked).toBe(2);
+  });
+
+  it('never outranks staleness, which is about a different day', () => {
+    const yesterday = document({ date: '2026-11-24', blocked: 0, checks: 0 });
+    expect(boardVerdict(yesterday, inWindow, 18000)).toBe('stale');
   });
 });

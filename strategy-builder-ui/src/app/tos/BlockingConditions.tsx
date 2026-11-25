@@ -1,7 +1,7 @@
 "use client";
 
 import type { TosBarsSummary } from '@/lib/dashboard/tosBars';
-import { entryBlockers } from '@/lib/dashboard/tosDecision';
+import { entryBlockers, isProbeRule, type ProbePredicate } from '@/lib/dashboard/tosDecision';
 import Term from './Term';
 
 /**
@@ -17,10 +17,13 @@ import Term from './Term';
  */
 export default function BlockingConditions({
   summary,
+  isProbe = isProbeRule,
 }: {
   summary: TosBarsSummary | null | undefined;
+  /** The document's probe test, so a probe rule is not read as the entry. */
+  isProbe?: ProbePredicate;
 }) {
-  const blockers = entryBlockers(summary);
+  const blockers = entryBlockers(summary, isProbe);
   if (!blockers.length) {
     return (
       <p className="text-sm text-slate-500 dark:text-slate-400">

@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import config from '@/config/tos-control-plane.json';
 
 // Wire contract: services/dashboard/routes/tos_status.py. Legibility plan
 // docs/plans/2026-11-25-tos-operator-page-legibility-plan.md §4 ① «상태 띠».
@@ -122,6 +123,13 @@ export interface TosStatusResponse {
   available: boolean;
   reason: string | null;
   age_seconds: number | null;
+  /**
+   * True when the READER had to strip a path or an account-shaped value on the
+   * way out — which means the exporter regressed. The body is safe either way,
+   * so this is not an error state; the page says a sentence was altered rather
+   * than presenting a scrubbed broken export as normal.
+   */
+  redacted?: boolean;
   document: TosStatusDocument | null;
 }
 
@@ -171,7 +179,45 @@ export function statusState(
 }
 
 /** How the strip should read overall. Never derived from a level literal here. */
-export type BoardVerdict = 'blocked' | 'check' | 'clear' | 'stale' | 'unknown';
+export type BoardVerdict = 'blocked' | 'check' | 'clear' | 'stopped' | 'stale' | 'unknown';
+
+/**
+ * The KST wall clock, as the export window is written.
+ *
+ * `weekday` is 0=Sunday … 6=Saturday, matching `Date.getDay()` so the config's
+ * `weekdays: [1,2,3,4,5]` reads the way an operator would write it. Both parts
+ * come from one `Intl` pass in Asia/Seoul, because the viewer's own timezone
+ * must not decide whether the exporter was supposed to be running.
+ */
+export function kstClock(now: Date = new Date()): { hour: number; weekday: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul',
+    hour12: false,
+    hour: '2-digit',
+    weekday: 'short',
+  }).formatToParts(now);
+  const hourPart = parts.find((part) => part.type === 'hour')?.value ?? '0';
+  const weekdayPart = parts.find((part) => part.type === 'weekday')?.value ?? '';
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // `hour12: false` renders midnight as 24 in some ICU builds.
+  const hour = Number(hourPart) % 24;
+  return { hour: Number.isFinite(hour) ? hour : 0, weekday: Math.max(0, names.indexOf(weekdayPart)) };
+}
+
+/**
+ * Whether the exporter is supposed to be rewriting the board right now.
+ *
+ * The window is config (`tos-control-plane.json::statusExportWindowKst`), not a
+ * literal here, because it mirrors the export cron on the host — a schedule
+ * change must not need a UI release to stop the page lying in one direction or
+ * the other.
+ */
+export function insideExportWindow(now: Date = new Date()): boolean {
+  const { hour, weekday } = kstClock(now);
+  const window = config.statusExportWindowKst;
+  if (!window.weekdays.includes(weekday)) return false;
+  return hour >= window.fromHour && hour < window.untilHour;
+}
 
 /**
  * Today in KST, as `YYYY-MM-DD`.
@@ -185,29 +231,99 @@ export function kstToday(now: Date = new Date()): string {
 }
 
 /**
- * The board's one-word verdict, from the counts the exporter already took.
+ * The board's verdict: the counts the exporter took, and whether it is still
+ * taking them.
  *
- * **`stale` beats every other answer.** A board from another day says nothing
- * about now: on the morning after a clean close the document still reads
- * "0 blocks", and rendering that as "clear" is precisely how a stopped
- * exporter passes for a healthy day. The counts are only meaningful once the
- * document is today's.
+ * Two freshness rules, in this order, because each catches a different way the
+ * page could pass a dead exporter off as a healthy day.
+ *
+ * * **`stale` beats every other answer.** A board from another day says nothing
+ *   about now: on the morning after a clean close the document still reads
+ *   "0 blocks", and rendering that as "clear" is precisely how a stopped
+ *   exporter passes for a healthy day.
+ * * **`stopped` catches the same failure WITHIN a day.** The export cron runs
+ *   every five minutes through the session, so a board whose date is today but
+ *   whose age is three intervals old was written before the cron died — and it
+ *   still reads «0 blocks» at 15:00 because nothing has updated it since 10:00.
+ *   The date rule cannot see that; only the age can. It applies **only inside
+ *   the export window**, so the board sitting untouched overnight — which is
+ *   correct and expected — is not flagged until the next session.
+ *
+ * `stopped` wins over `clear` and over the counts, because the counts it would
+ * report are not about now. It does not hide them: the caller still has
+ * `document.blocked`/`checks` and labels them «마지막 기록 기준».
  *
  * `unknown` when the document names no date or no counts — absence stays
  * absence rather than defaulting to good news.
+ *
+ * @param ageSeconds the response's `age_seconds`. `undefined` means the caller
+ *   did not measure it (the pre-P2 call shape) and the age rule is skipped;
+ *   `null` means the reader could not tell, which inside the window is itself
+ *   a reason not to say «이상 없음».
  */
 export function boardVerdict(
   document: TosStatusDocument | null | undefined,
   now: Date = new Date(),
+  ageSeconds?: number | null,
 ): BoardVerdict {
   if (!document?.date) return 'unknown';
   if (document.date !== kstToday(now)) return 'stale';
+  if (ageSeconds !== undefined && insideExportWindow(now)) {
+    if (ageSeconds == null || ageSeconds > config.statusStaleAfterSeconds) return 'stopped';
+  }
   const blocked = document.blocked;
   const checks = document.checks;
   if (typeof blocked !== 'number' || typeof checks !== 'number') return 'unknown';
   if (blocked > 0) return 'blocked';
   if (checks > 0) return 'check';
   return 'clear';
+}
+
+/**
+ * The issues, blocks first — the board's own level words, not a literal here.
+ *
+ * The order is the one an operator reads in: what is stopped comes before what
+ * wants a look. Inside a level the exporter's order is preserved, because it is
+ * already the order `sts tos status` prints (tenant by tenant, then paper), and
+ * re-sorting would make the page and the CLI disagree about the same day.
+ *
+ * A level the document did not name sorts last rather than being dropped: an
+ * unrecognised level is still an issue somebody raised.
+ */
+export function orderedIssues(
+  document: TosStatusDocument | null | undefined,
+): TosStatusIssue[] {
+  const issues = document?.issues ?? [];
+  const blocked = document?.levels?.blocked ?? null;
+  const check = document?.levels?.check ?? null;
+  const rank = (issue: TosStatusIssue): number => {
+    if (blocked != null && issue.level === blocked) return 0;
+    if (check != null && issue.level === check) return 1;
+    return 2;
+  };
+  return [...issues].sort((left, right) => rank(left) - rank(right));
+}
+
+/** Whether the resident paper cell was running when the board was taken. */
+export type PaperLiveness = 'alive' | 'partial' | 'stopped' | 'not-checked' | 'unknown';
+
+/**
+ * The resident paper cell's liveness, from the board alone.
+ *
+ * `not-checked` is its own answer and not a synonym for «stopped»: the
+ * exporter reads /proc only for today, so on a past date both flags are false
+ * and say nothing at all. Rendering that as «꺼짐» would report an outage for
+ * every board older than this morning.
+ */
+export function paperLiveness(paper: TosStatusPaper | null | undefined): PaperLiveness {
+  if (!paper) return 'unknown';
+  if (paper.live_check !== true) return 'not-checked';
+  const runtime = paper.runtime_alive;
+  const driver = paper.driver_alive;
+  if (runtime == null || driver == null) return 'unknown';
+  if (runtime && driver) return 'alive';
+  if (runtime || driver) return 'partial';
+  return 'stopped';
 }
 
 export const tosStatusApi = {

@@ -1,6 +1,8 @@
 {
   "pollIntervalMs": 15000,
   "staleAfterSeconds": 60,
+  "statusStaleAfterSeconds": 900,
+  "statusExportWindowKst": { "fromHour": 9, "untilHour": 16, "weekdays": [1, 2, 3, 4, 5] },
   "clockTickMs": 1000,
   "legacyStockInstrument": "005930",
   "timelineHeadRows": 8,

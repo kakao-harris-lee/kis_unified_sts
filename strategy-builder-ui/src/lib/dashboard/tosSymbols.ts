@@ -160,6 +160,12 @@ export interface TosSymbolsResponse {
   available: boolean;
   reason: string | null;
   age_seconds: number | null;
+  /**
+   * True when the READER had to strip a path or an account-shaped value on the
+   * way out — the exporter regressed. The body is safe either way, so the page
+   * notes that a sentence was altered rather than refusing to render.
+   */
+  redacted?: boolean;
   document: TosSymbolsDocument | null;
 }
 
@@ -247,6 +253,29 @@ export function sessionPhase(session: TosSymbolSession | null | undefined): Sess
   // folded into "ended" — the page shows the raw status beside the phase.
   if (status === 'ENDED') return 'settled';
   return 'unknown';
+}
+
+/**
+ * Whether this row's tenant can trade at all.
+ *
+ * Read from the row's own `decision_only` flag first and from `kind` only as a
+ * fallback, because the flag is what the exporter asserts and the kind is a
+ * label: a stock tenant that is someday made decision-only must stop showing
+ * fill and PnL cells on the strength of the flag alone.
+ */
+export function isDecisionOnlyRow(row: TosSymbolRow): boolean {
+  return row.decision_only === true || (row.decision_only == null && row.kind === TENANT_KIND_FUTURES);
+}
+
+/**
+ * The rows whose figures may be added up — the ones that actually order.
+ *
+ * A decision-only row has no realized PnL to sum (its `pnl` is null, not zero)
+ * and its hypothetical figure must never enter a total, so the totals row is
+ * built from this list rather than from every row in the document.
+ */
+export function tradingRows(document: TosSymbolsDocument | null | undefined): TosSymbolRow[] {
+  return (document?.symbols ?? []).filter((row) => !isDecisionOnlyRow(row));
 }
 
 export const tosSymbolsApi = {

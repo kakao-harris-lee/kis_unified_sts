@@ -1,4 +1,11 @@
-import type { TosBarsBar, TosBarsDocument, TosBarsRule } from '@/lib/dashboard/tosBars';
+import type {
+  TosBarsBar,
+  TosBarsDocument,
+  TosBarsExplain,
+  TosBarsHypotheticalPnl,
+  TosBarsRule,
+} from '@/lib/dashboard/tosBars';
+import type { TosStatusDocument } from '@/lib/dashboard/tosStatus';
 import type { TosSymbolsDocument } from '@/lib/dashboard/tosSymbols';
 
 // Six- and four-bar excerpts with the SHAPES the real exports carry.
@@ -236,6 +243,254 @@ const EOD: Env = {
  * Decision-only, which is why every proposal on it ends at a gate: a tree with
  * no position cannot close one, and no approval comes back for an open.
  */
+
+// ---------------------------------------------------------------------------
+// The P2 blocks: what the rules MEAN, and what the decisions would have earned
+// ---------------------------------------------------------------------------
+//
+// `rationale`, `probe` and the field definitions below are copied verbatim out
+// of the same two exports the bars above came from. Verbatim matters twice
+// over: the page prints the sentence unchanged, and `probe: true` is the
+// operator map's assertion (`config/tos_bars_explain.yaml`,
+// `probe_basis: OPERATOR_RULE_MAP`) rather than a word read out of the rule id
+// — a fixture that paraphrased either would let the real wording drift
+// untested.
+
+/** The field catalog entries the Setup D rules stand on. */
+const SETUP_D_FIELDS: NonNullable<TosBarsExplain['fields']> = {
+  entry_window: {
+    field: 'entry_window',
+    op: 'between',
+    inputs: ['mso'],
+    params: { hi: 345, lo: 15 },
+    published_as: 'entry_window',
+    known: true,
+  },
+  hi_vol: {
+    field: 'hi_vol',
+    op: 'all',
+    inputs: ['usable', 'vol_pass'],
+    params: null,
+    published_as: 'hi_vol',
+    known: true,
+  },
+  stall_ok: {
+    field: 'stall_ok',
+    op: 'all',
+    inputs: ['through_extreme', 'stall_short_gate', 'stall_long_gate'],
+    params: null,
+    published_as: 'stall_ok',
+    known: true,
+  },
+  reversal_ok: {
+    field: 'reversal_ok',
+    op: 'all',
+    inputs: ['stall_ok', 'prev_close_known', 'turn_long_gate', 'turn_short_gate', 'improve_ok'],
+    params: null,
+    published_as: 'reversal_ok',
+    known: true,
+  },
+  z_x1000: {
+    field: 'z',
+    op: 'ratio_z',
+    inputs: ['close', 'vwap', 'atr'],
+    params: null,
+    published_as: 'z_x1000',
+    scale: { mult: 1000, round: 'toward_zero' },
+    known: true,
+  },
+  vwap_reverted: {
+    field: 'vwap_reverted',
+    op: 'le',
+    inputs: ['abs_z'],
+    params: { const: 0.2 },
+    published_as: 'vwap_reverted',
+    known: true,
+  },
+  eod: {
+    field: 'eod',
+    op: 'time_ge',
+    inputs: [],
+    params: { at: '15:15' },
+    published_as: 'eod',
+    known: true,
+  },
+};
+
+const NO_ACTION_DEFAULT = {
+  rule_id: 'R0-DEFAULT-NO-ACTION',
+  decision_kind: 'NO_ACTION',
+  rationale: 'R0-DEFAULT-NO-ACTION: no rule fired — hold exposure unchanged.',
+};
+
+/** The explain block of a Setup D tree, with the probe rule only where it runs. */
+export function setupDExplain({ probe = false }: { probe?: boolean } = {}): TosBarsExplain {
+  const rules: NonNullable<TosBarsExplain['rules']> = [
+    {
+      label: 'R1',
+      rule_id: 'R1-ENTRY-LONG',
+      decision_kind: 'ACTION',
+      probe: false,
+      rationale:
+        'R1-ENTRY-LONG: entry window open, high-volatility regime, stall guard clear, reversal confirmed, and the VWAP extension has reached the LONG extreme threshold — propose a new long.',
+      target_rationale:
+        'R1-ENTRY-LONG: open a new long at the LONG-side VWAP extreme with every Setup D gate satisfied.',
+      fields: ['entry_window', 'hi_vol', 'stall_ok', 'reversal_ok', 'z_x1000'],
+      bindings: ['z_entry_max_x1000'],
+    },
+    {
+      label: 'R2',
+      rule_id: 'R2-EXIT-VWAP-REVERTED',
+      decision_kind: 'FLAT',
+      probe: false,
+      rationale:
+        'R2-EXIT-VWAP-REVERTED: price has returned to the VWAP band — the mean-reversion thesis is realized, go flat.',
+      fields: ['vwap_reverted'],
+      bindings: [],
+    },
+    {
+      label: 'R3',
+      rule_id: 'R3-EXIT-EOD',
+      decision_kind: 'FLAT',
+      probe: false,
+      rationale: "R3-EXIT-EOD: the session's EOD close time has arrived — go flat.",
+      fields: ['eod'],
+      bindings: [],
+    },
+  ];
+  if (probe) {
+    rules.push({
+      label: 'R4',
+      rule_id: 'R4-M2-PROBE-ENTRY-LONG',
+      decision_kind: 'ACTION',
+      probe: true,
+      rationale:
+        "R4-M2-PROBE-ENTRY-LONG: M2 boundary probe, NOT a Setup D signal — the entry window is open and the operator's M2 probe binding is on, so propose one long to exercise the approval/reservation/verify/ kis_mock send/result/finality boundary end to end.",
+      fields: ['entry_window'],
+      bindings: ['m2_probe_entry_enabled'],
+    });
+  }
+  return {
+    schema: 'tos-bars-explain/1',
+    rules,
+    default: NO_ACTION_DEFAULT,
+    fields: SETUP_D_FIELDS,
+    probe_basis: 'OPERATOR_RULE_MAP',
+  };
+}
+
+/** The RSI/%R tenant's own rule set — a different vocabulary on purpose. */
+export function rsiExplain(): TosBarsExplain {
+  const permissive = (field: string) => ({
+    field,
+    op: 'permissive',
+    inputs: [`${field}_raw`],
+    params: { when_missing: false },
+    published_as: field,
+    known: true,
+  });
+  return {
+    schema: 'tos-bars-explain/1',
+    rules: [
+      {
+        label: 'R1',
+        rule_id: 'R1-ENTRY-LONG-RSI-WR',
+        decision_kind: 'ACTION',
+        probe: false,
+        rationale:
+          'R1-ENTRY-LONG-RSI-WR: entry window open, RSI(14) at or below its oversold line and Williams %R(14) at or below its own — both momentum readings say the pullback is stretched, so propose a new long.',
+        fields: ['entry_window', 'rsi_oversold', 'wr_oversold'],
+        bindings: [],
+      },
+      {
+        label: 'R2',
+        rule_id: 'R2-EXIT-RSI-RECOVERED',
+        decision_kind: 'FLAT',
+        probe: false,
+        rationale:
+          'R2-EXIT-RSI-RECOVERED: RSI(14) has climbed back to its midline — the mean-reversion thesis is realized, go flat.',
+        fields: ['rsi_recovered'],
+        bindings: [],
+      },
+      {
+        label: 'R3',
+        rule_id: 'R3-EXIT-EOD',
+        decision_kind: 'FLAT',
+        probe: false,
+        rationale: "R3-EXIT-EOD: the session's EOD close time has arrived — go flat.",
+        fields: ['eod'],
+        bindings: [],
+      },
+    ],
+    default: NO_ACTION_DEFAULT,
+    fields: {
+      entry_window: SETUP_D_FIELDS.entry_window,
+      eod: SETUP_D_FIELDS.eod,
+      rsi_oversold: permissive('rsi_oversold'),
+      wr_oversold: permissive('wr_oversold'),
+      rsi_recovered: permissive('rsi_recovered'),
+    },
+  };
+}
+
+/**
+ * The futures tree's hypothetical PnL — one would-have-been round trip.
+ *
+ * Both leg times name bars this fixture actually carries, so the chart marks
+ * land on real indices, and the skipped decision is the shape the real export
+ * produced on 2026-11-25: a close the inspection re-derived rather than one
+ * the engine made, left out of the total with its reason stated.
+ */
+export function futuresHypothetical(): TosBarsHypotheticalPnl {
+  return {
+    hypothetical: true,
+    direction: 'LONG',
+    instrument: 'A05612',
+    contract: 'kospi200_mini',
+    multiplier_krw_per_point: 50000,
+    price_field: 'close_x100',
+    price_scale: 100,
+    assumptions: [
+      'FILL_AT_DECISION_BAR_CLOSE',
+      'FILL_ALWAYS_ASSUMED',
+      'NO_FEES',
+      'NO_SLIPPAGE',
+      'ONE_CONTRACT',
+      'ONE_POSITION_AT_A_TIME',
+    ],
+    trades: [
+      {
+        entry_time_kst: '09:14',
+        entry_rule_id: 'R1-ENTRY-LONG',
+        entry_price_points: '735.64',
+        exit_time_kst: '15:45',
+        exit_rule_id: 'R3-EXIT-EOD',
+        exit_price_points: '738.58',
+        points: '2.94',
+        hypothetical_pnl_krw: '147000',
+        forced_close: false,
+        forced_close_reason: null,
+      },
+    ],
+    totals: {
+      trades: 1,
+      wins: 1,
+      points: '2.94',
+      hypothetical_pnl_krw: '147000',
+      forced_closes: 0,
+    },
+    unpriced_decisions: [],
+    skipped_decisions: [
+      {
+        time_kst: '08:48',
+        decision_kind: 'FLAT',
+        rule_id: 'R2-EXIT-VWAP-REVERTED',
+        reason: 'NOT_ENGINE_COUNTED',
+      },
+    ],
+  };
+}
+
 export function futuresBarsDocument(): TosBarsDocument {
   const z = -1800;
   const bars = [
@@ -320,6 +575,10 @@ export function futuresBarsDocument(): TosBarsDocument {
     schema_version: 1,
     session: 'long-20261125',
     instrument: 'A05612',
+    market: 'futures',
+    decision_only: true,
+    explain: setupDExplain(),
+    hypothetical_pnl: futuresHypothetical(),
     strategy: { sha256: 'aa6b6fee3b7c08de1e95c9c45593c8c49d6898c5fd862568f6e3a226e8222eee' },
     bindings: { values: { z_entry_max_x1000: z } },
     window: { from: null, to: null },
@@ -479,6 +738,9 @@ export function stockBarsDocument(): TosBarsDocument {
     schema_version: 1,
     session: 'stock-r1-20261125',
     instrument: '005930',
+    market: 'stock',
+    decision_only: false,
+    explain: setupDExplain({ probe: true }),
     strategy: { sha256: 'df164ee2461aa133ac6506889cd53c3618134a42403e2c302128cb3c54fd3b00' },
     bindings: { values: { m2_probe_entry_enabled: true, z_entry_max_x1000: z } },
     window: { from: null, to: null },
@@ -691,6 +953,9 @@ export function rsiStockBarsDocument(): TosBarsDocument {
     schema_version: 1,
     session: 'stock-005380-r1-20261125',
     instrument: '005380',
+    market: 'stock',
+    decision_only: false,
+    explain: rsiExplain(),
     strategy: { sha256: '0f0e8b6d6c3a4e5f8a9b0c1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f7' },
     bindings: { values: {} },
     window: { from: null, to: null },
@@ -741,9 +1006,40 @@ export function symbolsDocument(): TosSymbolsDocument {
     generated_kst: '2026-11-25T15:55:02+09:00',
     holding_basis: 'TOS_LEDGER_FIFO_OPEN_LOTS',
     symbols: [
+      // The decision-only tree, which the document carries since P2: it has a
+      // session (status, boot, end) and NO pnl — null, never zero.
+      {
+        symbol: 'A05612',
+        tree_id: 'cp3-setup-d-long',
+        kind: 'futures',
+        direction: 'LONG',
+        decision_only: true,
+        session: {
+          name: 'long-20261125',
+          status: 'ENDED',
+          boot_at: '08:46:08',
+          end_at: '15:50:01',
+          run_rc: 0,
+        },
+        buy: { fills: null, quantity: null, last: null },
+        sell: { fills: null, quantity: null, last: null },
+        holding: { quantity: null, lots: null, basis: 'TOS_LEDGER_FIFO_OPEN_LOTS' },
+        pnl: null,
+        halt: {
+          error: null,
+          last_flow: { reason: 'STAGE_DENIED', step: 'CANDIDATE_COMMAND_CONSTRUCTION', time_kst: '15:33' },
+          last_withheld: { reason: 'TIME_NOT_ADMITTED', step: 'DECISION_WITHHELD', time_kst: '08:45' },
+          flow_counts: { STAGE_DENIED: 36, STAGE_UNKNOWN: 1 },
+        },
+        ticks: 409,
+        error: null,
+      },
       {
         symbol: '005930',
         tree_id: 'cp3-setup-d-stock-005930',
+        kind: 'stock',
+        direction: 'LONG',
+        decision_only: false,
         session: {
           name: 'stock-r1-20261125',
           status: 'ENDED',
@@ -778,6 +1074,49 @@ export function symbolsDocument(): TosSymbolsDocument {
           },
         },
         holding: { quantity: '0', lots: 0, basis: 'TOS_LEDGER_FIFO_OPEN_LOTS' },
+        // The figures `tools/tos_cp3/perf.py` produced for 2026-11-25: one
+        // round trip that lost 4,050원, and one order from two days earlier
+        // the FIFO could not account for — which is NOT in either figure.
+        pnl: {
+          today: {
+            pnl_krw: '-4050',
+            pnl_basis: 'EXECUTION',
+            closed_round_trips: 1,
+            wins: 0,
+            buy_fills: 1,
+            sell_fills: 1,
+            quantity_bought: '1',
+            quantity_sold: '1',
+          },
+          cumulative: {
+            pnl_krw: '-3150',
+            pnl_basis: 'EXECUTION',
+            closed_round_trips: 4,
+            wins: 2,
+            buy_fills: 4,
+            sell_fills: 4,
+            quantity_bought: '4',
+            quantity_sold: '4',
+            open_quantity: '0',
+            open_lots: 0,
+          },
+          unresolved: {
+            count: 1,
+            attempts: [
+              {
+                status: 'NO_FILL',
+                status_label: '비체결 종료',
+                side: 'BUY',
+                quantity: '1',
+                order_price_krw: '175800',
+                broker_execution_id: null,
+                trading_date: '20261123',
+                reason: '미접수(마지막 결과 UNKNOWN → 재조회로 확인)',
+                observation: '전송되지 않음(체결 없음)',
+              },
+            ],
+          },
+        },
         halt: {
           error: null,
           last_flow: { reason: 'STAGE_DENIED', step: 'CANDIDATE_COMMAND_CONSTRUCTION', time_kst: '15:18' },
@@ -786,6 +1125,157 @@ export function symbolsDocument(): TosSymbolsDocument {
         },
         ticks: 380,
         error: null,
+      },
+      // A second trading tree, so a totals row has something to add up.
+      {
+        symbol: '000660',
+        tree_id: 'cp3-setup-d-stock-000660',
+        kind: 'stock',
+        direction: 'LONG',
+        decision_only: false,
+        session: {
+          name: 'stock-000660-r1-20261125',
+          status: 'ENDED',
+          boot_at: '09:02:18',
+          end_at: '15:40:01',
+          run_rc: 0,
+        },
+        buy: { fills: 1, quantity: '1', last: null },
+        sell: { fills: 1, quantity: '1', last: null },
+        holding: { quantity: '0', lots: 0, basis: 'TOS_LEDGER_FIFO_OPEN_LOTS' },
+        pnl: {
+          today: {
+            pnl_krw: '-19000',
+            pnl_basis: 'EXECUTION',
+            closed_round_trips: 1,
+            wins: 0,
+          },
+          cumulative: {
+            pnl_krw: '-4000',
+            pnl_basis: 'EXECUTION',
+            closed_round_trips: 2,
+            wins: 1,
+            open_quantity: '0',
+            open_lots: 0,
+          },
+          unresolved: { count: 0, attempts: [] },
+        },
+        halt: {
+          error: null,
+          last_flow: { reason: 'STAGE_DENIED', step: 'CANDIDATE_COMMAND_CONSTRUCTION', time_kst: '15:18' },
+          last_withheld: null,
+          flow_counts: { STAGE_DENIED: 6, STAGE_UNKNOWN: 1 },
+        },
+        ticks: 379,
+        error: null,
+      },
+    ],
+  };
+}
+
+/**
+ * The one-page status board, as `status/board.json` carries it.
+ *
+ * The issue sentences are the exporter's own, verbatim: the page prints them
+ * unchanged, so a paraphrase here would let their wording drift untested. The
+ * counts are the ones the exporter took from this very list — the strip must
+ * never recount them itself.
+ */
+export function statusDocument(): TosStatusDocument {
+  return {
+    schema_version: 1,
+    date: '2026-11-25',
+    generated_kst: '2026-11-25T15:55:10+09:00',
+    levels: { blocked: '막힘', check: '확인' },
+    blocked: 0,
+    checks: 2,
+    tenants: [
+      {
+        name: 'long-20261125',
+        label: 'long',
+        tree_id: 'cp3-setup-d-long',
+        market: 'futures',
+        direction: 'LONG',
+        instrument: 'A05612',
+        status: 'ENDED',
+        run_alive: false,
+        producer_alive: false,
+        boot_at: '08:46:08',
+        end_at: '15:50:01',
+        run_rc: 0,
+        producer_rc: 0,
+        ticks: 409,
+        issues: [
+          {
+            level: '확인',
+            text: 'MARKETFEED_PASS_OVERRUN 1행 — 최악 pass 1232ms > 창 500ms (tick 1232ms + post-pass 0ms, seq 77038)',
+          },
+        ],
+      },
+      {
+        name: 'stock-r1-20261125',
+        label: 'stock-r1',
+        tree_id: 'cp3-setup-d-stock-005930',
+        market: 'stock',
+        direction: 'LONG',
+        instrument: '005930',
+        status: 'ENDED',
+        run_alive: false,
+        producer_alive: false,
+        boot_at: '09:01:09',
+        end_at: '15:40:01',
+        run_rc: 0,
+        producer_rc: 0,
+        ticks: 380,
+        issues: [
+          { level: '확인', text: 'APPROVAL_STANDING_NOT_COVERED 1행 (open_over_outstanding_reservation 1)' },
+        ],
+      },
+    ],
+    clean_streak: [
+      {
+        label: 'long',
+        days: 5,
+        target_days: 5,
+        window_days: 40,
+        met: true,
+        start: '2026-11-19',
+        window_start: '2026-11-19',
+        pending: null,
+        broke_on: null,
+        broke_reason: null,
+        calendar_version: 'krx-2026.11',
+        error: null,
+      },
+    ],
+    paper: {
+      session: '2026-11-25-084505-LONG',
+      live_check: false,
+      runtime_alive: false,
+      driver_alive: false,
+      boot_ok: true,
+      report: {
+        verdict: 'ok',
+        exit_code: 0,
+        stop_reason: 'signal',
+        started_kst: '2026-11-25T08:45:05+09:00',
+        ended_kst: '2026-11-25T15:45:02+09:00',
+        events_consumed: 5018,
+        stale_withheld: 1,
+        stale_ratio: 0.0002,
+      },
+      issues: [],
+    },
+    issues: [
+      {
+        level: '확인',
+        where: 'long-20261125',
+        text: 'MARKETFEED_PASS_OVERRUN 1행 — 최악 pass 1232ms > 창 500ms (tick 1232ms + post-pass 0ms, seq 77038)',
+      },
+      {
+        level: '확인',
+        where: 'stock-r1-20261125',
+        text: 'APPROVAL_STANDING_NOT_COVERED 1행 (open_over_outstanding_reservation 1)',
       },
     ],
   };

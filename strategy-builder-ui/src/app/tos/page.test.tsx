@@ -11,9 +11,15 @@ import {
   type TosProjectionResponse,
 } from '@/lib/dashboard/tos';
 import { tosBarsApi, type TosSessionEntry } from '@/lib/dashboard/tosBars';
+import { tosStatusApi } from '@/lib/dashboard/tosStatus';
 import { tosSymbolsApi } from '@/lib/dashboard/tosSymbols';
 import { tosFixture } from '@/test/tosFixture';
-import { futuresBarsDocument, stockBarsDocument, symbolsDocument } from '@/test/tosBarsFixture';
+import {
+  futuresBarsDocument,
+  statusDocument,
+  stockBarsDocument,
+  symbolsDocument,
+} from '@/test/tosBarsFixture';
 const fixture = tosFixture();
 const unknown = tosFixture(true);
 import config from '@/config/tos-control-plane.json';
@@ -35,6 +41,12 @@ vi.mock('@/lib/dashboard/tosBars', async () => {
   );
   return { ...actual, tosBarsApi: { getBars: vi.fn(), listSessions: vi.fn() } };
 });
+vi.mock('@/lib/dashboard/tosStatus', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/dashboard/tosStatus')>(
+    '@/lib/dashboard/tosStatus',
+  );
+  return { ...actual, tosStatusApi: { getStatus: vi.fn() } };
+});
 vi.mock('@/lib/dashboard/tosSymbols', async () => {
   const actual = await vi.importActual<typeof import('@/lib/dashboard/tosSymbols')>(
     '@/lib/dashboard/tosSymbols',
@@ -52,6 +64,16 @@ function entry(overrides: Partial<TosSessionEntry> & { session: string }): TosSe
     age_seconds: 600,
     ...overrides,
   };
+}
+
+/**
+ * The 시스템 내부 disclosure.
+ *
+ * Found by its own summary: the status strip now owns a `<details>` too (its
+ * issue list), so «the first details on the page» is no longer this one.
+ */
+function internals(): HTMLDetailsElement {
+  return screen.getByText(/paper 셀 상태와 기록 검증/).closest('details') as HTMLDetailsElement;
 }
 
 let client: QueryClient;
@@ -90,6 +112,12 @@ function mount(response?: Partial<TosProjectionResponse>) {
     reason: null,
     age_seconds: 30,
     document: symbolsDocument(),
+  });
+  vi.mocked(tosStatusApi.getStatus).mockResolvedValue({
+    available: true,
+    reason: null,
+    age_seconds: 20,
+    document: statusDocument(),
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   render(
@@ -132,7 +160,7 @@ describe('TOS 운영 페이지', () => {
   it('puts the machinery last and collapsed, labelled as the paper cell', async () => {
     mount({});
     await screen.findByText('최근 상태 도착');
-    const details = document.querySelector('details') as HTMLDetailsElement;
+    const details = internals();
     expect(details.open).toBe(false);
     expect(details).toHaveTextContent('paper 셀 상태와 기록 검증');
     // The five fact cards are still there, whole — just no longer the page.
@@ -150,6 +178,14 @@ describe('TOS 운영 페이지', () => {
     await waitFor(() => expect(tosBarsApi.getBars).toHaveBeenCalledWith('stock-r1-20261125'));
   });
 
+  it('puts the board’s own verdict at the top, from /api/tos/status', async () => {
+    mount({});
+    await screen.findByText('최근 상태 도착');
+    const strip = within(screen.getByRole('region', { name: '지금 상태' }));
+    expect(strip.getByText('막힘 0 · 확인 2')).toBeInTheDocument();
+    expect(strip.getByText('5/5일 달성')).toBeInTheDocument();
+  });
+
   it('offers exactly one command-shaped control, and it only re-reads', async () => {
     mount({});
     await screen.findByText('최근 상태 도착');
@@ -161,18 +197,18 @@ describe('TOS 운영 페이지', () => {
   it('renders producer fixture values, preserving false and zero', async () => {
     mount({});
     await screen.findByText('최근 상태 도착');
-    const internals = document.querySelector('details') as HTMLElement;
-    expect(within(internals).getByRole('region', { name: '위험 원장과 증거' })).toHaveTextContent('0');
-    expect(within(internals).getByRole('region', { name: '릴리스 상태' })).toHaveTextContent('거부');
+    const panel = internals();
+    expect(within(panel).getByRole('region', { name: '위험 원장과 증거' })).toHaveTextContent('0');
+    expect(within(panel).getByRole('region', { name: '릴리스 상태' })).toHaveTextContent('거부');
   });
 
   it('renders whole null groups as unknown, including alert counts', async () => {
     mount({ projection: unknown });
     await screen.findByText('최근 상태 도착');
-    const internals = document.querySelector('details') as HTMLElement;
-    expect(within(internals).getAllByText('알 수 없음').length).toBeGreaterThan(10);
+    const panel = internals();
+    expect(within(panel).getAllByText('알 수 없음').length).toBeGreaterThan(10);
     expect(
-      within(within(internals).getByRole('region', { name: '백업과 알림' })).queryByText('없음'),
+      within(within(panel).getByRole('region', { name: '백업과 알림' })).queryByText('없음'),
     ).not.toBeInTheDocument();
   });
 
