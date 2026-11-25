@@ -29,6 +29,7 @@
 - [Phase-0 판정 장치 퇴역 (2026-11-12)](2026-11-12-phase0-retirement-plan.md): Phase 0 는 2026-10-22 서명(#920)으로 닫혔고 완료 기준은 `TOS_PAPER_READY` 다. P1 — 완료 계약서·인덱스 도구·완료/계약 검사기·U-17 예방 통제와 그 CI 단계를 지운다(`tos-gate` 체크 이름은 유지하고 내용만 `tos_redigest --check` 로 교체). P2(이력 합치기)는 운영자 실행.
 - [TOS 활용 계획 (2026-11-19)](2026-11-19-tos-usage-plan.md): 11-13 효용성 문서를 대체. 단위는 «종목 하나 × 전략 하나 = tenant 하나». 이번 주 3대형주(005930 · 000660 · 005380) 왕복 이틀 연속 = 거래 경로 확정. 운용 규칙 U1~U6(tenant 당 포지션 하나 · 종목당 전략 하나 · 장중 수동 주문 금지 · 모의 키당 tenant 3개 · 부팅 70초 엇갈림 · 막힌 잎은 보관). 성과 집계 최소판·종목별 화면을 P3 보다 앞당김. 역할: 005930 카나리아(R4) · 000660 Setup D · 005380 RSI/%R. 판정 네 문장.
 - [TOS 코드 절반 이하 (2026-11-13)](2026-11-13-tos-code-halving-plan.md): 운영자 지시 — S1 안 쓰는 커널 패키지·B3·시간 스냅샷 부피, S2 안 터진 판정 장치(안전망 wdr/sir/spg/protective/liveauth/hag/stm, verify 17→8, currentness 21→12) 합치기·제거, S3 tos-spec·tos-evidence·역사 문서 은퇴, S4 docstring 첫 줄·주석 제거. 지킬 것: 중복 주문 방지·#998·리스크 한도·GET 전용.
+- [`/tos` 운영 페이지 가독성 개선 (2026-11-25)](2026-11-25-tos-operator-page-legibility-plan.md): 운영자 지시 — 페이지가 답할 세 질문(왜 진입했나/안 했나 · 각 tenant 가 어디에 있나 · 무엇을 사고팔았나). 여섯 구역, 조건 체크리스트와 한 줄 식, 게이트와 신호 분리. P1 화면만 · P2 내보내기 확장(손익 · 상태판 · 선물 가상 손익) · P3 장중 갱신.
 - Current implementation/check snapshot: [PROJECT_STATUS](../PROJECT_STATUS.md).
 - The dated update paragraphs below are historical observations, not current entry-gate verdicts. Consult the current checkers and normative sources for authorization.
 
