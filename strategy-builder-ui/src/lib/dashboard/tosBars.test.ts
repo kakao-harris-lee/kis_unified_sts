@@ -6,17 +6,24 @@ import {
   BAR_FLAGS,
   LATEST_SESSION,
   LEGACY_STOCK_INSTRUMENT,
+  SKIP_ENGINE_DISAGREES,
+  SKIP_NOT_ENGINE_COUNTED,
+  SKIP_PROBE_ENTRY,
   SUPPORTED_BARS_SCHEMA_VERSION,
   barValue,
   barsState,
   groupSessionsByDate,
   hasFlag,
+  hasHypotheticalPnl,
   isAcceptedBarsDocument,
+  ruleExplanation,
   sessionKindLabel,
   sessionOptionLabel,
   type BarsState,
   type TosBarsBar,
   type TosBarsDocument,
+  type TosBarsExplainField,
+  type TosHypotheticalSkipped,
   type TosBarsResponse,
   type TosSessionEntry,
 } from './tosBars';
@@ -212,5 +219,139 @@ describe('groupSessionsByDate', () => {
 
   it('is empty for an empty listing, which is what sends the panel to its text box', () => {
     expect(groupSessionsByDate([])).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The explanation blocks — legibility plan §6 P2, items four and five.
+// ---------------------------------------------------------------------------
+
+const explained: TosBarsDocument = {
+  schema_version: SUPPORTED_BARS_SCHEMA_VERSION,
+  market: 'futures',
+  decision_only: true,
+  explain: {
+    schema: 'tos-bars-explain/1',
+    probe_basis: 'OPERATOR_RULE_MAP',
+    rules: [
+      { label: 'R1', rule_id: 'R1-ENTRY-LONG', rationale: '진입 조건이 모두 섰다.', probe: false },
+      { label: 'R4', rule_id: 'R4-M2-PROBE-ENTRY-LONG', rationale: '경계 프로브다.', probe: true },
+    ],
+    default: { rule_id: 'R0-DEFAULT-NO-ACTION', rationale: '아무 규칙도 서지 않았다.' },
+    fields: {
+      z_x1000: { field: 'z', op: 'ratio_z', inputs: ['close', 'vwap', 'atr'], known: true },
+    },
+  },
+  hypothetical_pnl: {
+    hypothetical: true,
+    direction: 'LONG',
+    multiplier_krw_per_point: 50000,
+    assumptions: ['FILL_AT_DECISION_BAR_CLOSE', 'NO_FEES'],
+    totals: { trades: 1, wins: 1, points: '2.94', hypothetical_pnl_krw: '147000' },
+  },
+};
+
+describe('ruleExplanation', () => {
+  it('matches on the authored rule id, which is what a bar names', () => {
+    expect(ruleExplanation(explained, 'R1-ENTRY-LONG')?.rationale).toBe('진입 조건이 모두 섰다.');
+    expect(ruleExplanation(explained, 'R4-M2-PROBE-ENTRY-LONG')?.probe).toBe(true);
+  });
+
+  it('never matches on the position label', () => {
+    // `label` is the rule's POSITION (R1, R4); two tenants put different rules
+    // at the same position, so matching on it would caption a 005380 bar with
+    // 005930's sentence — and the whole point is that the caption is true.
+    expect(ruleExplanation(explained, 'R1')).toBeNull();
+    expect(ruleExplanation(explained, 'R4')).toBeNull();
+  });
+
+  it('covers the default rule, which fires on most bars and is not in rules', () => {
+    expect(ruleExplanation(explained, 'R0-DEFAULT-NO-ACTION')?.rationale).toBe(
+      '아무 규칙도 서지 않았다.',
+    );
+  });
+
+  it('is null rather than throwing for anything it cannot answer', () => {
+    expect(ruleExplanation(explained, 'R9-NOT-A-RULE')).toBeNull();
+    expect(ruleExplanation(explained, null)).toBeNull();
+    expect(ruleExplanation(null, 'R1-ENTRY-LONG')).toBeNull();
+    expect(
+      ruleExplanation({ schema_version: SUPPORTED_BARS_SCHEMA_VERSION }, 'R1-ENTRY-LONG'),
+    ).toBeNull();
+  });
+});
+
+describe('hasHypotheticalPnl', () => {
+  it('is true only for a decision-only document whose block says what it is', () => {
+    expect(hasHypotheticalPnl(explained)).toBe(true);
+  });
+
+  it('refuses a block that has not asserted it is hypothetical', () => {
+    // A block whose own flag is missing has not said what it is, and a page
+    // that shows it anyway is one label away from presenting an assumed fill
+    // as money.
+    expect(
+      hasHypotheticalPnl({ ...explained, hypothetical_pnl: { totals: { trades: 1 } } }),
+    ).toBe(false);
+  });
+
+  it('refuses it on a tenant that really trades', () => {
+    expect(
+      hasHypotheticalPnl({ ...explained, market: 'stock', decision_only: false }),
+    ).toBe(false);
+  });
+
+  it('is false for a document that predates the block', () => {
+    expect(hasHypotheticalPnl({ schema_version: SUPPORTED_BARS_SCHEMA_VERSION })).toBe(false);
+    expect(hasHypotheticalPnl(null)).toBe(false);
+  });
+
+  it('keeps the hypothetical total out of the realized namespace', () => {
+    // There is no `pnl_krw` here to be summed with the symbols document's.
+    const totals = explained.hypothetical_pnl?.totals ?? {};
+    expect(Object.keys(totals)).not.toContain('pnl_krw');
+    expect(totals.hypothetical_pnl_krw).toBe('147000');
+  });
+
+  it('types a zero-trade session as no total rather than zero won', () => {
+    // '0' would render as "±0 today", which is a different claim from "no
+    // signal fired". The exporter sends null; the type must allow it.
+    const quiet: TosBarsDocument = {
+      schema_version: SUPPORTED_BARS_SCHEMA_VERSION,
+      decision_only: true,
+      hypothetical_pnl: {
+        hypothetical: true,
+        totals: { trades: 0, wins: 0, points: null, hypothetical_pnl_krw: null },
+      },
+    };
+    expect(hasHypotheticalPnl(quiet)).toBe(true);
+    expect(quiet.hypothetical_pnl?.totals?.hypothetical_pnl_krw).toBeNull();
+    expect(quiet.hypothetical_pnl?.totals?.trades).toBe(0);
+  });
+
+  it('types the skipped decisions that say what the total left out', () => {
+    const skipped: TosHypotheticalSkipped[] = [
+      { time_kst: '15:45', rule_id: 'R3-EXIT-EOD', reason: SKIP_NOT_ENGINE_COUNTED },
+      { time_kst: '09:14', rule_id: 'R4-M2-PROBE', reason: SKIP_PROBE_ENTRY },
+      { time_kst: '10:00', rule_id: 'R1', reason: SKIP_ENGINE_DISAGREES },
+    ];
+    expect(skipped.map((entry) => entry.reason)).toEqual([
+      'NOT_ENGINE_COUNTED',
+      'PROBE_ENTRY',
+      'ENGINE_DISAGREES',
+    ]);
+  });
+
+  it('accepts a field parameter shape nobody typed', () => {
+    // fields.yaml is authored content: a null, a list or a nested mapping must
+    // only ever degrade the explanation, never fail the document.
+    const field: TosBarsExplainField = {
+      field: 'odd',
+      op: 'permissive',
+      params: { when_missing: null, choices: [1, 2], nested: { a: 1 } },
+      scale: { mult: null },
+    };
+    expect(field.params?.when_missing).toBeNull();
+    expect(field.params?.choices).toEqual([1, 2]);
   });
 });
