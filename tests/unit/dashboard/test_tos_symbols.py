@@ -593,6 +593,51 @@ def test_a_document_without_the_new_fields_still_reads(
     assert row["buy"]["fills"] == 1
 
 
+def test_an_unresolved_attempt_sentence_carrying_a_path_does_not_pass_through(
+    client: TestClient, document: Path
+) -> None:
+    """``reason``/``observation`` 은 런타임이 쓴 **자유 텍스트**다.
+
+    ``perf`` 가 골라 오기만 할 뿐 내용을 통제하지 않으므로, 언제든 경로를 물고 올
+    수 있다. #1179 에서 자매 라우트(상태판)가 바로 그렇게 샜다.
+    """
+    payload = json.loads(json.dumps(_VALID_DOCUMENT))
+    attempt = payload["symbols"][0]["pnl"]["unresolved"]["attempts"][0]
+    attempt["reason"] = (
+        "미전송 종료(cannot open /home/deploy/.local/state/tos/"
+        "cp3-setup-d-stock-005930-data/005930/evidence.sqlite3)"
+    )
+    attempt["observation"] = "see ~/.local/state/tos/cp3-stock.log"
+    payload["symbols"][0]["error"] = "OperationalError: /home/deploy/x"
+    _write(document, payload)
+
+    body = _get(client)
+    assert body["available"] is True
+    assert body["redacted"] is True
+    rendered = json.dumps(body, ensure_ascii=False)
+    for needle in ("/home", "~/", "state/tos"):
+        assert needle not in rendered, needle
+    # 사유는 남는다.
+    assert "미전송 종료" in rendered
+    assert "OperationalError" in rendered
+
+
+def test_a_broker_order_number_still_reaches_the_body(
+    client: TestClient, document: Path
+) -> None:
+    """``broker_execution_id`` 는 주문번호다 — 가리면 브로커에서 찾을 길이 없다.
+
+    10자리라 계좌 패턴에 걸리지만, 구조화된 그 키에서는 패턴 추측을 적용하지
+    않는다. 같은 숫자가 **문장 안**에 있으면 그때는 지운다.
+    """
+    _write(document, _VALID_DOCUMENT)
+    body = _get(client)
+    assert body["redacted"] is False
+    row = body["document"]["symbols"][0]
+    assert row["buy"]["last"]["broker_execution_id"] == "0000027053"
+    assert row["sell"]["last"]["broker_execution_id"] == "0000029505"
+
+
 def test_the_route_imports_nothing_from_tos() -> None:
     """The reverse firewall, restated where a reader of this suite sees it."""
     for line in _ROUTE_MODULE.read_text(encoding="utf-8").splitlines():

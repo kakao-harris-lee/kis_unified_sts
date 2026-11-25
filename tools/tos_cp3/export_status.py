@@ -16,8 +16,10 @@
 방화벽(TOS-FW-R)상 커널을 import 할 수 없고, 그 virtualenv 에 ``tos_runtime`` 이
 없다. 경계는 **파일**이다.
 
-**무엇을 떼는가.** 이 문서는 대시보드가 그대로 브라우저에 보내고, 그 페이지는
-Cloudflare Access 뒤에서 인터넷에 열려 있다. 그래서 상태판 JSON 이 가진 것 중
+**무엇을 떼는가 — 두 겹이다.** 이 문서는 대시보드가 그대로 브라우저에 보내고, 그
+페이지는 Cloudflare Access 뒤에서 인터넷에 열려 있다.
+
+*첫째, 키를 고른다.* 상태판 JSON 이 가진 것 중
 
 * ``state_dir`` · ``clean_streak[].calendar`` — **호스트 경로**,
 * ``expected_code_digest`` · ``band_digest`` · ``repo_commit`` · ``bootproof``
@@ -26,6 +28,18 @@ Cloudflare Access 뒤에서 인터넷에 열려 있다. 그래서 상태판 JSON
 
 은 **싣지 않는다**. boot proof 는 통째로 빼는 대신 «OK 였나» 한 불값으로 줄인다
 (:func:`_boot_ok`) — 운영자가 봐야 하는 것은 그 문장이 아니라 그 판정이다.
+
+*둘째, 고르기만으로는 부족하다.* 남긴 것 중 여럿이 **자유 텍스트**다 — 이슈 문장,
+``aborts``, 달력 오류. 러너의 ``die`` 는 ``$TENANT_CUSTODY_ROOT`` · ``$TENANT_LOG``
+같은 절대 경로를 문장에 그대로 끼워 넣고, 잎/달력 오류는 ``f"{type}: {exc}"`` 라
+예외 메시지의 경로를 통째로 들고 온다. 실제 사고(#1179 리뷰): 세션 로그 한 줄의
+``ABORT: cannot create data leaf /home/deploy/...`` 가 문서에 세 번 실렸다. 그래서
+:func:`build_document` 는 **완성된 문서를 통째로 걸어 모든 문자열**을
+:mod:`tools.tos_cp3.redact` 에 건다 — 필드를 하나 더해도 기본값이 「지워진 채
+나간다」 가 되도록. 키를 골라 지우는 방식이었다면 다음 필드에서 또 샌다.
+
+웹 계층도 같은 일을 한 번 더 한다(:mod:`services.dashboard.routes.tos_status`) —
+읽는 쪽이 내보내기가 옳았다는 가정 위에 서지 않게.
 """
 
 from __future__ import annotations
@@ -34,7 +48,7 @@ import argparse
 import datetime as _dt
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +56,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.tos_cp3 import export_bars, status_board  # noqa: E402
+from tools.tos_cp3 import export_bars, redact, status_board  # noqa: E402
 
 __all__ = [
     "DOCUMENT_NAME",
@@ -180,13 +194,39 @@ def _paper_block(paper: Any) -> dict[str, Any]:
     }
 
 
-def build_document(board: dict[str, Any]) -> dict[str, Any]:
-    """상태판 JSON 에서 화면이 읽을 것만. ``board`` 는 ``build_board`` 의 반환값이다.
+def build_document(
+    board: dict[str, Any],
+    *,
+    state_dir: str | None = None,
+    account_values: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """상태판 JSON 에서 화면이 읽을 것만, **경로와 계좌를 지워서**.
 
-    순수 함수다 — 디스크도 시계도 보지 않는다. 그래서 테스트가 녹화된 상태판
-    하나로 «무엇이 실리고 무엇이 떨어지는가» 를 통째로 고정할 수 있다.
+    순수 함수다 — 디스크도 시계도 보지 않는다(``account_values`` 를 주지 않으면
+    환경만 한 번 읽는다). 그래서 테스트가 녹화된 상태판 하나로 «무엇이 실리고
+    무엇이 떨어지는가» 를 통째로 고정할 수 있다.
+
+    마지막 줄이 :func:`redact.redact_document` 인 것이 핵심이다 — 위에서 고른 키
+    목록이 아니라 **문서 전체**가 지워지므로, 나중에 필드를 더하는 사람이 지우는
+    것을 잊어도 새지 않는다.
     """
     issues = [dict(issue) for issue in board.get("issues") or []]
+    document = _select(board, issues)
+    return redact.redact_mapping(
+        document,
+        account_values=(
+            redact.account_values_from_env()
+            if account_values is None
+            else account_values
+        ),
+        # 상태 루트는 절대 경로 규칙이 이미 잡지만, 그 규칙이 바뀌어도 이것만은
+        # 반드시 지워지게 따로 건넨다.
+        extra_paths=[state_dir] if state_dir else [],
+    )
+
+
+def _select(board: dict[str, Any], issues: list[dict[str, Any]]) -> dict[str, Any]:
+    """화면이 읽는 키만 고른 문서(아직 지우기 전)."""
     return {
         "schema_version": STATUS_SCHEMA_VERSION,
         "date": board.get("date"),
@@ -221,7 +261,7 @@ def export_status(
     today = status_board.today_kst()
     day = _dt.date.fromisoformat(date) if date else today
     board = status_board.build_board(cfg, day=day, today=today, proc_root=proc_root)
-    document = build_document(board)
+    document = build_document(board, state_dir=str(cfg.state_dir))
     path = document_path(destination_root)
     try:
         export_bars._write_atomically(

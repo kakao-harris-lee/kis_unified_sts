@@ -211,6 +211,158 @@ def test_no_host_path_or_digest_reaches_the_document(
                 assert value not in rendered, key
 
 
+# --------------------------------------------------------------------------- #
+# 자유 텍스트로 새는 경로 — #1179 리뷰의 차단 지적
+# --------------------------------------------------------------------------- #
+
+#: 러너가 실제로 쓰는 `die` 모양 그대로 — 스탬프 접두까지(``parse_runner_log`` 는
+#: ``YYYY-MM-DD HH:MM:SS`` 가 붙은 줄만 읽는다. 접두 없이 쓰면 이 테스트가 조용히
+#: 아무 것도 검사하지 않는다 — 처음에 실제로 그렇게 썼다가 잡혔다).
+_ABORT_LINES = (
+    "2026-10-22 08:38:06 ABORT: cannot create data leaf"
+    " /home/deploy/.local/state/tos/cp3-setup-d-long-data/20261126-A05612",
+    "2026-10-22 08:38:07 ABORT: TENANT_CUSTODY_ROOT does not exist:"
+    " /home/deploy/.local/state/tos/cp3-setup-d-stock-custody",
+    "2026-10-22 08:38:08 ABORT: band process exited rc 1 (gate refusal) — see"
+    " /home/deploy/.local/state/tos/cp3-long.log",
+)
+
+
+def _with_abort_lines(state: Path) -> list[str]:
+    """그날 세션 로그에 ABORT 줄을 붙인다 — 상태판이 그대로 이슈로 올린다."""
+    log = state / "cp3-sessions" / "long-20261022" / "session.log"
+    log.write_text(
+        log.read_text(encoding="utf-8") + "\n".join(_ABORT_LINES) + "\n",
+        encoding="utf-8",
+    )
+    # 러너 로그 파서는 스탬프와 `ABORT: ` 접두를 떼고 사유만 담는다.
+    return [line.split("ABORT: ", 1)[1] for line in _ABORT_LINES]
+
+
+def _leaks(rendered: str, state: Path) -> list[str]:
+    """문서에 남으면 안 되는 것들 — 발견된 것만 돌려준다."""
+    found = []
+    for needle in ("/home", "/tmp", "~/", str(state), "5020591501", "12345678-01"):
+        if needle in rendered:
+            found.append(needle)
+    return found
+
+
+def test_an_abort_line_carrying_a_path_never_reaches_the_document(
+    cfg: sb.BoardConfig, state: Path
+) -> None:
+    """#1179 재현: 세션 로그 한 줄의 절대 경로가 문서에 세 번 실렸다.
+
+    사유는 남고 경로만 자리 표시가 된다 — 운영자가 봐야 하는 것은 「무엇이
+    막혔나」 이고, 경로는 호스트의 로그에 이미 있다.
+    """
+    expected = _with_abort_lines(state)
+    board = sb.build_board(
+        cfg, day=D1022, today=dt.date(2026, 12, 31), proc_root=Path("/nonexistent")
+    )
+    # 전제 확인: 상태판 **자신의 이슈 문장**이 경로를 들고 있다. 이것을 보지 않으면
+    # 아래 검사가 「애초에 아무 것도 없었다」 로 공허하게 통과한다.
+    assert board["tenant_sessions"][0]["aborts"] == expected
+    board_issues = json.dumps(board["issues"], ensure_ascii=False)
+    assert board_issues.count("/home/deploy") == 3
+
+    document = ex.build_document(board, state_dir=str(cfg.state_dir))
+    rendered = json.dumps(document, ensure_ascii=False)
+    assert _leaks(rendered, state) == []
+    assert ex.redact.PATH_PLACEHOLDER in rendered
+
+    texts = [issue["text"] for issue in document["issues"]]
+    assert any("cannot create data leaf" in text for text in texts)
+    assert any("TENANT_CUSTODY_ROOT does not exist" in text for text in texts)
+    assert any("band process exited rc 1" in text for text in texts)
+
+
+def test_a_streak_error_carrying_a_path_is_redacted(
+    cfg: sb.BoardConfig, state: Path
+) -> None:
+    """달력을 못 읽으면 ``f"{type}: {exc}"`` 가 워크트리 경로를 통째로 들고 온다."""
+    board = sb.build_board(
+        cfg, day=D1022, today=dt.date(2026, 12, 31), proc_root=Path("/nonexistent")
+    )
+    board["clean_streak"][0]["error"] = (
+        "FileNotFoundError: [Errno 2] No such file or directory: "
+        "'/home/deploy/project/kis_unified_sts/config/tos_runtime/x/calendar.yaml'"
+    )
+    board["issues"].append(
+        {
+            "level": sb.WARN,
+            "where": "streak/long",
+            "text": "깨끗한 거래일을 셀 수 없다 — " + board["clean_streak"][0]["error"],
+        }
+    )
+    document = ex.build_document(board, state_dir=str(cfg.state_dir))
+    rendered = json.dumps(document, ensure_ascii=False)
+    assert _leaks(rendered, state) == []
+    assert document["clean_streak"][0]["error"].startswith("FileNotFoundError")
+
+
+def test_a_leaf_open_failure_carrying_a_path_is_redacted(
+    cfg: sb.BoardConfig, state: Path
+) -> None:
+    """잎을 열지 못한 사유도 예외 메시지라 경로를 물고 온다."""
+    board = sb.build_board(
+        cfg, day=D1022, today=dt.date(2026, 12, 31), proc_root=Path("/nonexistent")
+    )
+    leaked = (
+        "OperationalError: unable to open database file "
+        "/home/deploy/.local/state/tos/cp3-setup-d-long-data/A05611/evidence.sqlite3"
+    )
+    board["tenant_sessions"][0]["store"] = {"error": leaked, "ticks": 6}
+    board["issues"].append(
+        {"level": sb.BLOCK, "where": "long-20261022", "text": f"저장소 — {leaked}"}
+    )
+    rendered = json.dumps(
+        ex.build_document(board, state_dir=str(cfg.state_dir)), ensure_ascii=False
+    )
+    assert _leaks(rendered, state) == []
+    assert "unable to open database file" in rendered
+
+
+def test_an_account_value_in_free_text_never_reaches_the_document(
+    cfg: sb.BoardConfig, state: Path
+) -> None:
+    """계좌 모양의 수도 지운다 — 설정된 값이든 패턴이든."""
+    board = sb.build_board(
+        cfg, day=D1022, today=dt.date(2026, 12, 31), proc_root=Path("/nonexistent")
+    )
+    board["issues"].append(
+        {
+            "level": sb.BLOCK,
+            "where": "long-20261022",
+            "text": "INVALID_CHECK_ACNO for 5020591501 (12345678-01)",
+        }
+    )
+    rendered = json.dumps(
+        ex.build_document(
+            board, state_dir=str(cfg.state_dir), account_values=["5020591501"]
+        ),
+        ensure_ascii=False,
+    )
+    assert _leaks(rendered, state) == []
+    assert "INVALID_CHECK_ACNO" in rendered
+
+
+def test_a_field_added_tomorrow_is_redacted_without_anyone_remembering(
+    cfg: sb.BoardConfig, state: Path
+) -> None:
+    """키를 고르는 방식이었다면 이 필드가 조용히 샌다 — 그래서 문서를 통째로 건다."""
+    board = sb.build_board(
+        cfg, day=D1022, today=dt.date(2026, 12, 31), proc_root=Path("/nonexistent")
+    )
+    board["tenant_sessions"][0]["issues"].append(
+        {"level": sb.WARN, "text": "새 필드가 /home/deploy/secret 를 물고 왔다"}
+    )
+    rendered = json.dumps(
+        ex.build_document(board, state_dir=str(cfg.state_dir)), ensure_ascii=False
+    )
+    assert "/home/deploy" not in rendered
+
+
 def test_the_document_lands_where_the_dashboard_reads_with_narrow_modes(
     cfg: sb.BoardConfig, tmp_path: Path
 ) -> None:

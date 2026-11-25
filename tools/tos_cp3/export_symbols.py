@@ -19,11 +19,20 @@ import 할 수 없고, 그 virtualenv 에 ``tos_runtime`` 이 없다. 경계는 
 아니라 **TOS 자신의 원장이 아는 값**(perf 의 FIFO 미청산 lot)이고, 문서와 화면 모두
 그렇게 이름 붙인다.
 
-**호스트 경로는 문서에 넣지 않는다.** 이 문서는 대시보드가 그대로 브라우저에 보내고,
-그 브라우저는 번들에 대시보드 API 키를 쥐고 있다. 잎 경로 · 세션 경로는 어느 키에도
-없고, 잎을 읽지 못한 사유조차 예외 **종류 이름**으로 줄여 적는다(:func:`_reduce_error`).
-``perf`` 의 ``leaves[]``(계좌 번호 · 잎 경로를 담는다)는 통째로 내보내지 않고, 집계 밖
-attempt 에서도 ``leaf`` 키만 떼고 싣는다(:func:`_attempt_block`).
+**호스트 경로는 문서에 넣지 않는다 — 세 겹으로.** 이 문서는 대시보드가 그대로
+브라우저에 보내고, 그 페이지는 Cloudflare Access 뒤에서 인터넷에 열려 있다.
+
+1. *키를 고른다.* ``perf`` 의 ``leaves[]``(계좌 번호 · 잎 경로를 담는다)는 통째로
+   내보내지 않고, 집계 밖 attempt 에서도 ``leaf`` 키를 떼고 싣는다
+   (:func:`_attempt_block`). 잎을 읽지 못한 사유는 예외 **종류 이름**으로 줄인다
+   (:func:`_reduce_error`).
+2. *그래도 자유 텍스트가 남는다.* 집계 밖 attempt 의 사유·관측 문장은 런타임이
+   적은 것을 ``perf`` 가 골라 온 것이라 언제든 경로를 물고 올 수 있다. 그래서
+   :func:`build_document` 가 **완성된 문서를 통째로 걸어 모든 문자열**을
+   :mod:`tools.tos_cp3.redact` 에 건다. 키를 고르는 방식만 쓰면 필드가 하나 늘 때
+   조용히 새는 길이 생긴다 — 상태판에서 실제로 그렇게 샜다(#1179 리뷰).
+3. *웹 계층이 한 번 더 한다* (:mod:`services.dashboard.routes.tos_symbols`) —
+   읽는 쪽이 내보내기가 옳았다는 가정 위에 서지 않게.
 
 **다섯 tenant 가 모두 줄을 받는다.** 주식 셋은 체결·보유·손익이 있는 줄이고, 선물 둘은
 ``decision_only`` 가 참인 줄이다 — 진입이 독립 승인 단계에서 멈추므로(운영자 결정
@@ -56,6 +65,7 @@ if str(REPO_ROOT) not in sys.path:
 from tools.tos_cp3 import (  # noqa: E402
     export_bars,
     perf,
+    redact,
     status_board,
 )
 from tools.tos_cp3 import session_inputs as si  # noqa: E402
@@ -612,7 +622,7 @@ def build_document(
                 ),
             )
         )
-    return {
+    document = {
         "schema_version": SYMBOLS_SCHEMA_VERSION,
         "date": day.isoformat(),
         "generated_kst": _dt.datetime.now(status_board.KST).isoformat(
@@ -621,6 +631,16 @@ def build_document(
         "holding_basis": HOLDING_BASIS,
         "symbols": rows,
     }
+    # 마지막에 문서를 통째로 걸어 경로·계좌를 지운다. 위에서 키를 골라 담은 것만으로는
+    # 부족하다 — 집계 밖 attempt 의 사유·관측 문장(`perf._attempt_cause` /
+    # `_attempt_observation`)은 런타임이 적은 **자유 텍스트**라 언제든 경로를 물고
+    # 올 수 있고, 잎 오류 문장도 그렇다. 키를 고르는 방식은 필드가 하나 늘 때마다
+    # 조용히 새는 길을 만든다(#1179 리뷰에서 상태판이 실제로 그랬다).
+    return redact.redact_mapping(
+        document,
+        account_values=redact.account_values_from_env(),
+        extra_paths=[str(cfg.state_dir)],
+    )
 
 
 def export_symbols(

@@ -171,20 +171,39 @@ export function statusState(
 }
 
 /** How the strip should read overall. Never derived from a level literal here. */
-export type BoardVerdict = 'blocked' | 'check' | 'clear' | 'unknown';
+export type BoardVerdict = 'blocked' | 'check' | 'clear' | 'stale' | 'unknown';
+
+/**
+ * Today in KST, as `YYYY-MM-DD`.
+ *
+ * The viewer's own clock and timezone are irrelevant: trading days here are KST
+ * (CLAUDE.md, "Timezone"), so a laptop in another zone must not make yesterday's
+ * board look current.
+ */
+export function kstToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(now);
+}
 
 /**
  * The board's one-word verdict, from the counts the exporter already took.
  *
- * `unknown` when the document names no counts: a board that could not be
- * counted must not render as "clear", which is the reading that would let a
- * stopped exporter pass for a healthy day.
+ * **`stale` beats every other answer.** A board from another day says nothing
+ * about now: on the morning after a clean close the document still reads
+ * "0 blocks", and rendering that as "clear" is precisely how a stopped
+ * exporter passes for a healthy day. The counts are only meaningful once the
+ * document is today's.
+ *
+ * `unknown` when the document names no date or no counts — absence stays
+ * absence rather than defaulting to good news.
  */
 export function boardVerdict(
   document: TosStatusDocument | null | undefined,
+  now: Date = new Date(),
 ): BoardVerdict {
-  const blocked = document?.blocked;
-  const checks = document?.checks;
+  if (!document?.date) return 'unknown';
+  if (document.date !== kstToday(now)) return 'stale';
+  const blocked = document.blocked;
+  const checks = document.checks;
   if (typeof blocked !== 'number' || typeof checks !== 'number') return 'unknown';
   if (blocked > 0) return 'blocked';
   if (checks > 0) return 'check';

@@ -596,6 +596,62 @@ def test_a_read_failure_is_reduced_to_its_exception_type(
     assert ex._reduce_error(raw) == expected
 
 
+def test_an_attempt_sentence_carrying_a_path_never_reaches_the_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """집계 밖 문장은 런타임이 쓴 **자유 텍스트**다 — ``perf`` 는 고르기만 한다.
+
+    #1179 에서 자매 문서(상태판)가 바로 이 길로 샜다. 키를 고르는 것만으로는
+    못 막으므로 문서를 통째로 걸어 지운다.
+    """
+    leaky = (
+        "미전송 종료(cannot open "
+        "/home/deploy/.local/state/tos/cp3-setup-d-stock-005930-data/005930)"
+    )
+    monkeypatch.setattr(perf, "_attempt_cause", lambda attempt: leaky)
+    monkeypatch.setattr(
+        perf, "_attempt_observation", lambda attempt: "see ~/.local/state/tos/x.log"
+    )
+    leaf = _write_leaf(
+        tmp_path / "005930",
+        [
+            ("VENUE_POLICY_BOUND", {"price_scale": PRICE_SCALE}),
+            ("SEND_SEALED", _seal("attempt-buy", "BUY", 175_800)),
+            (
+                "UNCERTAIN_SEND_RECONCILED",
+                {
+                    "attempt_id": "attempt-buy",
+                    "outcome": perf.RECONCILED_NEVER_ACCEPTED,
+                },
+            ),
+        ],
+    )
+    row = _row_for(leaf)
+    # 줄 하나만으로는 아직 지워지지 않았다 — 지우는 곳은 문서를 닫는 자리다.
+    assert "/home/deploy" in json.dumps(row, ensure_ascii=False)
+
+    document = ex.redact.redact_document(
+        {"symbols": [row]}, extra_paths=[str(tmp_path)]
+    )
+    rendered = json.dumps(document, ensure_ascii=False)
+    assert "/home" not in rendered
+    assert "~/" not in rendered
+    assert str(tmp_path) not in rendered
+    # 사유는 남는다.
+    assert "미전송 종료" in rendered
+
+
+def test_the_whole_document_is_redacted_on_the_way_out(
+    recorded: tuple[sb.BoardConfig, Path],
+) -> None:
+    """내보내기가 닫히는 자리에서 한 번, 문서 전체에. 키 목록이 아니라 walk 다."""
+    config, _ = recorded
+    document = _document(recorded)
+    rendered = json.dumps(document, ensure_ascii=False)
+    for needle in ("/home", "/tmp", "~/", str(config.state_dir)):
+        assert needle not in rendered, needle
+
+
 def test_no_host_path_reaches_the_document(
     recorded: tuple[sb.BoardConfig, Path], tmp_path: Path
 ) -> None:

@@ -38,13 +38,23 @@ yet" as a server error would violate ADR-DEV-014 OBS-INV-003. The reason prefixe
 are pinned by ``tests/fixtures/tos/symbols-reasons.json``, shared with the UI's
 matcher.
 
-**No ``reason`` ever carries a value read from the document**, and the document
-carries no host path to begin with: the exporter emits none, and reduces even a
-leaf-read failure to the exception's type name (``export_symbols._reduce_error``)
-precisely because this body reaches a browser that holds the dashboard API key in
-its bundle. Unlike ``tos_bars`` there is no caller-supplied path segment at all —
-the document's name is fixed, so this route has no id to validate and no
-traversal surface to close.
+**No ``reason`` ever carries a value read from the document.** Unlike
+``tos_bars`` there is no caller-supplied path segment at all — the document's
+name is fixed, so this route has no id to validate and no traversal surface to
+close.
+
+**What keeps host paths and account numbers out of this body**, on a page open
+to the internet behind Cloudflare Access — two mechanisms, not a promise:
+
+1. The exporter emits no path key and reduces a leaf-read failure to the
+   exception's type name (``export_symbols._reduce_error``).
+2. That alone would not be enough: the unresolved-attempt ``reason`` and
+   ``observation`` are sentences the RUNTIME wrote, relayed by
+   ``perf._attempt_cause``/``_attempt_observation``, and free text is exactly
+   how #1179's review found host paths reaching the sibling status route. So
+   every string leaf is run through
+   :func:`services.dashboard.routes._redact.redact_payload` before validation,
+   and the response reports ``redacted=true`` when it had to change anything.
 """
 
 from __future__ import annotations
@@ -57,6 +67,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict
+
+from services.dashboard.routes._redact import redact_payload
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +308,9 @@ class TosSymbolsResponse(BaseModel):
     available: bool
     reason: str | None = None
     age_seconds: float | None = None
+    #: True when this tier had to strip a path or account-shaped value. It means
+    #: the EXPORTER regressed; the body is safe either way.
+    redacted: bool = False
     document: TosSymbolsDocument | None = None
     # The document's filesystem path is deliberately NOT a response field, for
     # the same reason the projection's and the bars document's are not: it is a
@@ -366,6 +381,17 @@ def _read_document(path: Path) -> TosSymbolsResponse:
             age_seconds,
         )
 
+    # Redact before validating — the unresolved-attempt sentences are free text
+    # the runtime wrote, and this tier does not trust the exporter to have
+    # cleaned them (see `_redact`'s module docstring).
+    payload, redacted = redact_payload(payload)
+    if redacted:
+        logger.warning(
+            "tos symbols document carried a path or account-shaped value and was "
+            "redacted by the reader; the exporter should have done this: %s",
+            path,
+        )
+
     try:
         document = TosSymbolsDocument.model_validate(payload)
     except Exception as exc:  # noqa: BLE001 - report as unknown, never 5xx
@@ -378,6 +404,7 @@ def _read_document(path: Path) -> TosSymbolsResponse:
         available=True,
         reason=None,
         age_seconds=age_seconds,
+        redacted=redacted,
         document=document,
     )
 

@@ -31,14 +31,27 @@ yet" as a server error would violate ADR-DEV-014 OBS-INV-003. The reason prefixe
 are pinned by ``tests/fixtures/tos/status-reasons.json``, shared with the UI's
 matcher.
 
-**No ``reason`` ever carries a value read from the document**, and the document
-carries no host path, digest or commit to begin with: the exporter strips
-``state_dir``, the clean-streak calendar path, the release digests and the boot
-proof's revision line before writing, precisely because this body reaches a
-browser on a page that is open to the internet behind Cloudflare Access. Like
+**No ``reason`` ever carries a value read from the document.** Like
 ``tos_symbols`` and unlike ``tos_bars`` there is no caller-supplied path segment
 at all — the document's name is fixed, so this route has no id to validate and
 no traversal surface to close.
+
+**What actually keeps host paths out of this body** — the page is open to the
+internet behind Cloudflare Access, so this is the part to get right, and it is
+*two* mechanisms, not a promise:
+
+1. The DTOs declare no path-bearing key, so ``extra="ignore"`` drops
+   ``state_dir``, the clean-streak calendar path, the release digests and the
+   boot proof's revision line even if a document carries them.
+2. That is **not enough on its own**, because several declared fields are free
+   text: issue sentences, ``aborts``, the streak's ``error``. Runner ``die``
+   messages interpolate absolute paths (``$TENANT_CUSTODY_ROOT``,
+   ``$TENANT_LOG``) and leaf/calendar errors are ``f"{type}: {exc}"``. That is
+   exactly how #1179's review found an ``ABORT: … /home/deploy/…`` line reaching
+   this route. So every string leaf of the payload is run through
+   :func:`services.dashboard.routes._redact.redact_payload` **before**
+   validation, and the response says ``redacted=true`` when it had to change
+   anything. The exporter redacts too; this tier does not take that on trust.
 """
 
 from __future__ import annotations
@@ -51,6 +64,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict
+
+from services.dashboard.routes._redact import redact_payload
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +254,11 @@ class TosStatusResponse(BaseModel):
     available: bool
     reason: str | None = None
     age_seconds: float | None = None
+    #: True when this tier had to strip a path or account-shaped value from the
+    #: document. It means the EXPORTER regressed, so the page should say the
+    #: document was altered rather than present a scrubbed broken export as
+    #: normal. The body is safe either way.
+    redacted: bool = False
     document: TosStatusDocument | None = None
     # The document's filesystem path is deliberately NOT a response field, for
     # the same reason the other three read models' are not: it is a
@@ -307,6 +327,18 @@ def _read_document(path: Path) -> TosStatusResponse:
             age_seconds,
         )
 
+    # Redact BEFORE validating, so nothing a hostile or regressed document
+    # carries can reach the body — not even through a field this DTO ignores
+    # but a future one declares. The exporter redacts too; this tier does not
+    # take that on trust (module docstring of `_redact`).
+    payload, redacted = redact_payload(payload)
+    if redacted:
+        logger.warning(
+            "tos status document carried a path or account-shaped value and was "
+            "redacted by the reader; the exporter should have done this: %s",
+            path,
+        )
+
     try:
         document = TosStatusDocument.model_validate(payload)
     except Exception as exc:  # noqa: BLE001 - report as unknown, never 5xx
@@ -319,6 +351,7 @@ def _read_document(path: Path) -> TosStatusResponse:
         available=True,
         reason=None,
         age_seconds=age_seconds,
+        redacted=redacted,
         document=document,
     )
 

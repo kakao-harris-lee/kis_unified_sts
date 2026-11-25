@@ -88,21 +88,48 @@ describe('isAcceptedStatusDocument', () => {
 });
 
 describe('boardVerdict', () => {
+  // 2026-11-25 12:00 KST — the day the fixtures describe.
+  const onTheDay = new Date('2026-11-25T03:00:00Z');
+  const today = (overrides: Partial<TosStatusDocument> = {}) =>
+    document({ date: '2026-11-25', ...overrides });
+
   it('reads the counts the exporter already took', () => {
-    expect(boardVerdict(document({ blocked: 0, checks: 0 }))).toBe('clear');
-    expect(boardVerdict(document({ blocked: 0, checks: 11 }))).toBe('check');
-    expect(boardVerdict(document({ blocked: 2, checks: 11 }))).toBe('blocked');
+    expect(boardVerdict(today({ blocked: 0, checks: 0 }), onTheDay)).toBe('clear');
+    expect(boardVerdict(today({ blocked: 0, checks: 11 }), onTheDay)).toBe('check');
+    expect(boardVerdict(today({ blocked: 2, checks: 11 }), onTheDay)).toBe('blocked');
   });
 
   it('lets a block win over any number of checks', () => {
-    expect(boardVerdict(document({ blocked: 1, checks: 0 }))).toBe('blocked');
+    expect(boardVerdict(today({ blocked: 1, checks: 0 }), onTheDay)).toBe('blocked');
   });
 
-  it('is unknown — never clear — when the counts are missing', () => {
+  it('calls a board from another day stale, however clean it reads', () => {
+    // The morning after a clean close, yesterday's document still says
+    // "0 blocks". Rendering that as "clear" is exactly how a stopped exporter
+    // passes for a healthy day — so staleness wins over the counts.
+    const yesterday = document({ date: '2026-11-24', blocked: 0, checks: 0 });
+    expect(boardVerdict(yesterday, onTheDay)).toBe('stale');
+
+    const alsoStale = document({ date: '2026-11-24', blocked: 3, checks: 0 });
+    expect(boardVerdict(alsoStale, onTheDay)).toBe('stale');
+  });
+
+  it('judges the day in KST, not in the viewer timezone', () => {
+    // 2026-11-25 23:30 UTC is already 2026-11-26 in Seoul, so a 11-25 board is
+    // stale for a viewer anywhere on earth.
+    const lateUtc = new Date('2026-11-25T23:30:00Z');
+    expect(boardVerdict(today({ blocked: 0, checks: 0 }), lateUtc)).toBe('stale');
+    // …and 2026-11-24 15:30 UTC is already 11-25 in Seoul, so it is current.
+    const earlyUtc = new Date('2026-11-24T15:30:00Z');
+    expect(boardVerdict(today({ blocked: 0, checks: 0 }), earlyUtc)).toBe('clear');
+  });
+
+  it('is unknown — never clear — when the date or the counts are missing', () => {
     // A board that could not be counted must not render as "all good": that is
     // the reading that would let a stopped exporter pass for a healthy day.
-    expect(boardVerdict(document())).toBe('unknown');
-    expect(boardVerdict(document({ blocked: 0, checks: null }))).toBe('unknown');
-    expect(boardVerdict(null)).toBe('unknown');
+    expect(boardVerdict(document(), onTheDay)).toBe('unknown');
+    expect(boardVerdict(today(), onTheDay)).toBe('unknown');
+    expect(boardVerdict(today({ blocked: 0, checks: null }), onTheDay)).toBe('unknown');
+    expect(boardVerdict(null, onTheDay)).toBe('unknown');
   });
 });

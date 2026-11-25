@@ -250,6 +250,119 @@ def test_a_document_carrying_a_host_path_anyway_never_echoes_it(
     assert "f" * 64 not in body
 
 
+_REDACTION_FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "tos" / "redaction-cases.json"
+
+
+def _redaction_cases() -> dict[str, Any]:
+    return json.loads(_REDACTION_FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_a_hand_written_document_carrying_a_path_does_not_pass_through(
+    client: TestClient, document: Path
+) -> None:
+    """웹 계층은 내보내기가 옳았다는 가정 위에 서지 않는다.
+
+    #1179: 내보내기가 지우기 전에는 러너의 ABORT 문장이 그대로 이 라우트를 타고
+    브라우저까지 갔다. 내보내기를 고쳤지만, 그것이 **다시 틀렸을 때** 아무도
+    눈치채지 못하는 구조는 그대로 두지 않는다.
+    """
+    payload = json.loads(json.dumps(_VALID_DOCUMENT))
+    payload["issues"].append(
+        {
+            "level": "막힘",
+            "where": "long-20261125",
+            "text": "ABORT: cannot create data leaf "
+            "/home/deploy/.local/state/tos/cp3-setup-d-long-data/A05612",
+        }
+    )
+    payload["clean_streak"][0][
+        "error"
+    ] = "FileNotFoundError: '/home/deploy/project/x/calendar.yaml'"
+    payload["tenants"][0]["issues"].append(
+        {"level": "막힘", "text": "see ~/.local/state/tos/cp3-long.log"}
+    )
+    _write(document, payload)
+
+    body = _get(client)
+    assert body["available"] is True
+    assert body["redacted"] is True
+    rendered = json.dumps(body, ensure_ascii=False)
+    for needle in ("/home", "/tmp", "~/", "state/tos"):
+        assert needle not in rendered, needle
+    # …사유는 남는다. 지우는 것이 숨기는 것이 되면 안 된다.
+    assert "cannot create data leaf" in rendered
+    assert "FileNotFoundError" in rendered
+
+
+def test_an_account_shaped_value_does_not_pass_through(
+    client: TestClient, document: Path
+) -> None:
+    payload = json.loads(json.dumps(_VALID_DOCUMENT))
+    payload["issues"].append(
+        {
+            "level": "막힘",
+            "where": "paper",
+            "text": "INVALID_CHECK_ACNO 5020591501 / 12345678-01",
+        }
+    )
+    _write(document, payload)
+    body = _get(client)
+    assert body["redacted"] is True
+    rendered = json.dumps(body, ensure_ascii=False)
+    assert "5020591501" not in rendered
+    assert "12345678-01" not in rendered
+    assert "INVALID_CHECK_ACNO" in rendered
+
+
+def test_a_clean_document_is_not_reported_as_redacted(
+    client: TestClient, document: Path
+) -> None:
+    """``redacted`` 가 늘 참이면 운영자가 그 신호를 읽지 않게 된다."""
+    _write(document, _VALID_DOCUMENT)
+    body = _get(client)
+    assert body["available"] is True
+    assert body["redacted"] is False
+    # 멀쩡한 문장은 글자 그대로 남는다.
+    assert body["document"]["issues"][0]["text"].startswith("MARKETFEED_PASS_OVERRUN")
+
+
+def test_the_reader_agrees_with_the_exporter_on_every_shared_case(
+    client: TestClient, document: Path
+) -> None:
+    """구현이 둘이라(``services/`` 는 ``tools/`` 를 import 못 한다) 표를 공유한다.
+
+    두 쪽이 갈라지면 화면에 두 가지 «지움» 이 생기거나, 한쪽만 새기 시작한다.
+    """
+    cases = _redaction_cases()
+    for case in cases["redacted"]:
+        payload = json.loads(json.dumps(_VALID_DOCUMENT))
+        payload["issues"] = [{"level": "확인", "where": "x", "text": case["input"]}]
+        _write(document, payload)
+        body = _get(client)
+        assert body["redacted"] is True, case["why"]
+        assert body["document"]["issues"][0]["text"] == case["expected"], case["why"]
+
+    for case in cases["kept"]:
+        payload = json.loads(json.dumps(_VALID_DOCUMENT))
+        payload["issues"] = [{"level": "확인", "where": "x", "text": case["input"]}]
+        _write(document, payload)
+        body = _get(client)
+        assert body["document"]["issues"][0]["text"] == case["input"], case["why"]
+        assert body["redacted"] is False, case["why"]
+
+
+def test_a_redacted_document_is_logged_so_the_exporter_bug_is_visible(
+    client: TestClient, document: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """조용히 고쳐 주면 내보내기 버그가 영원히 안 보인다."""
+    payload = json.loads(json.dumps(_VALID_DOCUMENT))
+    payload["issues"] = [{"level": "막힘", "where": "x", "text": "/home/deploy/x"}]
+    _write(document, payload)
+    with caplog.at_level(logging.INFO, logger=tos_status.logger.name):
+        _get(client)
+    assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
 def test_a_missing_document_is_unavailable_not_an_error(
     client: TestClient, document: Path
 ) -> None:
