@@ -442,3 +442,388 @@ def test_latest_ignores_a_leftover_temp_file(
     body = _get(client, tos_bars.LATEST)
     assert body["available"] is True
     assert body["session"] == SESSION
+
+
+# ---------------------------------------------------------------------------
+# GET /api/tos/sessions — the listing the panel's picker reads.
+# ---------------------------------------------------------------------------
+
+
+def _list(client: TestClient) -> dict[str, Any]:
+    response = client.get("/api/tos/sessions")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    return response.json()
+
+
+def test_the_listing_names_every_exported_session_newest_day_first(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """The order is day-descending, and stable inside a day."""
+    for session in [
+        "stock-r1-20261124",
+        "long-20261125",
+        "stock-000660-r1-20261125",
+        "short-20261125",
+        "stock-r1-20261125",
+    ]:
+        _write(bars_dir, session, _VALID_DOCUMENT)
+    body = _list(client)
+    assert body["available"] is True
+    assert body["reason"] is None
+    assert body["truncated"] is False
+    assert [item["session"] for item in body["sessions"]] == [
+        "long-20261125",
+        "short-20261125",
+        "stock-000660-r1-20261125",
+        "stock-r1-20261125",
+        "stock-r1-20261124",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("session", "expected"),
+    [
+        (
+            "long-20261125",
+            {
+                "date": "2026-11-25",
+                "kind": "futures",
+                "direction": "LONG",
+                "instrument": None,
+                "run": None,
+            },
+        ),
+        (
+            "short-20261125",
+            {
+                "date": "2026-11-25",
+                "kind": "futures",
+                "direction": "SHORT",
+                "instrument": None,
+                "run": None,
+            },
+        ),
+        (
+            # The tenant whose name predates the per-symbol convention: the
+            # name carries no instrument, so neither does the entry.
+            "stock-r1-20261125",
+            {
+                "date": "2026-11-25",
+                "kind": "stock",
+                "direction": None,
+                "instrument": None,
+                "run": 1,
+            },
+        ),
+        (
+            "stock-000660-r1-20261123",
+            {
+                "date": "2026-11-23",
+                "kind": "stock",
+                "direction": None,
+                "instrument": "000660",
+                "run": 1,
+            },
+        ),
+        (
+            # An operator restart is run 2, and the picker must be able to tell
+            # it from cron's run on the same day.
+            "stock-005380-r2-20261123",
+            {
+                "date": "2026-11-23",
+                "kind": "stock",
+                "direction": None,
+                "instrument": "005380",
+                "run": 2,
+            },
+        ),
+        (
+            # A name this route will not claim to recognise is still listed:
+            # the reader opens it fine.
+            "experiment_a-20261125",
+            {
+                "date": "2026-11-25",
+                "kind": "other",
+                "direction": None,
+                "instrument": None,
+                "run": None,
+            },
+        ),
+        (
+            # Eight digits that are not a date. Listed, grouped as undated.
+            "long-20261345",
+            {
+                "date": None,
+                "kind": "futures",
+                "direction": "LONG",
+                "instrument": None,
+                "run": None,
+            },
+        ),
+        (
+            # No trailing day at all.
+            "scratch",
+            {
+                "date": None,
+                "kind": "other",
+                "direction": None,
+                "instrument": None,
+                "run": None,
+            },
+        ),
+    ],
+)
+def test_the_listing_derives_each_entry_from_the_name_alone(
+    client: TestClient, bars_dir: Path, session: str, expected: dict[str, object]
+) -> None:
+    """Kind, date, side, symbol and run come from the file name, never the file."""
+    # The document says 005930 on every one of them; nothing may read it.
+    _write(bars_dir, session, _VALID_DOCUMENT)
+    body = _list(client)
+    assert len(body["sessions"]) == 1
+    entry = body["sessions"][0]
+    assert entry["session"] == session
+    assert {key: entry[key] for key in expected} == expected
+    assert entry["age_seconds"] is not None and entry["age_seconds"] >= 0
+
+
+def test_an_undated_session_sorts_after_every_dated_one(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """A name without a readable day must not float above today's sessions."""
+    for session in ["scratch", "stock-r1-20261110", "long-20261125"]:
+        _write(bars_dir, session, _VALID_DOCUMENT)
+    body = _list(client)
+    assert [item["session"] for item in body["sessions"]] == [
+        "long-20261125",
+        "stock-r1-20261110",
+        "scratch",
+    ]
+
+
+def test_the_listing_opens_no_document(
+    client: TestClient, bars_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A megabyte apiece, per page load, for one string each — so: never.
+
+    Pinned by making every open from this module raise: the listing must still
+    answer. A regression that started reading documents to recover the
+    instrument would fail here instead of being discovered as a slow page.
+    """
+    _write(bars_dir, "stock-r1-20261125", _VALID_DOCUMENT)
+    _write(bars_dir, "long-20261125", "{not json at all")
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise AssertionError("the listing opened a document")
+
+    monkeypatch.setattr(Path, "open", refuse)
+    monkeypatch.setattr(tos_bars.json, "load", refuse)
+    body = _list(client)
+    assert [item["session"] for item in body["sessions"]] == [
+        "long-20261125",
+        "stock-r1-20261125",
+    ]
+
+
+def test_an_invalid_document_is_still_listed(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """The picker offers it; the reader then says WHY it cannot be rendered.
+
+    Hiding it would leave an operator unable to tell "never exported" from
+    "exported broken" — the second is the one worth looking at.
+    """
+    _write(bars_dir, "stock-r1-20261125", "{not json")
+    body = _list(client)
+    assert [item["session"] for item in body["sessions"]] == ["stock-r1-20261125"]
+    assert _get(client, "stock-r1-20261125")["reason"].startswith("invalid json")
+
+
+def test_the_listing_is_bounded_by_its_configured_cap(
+    client: TestClient, bars_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The NEWEST survive the cap, and the body says the list is partial."""
+    for day in range(10, 20):
+        _write(bars_dir, f"stock-r1-202611{day}", _VALID_DOCUMENT)
+    monkeypatch.setenv("TOS_BARS_SESSION_LIST_MAX", "3")
+    body = _list(client)
+    assert body["truncated"] is True
+    assert [item["session"] for item in body["sessions"]] == [
+        "stock-r1-20261119",
+        "stock-r1-20261118",
+        "stock-r1-20261117",
+    ]
+
+    monkeypatch.delenv("TOS_BARS_SESSION_LIST_MAX")
+    whole = _list(client)
+    assert whole["truncated"] is False
+    assert len(whole["sessions"]) == 10
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "nonsense", "3.5", " 12x"])
+def test_a_cap_that_is_not_a_positive_integer_falls_back_loudly(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, raw: str
+) -> None:
+    """Silently ignoring the operator's value looks exactly like applying it."""
+    monkeypatch.setenv("TOS_BARS_SESSION_LIST_MAX", raw)
+    with caplog.at_level(logging.INFO, logger=tos_bars.logger.name):
+        assert tos_bars._session_list_max() == tos_bars._DEFAULT_SESSION_LIST_MAX
+    assert [record.levelno for record in caplog.records] == [logging.WARNING]
+
+
+@pytest.mark.parametrize("raw", ["", "   "])
+def test_an_empty_cap_is_no_opinion_rather_than_a_bad_one(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, raw: str
+) -> None:
+    """Compose passes the knob through as ``${VAR:-}``, so empty is the norm.
+
+    Warning on it would put a line in the container's stderr on every page
+    load of a stack that is configured exactly as shipped.
+    """
+    monkeypatch.setenv("TOS_BARS_SESSION_LIST_MAX", raw)
+    with caplog.at_level(logging.INFO, logger=tos_bars.logger.name):
+        assert tos_bars._session_list_max() == tos_bars._DEFAULT_SESSION_LIST_MAX
+    assert caplog.records == []
+
+
+def test_a_cap_set_to_a_number_is_applied_whatever_the_whitespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``.env`` values arrive with whatever the file had around them."""
+    monkeypatch.setenv("TOS_BARS_SESSION_LIST_MAX", " 7 ")
+    assert tos_bars._session_list_max() == 7
+
+
+def test_the_cap_default_is_not_a_literal_in_a_branch() -> None:
+    """Configuration-driven: the number has a name and an env override."""
+    assert tos_bars._DEFAULT_SESSION_LIST_MAX > 0
+    source = _ROUTE_MODULE.read_text(encoding="utf-8")
+    assert 'os.environ.get("TOS_BARS_SESSION_LIST_MAX"' in source
+
+
+def test_the_listing_never_offers_the_latest_sentinel_as_a_session(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """A file literally named ``latest.json`` is not an id the picker may hand back.
+
+    It would otherwise be a second option carrying the sentinel's own value,
+    and selecting it would resolve by mtime rather than to that file.
+    """
+    _write(bars_dir, tos_bars.LATEST, _VALID_DOCUMENT)
+    _write(bars_dir, "stock-r1-20261125", _VALID_DOCUMENT)
+    body = _list(client)
+    assert [item["session"] for item in body["sessions"]] == ["stock-r1-20261125"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".stock-r1-20261125.json.abc123.tmp",  # a SIGKILLed export's leftover
+        "stock-r1-20261125.json.bak",
+        "notes.txt",
+        ".hidden.json",  # stem ".hidden" — leading dot, outside the pattern
+        "has space.json",
+        "..json",
+    ],
+)
+def test_the_listing_skips_what_the_reader_would_refuse(
+    client: TestClient, bars_dir: Path, name: str
+) -> None:
+    """Only names that pass ``_SESSION_ID_PATTERN`` reach the body."""
+    (bars_dir / name).write_text("{}", encoding="utf-8")
+    assert _list(client)["sessions"] == []
+
+
+def test_a_subdirectory_is_not_a_session(client: TestClient, bars_dir: Path) -> None:
+    """``stock-r1-20261125.json/`` as a directory is the mount hazard, not a session."""
+    (bars_dir / "stock-r1-20261125.json").mkdir()
+    assert _list(client)["sessions"] == []
+
+
+def test_an_empty_directory_is_available_with_no_sessions(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """Nothing exported yet is a fact this route established, not a failure to."""
+    body = _list(client)
+    assert (body["available"], body["sessions"], body["reason"]) == (True, [], None)
+
+
+def test_an_absent_directory_is_absent_not_an_error(
+    client: TestClient, bars_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Before the first export ever ran. A 200, and INFO rather than WARNING."""
+    bars_dir.rmdir()
+    with caplog.at_level(logging.INFO, logger=tos_bars.logger.name):
+        body = _list(client)
+    assert (body["available"], body["sessions"]) == (False, [])
+    assert body["reason"] == "bars directory absent"
+    assert [record.levelno for record in caplog.records] == [logging.INFO]
+
+
+def test_an_unlistable_directory_names_permissions_not_the_data(
+    client: TestClient, bars_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 0700 directory or a uid mismatch on the mount — never a 500."""
+
+    def denied(*args: object, **kwargs: object) -> object:
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(Path, "iterdir", denied)
+    body = _list(client)
+    assert (body["available"], body["sessions"]) == (False, [])
+    assert body["reason"] == "cannot list bars directory: PermissionError"
+
+
+def test_the_listing_survives_a_document_vanishing_mid_listing(
+    client: TestClient, bars_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An export replacing a document between ``iterdir`` and ``stat``."""
+    _write(bars_dir, "stock-r1-20261125", _VALID_DOCUMENT)
+    _write(bars_dir, "long-20261125", _VALID_DOCUMENT)
+    real_stat = Path.stat
+    vanished = bars_dir / "long-20261125.json"
+
+    def vanishing(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        if self == vanished:
+            raise FileNotFoundError(2, "vanished", str(self))
+        return real_stat(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "stat", vanishing)
+    body = _list(client)
+    assert body["available"] is True
+    assert [item["session"] for item in body["sessions"]] == ["stock-r1-20261125"]
+
+
+def test_the_listing_body_carries_no_host_path_and_no_file_content(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """``/tos`` is internet-facing: the listing may expose only names and times."""
+    hostile = "<img src=x onerror=alert(1)>"
+    _write(
+        bars_dir,
+        "stock-r1-20261125",
+        {**_VALID_DOCUMENT, "session": hostile, "instrument": "SECRET"},
+    )
+    serialized = json.dumps(_list(client))
+    assert hostile not in serialized
+    assert "SECRET" not in serialized
+    assert "/home/deploy" not in serialized
+    assert str(bars_dir) not in serialized
+
+
+def test_the_two_routes_do_not_shadow_each_other() -> None:
+    """``/sessions`` is two segments; the reader's path is four."""
+    from services.dashboard.app import create_app
+
+    paths = {route.path for route in create_app().routes}  # type: ignore[attr-defined]
+    assert "/api/tos/sessions" in paths
+    assert "/api/tos/sessions/{session_id}/bars" in paths
+
+
+def test_the_sentinel_still_reads_through_the_reader(
+    client: TestClient, bars_dir: Path
+) -> None:
+    """The listing does not replace ``latest``; the panel opens on it."""
+    _write(bars_dir, "stock-r1-20261125", _VALID_DOCUMENT)
+    assert _get(client, tos_bars.LATEST)["session"] == "stock-r1-20261125"

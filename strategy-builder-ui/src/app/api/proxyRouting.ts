@@ -38,14 +38,20 @@ export const exactPathRoots = new Map<string, ReadonlySet<string>>([
   // name is fixed on the exporter side (export_symbols.DOCUMENT_NAME), so this
   // surface carries no caller-supplied segment at all and must not be widened
   // into one. Compare `tos/sessions/*/bars` below, which does carry one.
-  ["tos", new Set(["tos/projection", "tos/symbols/today"])],
+  //
+  // `tos/sessions` is the bars picker's listing. Exact, so it stays two
+  // segments: the proxy must not start forwarding `tos/sessions/<id>` — a path
+  // the dashboard does not serve — just because the listing shares the prefix.
+  ["tos", new Set(["tos/projection", "tos/sessions", "tos/symbols/today"])],
 ]);
 
 // The same allowlist discipline for a surface that carries one caller-supplied
 // segment. `*` matches EXACTLY ONE non-empty segment, so the pattern widens the
 // proxy by one path shape and nothing else: `tos/sessions/<id>/bars` resolves,
-// while `tos/sessions`, `tos/sessions/<id>`, `tos/sessions/<id>/bars/extra` and
-// `tos/sessions//bars` all still reach null.
+// while `tos/sessions/<id>`, `tos/sessions/<id>/bars/extra` and
+// `tos/sessions//bars` all still reach null. (`tos/sessions` itself resolves —
+// through the exact allowlist above, as its own two-segment listing, not
+// through this pattern.)
 //
 // A pattern rather than a prefix on purpose. `startsWith("tos/sessions/")`
 // would forward every future path under that prefix the moment the dashboard
@@ -69,7 +75,8 @@ export function matchesPathPattern(path: string[], pattern: string): boolean {
 // Roots this proxy forwards only as GET. The dashboard's TOS surface is
 // read-only: services/dashboard/routes/tos_projection.py declares
 // `@router.get("/projection")`, tos_bars.py declares
-// `@router.get("/sessions/{session_id}/bars")` and tos_symbols.py declares
+// `@router.get("/sessions/{session_id}/bars")` and `@router.get("/sessions")`,
+// and tos_symbols.py declares
 // `@router.get("/symbols/today")`, and nothing else, and
 // FastAPI's APIRoute — unlike
 // Starlette's Route — does not add HEAD to a GET route, so the dashboard itself

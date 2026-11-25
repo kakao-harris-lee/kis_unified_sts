@@ -92,6 +92,29 @@ describe("TOS projection proxy boundary", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("forwards the session listing the bars picker reads", async () => {
+    // Without this path in the allowlist the picker 404s under `next dev`,
+    // and the panel silently degrades to its text box in development only.
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ available: true, sessions: [] }));
+    const response = await GET(requestFor("/api/tos/sessions"), contextFor(["tos", "sessions"]));
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe("http://localhost:5081/api/tos/sessions");
+  });
+
+  it("forwards one session's bars, which carries a caller-supplied segment", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ available: true }));
+    const response = await GET(
+      requestFor("/api/tos/sessions/stock-r1-20261125/bars"),
+      contextFor(["tos", "sessions", "stock-r1-20261125", "bars"]),
+    );
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      "http://localhost:5081/api/tos/sessions/stock-r1-20261125/bars",
+    );
+  });
+
   it.each([
     [["tos"], "/api/tos"],
     [["tos", "projection", "extra"], "/api/tos/projection/extra"],
@@ -100,6 +123,12 @@ describe("TOS projection proxy boundary", () => {
     [["tos", "rearm"], "/api/tos/rearm"],
     [["tos", "projections"], "/api/tos/projections"],
     [["tos", "PROJECTION"], "/api/tos/PROJECTION"],
+    // The listing is two segments and the reader is four. Adding the listing
+    // must not have widened the prefix into everything between them.
+    [["tos", "sessions", "stock-r1-20261125"], "/api/tos/sessions/stock-r1-20261125"],
+    [["tos", "sessions", ""], "/api/tos/sessions/"],
+    [["tos", "sessions", "stock-r1-20261125", "bars", "extra"], "/api/tos/sessions/stock-r1-20261125/bars/extra"],
+    [["tos", "SESSIONS"], "/api/tos/SESSIONS"],
   ])("refuses %s — the allowlist is exact, not a prefix", async (path, url) => {
     // Exercises the exactPathRoots allowlist in proxyRouting.ts: with that
     // lookup removed, every one of these proxies through as if it were the

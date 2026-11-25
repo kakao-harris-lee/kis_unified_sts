@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import displayConfig from '@/config/tos-control-plane.json';
 
 // Wire contract: services/dashboard/routes/tos_bars.py. Roadmap
 // docs/plans/2026-11-11-tos-platform-roadmap.md §P1, second item.
@@ -196,11 +197,136 @@ export function barValue(bar: TosBarsBar, key: string): number | null {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// The session listing — GET /api/tos/sessions, what the picker offers.
+// ---------------------------------------------------------------------------
+
+/**
+ * One exported session, as the ROUTE derived it from the document's file name.
+ *
+ * Nothing here is read from the document: a megabyte apiece, per page load, for
+ * one string each. So a field the name does not carry arrives null and this
+ * module must not invent it — except for the one case config answers below.
+ */
+export interface TosSessionEntry {
+  session: string;
+  /** `YYYY-MM-DD`, or null when the name's tail is eight digits that are not a date. */
+  date: string | null;
+  kind: 'futures' | 'stock' | 'other';
+  /** `LONG`/`SHORT` on a futures session. */
+  direction: string | null;
+  /** The symbol when the NAME carries it (`stock-000660-r1-…`). */
+  instrument: string | null;
+  /** Cron is run 1; an operator restart on the same day is run 2. */
+  run: number | null;
+  age_seconds: number | null;
+}
+
+export interface TosSessionsResponse {
+  available: boolean;
+  reason: string | null;
+  sessions: TosSessionEntry[];
+  /** True when the route's cap dropped older sessions. The newest are kept. */
+  truncated: boolean;
+}
+
+/**
+ * The symbol of the stock tenant whose session name predates the per-symbol
+ * convention: `stock-r<N>-<날짜>`, where every tenant since is
+ * `stock-<symbol>-r<N>-<날짜>`.
+ *
+ * **This value mirrors `STOCK_LEGACY_SYMBOL=005930` in
+ * `tools/tos_cp3/runners/cp3_tenant_daily.sh`** — the runner that composes the
+ * names in the first place. Its line 199 is the whole rule:
+ * `if [ "$SYMBOL" = "$STOCK_LEGACY_SYMBOL" ]; then lc=stock; else lc=stock-$SYMBOL; fi`.
+ * So if that variable is ever repointed at another symbol, this label follows
+ * it or starts lying about which tenant the operator is looking at. The two
+ * cannot be held together by an import (the runner is host-side shell, this is
+ * a browser bundle), which is why the dependency is written here instead.
+ *
+ * The value is config (src/config/tos-control-plane.json — JSON takes no
+ * comment, hence this note at the read) rather than a literal in a branch, per
+ * the repo rule that symbols belong in configuration. It lives on THIS side
+ * rather than in the route because it is a display label, not a fact the route
+ * established — the route refuses to claim an instrument the file name does
+ * not carry.
+ */
+export const LEGACY_STOCK_INSTRUMENT = displayConfig.legacyStockInstrument;
+
+/** `2026-11-25` → `11-25`; anything else is passed through unchanged. */
+export function sessionDayLabel(date: string | null): string {
+  return date && date.length === 10 ? date.slice(5) : (date ?? '날짜 없음');
+}
+
+/**
+ * What this session IS, in one Korean phrase: `선물 LONG`, `주식 005930`.
+ *
+ * The run is shown only when it is not cron's: every session would otherwise
+ * carry a `· r1` that distinguishes nothing, and the one case the operator
+ * needs to see — a restart beside cron's own run on the same day — would be
+ * that much harder to spot.
+ */
+export function sessionKindLabel(entry: TosSessionEntry): string {
+  if (entry.kind === 'futures') {
+    return entry.direction ? `선물 ${entry.direction}` : '선물';
+  }
+  if (entry.kind === 'stock') {
+    const instrument = entry.instrument ?? LEGACY_STOCK_INSTRUMENT;
+    return entry.run != null && entry.run !== 1
+      ? `주식 ${instrument} · r${entry.run}`
+      : `주식 ${instrument}`;
+  }
+  // A shape this reader will not claim to recognise: say the name itself
+  // rather than a label that pretends to know more than the route does.
+  return entry.session;
+}
+
+/** The option's text: `11-25 · 주식 005930`. */
+export function sessionOptionLabel(entry: TosSessionEntry): string {
+  const kind = sessionKindLabel(entry);
+  return entry.date ? `${sessionDayLabel(entry.date)} · ${kind}` : kind;
+}
+
+export interface TosSessionGroup {
+  date: string | null;
+  label: string;
+  sessions: TosSessionEntry[];
+}
+
+/**
+ * The listing as `<optgroup>`s, one per trading day.
+ *
+ * Order is the route's own (newest day first, stable inside a day) — grouping
+ * must not re-sort, or the picker and the API would disagree about which
+ * session is the most recent while `latest` still resolves by export time.
+ */
+export function groupSessionsByDate(sessions: TosSessionEntry[]): TosSessionGroup[] {
+  const groups = new Map<string, TosSessionGroup>();
+  for (const entry of sessions) {
+    const key = entry.date ?? '';
+    const group = groups.get(key);
+    if (group) {
+      group.sessions.push(entry);
+    } else {
+      groups.set(key, {
+        date: entry.date,
+        label: entry.date ?? '날짜 없음',
+        sessions: [entry],
+      });
+    }
+  }
+  return [...groups.values()];
+}
+
 export const tosBarsApi = {
   getBars: async (sessionId: string) => {
     const { data } = await apiClient.get<TosBarsResponse>(
       `/api/tos/sessions/${encodeURIComponent(sessionId)}/bars`,
     );
+    return data;
+  },
+  listSessions: async () => {
+    const { data } = await apiClient.get<TosSessionsResponse>('/api/tos/sessions');
     return data;
   },
 };
