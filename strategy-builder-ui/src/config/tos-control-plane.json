@@ -1,5 +1,6 @@
 {
   "pollIntervalMs": 15000,
   "staleAfterSeconds": 60,
-  "clockTickMs": 1000
+  "clockTickMs": 1000,
+  "legacyStockInstrument": "005930"
 }

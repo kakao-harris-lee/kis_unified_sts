@@ -9,7 +9,9 @@ import BarsSummaryTable from './BarsSummaryTable';
 import {
   LATEST_SESSION,
   barsState,
+  groupSessionsByDate,
   isAcceptedBarsDocument,
+  sessionOptionLabel,
   tosBarsApi,
   type BarsState,
 } from '@/lib/dashboard/tosBars';
@@ -53,6 +55,27 @@ export default function BarsPanel() {
     queryFn: () => tosBarsApi.getBars(requested),
     retry: false,
   });
+  // The picker's own listing. It never gates the bars query: the panel opens on
+  // `latest` either way, so a listing that fails or is still in flight costs
+  // the operator the dropdown, never the session they came to read.
+  const sessions = useQuery({
+    queryKey: ['tos-sessions'],
+    queryFn: tosBarsApi.listSessions,
+    retry: false,
+  });
+  // `available` AND a real array: a body that lost its `sessions` key (a proxy
+  // error page, a future route revision) must send the panel to its text box,
+  // not throw while grouping.
+  const listed =
+    sessions.data?.available && Array.isArray(sessions.data.sessions)
+      ? sessions.data.sessions
+      : [];
+  const groups = groupSessionsByDate(listed);
+  // Falling back to the text box is what keeps a session reachable when the
+  // listing cannot be had — a dropdown with nothing in it would be a dead end.
+  const picker = groups.length > 0;
+  const unlisted =
+    requested !== LATEST_SESSION && !listed.some((entry) => entry.session === requested);
 
   const response = query.data;
   const state = barsState(response, query.isError || query.fetchStatus === 'paused');
@@ -82,25 +105,62 @@ export default function BarsPanel() {
             기록된 세션의 봉마다 엔진이 평가한 값 · 규칙별 통과 · 결정과 정지를 봅니다.
           </p>
         </div>
-        <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
+        <form onSubmit={submit} className="flex flex-wrap items-center justify-end gap-2">
           <label htmlFor="bars-session" className="text-sm text-slate-500 dark:text-slate-400">
             세션
           </label>
-          <input
-            id="bars-session"
-            name="session"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder={LATEST_SESSION}
-            className="w-48 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950"
-          />
-          <button
-            type="submit"
-            disabled={query.isFetching}
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-slate-700"
-          >
-            조회
-          </button>
+          {picker ? (
+            <select
+              id="bars-session"
+              name="session"
+              value={requested}
+              onChange={(event) => setRequested(event.target.value)}
+              className="max-w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950"
+            >
+              <option value={LATEST_SESSION}>최신 세션 ({LATEST_SESSION})</option>
+              {/* A session the operator asked for that the listing does not
+                  carry — typed before the listing arrived, or exported and then
+                  removed. Without its own option the select would show blank
+                  while the panel below renders that very session. */}
+              {unlisted && (
+                <option value={requested} title={requested}>
+                  {requested}
+                </option>
+              )}
+              {groups.map((group) => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.sessions.map((entry) => (
+                    <option key={entry.session} value={entry.session} title={entry.session}>
+                      {sessionOptionLabel(entry)}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          ) : (
+            <>
+              <input
+                id="bars-session"
+                name="session"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                placeholder={LATEST_SESSION}
+                className="w-48 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950"
+              />
+              <button
+                type="submit"
+                disabled={query.isFetching}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-slate-700"
+              >
+                조회
+              </button>
+            </>
+          )}
+          {picker && sessions.data?.truncated && (
+            <p className="w-full text-right text-xs text-slate-500 dark:text-slate-400">
+              최근 {listed.length}개 세션만 표시합니다.
+            </p>
+          )}
         </form>
       </div>
 

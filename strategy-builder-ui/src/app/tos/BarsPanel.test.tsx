@@ -4,13 +4,19 @@ import userEvent from '@testing-library/user-event';
 import { AxiosError } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import BarsPanel from './BarsPanel';
-import { tosBarsApi, type TosBarsDocument, type TosBarsResponse } from '@/lib/dashboard/tosBars';
+import {
+  tosBarsApi,
+  type TosBarsDocument,
+  type TosBarsResponse,
+  type TosSessionEntry,
+  type TosSessionsResponse,
+} from '@/lib/dashboard/tosBars';
 
 vi.mock('@/lib/dashboard/tosBars', async () => {
   const actual = await vi.importActual<typeof import('@/lib/dashboard/tosBars')>(
     '@/lib/dashboard/tosBars',
   );
-  return { ...actual, tosBarsApi: { getBars: vi.fn() } };
+  return { ...actual, tosBarsApi: { getBars: vi.fn(), listSessions: vi.fn() } };
 });
 
 /** Two bars: one withheld (not evaluated), one counted whose view ≠ journal. */
@@ -98,9 +104,44 @@ function fixture(): TosBarsDocument {
   };
 }
 
+/** One entry of the listing the picker reads (GET /api/tos/sessions). */
+function entry(overrides: Partial<TosSessionEntry> & { session: string }): TosSessionEntry {
+  return {
+    date: null,
+    kind: 'other',
+    direction: null,
+    instrument: null,
+    run: null,
+    age_seconds: 60,
+    ...overrides,
+  };
+}
+
+/** Two trading days: today's futures pair and three stock tenants. */
+function sessionList(): TosSessionEntry[] {
+  return [
+    entry({ session: 'long-20261125', date: '2026-11-25', kind: 'futures', direction: 'LONG' }),
+    entry({ session: 'short-20261125', date: '2026-11-25', kind: 'futures', direction: 'SHORT' }),
+    entry({
+      session: 'stock-000660-r1-20261125',
+      date: '2026-11-25',
+      kind: 'stock',
+      instrument: '000660',
+      run: 1,
+    }),
+    // The tenant whose name predates the per-symbol convention: no instrument
+    // in the name, so the label has to come from the UI's own config.
+    entry({ session: 'stock-r1-20261125', date: '2026-11-25', kind: 'stock', run: 1 }),
+    entry({ session: 'stock-r1-20261110', date: '2026-11-10', kind: 'stock', run: 1 }),
+  ];
+}
+
 let client: QueryClient;
 
-function mount(response?: Partial<TosBarsResponse>) {
+function mount(
+  response?: Partial<TosBarsResponse>,
+  sessions?: Partial<TosSessionsResponse> | Error,
+) {
   vi.mocked(tosBarsApi.getBars).mockImplementation(async () => ({
     available: true,
     reason: null,
@@ -109,6 +150,17 @@ function mount(response?: Partial<TosBarsResponse>) {
     document: fixture(),
     ...response,
   }));
+  if (sessions instanceof Error) {
+    vi.mocked(tosBarsApi.listSessions).mockRejectedValue(sessions);
+  } else {
+    vi.mocked(tosBarsApi.listSessions).mockImplementation(async () => ({
+      available: true,
+      reason: null,
+      sessions: sessionList(),
+      truncated: false,
+      ...sessions,
+    }));
+  }
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   render(
     <QueryClientProvider client={client}>
@@ -116,6 +168,13 @@ function mount(response?: Partial<TosBarsResponse>) {
     </QueryClientProvider>,
   );
 }
+
+/** The listing unavailable — the panel must still reach a session. */
+const NO_LISTING: Partial<TosSessionsResponse> = {
+  available: false,
+  reason: 'bars directory absent',
+  sessions: [],
+};
 
 beforeEach(() => vi.resetAllMocks());
 afterEach(() => client?.clear());
@@ -166,17 +225,116 @@ describe('TOS bars panel', () => {
     ]);
   });
 
-  it('asks for the session the operator typed', async () => {
+  it('offers the exported sessions grouped by day, newest first', async () => {
     mount();
     await screen.findByText('바 기록을 조회했습니다');
-    await userEvent.clear(screen.getByLabelText('세션'));
-    await userEvent.type(screen.getByLabelText('세션'), 'long-20261110');
+    const picker = screen.getByLabelText('세션');
+    expect(picker.tagName).toBe('SELECT');
+    // The sentinel stays the first option: the panel opens on it, and it is
+    // the one choice that works when the listing does not.
+    const options = within(picker).getAllByRole('option');
+    expect(options[0]).toHaveValue('latest');
+    expect(options.map((option) => option.textContent)).toEqual([
+      '최신 세션 (latest)',
+      '11-25 · 선물 LONG',
+      '11-25 · 선물 SHORT',
+      '11-25 · 주식 000660',
+      // The legacy tenant's symbol is not in its name; the label comes from
+      // src/config/tos-control-plane.json, not from a literal in a branch.
+      '11-25 · 주식 005930',
+      '11-10 · 주식 005930',
+    ]);
+    expect(
+      within(picker)
+        .getAllByRole('group')
+        .map((group) => group.getAttribute('label')),
+    ).toEqual(['2026-11-25', '2026-11-10']);
+  });
+
+  it('keeps the raw session id on the option the label stands for', async () => {
+    mount();
+    await screen.findByText('바 기록을 조회했습니다');
+    expect(screen.getByRole('option', { name: '11-25 · 주식 000660' })).toHaveAttribute(
+      'title',
+      'stock-000660-r1-20261125',
+    );
+  });
+
+  it('asks for the session the operator picked', async () => {
+    mount();
+    await screen.findByText('바 기록을 조회했습니다');
+    await userEvent.selectOptions(screen.getByLabelText('세션'), 'long-20261125');
+    await waitFor(() => expect(tosBarsApi.getBars).toHaveBeenCalledWith('long-20261125'));
+    expect(screen.getByText(/요청한 세션: long-20261125/)).toBeInTheDocument();
+  });
+
+  it('says when the listing is only the newest part of the directory', async () => {
+    mount({}, { truncated: true });
+    await screen.findByText('바 기록을 조회했습니다');
+    expect(screen.getByText('최근 5개 세션만 표시합니다.')).toBeInTheDocument();
+  });
+
+  it('keeps a session the listing does not carry selectable', async () => {
+    // The operator typed it while the listing was down, and the listing then
+    // arrived without it. A blank select over a rendered session is worse than
+    // an option that names the id.
+    mount({}, NO_LISTING);
+    await screen.findByText('바 기록을 조회했습니다');
+    await userEvent.type(screen.getByLabelText('세션'), 'long-20261001');
+    await userEvent.click(screen.getByRole('button', { name: '조회' }));
+    await waitFor(() => expect(tosBarsApi.getBars).toHaveBeenCalledWith('long-20261001'));
+
+    vi.mocked(tosBarsApi.listSessions).mockResolvedValue({
+      available: true,
+      reason: null,
+      sessions: sessionList(),
+      truncated: false,
+    });
+    await client.refetchQueries({ queryKey: ['tos-sessions'] });
+    await waitFor(() => expect(screen.getByLabelText('세션').tagName).toBe('SELECT'));
+    const picker = screen.getByLabelText('세션');
+    expect(picker).toHaveValue('long-20261001');
+    expect(within(picker).getByRole('option', { name: 'long-20261001' })).toBeInTheDocument();
+  });
+
+  it('falls back to the text box when the listing is unavailable', async () => {
+    mount({}, NO_LISTING);
+    await screen.findByText('바 기록을 조회했습니다');
+    const box = screen.getByLabelText('세션');
+    expect(box.tagName).toBe('INPUT');
+    // latest still works, and a session is still reachable by name — the whole
+    // point of keeping the box rather than rendering an empty dropdown.
+    expect(tosBarsApi.getBars).toHaveBeenCalledWith('latest');
+    await userEvent.type(box, 'long-20261110');
     await userEvent.click(screen.getByRole('button', { name: '조회' }));
     await waitFor(() => expect(tosBarsApi.getBars).toHaveBeenCalledWith('long-20261110'));
   });
 
+  it('falls back to the text box when the listing call itself fails', async () => {
+    // The picker is the only thing the operator loses: the bars query never
+    // waited on the listing, so the panel still opened on `latest`.
+    mount({}, new Error('offline'));
+    await screen.findByText('바 기록을 조회했습니다');
+    expect(screen.getByLabelText('세션').tagName).toBe('INPUT');
+    expect(tosBarsApi.getBars).toHaveBeenCalledWith('latest');
+  });
+
+  it('falls back to the text box when nothing has been exported yet', async () => {
+    mount({}, { available: true, sessions: [] });
+    await screen.findByText('바 기록을 조회했습니다');
+    expect(screen.getByLabelText('세션').tagName).toBe('INPUT');
+  });
+
+  it('falls back to the text box on a body that lost its sessions key', async () => {
+    // A proxy error page, or a future route revision. Grouping an undefined
+    // list would throw and take the whole panel — including the bars — down.
+    mount({}, { available: true, sessions: undefined as unknown as [] });
+    await screen.findByText('바 기록을 조회했습니다');
+    expect(screen.getByLabelText('세션').tagName).toBe('INPUT');
+  });
+
   it('falls back to latest when the operator submits an empty box', async () => {
-    mount();
+    mount({}, NO_LISTING);
     await screen.findByText('바 기록을 조회했습니다');
     await userEvent.click(screen.getByRole('button', { name: '조회' }));
     await waitFor(() => expect(tosBarsApi.getBars).toHaveBeenLastCalledWith('latest'));
@@ -240,6 +398,15 @@ describe('TOS bars panel', () => {
 
   it('offers no command surface — it is a read model', async () => {
     mount();
+    await screen.findByText('바 기록을 조회했습니다');
+    const panel = screen.getByRole('region', { name: '바별 결정 점검' });
+    // Picking a session applies on change, so the picker needs no button at
+    // all; the fallback box keeps its 조회 and nothing else.
+    expect(within(panel).queryAllByRole('button')).toEqual([]);
+  });
+
+  it('offers no command surface in the fallback either', async () => {
+    mount({}, NO_LISTING);
     await screen.findByText('바 기록을 조회했습니다');
     const panel = screen.getByRole('region', { name: '바별 결정 점검' });
     expect(within(panel).getAllByRole('button').map((b) => b.textContent)).toEqual(['조회']);
