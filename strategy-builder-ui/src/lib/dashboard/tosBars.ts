@@ -233,12 +233,23 @@ export interface TosSessionsResponse {
 /**
  * The symbol of the stock tenant whose session name predates the per-symbol
  * convention: `stock-r<N>-<날짜>`, where every tenant since is
- * `stock-<symbol>-r<N>-<날짜>` (tools/tos_cp3/runners/cp3_tenant_daily.sh).
+ * `stock-<symbol>-r<N>-<날짜>`.
  *
- * It is config rather than a literal in a branch (repo rule: symbols belong in
- * configuration), and it lives on THIS side rather than in the route because it
- * is a display label, not a fact the route established — the route refuses to
- * claim an instrument the file name does not carry.
+ * **This value mirrors `STOCK_LEGACY_SYMBOL=005930` in
+ * `tools/tos_cp3/runners/cp3_tenant_daily.sh`** — the runner that composes the
+ * names in the first place. Its line 199 is the whole rule:
+ * `if [ "$SYMBOL" = "$STOCK_LEGACY_SYMBOL" ]; then lc=stock; else lc=stock-$SYMBOL; fi`.
+ * So if that variable is ever repointed at another symbol, this label follows
+ * it or starts lying about which tenant the operator is looking at. The two
+ * cannot be held together by an import (the runner is host-side shell, this is
+ * a browser bundle), which is why the dependency is written here instead.
+ *
+ * The value is config (src/config/tos-control-plane.json — JSON takes no
+ * comment, hence this note at the read) rather than a literal in a branch, per
+ * the repo rule that symbols belong in configuration. It lives on THIS side
+ * rather than in the route because it is a display label, not a fact the route
+ * established — the route refuses to claim an instrument the file name does
+ * not carry.
  */
 export const LEGACY_STOCK_INSTRUMENT = displayConfig.legacyStockInstrument;
 

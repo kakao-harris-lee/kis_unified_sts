@@ -271,7 +271,30 @@ describe('TOS bars panel', () => {
   it('says when the listing is only the newest part of the directory', async () => {
     mount({}, { truncated: true });
     await screen.findByText('바 기록을 조회했습니다');
-    expect(screen.getByText('최근 5개 세션만 표시합니다.')).toBeInTheDocument();
+    expect(screen.getByText(/최근 5개 세션만 목록에 있습니다/)).toBeInTheDocument();
+  });
+
+  it('keeps a session past the cap reachable by name', async () => {
+    // The cap keeps the NEWEST sessions, so an older one is still in the
+    // directory and still readable — the dropdown alone would make it
+    // unreachable from the UI, which is the one thing the cap must not do.
+    mount({}, { truncated: true });
+    await screen.findByText('바 기록을 조회했습니다');
+    expect(screen.getByLabelText('세션').tagName).toBe('SELECT');
+    const box = screen.getByLabelText('직접 입력');
+    expect(box.tagName).toBe('INPUT');
+    await userEvent.type(box, 'stock-r1-20260901');
+    await userEvent.click(screen.getByRole('button', { name: '조회' }));
+    await waitFor(() => expect(tosBarsApi.getBars).toHaveBeenCalledWith('stock-r1-20260901'));
+    // And the picker then names it, rather than sitting blank over a session
+    // the panel is rendering.
+    expect(screen.getByLabelText('세션')).toHaveValue('stock-r1-20260901');
+  });
+
+  it('offers no second box while the whole directory fits in the picker', async () => {
+    mount();
+    await screen.findByText('바 기록을 조회했습니다');
+    expect(screen.queryByLabelText('직접 입력')).not.toBeInTheDocument();
   });
 
   it('keeps a session the listing does not carry selectable', async () => {

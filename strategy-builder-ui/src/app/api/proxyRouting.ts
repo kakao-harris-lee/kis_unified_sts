@@ -75,7 +75,8 @@ export function matchesPathPattern(path: string[], pattern: string): boolean {
 // Roots this proxy forwards only as GET. The dashboard's TOS surface is
 // read-only: services/dashboard/routes/tos_projection.py declares
 // `@router.get("/projection")`, tos_bars.py declares
-// `@router.get("/sessions/{session_id}/bars")` and tos_symbols.py declares
+// `@router.get("/sessions/{session_id}/bars")` and `@router.get("/sessions")`,
+// and tos_symbols.py declares
 // `@router.get("/symbols/today")`, and nothing else, and
 // FastAPI's APIRoute — unlike
 // Starlette's Route — does not add HEAD to a GET route, so the dashboard itself
