@@ -77,14 +77,25 @@ def _materialize(tmp_path: Path) -> Path:
     return state
 
 
-def _trees(root: Path, *declared: tuple[str, str]) -> Path:
-    """``RENDER.yaml`` 만 있는 설정 디렉터리 — 종목 목록의 유일한 출처."""
+def _trees(
+    root: Path,
+    *declared: tuple[str, str | None],
+    market: str = ex.KIND_STOCK,
+    direction: str = "LONG",
+) -> Path:
+    """``RENDER.yaml`` 만 있는 설정 디렉터리 — tenant 목록의 유일한 출처.
+
+    ``symbol`` 이 ``None`` 이면 ``instrument.pattern`` 을 적지 않는다 — 선물 트리의
+    실제 매니페스트가 그렇다(월물은 렌더 때 정해진다).
+    """
     root.mkdir(parents=True, exist_ok=True)
     for tree_id, symbol in declared:
         tree = root / tree_id
         tree.mkdir()
+        instrument = "" if symbol is None else f'instrument:\n  pattern: "{symbol}"\n'
         (tree / ex.RENDER_MANIFEST_NAME).write_text(
-            f'tree_id: "{tree_id}"\ninstrument:\n  pattern: "{symbol}"\n',
+            f'tree_id: "{tree_id}"\nmarket: "{market}"\n'
+            f'direction:\n  value: "{direction}"\n{instrument}',
             encoding="utf-8",
         )
     return root
@@ -97,11 +108,17 @@ def _board(state: Path) -> sb.BoardConfig:
 
 @pytest.fixture
 def recorded(tmp_path: Path) -> tuple[sb.BoardConfig, Path]:
+    """녹화된 두 선물 tenant — 트리 선언도 실제 매니페스트대로 ``market: futures``.
+
+    종목을 선언하지 않는 것까지 진짜와 같다: 선물 월물은 렌더 때 정해지므로
+    ``instrument.pattern`` 이 없고, 줄의 종목은 그날 돈 세션이 말한다.
+    """
     state = _materialize(tmp_path)
     trees = _trees(
         tmp_path / "trees",
-        ("cp3-setup-d-long", "A05611"),
-        ("cp3-setup-d-short", "A05611"),
+        ("cp3-setup-d-long", None),
+        ("cp3-setup-d-short", None),
+        market=ex.KIND_FUTURES,
     )
     return _board(state), trees
 
@@ -123,7 +140,7 @@ def _document(
 def test_every_declared_tenant_gets_a_row(
     recorded: tuple[sb.BoardConfig, Path],
 ) -> None:
-    """완료 판정은 «세 종목이 한 화면» 이다 — 안 돈 트리도 줄이 나야 한다."""
+    """완료 판정은 «다섯 tenant 가 한 화면» 이다 — 안 돈 트리도 줄이 나야 한다."""
     document = _document(recorded)
     assert document["schema_version"] == ex.SYMBOLS_SCHEMA_VERSION
     assert document["date"] == "2026-10-22"
@@ -131,7 +148,12 @@ def test_every_declared_tenant_gets_a_row(
         "cp3-setup-d-long",
         "cp3-setup-d-short",
     ]
-    assert all(row["symbol"] == "A05611" for row in document["symbols"])
+    # 선물 트리는 종목을 선언하지 않는다 — 그날 돈 세션이 말한 월물이 줄의 종목이고,
+    # 세션이 없으면 비운다. 지어낸 월물은 지난 월물일 수 있다.
+    assert [row["symbol"] for row in document["symbols"]] == ["A05611", None]
+    assert all(row["kind"] == ex.KIND_FUTURES for row in document["symbols"])
+    assert all(row["decision_only"] is True for row in document["symbols"])
+    assert all(row["direction"] == "LONG" for row in document["symbols"])
 
 
 def test_a_session_that_ran_reports_its_status_and_ticks(
@@ -157,7 +179,10 @@ def test_a_tenant_with_no_session_today_says_so_instead_of_vanishing(
     assert row["tree_id"] == "cp3-setup-d-short"
     assert row["session"]["status"] is None
     assert row["session"]["name"] is None
-    assert row["ticks"] == 0
+    # 선물 트리라 잎 자리를 도출할 수 없다(종목을 선언하지 않는다). «읽었는데 0 틱»
+    # 이 아니라 «읽을 잎을 모른다» 이므로 None 이고, 사유는 error 가 아니라
+    # status=None 이 말한다 — 안 돈 것은 고장이 아니다.
+    assert row["ticks"] is None
     assert row["error"] is None
 
 
@@ -198,10 +223,40 @@ def test_a_day_with_no_session_counts_nothing_from_other_days(
     """잎은 날짜를 누적한다. 날짜로 자르지 않으면 어제 일이 오늘 줄에 샌다."""
     document = _document(recorded, day=dt.date(2026, 10, 21))
     for row in document["symbols"]:
-        assert row["ticks"] == 0
+        assert row["ticks"] is None
         assert row["halt"]["last_flow"] is None
         assert row["halt"]["flow_counts"] == {}
-        assert row["buy"]["fills"] == 0
+        # 판단 전용 tenant 의 체결 자리는 0 이 아니라 None 이다 — «오늘 아무 것도
+        # 안 샀다» 가 아니라 «살 수 있는 자리가 아니다».
+        assert row["buy"]["fills"] is None
+        assert row["pnl"] is None
+
+
+def test_a_stock_tenant_with_no_session_still_reads_its_declared_leaf(
+    tmp_path: Path,
+) -> None:
+    """주식 트리는 종목을 선언하므로, 세션이 없어도 잎 자리가 도출된다.
+
+    그 잎을 실제로 읽었다는 증거가 ``ticks == 0`` 이다 — «읽을 잎을 모른다»(None)
+    와 다르다. 선물 줄이 None 을 내는 것은 트리가 월물을 선언하지 않기 때문이지,
+    세션이 없어서가 아니다.
+    """
+    state = _materialize(tmp_path)
+    trees = _trees(tmp_path / "stock-trees", ("cp3-setup-d-long", "A05611"))
+    document = ex.build_document(
+        cfg=_board(state),
+        day=dt.date(2026, 10, 21),
+        today=D1023,
+        config_dir=trees,
+        proc_root=Path("/nonexistent-proc"),
+    )
+    row = document["symbols"][0]
+    assert row["kind"] == ex.KIND_STOCK
+    assert row["decision_only"] is False
+    assert row["session"]["status"] is None
+    assert row["ticks"] == 0
+    assert row["buy"]["fills"] == 0
+    assert row["pnl"]["today"]["pnl_krw"] == "0"
 
 
 # --------------------------------------------------------------------------- #
@@ -278,7 +333,12 @@ def _round_trip_leaf(leaf: Path) -> Path:
 
 def _row_for(leaf: Path, *, day_key: str = DAY) -> dict[str, Any]:
     return ex.symbol_row(
-        ex.Tenant(tree_id="cp3-setup-d-stock-005930", symbol=SYMBOL),
+        ex.Tenant(
+            tree_id="cp3-setup-d-stock-005930",
+            symbol=SYMBOL,
+            market=ex.KIND_STOCK,
+            direction="LONG",
+        ),
         leaf_path=leaf,
         session=None,
         day_key=day_key,
@@ -308,6 +368,93 @@ def test_a_closed_round_trip_leaves_no_holding(tmp_path: Path) -> None:
         "lots": 0,
         "basis": ex.HOLDING_BASIS,
     }
+
+
+def test_the_pnl_block_is_perfs_own_figure_not_a_second_count(
+    tmp_path: Path,
+) -> None:
+    """손익은 ``perf.build_report`` 의 FIFO 결과 그대로다 — 여기서 다시 더하지 않는다.
+
+    193,300 에 사서 192,200 에 판 왕복 하나 = −1,100 원, 승 0. 같은 잎에 대고
+    ``perf.build_report`` 를 직접 돌린 값과 **글자 그대로** 같아야 한다: 그래야
+    ``sts tos perf`` 와 화면이 같은 날에 다른 손익을 말하는 일이 없다.
+    """
+    leaf = _round_trip_leaf(tmp_path / "005930")
+    row = _row_for(leaf)
+    expected = perf.build_report([perf.read_leaf(leaf)])["symbols"][0]
+    day = expected["days"][0]
+
+    assert row["pnl"]["today"] == {
+        "pnl_krw": "-1100",
+        "pnl_basis": perf.BASIS_EXECUTION,
+        "closed_round_trips": 1,
+        "wins": 0,
+        "buy_fills": 1,
+        "sell_fills": 1,
+        "quantity_bought": "1",
+        "quantity_sold": "1",
+    }
+    assert row["pnl"]["today"]["pnl_krw"] == day["pnl_krw"]
+    assert row["pnl"]["cumulative"]["pnl_krw"] == expected["totals"]["pnl_krw"]
+    assert row["pnl"]["cumulative"]["open_lots"] == 0
+    assert row["pnl"]["cumulative"]["open_quantity"] == "0"
+    assert row["pnl"]["unresolved"] == {"count": 0, "attempts": []}
+
+
+def test_fills_on_another_day_stay_out_of_todays_pnl_but_not_the_total(
+    tmp_path: Path,
+) -> None:
+    """오늘 칸은 그날 닫힌 것만, 누적 칸은 전부 — 둘을 섞으면 오늘이 과장된다."""
+    row = _row_for(_round_trip_leaf(tmp_path / "005930"), day_key="20261118")
+    assert row["pnl"]["today"] == {
+        "pnl_krw": "0",
+        "pnl_basis": None,
+        "closed_round_trips": 0,
+        "wins": 0,
+        "buy_fills": 0,
+        "sell_fills": 0,
+        "quantity_bought": "0",
+        "quantity_sold": "0",
+    }
+    assert row["pnl"]["cumulative"]["pnl_krw"] == "-1100"
+    assert row["pnl"]["cumulative"]["closed_round_trips"] == 1
+
+
+def test_an_unresolved_attempt_carries_perfs_sentences_and_no_leaf_path(
+    tmp_path: Path,
+) -> None:
+    """집계 밖 주문은 ``sts tos perf`` 가 쓰는 말 그대로, 잎 경로는 떼고 싣는다.
+
+    ``perf`` 는 그 attempt 에 ``leaf`` 로 **잎의 절대 경로**를 적는다. 이 문서는
+    대시보드가 그대로 브라우저에 보내므로 그 키가 새면 호스트 경로가 공개된다.
+    """
+    leaf = _write_leaf(
+        tmp_path / "005930",
+        [
+            ("VENUE_POLICY_BOUND", {"price_scale": PRICE_SCALE}),
+            ("SEND_SEALED", _seal("attempt-buy", "BUY", 175_800)),
+            (
+                "UNCERTAIN_SEND_RECONCILED",
+                {
+                    "attempt_id": "attempt-buy",
+                    "outcome": perf.RECONCILED_NEVER_ACCEPTED,
+                },
+            ),
+        ],
+    )
+    row = _row_for(leaf)
+    unresolved = row["pnl"]["unresolved"]
+    assert unresolved["count"] == 1
+    (attempt,) = unresolved["attempts"]
+    assert attempt["side"] == "BUY"
+    assert attempt["quantity"] == "1"
+    assert attempt["order_price_krw"] == "175800"
+    assert attempt["status"] == perf.STATUS_NO_FILL
+    assert attempt["status_label"] == "비체결 종료"
+    assert attempt["reason"].startswith("미접수")
+    assert attempt["observation"] == "전송되지 않음(체결 없음)"
+    assert "leaf" not in attempt
+    assert str(tmp_path) not in json.dumps(row, ensure_ascii=False)
 
 
 def test_an_open_buy_is_held_until_tos_closes_it(tmp_path: Path) -> None:
@@ -344,6 +491,17 @@ def test_a_leaf_without_a_marketfeed_still_reports_its_fills(tmp_path: Path) -> 
     assert row["halt"]["last_flow"] is None
     assert row["ticks"] is None
     assert row["error"] is None
+
+
+def test_an_unreadable_leaf_reports_unknown_pnl_not_zero(tmp_path: Path) -> None:
+    """잎을 열지 못한 줄의 손익은 ``None`` 이다 — 0 원은 «오늘 본전» 으로 읽힌다."""
+    leaf = tmp_path / "005930"
+    leaf.mkdir()
+    (leaf / "evidence.sqlite3").write_bytes(b"not a database")
+    row = _row_for(leaf)
+    assert row["error"] is not None
+    assert row["pnl"] is None
+    assert row["holding"]["quantity"] is None
 
 
 def test_an_unreadable_leaf_is_a_row_with_a_reason(tmp_path: Path) -> None:
@@ -494,17 +652,46 @@ def test_what_the_exporter_writes_is_what_the_route_accepts(
     assert first.holding is not None and first.holding.basis == ex.HOLDING_BASIS
 
 
-def test_a_tenant_tree_that_names_no_instrument_is_refused(tmp_path: Path) -> None:
-    """이름 없는 종목은 줄을 만들 수 없다 — 추측한 이름으로 만든 줄은 틀린 줄이다."""
-    trees = tmp_path / "trees"
-    tree = trees / "cp3-setup-d-stock-005930"
+def _manifest(trees: Path, tree_id: str, body: str) -> Path:
+    tree = trees / tree_id
     tree.mkdir(parents=True)
-    (tree / ex.RENDER_MANIFEST_NAME).write_text('tree_id: "x"\n', encoding="utf-8")
+    (tree / ex.RENDER_MANIFEST_NAME).write_text(body, encoding="utf-8")
+    return trees
+
+
+def test_a_stock_tree_that_names_no_instrument_is_refused(tmp_path: Path) -> None:
+    """이름 없는 종목은 줄을 만들 수 없다 — 추측한 이름으로 만든 줄은 틀린 줄이다."""
+    trees = _manifest(
+        tmp_path / "trees",
+        "cp3-setup-d-stock-005930",
+        'tree_id: "x"\nmarket: "stock"\n',
+    )
     with pytest.raises(ex.ExportRefusal, match="instrument.pattern"):
         ex.discover_tenants(config_dir=trees, tree_glob="cp3-setup-d-*")
 
 
-def test_the_symbol_list_comes_from_config_not_from_code(tmp_path: Path) -> None:
+def test_a_tree_that_names_no_market_is_refused(tmp_path: Path) -> None:
+    """줄의 종류를 모르면 체결 자리를 0 으로 그릴지 None 으로 그릴지 알 수 없다."""
+    trees = _manifest(tmp_path / "trees", "cp3-setup-d-long", 'tree_id: "x"\n')
+    with pytest.raises(ex.ExportRefusal, match="market"):
+        ex.discover_tenants(config_dir=trees, tree_glob="cp3-setup-d-*")
+
+
+def test_a_futures_tree_without_an_instrument_is_accepted(tmp_path: Path) -> None:
+    """선물 매니페스트에는 월물이 없는 것이 정상이다 — 거부가 아니다."""
+    trees = _trees(
+        tmp_path / "trees",
+        ("cp3-setup-d-short", None),
+        market=ex.KIND_FUTURES,
+        direction="SHORT",
+    )
+    (tenant,) = ex.discover_tenants(config_dir=trees, tree_glob="cp3-setup-d-*")
+    assert tenant.symbol is None
+    assert tenant.market == ex.KIND_FUTURES
+    assert tenant.direction == "SHORT"
+
+
+def test_the_tenant_list_comes_from_config_not_from_code(tmp_path: Path) -> None:
     """트리를 하나 더 붙인 날, 코드를 고치지 않아도 줄이 하나 더 난다."""
     trees = _trees(
         tmp_path / "trees",
@@ -515,3 +702,25 @@ def test_the_symbol_list_comes_from_config_not_from_code(tmp_path: Path) -> None
     tenants = ex.discover_tenants(config_dir=trees, tree_glob=perf.TENANT_TREE_GLOB)
     assert [tenant.symbol for tenant in tenants] == ["000660", "005380", "005930"]
     assert tenants[0].tree_id == "cp3-setup-d-stock-000660"
+
+
+def test_the_default_glob_takes_the_futures_trees_too(tmp_path: Path) -> None:
+    """기본 glob 이 주식만 훑으면 선물 둘이 조용히 화면에서 사라진다(#1178 이전)."""
+    trees = _trees(tmp_path / "trees", ("cp3-setup-d-stock-005930", "005930"))
+    _trees(
+        trees,
+        ("cp3-setup-d-long", None),
+        ("cp3-setup-d-short", None),
+        market=ex.KIND_FUTURES,
+    )
+    tenants = ex.discover_tenants(config_dir=trees)
+    assert [tenant.tree_id for tenant in tenants] == [
+        "cp3-setup-d-long",
+        "cp3-setup-d-short",
+        "cp3-setup-d-stock-005930",
+    ]
+    assert [tenant.market for tenant in tenants] == [
+        ex.KIND_FUTURES,
+        ex.KIND_FUTURES,
+        ex.KIND_STOCK,
+    ]

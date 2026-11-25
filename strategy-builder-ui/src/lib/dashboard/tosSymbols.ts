@@ -71,13 +71,77 @@ export interface TosSymbolSession {
   run_rc?: number | null;
 }
 
+/** `RENDER.yaml::market` — the two tenant kinds that exist. */
+export const TENANT_KIND_STOCK = 'stock';
+export const TENANT_KIND_FUTURES = 'futures';
+
+/** Realized PnL over one period. FIFO, fees/taxes NOT deducted. */
+export interface TosSymbolPnlPeriod {
+  pnl_krw?: string | null;
+  /**
+   * Which price the figure is built on. `EXECUTION` is the broker's average
+   * execution price; anything else means at least one leg fell back to the
+   * limit price the order sealed, and the page must say so.
+   */
+  pnl_basis?: string | null;
+  closed_round_trips?: number | null;
+  wins?: number | null;
+  buy_fills?: number | null;
+  sell_fills?: number | null;
+  quantity_bought?: string | null;
+  quantity_sold?: string | null;
+  /** Cumulative only — what the FIFO still holds open. */
+  open_quantity?: string | null;
+  open_lots?: number | null;
+}
+
+/** One order attempt the FIFO could not account for («집계 밖» in `sts tos perf`). */
+export interface TosSymbolUnresolvedAttempt {
+  status?: string | null;
+  /** The CLI's own word for the status — «미해결» / «비체결 종료». */
+  status_label?: string | null;
+  side?: string | null;
+  quantity?: string | null;
+  order_price_krw?: string | null;
+  broker_execution_id?: string | null;
+  trading_date?: string | null;
+  /** Why it is outside the PnL, in the sentence `sts tos perf` prints. */
+  reason?: string | null;
+  /** What was actually observed at the broker, in the same sentence. */
+  observation?: string | null;
+}
+
+export interface TosSymbolUnresolved {
+  count?: number | null;
+  attempts?: TosSymbolUnresolvedAttempt[] | null;
+}
+
+/** A tenant's realized PnL. Null on a decision-only tenant — never zero. */
+export interface TosSymbolPnl {
+  today?: TosSymbolPnlPeriod | null;
+  cumulative?: TosSymbolPnlPeriod | null;
+  unresolved?: TosSymbolUnresolved | null;
+}
+
 export interface TosSymbolRow {
   symbol?: string | null;
   tree_id?: string | null;
+  /** `stock` or `futures`, from the tenant tree's own render manifest. */
+  kind?: string | null;
+  /** `LONG`/`SHORT`. Fixed per tenant in config — a label, not an outcome. */
+  direction?: string | null;
+  /**
+   * True on the futures tenants: entries stop at an independent approval step
+   * (operator decision 2026-11-05), so `buy`/`sell`/`holding` are null and
+   * `pnl` is absent. Rendering those as zeros would claim the tenant traded
+   * nothing today instead of that it cannot trade at all.
+   */
+  decision_only?: boolean | null;
   session?: TosSymbolSession | null;
   buy?: TosSymbolSide | null;
   sell?: TosSymbolSide | null;
   holding?: TosSymbolHolding | null;
+  pnl?: TosSymbolPnl | null;
   halt?: TosSymbolHalt | null;
   ticks?: number | null;
   error?: string | null;

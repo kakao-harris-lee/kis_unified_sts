@@ -3,11 +3,15 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   SUPPORTED_SYMBOLS_SCHEMA_VERSION,
+  TENANT_KIND_FUTURES,
+  TENANT_KIND_STOCK,
+  TOS_LEDGER_HOLDING_BASIS,
   isAcceptedSymbolsDocument,
   isTodaysDocument,
   kstToday,
   sessionPhase,
   symbolsState,
+  type TosSymbolRow,
   type TosSymbolsDocument,
   type TosSymbolsResponse,
 } from './tosSymbols';
@@ -135,5 +139,61 @@ describe('sessionPhase', () => {
     for (const status of ['FAILED', 'ABORT', 'LOST', 'NOT-BOOTED']) {
       expect(sessionPhase({ status })).toBe('unknown');
     }
+  });
+});
+
+describe('the row shape the P2 export writes', () => {
+  // Legibility plan §6 P2: the five tenants are two different things, and the
+  // difference is carried by `decision_only` rather than by the page guessing
+  // from `kind`.
+  it('types a stock row with its realized PnL and its unresolved attempts', () => {
+    const row: TosSymbolRow = {
+      symbol: '005930',
+      tree_id: 'cp3-setup-d-stock-005930',
+      kind: TENANT_KIND_STOCK,
+      direction: 'LONG',
+      decision_only: false,
+      pnl: {
+        today: { pnl_krw: '-4050', pnl_basis: 'EXECUTION', closed_round_trips: 1, wins: 0 },
+        cumulative: { pnl_krw: '-3150', open_lots: 0, open_quantity: '0' },
+        unresolved: {
+          count: 1,
+          attempts: [
+            { status_label: '비체결 종료', side: 'BUY', observation: '전송되지 않음(체결 없음)' },
+          ],
+        },
+      },
+    };
+    expect(row.pnl?.today?.pnl_krw).toBe('-4050');
+    expect(row.pnl?.unresolved?.attempts?.[0]?.status_label).toBe('비체결 종료');
+  });
+
+  it('types a decision-only row with nulls where a stock row has numbers', () => {
+    // Null, never 0: the futures tenants cannot order at all (operator decision
+    // 2026-11-05), which is a different fact from "ordered nothing today".
+    const row: TosSymbolRow = {
+      symbol: 'A05612',
+      tree_id: 'cp3-setup-d-long',
+      kind: TENANT_KIND_FUTURES,
+      direction: 'LONG',
+      decision_only: true,
+      buy: { fills: null, quantity: null, last: null },
+      holding: { quantity: null, lots: null, basis: TOS_LEDGER_HOLDING_BASIS },
+      pnl: null,
+      ticks: 409,
+    };
+    expect(row.decision_only).toBe(true);
+    expect(row.buy?.fills).toBeNull();
+    expect(row.pnl).toBeNull();
+    expect(row.ticks).toBe(409);
+  });
+
+  it('still accepts a document whose rows predate the P2 fields', () => {
+    // The exporter runs from a fresh origin/main worktree every morning while
+    // the dashboard container is rebuilt by hand, so the two sides are out of
+    // step for a while. An old document must render, not blank the panel.
+    const legacy = document({ symbols: [{ symbol: '005930', ticks: 380 }] });
+    expect(isAcceptedSymbolsDocument(legacy)).toBe(true);
+    expect(legacy.symbols?.[0]?.kind).toBeUndefined();
   });
 });

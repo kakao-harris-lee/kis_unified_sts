@@ -1,8 +1,16 @@
-"""Read-only reader for the per-symbol operator row document.
+"""Read-only reader for the per-tenant operator row document.
 
-Plan ``docs/plans/2026-11-19-tos-usage-plan.md`` §5 «종목별 운영 화면»: one row per
-stock tenant on the ``/tos`` page — today's buys, today's sells, the holding TOS
-itself knows about, and the last thing that blocked a bar.
+Plan ``docs/plans/2026-11-19-tos-usage-plan.md`` §5 «종목별 운영 화면», widened by
+``docs/plans/2026-11-25-tos-operator-page-legibility-plan.md`` §6 P2: one row per
+CP-3 tenant on the ``/tos`` page — today's buys, today's sells, the holding TOS
+itself knows about, the realized PnL, and the last thing that blocked a bar.
+
+**Five rows, two shapes.** The three stock tenants trade (KIS mock) and carry
+fills, a holding and a ``pnl``. The two futures tenants are ``decision_only``:
+their entries stop at an independent approval step (operator decision
+2026-11-05), so their fill/holding fields are ``None`` — never ``0`` — and they
+carry no ``pnl`` at all. A page that drew those as zeros would be claiming the
+tenant traded nothing today rather than that it cannot trade here.
 
 This is a **read model**, not an authority source, and it is the exact sibling of
 :mod:`services.dashboard.routes.tos_bars`: it opens a JSON document written on
@@ -160,17 +168,99 @@ class SymbolSession(BaseModel):
     run_rc: int | None = None
 
 
+class SymbolPnlPeriod(BaseModel):
+    """Realized PnL over one period — today, or everything TOS has closed.
+
+    Realized only, and FIFO: the exporter reads ``sts tos perf``'s own report
+    rather than counting a second time, so the page and the CLI can never
+    disagree. ``pnl_basis`` names the price the figure is built on; the page
+    must say so, because a basis of ``MIXED`` or the sealed order price means
+    some leg used the limit it sent, not a broker execution price.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    pnl_krw: str | None = None
+    pnl_basis: str | None = None
+    closed_round_trips: int | None = None
+    wins: int | None = None
+    buy_fills: int | None = None
+    sell_fills: int | None = None
+    quantity_bought: str | None = None
+    quantity_sold: str | None = None
+    #: Cumulative only: what the FIFO still holds open.
+    open_quantity: str | None = None
+    open_lots: int | None = None
+
+
+class SymbolUnresolvedAttempt(BaseModel):
+    """One order attempt that is outside the PnL — «집계 밖» in ``sts tos perf``.
+
+    ``reason`` and ``observation`` are the exporter's copy of the sentences the
+    CLI prints, so an operator reading the page and an operator reading the
+    terminal are told the same thing about the same order. The attempt's leaf
+    path is NOT a field: the exporter strips it before writing.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    status: str | None = None
+    status_label: str | None = None
+    side: str | None = None
+    quantity: str | None = None
+    order_price_krw: str | None = None
+    broker_execution_id: str | None = None
+    trading_date: str | None = None
+    reason: str | None = None
+    observation: str | None = None
+
+
+class SymbolUnresolved(BaseModel):
+    """Everything the FIFO could not account for, with its count."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    count: int | None = None
+    attempts: list[SymbolUnresolvedAttempt] | None = None
+
+
+class SymbolPnl(BaseModel):
+    """One tenant's realized PnL. ``None`` on a decision-only tenant."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    today: SymbolPnlPeriod | None = None
+    cumulative: SymbolPnlPeriod | None = None
+    unresolved: SymbolUnresolved | None = None
+
+
 class SymbolRow(BaseModel):
-    """One stock tenant's row."""
+    """One tenant's row — a stock tenant, or a decision-only futures one.
+
+    On a ``decision_only`` row ``buy``/``sell``/``holding`` carry ``None``
+    rather than ``0`` and ``pnl`` is absent entirely: futures entries stop at an
+    independent approval step (operator decision 2026-11-05), so there is no
+    order, no fill and no holding to report, and a zero would read as "bought
+    nothing today" instead of "cannot buy here".
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     symbol: str | None = None
     tree_id: str | None = None
+    #: ``stock`` or ``futures``, as the tenant tree's own render manifest
+    #: declares it. Present on every row, including the stock ones that
+    #: predate this field.
+    kind: str | None = None
+    #: ``LONG``/``SHORT``. Fixed per tenant in config — there is no step that
+    #: picks a direction, so this is a label, not an outcome.
+    direction: str | None = None
+    decision_only: bool | None = None
     session: SymbolSession | None = None
     buy: SymbolSide | None = None
     sell: SymbolSide | None = None
     holding: SymbolHolding | None = None
+    pnl: SymbolPnl | None = None
     halt: SymbolHalt | None = None
     ticks: int | None = None
     error: str | None = None
