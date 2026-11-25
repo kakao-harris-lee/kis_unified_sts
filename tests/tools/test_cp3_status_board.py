@@ -1205,10 +1205,19 @@ def test_a_mid_session_loss_turns_the_exit_code_to_1(tmp_path: Path, state: Path
 
 
 STEP4_HALT_SEQ = 500
+GENERIC_STEP4_DETAIL = (
+    "no independent approval decision is available for this proposal — UNKNOWN is "
+    "restrictive, never an assumed grant"
+)
 
 
-def _append_step4_unknown(state: Path, seq: int = STEP4_HALT_SEQ) -> None:
+def _append_step4_unknown(
+    state: Path, seq: int = STEP4_HALT_SEQ, *, standing: str | None = None
+) -> None:
     """런타임 ``engine.sequencer._halt`` 가 4단계에서 쓰는 행 모양 그대로."""
+    detail = GENERIC_STEP4_DETAIL
+    if standing is not None:
+        detail = f"{detail} · {sb.STANDING_DETAIL_MARKER}{standing}"
     _append_rows(
         state,
         "long-A05611",
@@ -1221,10 +1230,7 @@ def _append_step4_unknown(state: Path, seq: int = STEP4_HALT_SEQ) -> None:
                         "kind": "FLOW_HALTED",
                         "step": sb.INDEPENDENT_APPROVAL_STEP,
                         "halt_reason": sb.STAGE_UNKNOWN_HALT_REASON,
-                        "detail": (
-                            "no independent approval decision is available for this "
-                            "proposal — UNKNOWN is restrictive, never an assumed grant"
-                        ),
+                        "detail": detail,
                         "instrument_key": {
                             "account": "6004929703",
                             "instrument": "A05611",
@@ -1319,6 +1325,48 @@ def test_without_a_step4_halt_a_futures_line_is_unchanged(
     text = sb.render_text(board)
     assert "흐름 정지: STAGE_DENIED 1 · STAGE_UNKNOWN 2" in text
     assert sb.STEP4_UNKNOWN_EXPECTED_LABEL not in text
+
+
+def _step4_standing_text(
+    state: Path, cfg: sb.BoardConfig, *, market: str, standing: str
+) -> tuple[dict, str]:
+    _append_step4_unknown(state, standing=standing)
+    _set_market(state, "long-20261015", market)
+    board = _board(cfg, D1015)
+    return _session(board, "long-20261015")["store"], sb.render_text(board)
+
+
+def test_a_stock_step4_unknown_is_broken_down_by_the_standing_reason(
+    state: Path, cfg: sb.BoardConfig
+):
+    """주식 트리의 4단계 UNKNOWN 은 standing 이 낸 거절 사유 그대로 떼어 센다."""
+    reason = "open_over_outstanding_reservation"
+    st, text = _step4_standing_text(state, cfg, market="stock", standing=reason)
+    assert st["flow_halts_independent_approval_standing"] == {reason: 1}
+    label = sb.STEP4_UNKNOWN_STANDING_LABEL.format(reason=reason)
+    assert f"흐름 정지: STAGE_DENIED 1 · STAGE_UNKNOWN 2 · {label} 1" in text
+    assert sb.STEP4_UNKNOWN_EXPECTED_LABEL not in text
+
+
+def test_another_standing_reason_is_shown_verbatim(state: Path, cfg: sb.BoardConfig):
+    """사유 문자열은 그대로 보여 준다 — 하나로 굳은 이름이 아니다."""
+    reason = "uses_exhausted:OPEN-LONG-02"
+    st, text = _step4_standing_text(state, cfg, market="stock", standing=reason)
+    assert st["flow_halts_independent_approval_standing"] == {reason: 1}
+    assert f"4단계 승인 없음(standing: {reason}) 1" in text
+
+
+def test_a_futures_step4_unknown_keeps_its_expected_label(
+    state: Path, cfg: sb.BoardConfig
+):
+    """선물은 그대로다 — detail 이 standing 사유를 실어도 결정 전용 이름을 쓴다."""
+    reason = "open_over_outstanding_reservation"
+    _, text = _step4_standing_text(state, cfg, market="futures", standing=reason)
+    assert (
+        "흐름 정지: STAGE_DENIED 1 · STAGE_UNKNOWN 2"
+        f" · {sb.STEP4_UNKNOWN_EXPECTED_LABEL} 1" in text
+    )
+    assert f"standing: {reason})" not in text
 
 
 D1012 = dt.date(2026, 10, 12)

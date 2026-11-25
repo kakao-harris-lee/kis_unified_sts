@@ -262,7 +262,17 @@ class StandingApprovalSource:
         self._bound_digest: str | None = None
         self._refused_digests: set[str] = set()
         self._not_covered_reasons: set[str] = set()
+        self._not_covered_reason: str | None = None
         self._pending: _PendingUse | None = None
+
+    def begin_request(self) -> None:
+        """Forget the previous request's not-covered reason before a new one is judged."""
+        self._not_covered_reason = None
+
+    @property
+    def last_not_covered_reason(self) -> str | None:
+        """Why THIS request was not covered, or ``None`` — read by the recording stage."""
+        return self._not_covered_reason
 
     def bind_at_boot(self) -> None:
         """Bind (and evidence) the artifact if it is already present at boot — never on a"""
@@ -316,6 +326,8 @@ class StandingApprovalSource:
         )
 
     def _not_covered(self, reason: str) -> None:
+        # SAFETY: set before the once-per-reason evidence dedupe, or every repeat of a reason loses its per-request attribution and the halt text falls back to the unattributable generic one (2026-11-25: 315 stock OPENs)
+        self._not_covered_reason = reason
         if reason in self._not_covered_reasons:
             return
         self._not_covered_reasons.add(reason)
@@ -328,6 +340,7 @@ class StandingApprovalSource:
     def provide(self, request: StageRequest) -> LoadedApproval | None:
         """The decision for ``request`` if the artifact covers it, else ``None``."""
         self._pending = None
+        self.begin_request()
         if self._mock_class() is not True:
             return None
         if not self._path.is_file():
@@ -562,7 +575,7 @@ def chain_decision_providers(
 
 
 class StandingRecordingStage:
-    """Step 4 wrapped so a committed standing use is evidenced after the stage judged it."""
+    """Step 4 wrapped so a committed standing use is evidenced and a refusal is named."""
 
     def __init__(
         self,
@@ -573,6 +586,16 @@ class StandingRecordingStage:
         self._standing = standing
 
     def __call__(self, request: StageRequest) -> StageVerdict:
+        # SAFETY: reset before the stage runs, or a request that never reaches the standing source inherits the PREVIOUS request's refusal reason and names a cause that did not happen here
+        self._standing.begin_request()
         verdict = self._inner(request)
         self._standing.record_verdict(verdict)
-        return verdict
+        reason = self._standing.last_not_covered_reason
+        if (
+            reason is None
+            or verdict.outcome is not StageOutcome.UNKNOWN
+            or verdict.bound_identity is not None
+        ):
+            return verdict
+        prefix = "" if verdict.reason is None else f"{verdict.reason} · "
+        return verdict.model_copy(update={"reason": f"{prefix}standing: {reason}"})

@@ -59,6 +59,10 @@ pytestmark = pytest.mark.usefixtures("_hermetic_network_guard", "_hermetic_write
 
 _ENV = "non-live-test"
 _FIXTURE_QTY = 10
+_GENERIC_STEP4_UNKNOWN = (
+    "no independent approval decision is available for this proposal — UNKNOWN is "
+    "restrictive, never an assumed grant"
+)
 
 
 def _strategy_id(config_dir: Path) -> str:
@@ -219,7 +223,9 @@ def test_a_proposal_outside_any_bound_is_not_approved(
     _deployed(config_dir, custody_root, server, monkeypatch, **overrides)
     runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
     result = _one_pass(runtime)
-    assert _step4(result).outcome is StageOutcome.UNKNOWN
+    verdict = _step4(result)
+    assert verdict.outcome is StageOutcome.UNKNOWN
+    assert verdict.reason == f"{_GENERIC_STEP4_UNKNOWN} · standing: {reason}"
     assert server.requests_for(_ORDER_PATH) == []
     assert _standing_uses(runtime) == []
     assert [r["reason"] for r in _rows(runtime, "APPROVAL_STANDING_NOT_COVERED")] == [
@@ -285,19 +291,42 @@ def test_an_open_step8_would_deny_spends_no_use(
     ]
     _deployed(config_dir, custody_root, server, monkeypatch, actions=actions)
     runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
-    assert _step4(_one_pass(runtime)).outcome is StageOutcome.ADMIT
+    admitted = _step4(_one_pass(runtime))
+    assert admitted.outcome is StageOutcome.ADMIT
+    assert admitted.reason == "independent approval consumed (CONSUMED_NEW)"
     assert any(
         state is not CapacityState.RELEASED
         for _rid, state, _seq, _scope in runtime.rcl_log.reservation_rows()
     )
     for _ in range(2):
         held = _one_pass(runtime)
-        assert _step4(held).outcome is StageOutcome.UNKNOWN
+        verdict = _step4(held)
+        assert verdict.outcome is StageOutcome.UNKNOWN
+        assert verdict.reason == (
+            f"{_GENERIC_STEP4_UNKNOWN} · standing: open_over_outstanding_reservation"
+        )
         assert held.flow is not None and held.flow.handed_off is False
     assert len(_standing_uses(runtime)) == 1
     assert len(server.requests_for(_ORDER_PATH)) == 1
     reasons = [r["reason"] for r in _rows(runtime, "APPROVAL_STANDING_NOT_COVERED")]
     assert reasons == ["open_over_outstanding_reservation"]
+    _close(runtime)
+
+
+def test_the_not_covered_reason_does_not_leak_into_the_next_proposal(
+    config_dir, data_dir, custody_root, tmp_path, monkeypatch, server
+) -> None:
+    """A pass the standing source never judges must not inherit the previous pass's reason."""
+    _deployed(config_dir, custody_root, server, monkeypatch, instrument="005930")
+    runtime = _boot(tmp_path, config_dir, data_dir, custody_root)
+    first = _step4(_one_pass(runtime))
+    assert first.reason == f"{_GENERIC_STEP4_UNKNOWN} · standing: instrument_mismatch"
+
+    (custody_root / STANDING_APPROVAL_RELPATH).unlink()
+    second = _step4(_one_pass(runtime))
+    assert second.outcome is StageOutcome.UNKNOWN
+    assert second.reason == _GENERIC_STEP4_UNKNOWN
+    assert server.requests_for(_ORDER_PATH) == []
     _close(runtime)
 
 

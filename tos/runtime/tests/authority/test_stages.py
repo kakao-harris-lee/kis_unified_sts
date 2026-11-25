@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from tos.dsl import Proposal
 from tos.engine.records import InstrumentKey, StageRequest, StageVerdict
@@ -15,6 +16,10 @@ from tos.iap import (
 )
 from tos_runtime.authority.iap import ConsumeResult, IntentRegistry, LoadedApproval
 from tos_runtime.authority.stages import IndependentApprovalStage, item14_fields
+from tos_runtime.authority.standing import (
+    StandingApprovalSource,
+    StandingRecordingStage,
+)
 
 from .test_iap import _decision as build_decision
 
@@ -127,3 +132,65 @@ def test_item14_fields_when_log_unreachable_is_none_not_false() -> None:
     fields = item14_fields(result)
     assert fields["approval_consumed_for_this_intent"] is None
     assert fields["approval_intent_binding_digest"] is None
+
+
+class _StubStandingSource:
+    """Only what ``StandingRecordingStage`` touches: the reset, the reason, the record."""
+
+    def __init__(self, on_request: str | None, stale: str | None = None) -> None:
+        self._on_request = on_request
+        self._reason = stale
+        self.recorded: list[StageVerdict] = []
+
+    def begin_request(self) -> None:
+        self._reason = self._on_request
+
+    @property
+    def last_not_covered_reason(self) -> str | None:
+        return self._reason
+
+    def record_verdict(self, verdict: StageVerdict) -> None:
+        self.recorded.append(verdict)
+
+
+def _recording_stage(
+    source: _StubStandingSource, verdict: StageVerdict
+) -> StandingRecordingStage:
+    return StandingRecordingStage(
+        lambda _request: verdict, cast(StandingApprovalSource, source)
+    )
+
+
+def _unknown(bound_identity: str | None = None) -> StageVerdict:
+    return StageVerdict(
+        step=CommitmentStep.INDEPENDENT_APPROVAL,
+        outcome=StageOutcome.UNKNOWN,
+        authority_class=StageAuthorityClass.AVAILABLE_PURE_PREDICATE,
+        bound_identity=bound_identity,
+        reason="no independent approval decision is available for this proposal",
+    )
+
+
+def test_the_standing_refusal_reason_is_named_in_the_step4_unknown_text() -> None:
+    """2026-11-25: 315 OPENs halted at step 4 with text that named no cause at all."""
+    inner = _unknown()
+    source = _StubStandingSource("uses_exhausted:OPEN-LONG-02")
+    verdict = _recording_stage(source, inner)(_bare_request())
+    assert verdict.reason == f"{inner.reason} · standing: uses_exhausted:OPEN-LONG-02"
+    assert verdict.outcome is inner.outcome and verdict.step is inner.step
+    assert verdict.authority_class is inner.authority_class
+    assert source.recorded == [inner]
+
+
+def test_a_stale_not_covered_reason_never_reaches_the_next_verdict() -> None:
+    """A pass the standing source never judges must name no standing reason."""
+    inner = _unknown()
+    source = _StubStandingSource(None, stale="open_over_outstanding_reservation")
+    assert _recording_stage(source, inner)(_bare_request()).reason == inner.reason
+
+
+def test_a_verdict_that_bound_a_decision_keeps_its_own_text() -> None:
+    """The reason belongs to the no-decision branch — never to one that consumed a decision."""
+    inner = _unknown(bound_identity="iap-decision-1")
+    source = _StubStandingSource("open_over_outstanding_reservation")
+    assert _recording_stage(source, inner)(_bare_request()).reason == inner.reason

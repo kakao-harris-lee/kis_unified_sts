@@ -8,7 +8,8 @@
   digest(source_revision · activation) 와 런타임 ``code_digest`` 대 ``release.yaml``
   ``expected_code_digest``.
 * 그 세션 날짜로 한정한 틱 수, 결정 종류, 보류(DECISION_WITHHELD 등) 사유와 흐름 정지 사유
-  분포(선물 트리의 4단계 UNKNOWN 은 따로 떼어 이름을 붙인다 — :func:`_fmt_flow_halts`),
+  분포(4단계 UNKNOWN 은 따로 떼어 이름을 붙인다 — 선물 트리는 결정 전용, 그 밖의 트리는
+  standing 거절 사유별로. :func:`_fmt_flow_halts`),
   M5 첫 수(값을 쥐고도 UNKNOWN 으로 거절된 post-boot 봉), ``MARKETFEED_FIELD_REFUSED``
   행, ``VENUE_BAND_OBSERVED`` 행, ``MARKETFEED_PASS_OVERRUN`` 행 수와 가장 긴 pass(#949).
 * 생산자 지연(journal ``as_of_ms`` − 분 마감) p50/p90 과 생산자 카운터.
@@ -76,6 +77,8 @@ STAGE_UNKNOWN_HALT_REASON = "STAGE_UNKNOWN"
 INDEPENDENT_APPROVAL_STEP = "INDEPENDENT_APPROVAL"
 DECISION_ONLY_MARKET = "futures"
 STEP4_UNKNOWN_EXPECTED_LABEL = "4단계 승인 없음(선물 결정 전용 — 예상)"
+STANDING_DETAIL_MARKER = "standing: "
+STEP4_UNKNOWN_STANDING_LABEL = "4단계 승인 없음(standing: {reason})"
 
 FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
 STALE_FIELD_REASON = "stale"
@@ -646,12 +649,20 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     flow_halts = Counter(
         r["flow_halt_reason"] for r in ticks if r.get("flow_halt_reason") is not None
     )
-    step4_unknown = sum(
-        1
+    step4_rows = [
+        r
         for r in ticks
         if r.get("flow_halt_reason") == STAGE_UNKNOWN_HALT_REASON
         and r.get("flow_halt_step") == INDEPENDENT_APPROVAL_STEP
-    )
+    ]
+    step4_unknown = len(step4_rows)
+    step4_standing: Counter[str] = Counter()
+    for r in step4_rows:
+        _, marker, standing_reason = str(r.get("flow_halt_detail") or "").rpartition(
+            STANDING_DETAIL_MARKER
+        )
+        if marker:
+            step4_standing[standing_reason] += 1
     withheld_post_boot = [
         r for r in post_boot if r["outcome_kind"] == si.NO_OUTCOME_KIND
     ]
@@ -750,6 +761,9 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         "withheld_by_reason": dict(sorted(withheld.items())),
         "flow_halts": dict(sorted(flow_halts.items())),
         "flow_halts_independent_approval_unknown": step4_unknown,
+        "flow_halts_independent_approval_standing": dict(
+            sorted(step4_standing.items())
+        ),
         "capacity_denied": sum(1 for r in ticks if r.get("capacity_denied")),
         "handed_off": sum(1 for r in ticks if r.get("handed_off")),
         "stale_withheld_post_boot": stale,
@@ -1549,17 +1563,28 @@ def _fmt_counts(counts: Mapping[str, Any] | None) -> str:
 
 
 def _fmt_flow_halts(store: Mapping[str, Any], market: str | None) -> str:
-    """흐름 정지 사유 분포. 선물 트리의 4단계 UNKNOWN 은 떼어 이름을 붙인다."""
+    """흐름 정지 사유 분포. 4단계 UNKNOWN 은 떼어 이름을 붙인다 — 선물은 결정 전용, 그 밖은 standing 거절 사유별."""
     counts = dict(store["flow_halts"])
     step4 = store.get("flow_halts_independent_approval_unknown") or 0
-    if market != DECISION_ONLY_MARKET or not step4:
+    if not step4:
         return _fmt_counts(counts)
-    rest = counts.get(STAGE_UNKNOWN_HALT_REASON, 0) - step4
+    if market == DECISION_ONLY_MARKET:
+        labels = {STEP4_UNKNOWN_EXPECTED_LABEL: step4}
+    else:
+        labels = {
+            STEP4_UNKNOWN_STANDING_LABEL.format(reason=reason): n
+            for reason, n in (
+                store.get("flow_halts_independent_approval_standing") or {}
+            ).items()
+        }
+    if not labels:
+        return _fmt_counts(counts)
+    rest = counts.get(STAGE_UNKNOWN_HALT_REASON, 0) - sum(labels.values())
     if rest > 0:
         counts[STAGE_UNKNOWN_HALT_REASON] = rest
     else:
         counts.pop(STAGE_UNKNOWN_HALT_REASON, None)
-    counts[STEP4_UNKNOWN_EXPECTED_LABEL] = step4
+    counts.update(labels)
     return _fmt_counts(counts)
 
 
