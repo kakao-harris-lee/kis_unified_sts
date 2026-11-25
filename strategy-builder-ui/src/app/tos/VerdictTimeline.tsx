@@ -4,12 +4,14 @@ import { useState } from 'react';
 import config from '@/config/tos-control-plane.json';
 import type { TosBarsBar } from '@/lib/dashboard/tosBars';
 import {
+  isProbeRule,
   isSignalVerdict,
   planTimeline,
   timelineSummary,
   verdictTimeline,
   type BarVerdict,
   type SignalCount,
+  type ProbePredicate,
   type TimelineEntry,
   type VerdictKind,
 } from '@/lib/dashboard/tosDecision';
@@ -21,6 +23,8 @@ interface VerdictTimelineProps {
   bars: TosBarsBar[];
   selectedIndex: number;
   onSelect: (index: number) => void;
+  /** The document's probe test, so «시험 진입» is the document's word. */
+  isProbe?: ProbePredicate;
 }
 
 const VERDICT_TONES: Record<BarVerdict['kind'], Tone> = {
@@ -123,9 +127,14 @@ function Row({
  * the quiet background only, what it drops is named by kind, and a filter
  * lists every entry, exit and probe with no cap at all.
  */
-export default function VerdictTimeline({ bars, selectedIndex, onSelect }: VerdictTimelineProps) {
+export default function VerdictTimeline({
+  bars,
+  selectedIndex,
+  onSelect,
+  isProbe = isProbeRule,
+}: VerdictTimelineProps) {
   const [tradesOnly, setTradesOnly] = useState(false);
-  const entries = verdictTimeline(bars);
+  const entries = verdictTimeline(bars, isProbe);
   const summary = timelineSummary(entries);
   const signals = entries.filter((entry) => isSignalVerdict(entry.verdict.kind));
   const plan = planTimeline(entries, config.timelineQuietMaxRows);

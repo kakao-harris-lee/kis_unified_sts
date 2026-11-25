@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from 'react';
-import type { BarsState } from '@/lib/dashboard/tosBars';
-import { latestCountedBar } from '@/lib/dashboard/tosDecision';
+import { hasHypotheticalPnl, type BarsState } from '@/lib/dashboard/tosBars';
+import { latestCountedBar, probePredicate } from '@/lib/dashboard/tosDecision';
 import BarsChart from './BarsChart';
 import BlockingConditions from './BlockingConditions';
 import DecisionEvidence from './DecisionEvidence';
+import HypotheticalTrades from './HypotheticalTrades';
 import VerdictTimeline from './VerdictTimeline';
 import { AsOf, ageLabel } from './marks';
 import type { BarsRead } from './queries';
@@ -57,6 +58,11 @@ interface BarsPanelProps {
 export default function BarsPanel({ requested, read }: BarsPanelProps) {
   const { state, document, response, authError } = read;
   const bars = document?.bars ?? [];
+  // One probe test for every view of this session — see probePredicate.
+  const isProbe = probePredicate(document);
+  const hypothetical = hasHypotheticalPnl(document)
+    ? (document?.hypothetical_pnl?.trades ?? [])
+    : [];
   const defaultIndex = Math.max(0, bars.indexOf(latestCountedBar(bars) ?? bars[bars.length - 1]));
   const [chosen, setChosen] = useState<number | null>(null);
   const selectedIndex = chosen == null ? defaultIndex : Math.min(chosen, Math.max(0, bars.length - 1));
@@ -124,10 +130,28 @@ export default function BarsPanel({ requested, read }: BarsPanelProps) {
             </span>
           </div>
 
-          <BarsChart bars={bars} selectedIndex={selectedIndex} onSelect={setChosen} />
-          <DecisionEvidence bar={bars[selectedIndex] ?? null} summary={document.summary} />
-          <BlockingConditions summary={document.summary} />
-          <VerdictTimeline bars={bars} selectedIndex={selectedIndex} onSelect={setChosen} />
+          <BarsChart
+            bars={bars}
+            selectedIndex={selectedIndex}
+            onSelect={setChosen}
+            isProbe={isProbe}
+            hypothetical={hypothetical}
+          />
+          <DecisionEvidence
+            bar={bars[selectedIndex] ?? null}
+            summary={document.summary}
+            document={document}
+          />
+          {/* Only on a decision-only tenant, and never beside a realized
+              figure: this tenant has none. */}
+          <HypotheticalTrades document={document} />
+          <BlockingConditions summary={document.summary} isProbe={isProbe} />
+          <VerdictTimeline
+            bars={bars}
+            selectedIndex={selectedIndex}
+            onSelect={setChosen}
+            isProbe={isProbe}
+          />
 
           <AsOf>
             이 기록은 세션이 끝난 뒤 한 번 내보낸 것입니다. 장중에는 직전 세션을 보고 있을 수

@@ -233,3 +233,133 @@ describe('문서 없는 상태', () => {
     expect(screen.queryByRole('radiogroup', { name: '판단이 바뀐 지점' })).not.toBeInTheDocument();
   });
 });
+
+describe('규칙의 뜻 — 문서가 설명을 실은 뒤', () => {
+  it('prints the strategy author’s own sentence for the bar’s rule', async () => {
+    mount();
+    await pick('09:14');
+    expect(screen.getByText(/entry window open, high-volatility regime/)).toBeInTheDocument();
+    expect(screen.getByText('— 전략 파일의 설명')).toBeInTheDocument();
+  });
+
+  it('falls back to the glossary for a document exported before the explanation', async () => {
+    const document = futuresBarsDocument();
+    delete document.explain;
+    mount({ document });
+    await pick('09:14');
+    expect(screen.getByText(/진입 시간대·변동성·추가 하락 멈춤·반전이 모두 서고/)).toBeInTheDocument();
+    expect(screen.queryByText('— 전략 파일의 설명')).not.toBeInTheDocument();
+  });
+
+  it('shows what the tenant’s field catalog computes, beside each condition', async () => {
+    mount();
+    await pick('09:14');
+    expect(screen.getByText(/between\(mso\) · hi=345 · lo=15/)).toBeInTheDocument();
+    expect(screen.getByText(/ratio_z\(close, vwap, atr\)/)).toBeInTheDocument();
+  });
+
+  it('calls a rule a probe when the document flags it as one', async () => {
+    mount({ document: stockBarsDocument() }, 'stock-r1-20261125');
+    await pick('09:15');
+    expect(screen.getByText('시험 진입 — 전략 신호 아님')).toBeInTheDocument();
+  });
+
+  it('stops calling it one when the operator map clears it, id unchanged', async () => {
+    // The id still says PROBE. The document's own flag is what decides.
+    const cleared = stockBarsDocument();
+    cleared.explain!.rules = cleared.explain!.rules!.map((rule) =>
+      rule.rule_id === 'R4-M2-PROBE-ENTRY-LONG' ? { ...rule, probe: false } : rule,
+    );
+    mount({ document: cleared }, 'stock-r1-20261125');
+    await pick('09:15');
+    expect(screen.queryByText('시험 진입 — 전략 신호 아님')).not.toBeInTheDocument();
+  });
+});
+
+describe('가상 거래', () => {
+  function hypothetical(): HTMLElement {
+    return screen.getByRole('group', { name: '가상 거래' });
+  }
+
+  it('shows a decision-only session what its judgements would have earned', () => {
+    mount();
+    const block = within(hypothetical());
+    expect(block.getByText('09:14')).toBeInTheDocument();
+    expect(block.getByText('15:45')).toBeInTheDocument();
+    expect(block.getAllByText('+2.94 pt').length).toBe(2);
+    expect(block.getAllByText('+147,000원').length).toBeGreaterThan(0);
+  });
+
+  it('states the assumptions the figure rests on, in plain words', () => {
+    mount();
+    const block = within(hypothetical());
+    expect(block.getByText('판단 봉 종가 체결')).toBeInTheDocument();
+    expect(block.getByText('체결 보장 가정')).toBeInTheDocument();
+    expect(block.getByText('수수료 없음')).toBeInTheDocument();
+    expect(block.getByText(/실현 손익과 합산하지\s*않습니다/)).toBeInTheDocument();
+  });
+
+  it('says what the total LEFT OUT, with the document’s own reason', () => {
+    mount();
+    const block = within(hypothetical());
+    expect(block.getByText(/합계에서 뺀 판단 1건 — 엔진 판단이 아님 1/)).toBeInTheDocument();
+    expect(block.getByText(/08:48/)).toBeInTheDocument();
+  });
+
+  it('says 진입 없음 — never 0원 — for a session that decided nothing', () => {
+    const document = futuresBarsDocument();
+    document.hypothetical_pnl = {
+      ...document.hypothetical_pnl,
+      trades: [],
+      totals: { trades: 0, wins: 0, points: null, hypothetical_pnl_krw: null, forced_closes: 0 },
+      skipped_decisions: [],
+    };
+    mount({ document });
+    const block = within(hypothetical());
+    expect(block.getByText(/진입 없음 — 이 세션은 진입 판단을 내지 않았습니다/)).toBeInTheDocument();
+    expect(block.queryByText('0원')).not.toBeInTheDocument();
+  });
+
+  it('marks a forced close as one rather than inventing an exit rule', () => {
+    const document = futuresBarsDocument();
+    document.hypothetical_pnl = {
+      ...document.hypothetical_pnl,
+      trades: [
+        {
+          entry_time_kst: '09:14',
+          entry_rule_id: 'R1-ENTRY-LONG',
+          entry_price_points: '735.64',
+          exit_time_kst: '15:45',
+          exit_rule_id: null,
+          exit_price_points: '730.00',
+          points: '-5.64',
+          hypothetical_pnl_krw: '-282000',
+          forced_close: true,
+          forced_close_reason: 'SESSION_END',
+        },
+      ],
+      totals: { trades: 1, wins: 0, points: '-5.64', hypothetical_pnl_krw: '-282000', forced_closes: 1 },
+    };
+    mount({ document });
+    const block = within(hypothetical());
+    expect(block.getByText('강제 청산')).toBeInTheDocument();
+    expect(block.getByText(/730 · 규칙 없음/)).toBeInTheDocument();
+    expect(block.getAllByText('-282,000원').length).toBeGreaterThan(0);
+  });
+
+  it('is absent entirely on a tenant that actually orders', () => {
+    // A stock tenant HAS a realized figure; an assumed one beside it would
+    // invite adding the two.
+    mount({ document: stockBarsDocument() }, 'stock-r1-20261125');
+    expect(screen.queryByRole('group', { name: '가상 거래' })).not.toBeInTheDocument();
+  });
+
+  it('draws the assumed legs apart from the real decision marks', () => {
+    mount();
+    const chart = screen.getByRole('img', { name: /가상 진입·청산 2회/ });
+    expect(chart).toBeInTheDocument();
+    const hollow = chart.querySelectorAll('[stroke-dasharray="3 2"]');
+    expect(hollow.length).toBe(2);
+    for (const mark of hollow) expect(mark.getAttribute('fill')).toBe('none');
+  });
+});

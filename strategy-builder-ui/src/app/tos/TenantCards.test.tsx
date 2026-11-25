@@ -159,25 +159,96 @@ describe('tenant 카드', () => {
     expect(within(card('선물 LONG')).queryByTitle('R4-M2-PROBE-ENTRY-LONG')).not.toBeInTheDocument();
   });
 
+  /** The document's row for one tenant, by the session the card names. */
+  function rowFor(document: TosSymbolsDocument, session: string) {
+    return document.symbols!.find((row) => row.session?.name === session)!;
+  }
+
   it('separates 진행 중 from 대기·차단 and from 종료·시작 안 함', async () => {
     const running = symbolsDocument();
-    running.symbols![0].session!.status = 'RUNNING';
+    rowFor(running, 'stock-r1-20261125').session!.status = 'RUNNING';
     mount({}, symbols(running));
     expect(await within(card('주식 005930')).findByText('진행 중 · RUNNING')).toBeInTheDocument();
 
     const failed = symbolsDocument();
-    failed.symbols![0].session!.status = 'FAILED';
+    rowFor(failed, 'stock-r1-20261125').session!.status = 'FAILED';
     client.clear();
     mount({}, symbols(failed));
     expect(screen.getAllByText('대기 · 차단 · FAILED').length).toBeGreaterThan(0);
   });
 
-  it('says 상태 기록 없음 for a tenant this document does not cover', async () => {
-    // The per-symbol export carries stock tenants only. 「종료」 would be a
-    // claim about a futures session the page cannot see.
+  it('gives a futures tenant its real session status, now that the document has one', async () => {
+    // Until P2 the per-symbol export carried the stock tenants only and every
+    // futures card read 「상태 기록 없음」. It now carries the futures rows, so
+    // the card states what actually happened — and its boot and end times.
     mount();
     await screen.findByText('선물 LONG');
+    expect(within(card('선물 LONG')).getByText('종료')).toBeInTheDocument();
+    expect(within(card('선물 LONG')).getByText(/부팅 08:46 · 종료 15:50/)).toBeInTheDocument();
+  });
+
+  it('says 상태 기록 없음 for a tenant this document does not cover', async () => {
+    // A session the export has no row for at all. 「종료」 would be a claim
+    // about a session the page cannot see.
+    const partial = symbolsDocument();
+    partial.symbols = partial.symbols!.filter((row) => row.session?.name !== 'long-20261125');
+    mount({}, symbols(partial));
+    await screen.findByText('선물 LONG');
     expect(within(card('선물 LONG')).getByText('상태 기록 없음')).toBeInTheDocument();
+  });
+
+  it('shows a stock tenant today’s realized PnL and the running total', async () => {
+    mount();
+    const stock = within(card('주식 005930'));
+    expect(await stock.findByText('-4,050원')).toBeInTheDocument();
+    // The hue is never alone: the sign is printed and the word follows.
+    expect(stock.getAllByText('손실').length).toBeGreaterThan(0);
+    expect(stock.getByText('-3,150원')).toBeInTheDocument();
+    // The counts sit beside a tooltip term, so the words are split across
+    // elements — assert on the card's text rather than on one node.
+    expect(card('주식 005930')).toHaveTextContent('왕복 4회 · 승 2');
+  });
+
+  it('badges the orders the PnL could not account for', async () => {
+    mount();
+    await screen.findByText('주식 005930');
+    expect(card('주식 005930')).toHaveTextContent('미해결 주문 1건');
+  });
+
+  it('says 손익 기록 없음 rather than 0원 when the row carries no PnL', async () => {
+    const blank = symbolsDocument();
+    rowFor(blank, 'stock-r1-20261125').pnl = null;
+    mount({}, symbols(blank));
+    await screen.findByText('주식 005930');
+    expect(within(card('주식 005930')).getByText(/기록 없음/)).toBeInTheDocument();
+    expect(within(card('주식 005930')).queryByText('0원')).not.toBeInTheDocument();
+  });
+
+  it('shows a futures tenant its hypothetical figure, labelled and outlined', async () => {
+    mount();
+    await screen.findByText('선물 LONG');
+    const futures = within(card('선물 LONG'));
+    expect(await futures.findByText(/가상 손익\(체결 가정\)/)).toBeInTheDocument();
+    expect(futures.getByText('+2.94 pt')).toBeInTheDocument();
+    expect(futures.getByText('+147,000원')).toBeInTheDocument();
+    expect(futures.getByText(/실현 손익이 아니며 합산하지 않습니다/)).toBeInTheDocument();
+  });
+
+  it('says 진입 없음 — never 0원 — for a session that decided nothing', async () => {
+    vi.mocked(tosBarsApi.getBars).mockImplementation(async (session: string) => {
+      const document = futuresBarsDocument();
+      document.hypothetical_pnl = {
+        ...document.hypothetical_pnl,
+        trades: [],
+        totals: { trades: 0, wins: 0, points: null, hypothetical_pnl_krw: null, forced_closes: 0 },
+      };
+      return { available: true, reason: null, age_seconds: 1, session, document };
+    });
+    mount();
+    await screen.findByText('선물 LONG');
+    const futures = within(card('선물 LONG'));
+    expect(await futures.findByText('진입 없음')).toBeInTheDocument();
+    expect(futures.queryByText('0원')).not.toBeInTheDocument();
   });
 
   it('reports the selection without acting on anything', async () => {

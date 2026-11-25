@@ -59,6 +59,26 @@ function traded(): TosSymbolRow {
       },
     },
     holding: { quantity: '0', lots: 0, basis: 'TOS_LEDGER_FIFO_OPEN_LOTS' },
+    pnl: {
+      today: { pnl_krw: '-4050', pnl_basis: 'EXECUTION', closed_round_trips: 1, wins: 0 },
+      cumulative: { pnl_krw: '-3150', pnl_basis: 'EXECUTION', closed_round_trips: 4, wins: 2 },
+      unresolved: {
+        count: 1,
+        attempts: [
+          {
+            status: 'NO_FILL',
+            status_label: '비체결 종료',
+            side: 'BUY',
+            quantity: '1',
+            order_price_krw: '175800',
+            broker_execution_id: null,
+            trading_date: '20261123',
+            reason: '미접수(마지막 결과 UNKNOWN → 재조회로 확인)',
+            observation: '전송되지 않음(체결 없음)',
+          },
+        ],
+      },
+    },
     halt: {
       error: null,
       last_flow: {
@@ -116,8 +136,48 @@ function holding(): TosSymbolRow {
     },
     sell: { fills: 0, quantity: '0', last: null },
     holding: { quantity: '1', lots: 1, basis: 'TOS_LEDGER_FIFO_OPEN_LOTS' },
+    pnl: {
+      today: { pnl_krw: '1000', pnl_basis: 'ORDER_PRICE', closed_round_trips: 1, wins: 1 },
+      cumulative: { pnl_krw: '1000', pnl_basis: 'ORDER_PRICE', closed_round_trips: 1, wins: 1 },
+      unresolved: { count: 0, attempts: [] },
+    },
     halt: { error: null, last_flow: null, last_withheld: null, flow_counts: {} },
     ticks: 47,
+    error: null,
+  };
+}
+
+/**
+ * A decision-only tenant, as the export has carried one since P2.
+ *
+ * Every trading cell is null — not zero — because this tree stops at an
+ * independent approval step and never orders.
+ */
+function decisionOnly(): TosSymbolRow {
+  return {
+    symbol: 'A05612',
+    tree_id: 'cp3-setup-d-long',
+    kind: 'futures',
+    direction: 'LONG',
+    decision_only: true,
+    session: {
+      name: 'long-20261120',
+      status: 'ENDED',
+      boot_at: '08:46:08',
+      end_at: '15:50:01',
+      run_rc: 0,
+    },
+    buy: { fills: null, quantity: null, last: null },
+    sell: { fills: null, quantity: null, last: null },
+    holding: { quantity: null, lots: null, basis: 'TOS_LEDGER_FIFO_OPEN_LOTS' },
+    pnl: null,
+    halt: {
+      error: null,
+      last_flow: { reason: 'STAGE_DENIED', step: 'CANDIDATE_COMMAND_CONSTRUCTION', time_kst: '15:33' },
+      last_withheld: null,
+      flow_counts: { STAGE_DENIED: 36 },
+    },
+    ticks: 409,
     error: null,
   };
 }
@@ -155,8 +215,13 @@ function renderPanel() {
   );
 }
 
-/** The row whose header cell names `symbol`. */
-function rowFor(symbol: string): HTMLElement {
+/**
+ * The row whose header cell names `symbol`.
+ *
+ * A matcher rather than an exact string: the header cell carries the tenant's
+ * fixed direction under the symbol, so its accessible name is «005930 LONG».
+ */
+function rowFor(symbol: string | RegExp): HTMLElement {
   return screen.getByRole('rowheader', { name: symbol }).closest('tr') as HTMLElement;
 }
 
@@ -178,11 +243,11 @@ describe('SymbolsPanel', () => {
   it('shows one row per symbol — the plan §5 acceptance, on one screen', async () => {
     mocked.mockResolvedValue(response());
     renderPanel();
-    await screen.findByRole('rowheader', { name: '005930' });
-    expect(screen.getByRole('rowheader', { name: '000660' })).toBeInTheDocument();
-    expect(screen.getByRole('rowheader', { name: '005380' })).toBeInTheDocument();
-    // Header row plus three symbol rows, and nothing else.
-    expect(screen.getAllByRole('row')).toHaveLength(4);
+    await screen.findByRole('rowheader', { name: /005930/ });
+    expect(screen.getByRole('rowheader', { name: /000660/ })).toBeInTheDocument();
+    expect(screen.getByRole('rowheader', { name: /005380/ })).toBeInTheDocument();
+    // Header row, three symbol rows and the totals row, and nothing else.
+    expect(screen.getAllByRole('row')).toHaveLength(5);
   });
 
   it('renders today’s buys and sells with their price basis and order bar', async () => {
@@ -346,22 +411,87 @@ describe('SymbolsPanel', () => {
     expect(screen.queryByRole('rowheader', { name: '005930' })).not.toBeInTheDocument();
   });
 
-  it('says why the futures tenants are not in the table at all', async () => {
+  it('gives a decision-only tenant no trading cells at all, rather than zeros', async () => {
+    mocked.mockResolvedValue(
+      response({ document: fixture({ symbols: [traded(), decisionOnly()] }) }),
+    );
+    renderPanel();
+    await screen.findByRole('rowheader', { name: /A05612/ });
+    const row = within(rowFor(/A05612/));
+    expect(row.getByText('판단 전용')).toBeInTheDocument();
+    expect(row.getByText(/주문·체결·손익 해당 없음/)).toBeInTheDocument();
+    // Not a single zero anywhere in that row — the claim would be that it
+    // traded and came out even.
+    expect(row.queryByText('0원')).not.toBeInTheDocument();
+    // The halt column survives: a tenant that cannot order still records what
+    // the kernel refused.
+    expect(row.getByText(/주문서 작성/)).toBeInTheDocument();
+  });
+
+  it('shows today’s realized PnL with its sign, its word and its basis', async () => {
     mocked.mockResolvedValue(response());
     renderPanel();
-    await screen.findByRole('rowheader', { name: '005930' });
-    expect(screen.getByText(/선물 tenant 는 주문 없음/)).toBeInTheDocument();
-    expect(screen.getByText(/선물 tenant 는 판단만 기록하므로 체결도 보유도 없고/))
+    await screen.findByRole('rowheader', { name: /005930/ });
+    const row = within(rowFor(/005930/));
+    expect(row.getByText('-4,050원')).toBeInTheDocument();
+    // Colour is never the only carrier.
+    expect(row.getAllByText('손실').length).toBeGreaterThan(0);
+    expect(row.getByText('-3,150원')).toBeInTheDocument();
+    // A figure built on a sealed limit price says so; an execution-priced one
+    // does not need to.
+    expect(row.queryByText('지정가 기준')).not.toBeInTheDocument();
+    expect(within(rowFor(/005380/)).getAllByText('지정가 기준').length).toBeGreaterThan(0);
+  });
+
+  it('says 알 수 없음, not 0, for a row the exporter sent no PnL for', async () => {
+    mocked.mockResolvedValue(response());
+    renderPanel();
+    await screen.findByRole('rowheader', { name: /000660/ });
+    const row = within(rowFor(/000660/));
+    expect(row.getAllByText('알 수 없음').length).toBeGreaterThan(0);
+    expect(row.queryByText('0원')).not.toBeInTheDocument();
+  });
+
+  it('sums the stock tenants only, and only when every figure is known', async () => {
+    // One row without a figure makes the total unknown rather than a sum that
+    // silently counts that row as zero.
+    mocked.mockResolvedValue(response());
+    renderPanel();
+    await screen.findByRole('rowheader', { name: /005930/ });
+    const totals = within(screen.getByRole('rowheader', { name: /합계/ }).closest('tr')!);
+    expect(totals.getAllByText('알 수 없음').length).toBeGreaterThan(0);
+    expect(totals.queryByText(/원$/)).not.toBeInTheDocument();
+    expect(totals.getByText(/판단 전용 tenant 와 가상 손익은 합계에 들어가지 않습니다/))
       .toBeInTheDocument();
   });
 
-  it('omits PnL rather than showing an empty column for it', async () => {
-    // The document carries no PnL. A 「—」 column would be read as 「0」 inside a
-    // week; it arrives when the exporter does.
+  it('adds the day up once every stock tenant has a figure', async () => {
+    const quiet = idle();
+    quiet.pnl = {
+      today: { pnl_krw: '0', pnl_basis: null, closed_round_trips: 0, wins: 0 },
+      cumulative: { pnl_krw: '0', pnl_basis: null, closed_round_trips: 0, wins: 0 },
+      unresolved: { count: 0, attempts: [] },
+    };
+    mocked.mockResolvedValue(
+      response({ document: fixture({ symbols: [traded(), quiet, holding(), decisionOnly()] }) }),
+    );
+    renderPanel();
+    await screen.findByRole('rowheader', { name: /005930/ });
+    const totals = within(screen.getByRole('rowheader', { name: /합계/ }).closest('tr')!);
+    // -4,050 + 0 + 1,000 — the decision-only row is not in it.
+    expect(totals.getByText('-3,050원')).toBeInTheDocument();
+    expect(totals.getByText(/주식 tenant 3개/)).toBeInTheDocument();
+  });
+
+  it('lists the orders the PnL could not account for, outside it', async () => {
     mocked.mockResolvedValue(response());
     renderPanel();
-    await screen.findByRole('rowheader', { name: '005930' });
-    expect(screen.queryByRole('columnheader', { name: /손익|PnL/ })).not.toBeInTheDocument();
+    await screen.findByRole('rowheader', { name: /005930/ });
+    expect(screen.getByText(/손익 집계 밖입니다/)).toBeInTheDocument();
+    expect(screen.getByText(/매수 · 1주 · 지정가 175,800원 · 비체결 종료/)).toBeInTheDocument();
+    expect(screen.getByText(/미접수\(마지막 결과 UNKNOWN/)).toBeInTheDocument();
+    expect(screen.getByText(/전송되지 않음\(체결 없음\)/)).toBeInTheDocument();
+    expect(screen.getByText(/거래일 20261123/)).toBeInTheDocument();
   });
 
   it('says so when no tenant is declared at all', async () => {
