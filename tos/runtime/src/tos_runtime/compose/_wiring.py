@@ -73,6 +73,7 @@ from tos_runtime.compose._egress_coordinates import (
 )
 from tos_runtime.compose._envelope_wiring import build_construction_inputs
 from tos_runtime.compose._ledger_wiring import _build_ledger_stages
+from tos_runtime.compose._marketfeed_wiring import load_position_context_config
 from tos_runtime.compose._monitor_wiring import (
     _MonitorOwners,
     build_capacity_owner,
@@ -786,6 +787,7 @@ def _resolve_strategies_and_attested_inputs(
     transport_boot = resolve_transport_boot(
         transport_kind, config_dir, broker_scopes, infra.custody
     )
+    declared_position_context = load_position_context_config(config_dir)
     resolved_strategies = resolve_strategy_registry(
         config_dir,
         injected_registry=registry,
@@ -793,6 +795,9 @@ def _resolve_strategies_and_attested_inputs(
         emergency_log=infra.emergency_log,
         identity=identity,
         allow_no_strategies=allow_no_strategies,
+        position_context_enabled=(
+            declared_position_context is not None and declared_position_context.enabled
+        ),
     )
     record_operator_attested_inputs(
         config_dir,
