@@ -11,6 +11,13 @@
 * ``export-bars`` → ``tools/tos_cp3/export_bars.py``. 같은 점검을 ``--json`` 으로
   받아 대시보드가 이미 읽기 전용으로 bind-mount 한 디렉터리에 원자적으로 쓴다
   (§P1 둘째 항목의 호스트 측). 컨테이너는 그 파일을 **경로로만** 연다.
+* ``replay`` → ``tools/tos_cp3/replay.py`` (리플레이 계획
+  ``docs/plans/2026-11-27-tos-replay-plan.md``). 과거 분봉을 그 tenant 의
+  ``fields.yaml`` 로 평가해 저널 한 벌을 만들고, 같은 ``inspect`` 하위 프로세스로
+  봉별 결정을 받아 결정 구간표와 가상 손익을 낸다. 머지 전에 「이 tenant YAML
+  변경이 결정을 어떻게 바꾸는지」를 보는 자리다. CI 가 대조하는 고정본은 **합성**
+  분봉이다(``tools/tos_cp3/synthetic_bars.py``) — 저장소가 공개라 시세 데이터를
+  커밋하지 않는다.
 * ``perf`` → ``tools/tos_cp3/perf.py`` (활용 계획
   ``docs/plans/2026-11-19-tos-usage-plan.md`` §5 «`sts tos perf` 최소판»).
   tenant 잎 evidence 만 읽어 종목·날짜별 체결 수 · 손익 · 승 · 보유 수량을 센다.
@@ -43,6 +50,7 @@ def tos_cmd() -> None:
         sts tos status --date 2026-10-22
         sts tos status --json
         sts tos inspect stock-r1-20261110 --from 09:00 --to 10:00
+        sts tos replay --tree cp3-setup-d-stock-005380 --from 2026-09-01 --to 2026-10-08
         sts tos perf
         sts tos export-symbols
         sts tos export-status
@@ -157,6 +165,115 @@ def tos_inspect(
     click.echo(outcome.stdout, nl=False)
     click.echo(outcome.stderr, nl=False, err=True)
     sys.exit(outcome.exit_code)
+
+
+@tos_cmd.command("replay")
+@click.option("--tree", default=None, help="tenant 트리 이름, 또는 그 경로")
+@click.option(
+    "--symbol",
+    default=None,
+    help="종목/월물 코드 (주식 트리는 기본값이 트리의 종목, 선물 트리는 필수)",
+)
+@click.option(
+    "--data-root",
+    default=None,
+    help="분봉 Parquet 저장소 (gitignore 라 호스트에만 있다 — 예: data/market)",
+)
+@click.option("--bars-csv", default=None, help="고정본 CSV/CSV.GZ")
+@click.option("--from", "window_from", default=None, help="구간 시작 YYYY-MM-DD (포함)")
+@click.option("--to", "window_to", default=None, help="구간 끝 YYYY-MM-DD (포함)")
+@click.option(
+    "--seed-sessions",
+    default=None,
+    type=int,
+    help="앞의 N 세션은 시드로만 쓰고 결정은 내지 않는다",
+)
+@click.option(
+    "--min-bars-per-day",
+    default=None,
+    type=int,
+    help="이보다 얇은 세션은 통째로 버린다",
+)
+@click.option("--market-open", default=None, help="개장 앵커 HH:MM, 또는 auto")
+@click.option(
+    "--golden",
+    type=click.Choice(["check", "update"]),
+    default=None,
+    help="출하 트리 전부를 고정본으로 돌려 커밋된 정답과 대조/갱신",
+)
+@click.option("--only", multiple=True, help="--golden 과 함께: 이 트리만 (반복 가능)")
+@click.option(
+    "--runs", "as_runs", is_flag=True, help="결정 구간표만 — 정답과 같은 모양"
+)
+@click.option("--json", "as_json", is_flag=True, help="JSON 으로 출력")
+def tos_replay(
+    tree: str | None,
+    symbol: str | None,
+    data_root: str | None,
+    bars_csv: str | None,
+    window_from: str | None,
+    window_to: str | None,
+    seed_sessions: int | None,
+    min_bars_per_day: int | None,
+    market_open: str | None,
+    golden: str | None,
+    only: tuple[str, ...],
+    as_runs: bool,
+    as_json: bool,
+) -> None:
+    """과거 분봉 위에서 그 tenant 가 무슨 결정을 냈을지 — 머지 전에 본다.
+
+    tenant 의 ``fields.yaml`` 로 분봉을 평가해 관측 저널 한 벌을 만들고, 출하
+    트리를 가짜 계좌로 임시 디렉터리에 렌더해, ``sts tos inspect`` 와 **같은**
+    하위 프로세스(``cp3.inspect_session``)로 봉마다 규칙을 다시 평가한다. 출력은
+    날짜별 규칙 발화 수 · 결정 구간표 · 가상 손익이다.
+
+    \b
+    리플레이가 말하지 않는 것:
+      * 신호만 본다 — 승인 · 예약 · venue 한도 · 시간 인정 단계는 지나지 않는다.
+      * 포지션을 모른다 — 청산 규칙은 보유 여부와 무관하게 발화한다.
+      * 라이브와 필드가 같다는 증명이 아니다(그건 fields_equivalence 의 일이다).
+      * 가상 손익은 성과 약속이 아니다 — 체결 가정 · 수수료 0 · 슬리피지 0 이다.
+
+    분봉 원천은 둘이다. ``--data-root`` 는 호스트의 Parquet 저장소(``data/market``,
+    gitignore — 실제 분봉은 호스트에서만 읽는다)이고, ``--bars-csv`` 는 커밋된
+    **합성** 고정본이다. ``--golden`` 은 그 합성 고정본으로 출하 트리 전부를 돌려
+    커밋된 결정 정답과 대조한다 — 저장소가 공개라 시세 데이터는 커밋하지 않는다.
+
+    \b
+    Examples:
+        sts tos replay --tree cp3-setup-d-stock-005380 --from 2026-09-01 --to 2026-10-08 \\
+            --data-root data/market
+        sts tos replay --tree cp3-setup-d-long --symbol A05610 \\
+            --bars-csv tests/fixtures/tos/replay/bars/A05610.csv.gz
+        sts tos replay --golden check
+    """
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from tools.tos_cp3 import replay
+
+    argv: list[str] = []
+    for flag, value in (
+        ("--tree", tree),
+        ("--symbol", symbol),
+        ("--data-root", data_root),
+        ("--bars-csv", bars_csv),
+        ("--from", window_from),
+        ("--to", window_to),
+        ("--seed-sessions", seed_sessions),
+        ("--min-bars-per-day", min_bars_per_day),
+        ("--market-open", market_open),
+        ("--golden", golden),
+    ):
+        if value is not None:
+            argv += [flag, str(value)]
+    for name in only:
+        argv += ["--only", name]
+    if as_runs:
+        argv.append("--runs")
+    if as_json:
+        argv.append("--json")
+    sys.exit(replay.main(argv))
 
 
 @tos_cmd.command("perf")
