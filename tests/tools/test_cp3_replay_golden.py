@@ -112,6 +112,13 @@ def test_the_replayed_decisions_match_the_committed_golden(tree: str) -> None:
     assert code == 0, text
 
 
+@pytest.mark.parametrize("mode", ["check", "update"])
+def test_an_unknown_only_tree_is_refused_not_passed(mode: str) -> None:
+    """오타 난 ``--only`` 는 아무것도 돌리지 않은 초록이 아니라 거부다 (#1185 리뷰 MEDIUM)."""
+    with pytest.raises(rp.ReplayError, match="cp3-setup-d-lng"):
+        rp.run_golden(mode, only=["cp3-setup-d-lng"])
+
+
 def test_the_two_futures_trees_read_the_same_bars_and_decide_differently() -> None:
     """같은 프레임에서 LONG · SHORT 가 같은 결정을 내면 방향 대칭이 깨진 것이다."""
     specs = {spec.tree: spec for spec in GOLDEN_RUNS}

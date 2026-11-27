@@ -820,7 +820,16 @@ def run_golden(
     sources = {
         item.symbol: synthetic_source(item) for item in synthetic_specs(config_path)
     }
-    for spec in load_golden_config(config_path):
+    specs = load_golden_config(config_path)
+    unknown = sorted(wanted - {spec.tree for spec in specs})
+    if unknown:
+        # SAFETY: 오타 난 --only 가 아무것도 돌리지 않고 exit 0 을 내면 리플레이하지 않은 트리가 통과로 읽힌다.
+        raise ReplayError(
+            f"{_relative(config_path)}: --only 가 가리킨 트리가 없다: "
+            f"{', '.join(unknown)} — 아는 트리: "
+            f"{', '.join(sorted(spec.tree for spec in specs))}"
+        )
+    for spec in specs:
         if wanted and spec.tree not in wanted:
             continue
         if spec.symbol not in sources:
