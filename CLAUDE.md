@@ -264,6 +264,12 @@ mypy shared/ --ignore-missing-imports --no-error-summary
 docker compose up -d              # dashboard + strategy-builder-ui + caddy + redis + prometheus
 sts tos status                    # the one-page operator status board
 sts tos inspect <session>         # per-bar: fields, per-compare pass/fail, decision, halt
+sts tos replay --tree <tree> --from D --to D --data-root data/market
+                                  # that tenant's per-bar decisions over past minute bars
+                                  # (signals only, no order path). `--golden check` replays the
+                                  # five shipped trees on the committed SYNTHETIC fixtures and
+                                  # compares the decisions; real bars live only on the host
+                                  # (`data/` is gitignored and this repo is public)
 sts tos perf                      # fills and PnL per symbol/date, from tenant leaf evidence
 sts tos export-bars <session>     # that session's per-bar review as the dashboard's JSON
 ```

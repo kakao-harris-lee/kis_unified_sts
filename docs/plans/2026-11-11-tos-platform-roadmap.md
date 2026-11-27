@@ -75,6 +75,11 @@
 
 ### P3 — 리플레이 검증 루프와 회귀 정답 · 12-07 ~ 12-23
 
+실행 계획은 `docs/plans/2026-11-27-tos-replay-plan.md` 다. **아래 커널 `tos.backtest` driver 문장은 P3
+에서는 대체됐다**(그 계획 §5 기각표): 조립 루트 전체를 오프라인용으로 다시 세워야 하는데 그 결과에는
+결정 종류도 규칙 id 도 없이 다이제스트만 나온다. 결정 diff 는 엔진이 부르는 것과 같은 `evaluate_policy`
+로 충족되고, 체결 모델이 필요해지는 P4(손절·목표) 때 driver 를 다시 본다.
+
 - `sts tos replay --tree <tree> --from D --to D` — 커널 `tos.backtest` driver 로 tenant 를 과거 분봉 위에서
   돌린다(synthetic 체결). 출력: 결정·제안·체결·손익 표.
 - **회귀 정답:** 출하된 tenant 트리마다 고정 구간(예: 20 거래일)의 결정 열을 저장소에 정답으로 커밋하고, CI 가
