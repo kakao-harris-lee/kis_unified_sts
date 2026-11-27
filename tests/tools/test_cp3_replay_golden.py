@@ -9,8 +9,10 @@ from __future__ import annotations
 import collections
 import gzip
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 from tools.tos_cp3 import replay as rp
 from tools.tos_cp3 import synthetic_bars
@@ -35,9 +37,10 @@ def _replayable_trees() -> tuple[str, ...]:
     for candidate in sorted(rp.TENANT_ROOT.iterdir()):
         if not (candidate / "RENDER.yaml").is_file():
             continue
+        # SAFETY: 건너뛰는 사유는 「저널을 렌더가 쓰는 트리」 하나뿐이다 — 모든 ReplayError 를 삼키면 리플레이 가능해야 할 새 트리가 다른 사유로 거부될 때 목록에서 조용히 빠지고, 아래 핀이 그 트리의 정답을 요구하지 않는다
         try:
             found.append(rp.tenant_facts(candidate).tree_id)
-        except rp.ReplayError:
+        except rp.ReplayJournalModeRefused:
             continue
     return tuple(found)
 
@@ -45,6 +48,56 @@ def _replayable_trees() -> tuple[str, ...]:
 def test_every_replayable_shipped_tree_has_a_golden() -> None:
     assert set(_replayable_trees()) == set(GOLDEN_TREES)
     assert len(GOLDEN_TREES) == 5
+
+
+#: 저널 모드만 바꿔 끼우는 최소 매니페스트 — 슬롯 하나와 그 대상 파일이 있어야
+#: ``load_manifest`` 가 통과한다. 방향은 ``substitute`` 라 리플레이가 **저널 모드와
+#: 무관한 사유**로 거부한다.
+_TMP_MANIFEST = """tree_id: "{tree_id}"
+direction:
+  mode: "substitute"
+journal:
+  mode: "{journal_mode}"
+slots:
+  - file: "construction.yaml"
+    key: "account"
+    anchor: 'account: "TBD"'
+    replacement: 'account: "{{value}}"'
+    value: "account"
+"""
+
+
+def _tmp_tree(root: Path, *, tree_id: str, journal_mode: str) -> Path:
+    """``RENDER.yaml`` 과 슬롯 대상 파일만 있는 tenant 트리 하나."""
+    tree = root / tree_id
+    tree.mkdir()
+    (tree / "RENDER.yaml").write_text(
+        _TMP_MANIFEST.format(tree_id=tree_id, journal_mode=journal_mode),
+        encoding="utf-8",
+    )
+    (tree / "construction.yaml").write_text('account: "TBD"\n', encoding="utf-8")
+    return tree
+
+
+def test_a_tree_refused_for_another_reason_is_not_silently_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """저널 모드 아닌 사유로 거부된 트리는 목록에서 빠지지 않고 테스트를 깬다 (#1186)."""
+    _tmp_tree(
+        tmp_path, tree_id="tmp-no-direction", journal_mode=rp.EXTERNAL_JOURNAL_MODE
+    )
+    monkeypatch.setattr(rp, "TENANT_ROOT", tmp_path)
+    with pytest.raises(rp.ReplayError, match="방향을 선언하지 않은 트리다"):
+        _replayable_trees()
+
+
+def test_a_tree_whose_render_writes_the_journal_is_still_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """상주 ``paper`` 트리처럼 저널을 렌더가 쓰는 트리는 정답을 요구하지 않는다."""
+    _tmp_tree(tmp_path, tree_id="tmp-synthetic", journal_mode="synthetic_bootproof")
+    monkeypatch.setattr(rp, "TENANT_ROOT", tmp_path)
+    assert _replayable_trees() == ()
 
 
 def test_every_golden_file_is_committed() -> None:
@@ -213,8 +266,6 @@ def test_the_fired_rules_are_the_tenants_own_and_cover_entry_exit_eod(
 
 def _declared_rule_ids(tree: str) -> set[str]:
     """그 트리의 전략 YAML 이 선언한 규칙 id 전부 — 기본 결정까지."""
-    import yaml
-
     from tools.tos_cp3 import bars_explain
 
     strategies = sorted((rp.TENANT_ROOT / tree / "strategies").glob("*.yaml"))
@@ -226,6 +277,78 @@ def _declared_rule_ids(tree: str) -> set[str]:
     }
     found.add(bars_explain.rule_id_of((policy.get("default") or {}).get("rationale")))
     return {rule_id for rule_id in found if rule_id}
+
+
+# ---------------------------------------------------------------------------
+# 리플레이가 읽는 값 ↔ 라이브 생산자 설정 (#1186 리뷰 LOW)
+# ---------------------------------------------------------------------------
+
+PRODUCER_DIR = REPO_ROOT / "config" / "tos_probes"
+# SAFETY: 선물 생산자(cp3-live-producer.yaml)는 `open_anchor: auto` 로 시대 규칙을 가리키므로 앵커 핀의 글롭에서 일부러 빠진다 — 이 글롭을 PRODUCER_GLOB 으로 넓히면 "auto" 를 HH:MM 으로 파싱하려다 깨진다(그 값의 핀은 test_cp3_replay.py 의 시대 규칙 테스트다)
+STOCK_PRODUCER_GLOB = "cp3-live-producer-stock-*.yaml"
+PRODUCER_GLOB = "cp3-live-producer*.yaml"
+
+
+def _producer_config(path: Path) -> dict[str, Any]:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(raw, dict), f"{path}: 최상위가 매핑이 아니다"
+    return raw
+
+
+def _hhmm(value: Any) -> tuple[int, int]:
+    hour_text, _, minute_text = str(value).strip().partition(":")
+    return int(hour_text), int(minute_text)
+
+
+def _golden_default_density() -> int:
+    """정답 설정의 기본 밀도 게이트 — 리플레이가 돌릴 때 쓰는 그 값."""
+    # SAFETY: 최상위 기본값이 아니라 run 마다 실제로 넘어가는 값을 본다 — run 하나가 자기 min_bars_per_day 를 덮어쓰면 그 트리만 다른 세션 집합에서 도는데 최상위 값만 보는 핀은 그것을 통과시킨다
+    used = {
+        spec.min_bars_per_day for spec in rp.load_golden_config(rp.GOLDEN_CONFIG_PATH)
+    }
+    assert (
+        len(used) == 1
+    ), f"{rp.GOLDEN_CONFIG_PATH}: run 들이 서로 다른 min_bars_per_day 로 돈다 ({sorted(used)})"
+    return used.pop()
+
+
+def test_every_stock_producer_open_anchor_is_the_one_replay_reads() -> None:
+    """주식 생산자의 개장 앵커와 리플레이가 읽는 개장 시각은 같은 값이어야 한다."""
+    # SAFETY: 리플레이는 생산자 설정이 아니라 market_schedule.yaml 을 읽는다 — 한쪽만 바뀌면 리플레이의 모든 봉에서 minutes_since_open 이 밀려 entry_window 가 조용히 다른 창이 되고, 결정 정답의 diff 는 그것을 규칙이 바뀐 것과 구별해 주지 않는다
+    configs = sorted(PRODUCER_DIR.glob(STOCK_PRODUCER_GLOB))
+    assert configs, f"{PRODUCER_DIR}/{STOCK_PRODUCER_GLOB}: 생산자 설정이 하나도 없다"
+    expected = rp.configured_open("stock")
+    schedule = rp.MARKET_SCHEDULE_PATH.relative_to(REPO_ROOT)
+    for path in configs:
+        declared = _hhmm(_producer_config(path)["open_anchor"])
+        assert declared == expected, (
+            f"{path.relative_to(REPO_ROOT)}::open_anchor 가 {declared} 인데 "
+            f"{schedule}::market_schedule.stock.regular.open 는 {expected} 다 "
+            "— 한쪽이 움직였고 리플레이는 뒤쪽만 따른다"
+        )
+
+
+def test_every_producer_density_gate_is_the_golden_configs_default() -> None:
+    """생산자 설정의 밀도 게이트와 정답 설정의 기본값은 같은 값이어야 한다."""
+    # SAFETY: 게이트는 어느 날이 프레임에 들어가는지를 정한다 — 두 값이 갈리면 리플레이와 라이브 생산자가 **다른 세션 집합**에서 돌고, 바뀐 결정이 규칙 변경 때문인지 날 집합 변경 때문인지 구별되지 않는다
+    configs = sorted(PRODUCER_DIR.glob(PRODUCER_GLOB))
+    assert configs, f"{PRODUCER_DIR}/{PRODUCER_GLOB}: 생산자 설정이 하나도 없다"
+    expected = _golden_default_density()
+    golden = rp.GOLDEN_CONFIG_PATH.relative_to(REPO_ROOT)
+    carried = 0
+    for path in configs:
+        value = _producer_config(path).get("min_bars_per_day")
+        if value is None:
+            continue
+        carried += 1
+        assert value == expected, (
+            f"{path.relative_to(REPO_ROOT)}::min_bars_per_day 가 {value} 인데 "
+            f"{golden}::min_bars_per_day 는 {expected} 다 "
+            "— 한쪽이 움직였고 리플레이는 뒤쪽으로 돈다"
+        )
+    assert (
+        carried
+    ), f"{PRODUCER_DIR}/{PRODUCER_GLOB}: min_bars_per_day 를 적은 설정이 하나도 없다"
 
 
 def test_the_bars_fixtures_stay_small_enough_to_review() -> None:
