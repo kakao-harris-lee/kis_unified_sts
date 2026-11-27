@@ -247,6 +247,7 @@ def run_decision_pipeline(
         scheme=scheme,
         enforcement_mechanism_version=configuration.enforcement_mechanism_version,
         resolved_context=payload.value_view,
+        position_context=payload.position_context,
     )
     outcome = select_outcome(
         bound_state, completed_outcome=result.outcome, on_exhaustion=_on_exhaustion

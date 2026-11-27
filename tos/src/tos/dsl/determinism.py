@@ -12,6 +12,7 @@ from tos.dsl._base import (
 )
 from tos.dsl.context_value import VALUE_NAMESPACE, ContextValueView
 from tos.dsl.outcome import NoActionOutcome, Outcome, PortfolioVector
+from tos.dsl.position_context import POSITION_NAMESPACE, PositionContext
 from tos.dsl.proposal import Proposal, Proposer, build_flat, build_proposal
 from tos.dsl.strategy import AuthoredStrategy
 from tos.dsl.vocabulary import (
@@ -55,6 +56,7 @@ def build_environment(
     config: EvaluationConfig,
     *,
     resolved_context: ContextValueView | None = None,
+    position_context: PositionContext | None = None,
 ) -> dict[str, Any]:
     """Build the Decision Context environment from the Capsule + config (design §4)."""
     capsule_view: dict[str, Any] = capsule.model_dump(mode="json")
@@ -66,6 +68,16 @@ def build_environment(
                 "with market-derived values, so the merge is refused (design #32 §3.2 (1))"
             )
         capsule_view[VALUE_NAMESPACE] = resolved_context.as_environment_mapping()
+    if position_context is not None:
+        # SAFETY: refuse rather than overwrite — a Capsule that grows a top-level `position`
+        # key would otherwise have its covered content silently replaced by order-path state.
+        if POSITION_NAMESPACE in capsule_view:
+            raise ArtifactIntegrityError(
+                f"the position namespace {POSITION_NAMESPACE!r} collides with a Decision "
+                "Context Capsule top-level key — merging would overwrite covered Capsule content "
+                "with order-path state, so the merge is refused (plan P4 §2 D2)"
+            )
+        capsule_view[POSITION_NAMESPACE] = position_context.as_environment_mapping()
     return {
         "capsule": capsule_view,
         "config": dict(config.bindings),
@@ -196,9 +208,15 @@ def _evaluate(
     scheme: Any,
     enforcement_mechanism_version: str,
     resolved_context: ContextValueView | None,
+    position_context: PositionContext | None,
 ) -> EvaluationResult:
     """The single evaluation body shared by :func:`evaluate` / :func:`evaluate_resolved`."""
-    env = build_environment(capsule, config, resolved_context=resolved_context)
+    env = build_environment(
+        capsule,
+        config,
+        resolved_context=resolved_context,
+        position_context=position_context,
+    )
     decision = evaluate_policy(strategy.policy, env)  # type: ignore[arg-type]
     outcome = _decision_to_outcome(
         decision, scheme=scheme, strategy=strategy, config=config, capsule=capsule
@@ -206,6 +224,8 @@ def _evaluate(
     captured_refs = _captured_value_refs(capsule)
     if resolved_context is not None:
         captured_refs = captured_refs + (resolved_context.canonical_digest,)
+    if position_context is not None:
+        captured_refs = captured_refs + (position_context.canonical_digest,)
     signature = RecordedInputSignature(
         capsule_id=capsule.capsule_id,
         capsule_canonical_digest=capsule.canonical_digest,
@@ -234,6 +254,7 @@ def evaluate(
         scheme=scheme,
         enforcement_mechanism_version=enforcement_mechanism_version,
         resolved_context=None,
+        position_context=None,
     )
 
 
@@ -245,6 +266,7 @@ def evaluate_resolved(
     scheme: Any,
     enforcement_mechanism_version: str,
     resolved_context: ContextValueView | None = None,
+    position_context: PositionContext | None = None,
 ) -> EvaluationResult:
     """Evaluate with a resolved Critical Input value view (design #32 §3.2 (3))."""
     return _evaluate(
@@ -254,4 +276,5 @@ def evaluate_resolved(
         scheme=scheme,
         enforcement_mechanism_version=enforcement_mechanism_version,
         resolved_context=resolved_context,
+        position_context=position_context,
     )

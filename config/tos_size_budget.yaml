@@ -412,11 +412,13 @@ exceptions:
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-07 decomposition_order 13→14(measured 불변, __call__ 재정렬로 인한 이동).
 - target: tos/src/tos/engine/pipeline.py::run_decision_pipeline
-  measured: 154
+  measured: 155
   owner: tos-kernel
   decomposition_order: 6
   expires_on: '2026-12-31'
-  note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
+  note: >-
+    **2026-11-27 P4 S1 재등재 154→155(+1, 운영자 승인)**: `evaluate_resolved` 호출에 `position_context=payload.position_context` 인자 한 줄.
+    Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/src/tos/egressgw/records.py::send_boundary_context
   measured: 127
   owner: tos-kernel

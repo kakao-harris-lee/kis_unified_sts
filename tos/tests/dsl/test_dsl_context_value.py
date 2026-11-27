@@ -324,6 +324,7 @@ def test_evaluate_resolved_has_its_own_locked_signature() -> None:
         "scheme",
         "enforcement_mechanism_version",
         "resolved_context",
+        "position_context",
     }
     assert not set(parameters) & {
         "clock",
@@ -338,17 +339,18 @@ def test_evaluate_resolved_has_its_own_locked_signature() -> None:
         "loader",
         "callback",
     }
-    assert parameters["resolved_context"].kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameters["resolved_context"].default is None
+    for name in ("resolved_context", "position_context"):
+        assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameters[name].default is None
     for name in ("scheme", "enforcement_mechanism_version"):
         assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
 
 
-def test_evaluate_resolved_adds_exactly_one_parameter_to_evaluate() -> None:
-    """(review MINOR-3) The two entry points differ by ``resolved_context`` and nothing else."""
+def test_evaluate_resolved_adds_exactly_its_context_parameters_to_evaluate() -> None:
+    """(review MINOR-3) The two entry points differ by the two injected contexts and nothing else."""
     resolved = set(inspect.signature(evaluate_resolved).parameters)
     plain = set(inspect.signature(evaluate).parameters)
-    assert resolved - plain == {"resolved_context"}
+    assert resolved - plain == {"resolved_context", "position_context"}
     assert plain - resolved == set()
 
 
