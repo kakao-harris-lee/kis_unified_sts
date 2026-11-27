@@ -256,8 +256,10 @@ def test_long_and_short_are_exact_mirrors(offset: int) -> None:
         short_gain.unrealized,
         short_gain.unrealized_bp,
     )
-    assert long_gain.unrealized == -long_loss.unrealized
-    assert long_gain.unrealized_bp == -long_loss.unrealized_bp
+    loss, loss_bp = long_loss.unrealized, long_loss.unrealized_bp
+    assert loss is not None and loss_bp is not None
+    assert long_gain.unrealized == -loss
+    assert long_gain.unrealized_bp == -loss_bp
 
 
 @pytest.mark.parametrize(
