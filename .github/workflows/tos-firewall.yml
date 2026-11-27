@@ -51,6 +51,12 @@
 # not wall time, and it is the price of the ~9 minutes this removes from every
 # PR's critical path.
 #
+# 2026-11-27: `tos-replay-golden` (P3 리플레이 결정 정답) joined as a fifth job
+# and was added to the aggregator's `needs` for the reason this header gives —
+# a new job must not become a new required NAME that leaves `tos-firewall`
+# meaning less than it says. `tos-recovery-drill` is the one deliberate
+# exception: it carries its own check name on purpose (see its header).
+#
 # NOTE: marking the `tos-firewall` job a *required* check is a GitHub
 # repository-ruleset setting and is NOT configured here — see the handoff
 # report.
@@ -768,13 +774,69 @@ jobs:
         run: python tools/tos_recovery_drill.py --rounds 3 --timeout 30 --workdir "$RUNNER_TEMP/recovery-drill"
 
   # ===========================================================================
+  # P3 리플레이 결정 정답 (docs/plans/2026-11-27-tos-replay-plan.md §4.4).
+  # 출하 트리 다섯을 커밋된 분봉 고정본에서 리플레이해, 봉별 결정이 커밋된 정답과
+  # 같은지 본다. 실패 출력은 「어느 봉의 결정이 무엇에서 무엇으로 바뀌었나」의
+  # unified diff 다.
+  #
+  # 고정본은 **합성** 분봉이다(`tools/tos_cp3/synthetic_bars.py` + 설정의 씨앗).
+  # 이 저장소는 공개돼 있고 `data/` 는 gitignore 라 실제 분봉을 커밋할 수 없다.
+  # 이 잡의 테스트가 커밋된 고정본이 그 생성기의 출력과 바이트 동일한지도 본다 —
+  # 누가 실제 분봉을 그 디렉터리에 떨어뜨리면 거기서 빨갛게 된다.
+  #
+  # 이 워크플로에 두는 이유: 여기는 경로 게이팅이 없다. 커널 · DSL · 지표 카탈로그 ·
+  # tenant YAML 어느 변경에서도 돈다. `test.yml` 도 `test_cp3_*` 를 돌리지만 그쪽은
+  # tos 전용 · 문서 전용 PR 에서 건너뛴다 — tenant YAML 한 줄만 바꾼 PR 이 바로 그
+  # 형태다.
+  #
+  # 이 검사가 선 근거(R5 — 새 검사에는 막았을 실제 사고 하나): 2026-11-12 주식 잎
+  # `EngineReplayDiverged` — 규칙을 바꾼 PR 이 다음 날 아침 세션이 돌고 나서야
+  # 드러났다. 결정 정답이 있었다면 그 PR 에서 「결정이 바뀐다」가 먼저 보였다.
+  #
+  # 설치는 위 세 잡의 최소 설치가 아니라 `test.yml` 의 shard 와 **같은** 방식이다:
+  # 생산자가 `shared.*`(pandas · numpy · pyarrow)를 읽고, 자식 프로세스
+  # (`cp3.inspect_session`)는 PYTHONPATH 로 tos · tos/runtime 를 찾으므로
+  # (tools/tos_cp3/inspect_session.py::child_pythonpath) 커널 설치는 필요 없다.
+  # 측정(이 PR, 16코어 호스트 .venv): 다섯 트리 30s, 이 파일 32 테스트 32s.
+  #
+  # 정답은 결정만 담는다 — 필드 값의 다이제스트는 넣지 않는다(계획 §4.3). 그래도
+  # 비교식이 임계값과 맞닿은 봉에서는 numpy · pandas 판이 바뀌며 결정이 흔들릴 수
+  # 있다. 그때 이 잡은 「어느 봉이 무엇에서 무엇으로」를 보여 주고 멈춘다. 그것이
+  # 조용히 지나가는 것보다 낫다는 것이 계획의 입장이다. 이 PR 의 정답은 Python
+  # 3.12.12 / numpy 2.4.2 / pandas 2.3.3 에서 뽑았고, 이 잡은 3.11 에서 돈다.
+  # ===========================================================================
+  tos-replay-golden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - *checkout
+      - *setup-python
+
+      - name: Install dependencies
+        # test.yml 의 shard 와 같은 두 줄. `-e ".[dev]"` 안에 pandas · numpy ·
+        # pyarrow · pydantic · pyyaml · pytest 가 전부 들어 있고, TA-Lib 은
+        # manylinux 휠이라 apt 패키지가 필요하지 않다(그 파일의 의존성 주석).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Replay the five shipped trees against the committed decisions
+        run: pytest tests/tools/test_cp3_replay_golden.py -q -p no:cacheprovider
+
+  # ===========================================================================
   # The check context the rest of the repo (and any future ruleset entry) names.
   # It owns no checks of its own; it exists so that splitting the work across
   # three runners did not split the NAME that says the work passed.
   # ===========================================================================
   tos-firewall:
     runs-on: ubuntu-latest
-    needs: [tos-firewall-gates, tos-firewall-tests, tos-firewall-static, tos-recovery-drill]
+    needs:
+      - tos-firewall-gates
+      - tos-firewall-tests
+      - tos-firewall-static
+      - tos-recovery-drill
+      - tos-replay-golden
     # `always()` so this job still runs — and still FAILS — when a dependency
     # failed or was cancelled. Without it the aggregator would be `skipped`,
     # and a skipped required check is treated as passing by some settings.

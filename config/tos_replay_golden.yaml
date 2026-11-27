@@ -1,0 +1,134 @@
+# config/tos_replay_golden.yaml — CI 가 리플레이할 출하 트리와 그 고정본·정답.
+#
+# 읽는 곳: tools/tos_cp3/replay.py (`--golden check|update` · `--write-synthetic-bars`) ·
+# tools/tos_cp3/synthetic_bars.py · 테스트 tests/tools/test_cp3_replay_golden.py ·
+# CI 잡 `tos-replay-golden` (.github/workflows/tos-firewall.yml).
+# 계획: docs/plans/2026-11-27-tos-replay-plan.md §4.3.
+#
+# ⛔ **고정본은 합성 분봉이다. 시세 데이터가 아니다.** 이 저장소는 공개돼 있고
+#   (`gh repo view --json visibility` → PUBLIC) `data/` 는 일부러 gitignore 다.
+#   실제 분봉을 고정본으로 커밋하면 시세 데이터를 공개 재배포하게 된다. 그래서
+#   `bars/*.csv.gz` 는 아래 `synthetic:` 명세와 표준 라이브러리 `random.Random(seed)`
+#   로 만든 것이고, 정답 머리에도 `# bars	synthetic seed=<n>` 으로 적힌다.
+#   **정답의 가상 손익을 시장 역사로 읽지 말 것** — 가격 자체가 지어낸 값이다.
+#   호스트의 실제 분봉으로 도는 것은 `sts tos replay --data-root <체크아웃>/data/market`
+#   이고, 그건 호스트에서만 되는 일이다(커밋되는 것이 없다).
+#
+# 이 검사가 선 근거(R5 — 새 검사에는 막았을 실제 사고 하나):
+#   2026-11-12 주식 잎 `EngineReplayDiverged` — 규칙을 바꾼 PR 이 다음 날 아침 세션이
+#   돌고 나서야 드러났다. 결정 정답이 있었다면 그 PR 에서 「결정이 바뀐다」가 먼저 보였다.
+#
+# 트리 집합을 코드가 아니라 여기 두는 이유: 트리를 더하는 PR 이 이 파일 한 줄과 고정본
+# 하나를 더하면 되고, 리뷰어는 그 줄을 보고 어느 트리가 정답을 갖게 됐는지 안다.
+
+schema: tos-replay-golden/1
+
+bars_dir: tests/fixtures/tos/replay/bars
+golden_dir: tests/fixtures/tos/replay/golden
+
+# B1a 의 DEFAULT_MIN_BARS_PER_DAY 와 같은 값 — 생산자 설정 다섯(config/tos_probes/
+# cp3-live-producer*.yaml)이 모두 쓰는 그 밀도 게이트다. 이보다 얇은 세션은 통째로 버린다.
+min_bars_per_day: 330
+
+runs:
+  # 선물 둘은 **같은 월물 고정본**을 쓴다 — 방향만 다른 트리이므로, 한 프레임에서
+  # LONG 과 SHORT 의 결정이 대칭인지가 정답 둘의 diff 로 보인다. 종목 코드는 공개
+  # 식별자라 실제 코드를 쓴다(합성인 것은 가격이다).
+  - tree: cp3-setup-d-long
+    symbol: A05610
+    bars: A05610.csv.gz
+  - tree: cp3-setup-d-short
+    symbol: A05610
+    bars: A05610.csv.gz
+
+  # 주식 셋은 각자 자기 종목 — 트리의 `RENDER.yaml::instrument.pattern` 이 그 코드만 받는다.
+  - tree: cp3-setup-d-stock-005930
+    symbol: "005930"
+    bars: 005930.csv.gz
+  - tree: cp3-setup-d-stock-000660
+    symbol: "000660"
+    bars: 000660.csv.gz
+  - tree: cp3-setup-d-stock-005380
+    symbol: "005380"
+    bars: 005380.csv.gz
+
+# ---------------------------------------------------------------------------
+# 합성 분봉 명세 — `python -m tools.tos_cp3.replay --write-synthetic-bars` 가 읽는다.
+# 숫자를 하나라도 바꾸면 고정본이 바뀌고, 따라서 정답도 다시 뽑아야 한다
+# (`--golden update`). 테스트가 커밋된 고정본이 이 명세의 출력과 **바이트 동일**한지
+# 본다 — 누군가 실제 분봉을 그 디렉터리에 떨어뜨리면 그 테스트가 빨갛게 된다.
+# ---------------------------------------------------------------------------
+synthetic:
+  # 14 거래일: 첫 세션은 생산자의 입장 오프셋(웜업 60봉 + 첫 세션 잔여)이 먹으므로
+  # 결정은 13 세션에서 난다.
+  sessions: 14
+  first_session: 2026-09-01
+
+  # 세션 창은 KIS 분봉 피드가 **실제로 주는** 범위다(호스트 저장소 실측): 주식은
+  # 09:00~15:19(종가 단일가 15:20~15:30 은 분봉으로 오지 않는다), 선물은 08:45~15:34
+  # (15:45 단일가 한 봉은 뺐다 — 결정에 쓰이지 않고 분 연속성만 깬다). 개장 시각은
+  # `config/market_schedule.yaml` 의 정규장 개장과 같고, 그 값이 각 트리
+  # `fields.yaml::session.minutes_since_open` 이 세는 기준이다.
+  markets:
+    stock:
+      open: "09:00"
+      last: "15:19"
+    futures:
+      open: "08:45"
+      last: "15:34"
+
+  # 모든 종목이 공유하는 과정 모양. 느린 anchor + AR(1) 편차 + 변동성 burst.
+  # 편차가 오래 남아야(persistence) 세션 VWAP 에서 멀어진 뒤 되돌아오고, 그 왕복이
+  # Setup D 의 z 극단 · 되돌림 확인과 RSI/%R 의 과매도 · 회복을 둘 다 만든다.
+  process:
+    dev_persistence: 0.985      # AR(1) 계수 — 1 에 가까울수록 편차가 오래 남는다
+    anchor_drift_ticks: 0.22    # 분당 느린 추세
+    overnight_gap_ticks: 9.0    # 세션 간 갭
+    burst_probability: 0.012    # 분마다 변동성 burst 가 시작될 확률
+    burst_min_bars: 25
+    burst_max_bars: 75
+    burst_vol_mult: 2.6         # burst 동안의 변동성 배수
+    session_vol_sigma: 0.42     # 세션별 변동성 배수의 로그 표준편차(조용한 날·거친 날)
+    wick_mult: 0.9              # 고가·저가 꼬리 크기
+    volume_burst_mult: 2.0
+
+  # 종목별. base_price 와 tick 은 그 종목의 실제 호가 격자대에 맞춘 **그럴듯한** 값이고
+  # (KRX 가격대별 호가단위: 20만 원 미만 100 원 · 20만~50만 원 500 원; 미니선물 0.02
+  # 지수 포인트), 가격 자체는 시세가 아니다. price_decimals 는 CSV 에 적히는 자리수다.
+  instruments:
+    "005930":
+      market: stock
+      seed: 2026112701
+      base_price: 72000
+      tick: 100
+      price_decimals: 0
+      vol_ticks: 0.55
+      volume_base: 9000
+      volume_jitter: 7000
+    "000660":
+      market: stock
+      seed: 2026112702
+      base_price: 185000
+      tick: 100
+      price_decimals: 0
+      vol_ticks: 1.6
+      volume_base: 3000
+      volume_jitter: 2500
+    "005380":
+      market: stock
+      seed: 2026112703
+      base_price: 240000
+      tick: 500
+      price_decimals: 0
+      vol_ticks: 0.5
+      volume_base: 1200
+      volume_jitter: 900
+    A05610:
+      market: futures
+      seed: 2026112704
+      base_price: 420.0
+      tick: 0.02
+      price_decimals: 2
+      vol_ticks: 2.2
+      volume_base: 600
+      volume_jitter: 900
