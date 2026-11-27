@@ -7,7 +7,7 @@
 #   유효하고 서로 정합하지만, **실 자금·실 주문을 전제한 안전 한도가 아니다.**
 #   실 배포 태세는 별도 승인 사안이며, 이 표를 근거로 그 승인을 대신할 수 없다.
 
-expected_code_digest: "5412bdd88696c7fea70ea8516a6af01acb577179732f87a7501e521995253584"
+expected_code_digest: "3768228188acce5d1769c004eaed5023af733111c4420f5136d1008bf363c08a"
 expected_dependency_set_digest: "20559763a1132fc75f71f3d83e99512f4b0d9cdde9e0df61b54b9d2459f98d8b"
 
 admission_result: "ADMIT"
