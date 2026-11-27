@@ -5,11 +5,12 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from tos.canonical import CanonicalizationScheme
 from tos.capsule import PolicyRef
-from tos.dsl import ContextValueView
-from tos.engine import EngineEvent, EventKind, InstrumentKey
+from tos.dsl import ContextValueView, PositionContext
+from tos.engine import DecisionTickPayload, EngineEvent, EventKind, InstrumentKey
 from tos.marketfeed import MarketFeedContextResolver
 from tos.time import SessionContext
 
@@ -35,11 +36,21 @@ from tos_runtime.time.sources import MonotonicSource
 __all__ = [
     "MultiInstrumentRefused",
     "PassBudget",
+    "PositionContextSource",
     "TickDecision",
     "TickResult",
     "TickScheduler",
     "decide_tick",
 ]
+
+
+@runtime_checkable
+class PositionContextSource(Protocol):
+    """The injected durable-evidence position projection (plan P4 §2 D1; stage S2)."""
+
+    def read(self, view: ContextValueView | None) -> PositionContext | None:
+        """This bar's proven position, or ``None`` when any part of it is not established."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -95,6 +106,7 @@ class TickResult:
     outcome: TickOutcome
     queued_until_recovery: bool = False
     value_view: ContextValueView | None = None
+    position_context: PositionContext | None = None
 
 
 _MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND = "MARKETFEED_QUEUED_UNTIL_RECOVERY"
@@ -182,11 +194,13 @@ class TickScheduler:
         before_decide: Callable[[], bool] | None = None,
         after_pass: Callable[[], None] | None = None,
         pass_budget: PassBudget | None = None,
+        position_context: PositionContextSource | None = None,
     ) -> None:
         """Wire the scheduler (every arg's own docstring lives on the field it fills below —"""
         self._before_decide = before_decide
         self._after_pass = after_pass
         self._pass_budget = pass_budget
+        self._position_context = position_context
         self._instrument = _require_single_instrument(instruments)
         self._instrument_class = instrument_class
         self._account = account
@@ -270,6 +284,7 @@ class TickScheduler:
         self._store.put(issued.snapshot, issued.preimages)
         capsule = self._capsule_issuer.issue(issued.snapshot)
         payload = self._resolver(capsule, instrument_key=self._instrument_key)
+        payload = self._with_position_context(payload)
         event = EngineEvent(kind=EventKind.DECISION_TICK, decision_tick=payload)
 
         queued_until_recovery = self._driver is None
@@ -288,6 +303,27 @@ class TickScheduler:
             outcome=TickOutcome.TICKED,
             queued_until_recovery=queued_until_recovery,
             value_view=payload.value_view,
+            position_context=payload.position_context,
+        )
+
+    def _with_position_context(
+        self, payload: DecisionTickPayload
+    ) -> DecisionTickPayload:
+        """Attach this bar's proven position to the payload BEFORE the event is built."""
+        # SAFETY: the position is read HERE, before enqueue, and travels in the payload — boot replay re-derives decisions from the inbox row alone, so a read at evaluation time would see a different ledger after a restart, diverge, and halt that leaf for good
+        if self._position_context is None:
+            return payload
+        context = self._position_context.read(payload.value_view)
+        if context is None:
+            return payload
+        # SAFETY: a fresh payload, never model_copy(update=…) — that path skips validation, so a context whose digest does not bind its own content would reach the inbox and be trusted on the next boot as if the kernel had projected it
+        return DecisionTickPayload(
+            instrument_key=payload.instrument_key,
+            capsule=payload.capsule,
+            time=payload.time,
+            reference=payload.reference,
+            value_view=payload.value_view,
+            position_context=context,
         )
 
     def _record_field_refusals(
