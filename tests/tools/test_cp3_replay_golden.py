@@ -114,10 +114,8 @@ def test_every_golden_file_is_committed() -> None:
 def test_every_committed_bar_file_is_byte_equal_to_the_generator_output(
     tmp_path: Path,
 ) -> None:
-    """커밋된 고정본은 설정의 합성 명세가 낸 **그 바이트**여야 한다.
-
+    """커밋된 고정본은 설정의 합성 명세가 낸 **그 바이트**여야 한다."""
     # SAFETY: 이 검사가 답하는 실제 사고 — 2026-11-27, 이 작업의 첫 판이 호스트의 실제 분봉을 고정본으로 커밋했고(이 저장소는 공개다) 푸시 직전에 멈췄다. 이후 누가 실제 분봉을 이 디렉터리에 떨어뜨리면 그 파일은 생성기 출력과 바이트가 달라 여기서 빨갛게 된다
-    """
     specs = {spec.symbol: spec for spec in rp.synthetic_specs()}
     committed = sorted(path for path in BARS_DIR.iterdir() if path.is_file())
     assert committed, "고정본 디렉터리가 비어 있다"
