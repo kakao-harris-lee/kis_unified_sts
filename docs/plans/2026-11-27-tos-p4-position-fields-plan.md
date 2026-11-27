@@ -66,7 +66,7 @@
 있거나, 진입가를 못 찾으면 `position` 을 통째로 싣지 않는다. 그러면 포지션을 읽는 비교가 전부 거짓이 되어
 손절도 진입(`side EQ FLAT`)도 발화하지 않는다. 일부만 채운 값은 만들지 않는다.
 
-**D4 — 계산은 커널의 순수 함수 하나.** `tos/src/tos/position/context.py` 에 «(증명된 수량·방향·진입가·
+**D4 — 계산은 커널의 순수 함수 하나.** `tos/src/tos/dsl/position_context.py`(§10 ④) 에 «(증명된 수량·방향·진입가·
 진입 봉 시각, 이번 봉의 가격·시각) → `PositionContext`» 를 둔다. 런타임 발행 경로와 리플레이 시뮬레이션(D7)이
 같은 함수를 부른다 — 두 구현이 갈라지면 리플레이가 라이브와 다른 손절을 보여 준다.
 
@@ -180,3 +180,17 @@ S1·S2 는 PR 하나로 묶지 않는다 — 커널 PR 이 작아야 A 등급 �
 2. 손익 단위 = **가격 스케일 + bp**(틱 아님).
 3. 손절 방식 = **봉 마감 판단 + LIMIT**(브로커 조건부 주문 없음).
 4. 시작 = **지금**(2027-01 을 기다리지 않는다). 첫 PR 은 S0 측정 기록이다.
+
+## 10. S0 실측 결과 (2026-11-27, main `f53b2e5f`, 코드 읽기)
+
+| # | 물은 것 | 답 | 자리 | 계획에 주는 영향 |
+| --- | --- | --- | --- | --- |
+| ① | SYNTHETIC 체결가 | **어디에도 남지 않는다.** 원장 테이블에 가격 열이 없고 `FILL_OBSERVED` 는 KIS mock 관측자만 쓴다 | `venue_ledger/synthetic.py:44-59` · `compose/_broker_posttrade_wiring.py:510-545` | 선물 트리의 `entry_price_basis` 는 항상 `ORDER` |
+| ② | 모든 전송에 있는 가격 | `SEND_SEALED.send_seal.outbound_price` — 전송 전에 커널 게이트웨이가 쓰고, 값은 `price_field_key` 뷰 정수 **그대로**(같은 스케일) | `egressgw/gateway.py:604-615,868-878` | 진입가의 기본 원천. `avg_execution_price`(원 단위)는 `× price_scale` 해야 같은 스케일 |
+| ③ | 진입 봉 시각 | 한 번의 조회는 없다. attempt → `event_id`(`ATTEMPT_REQUEST_CREATED`, 증분 색인 있음 — 비공개) → inbox payload 의 `value_view.values[*].as_of` | `rcl/reservation_lookup.py:36-98` · `engine/inbox.py:33` | S2 가 inbox 에 id 조회 하나와 색인의 공개 접근자 하나를 더한다 |
+| ④ | 엔진 import 폐쇄 | 엔진 폐쇄 표에 `tos.position` 이 없다 — 거기 둔 형을 `engine/records.py` 가 import 하면 폐쇄 테스트가 깨진다 | `tos/tests/_closure_table.py:446-449` | 레코드와 순수 함수는 `ContextValueView` 옆 `tos.dsl` 에 둔다(폐쇄를 넓히지 않는다) |
+| ⑤ | payload 필드 추가의 호환 | `exclude_if=_omit_when_none` 인 필드는 None 이면 `model_dump` 에서 빠져, 그 필드가 없는 이벤트의 id·다이제스트가 바이트 동일하다. 수신 지문은 payload 가 아니라 결과에서 나온다 | `engine/records.py:124,241-245` · `engine/flow_fingerprint.py:19-45` · 선례 테스트 `tos/tests/engine/test_engine_egress_trading_date.py:64-77` | D1·D5 그대로 성립 |
+| ⑥ | 봉마다 읽는 비용 | `durable_close_history` 는 호출마다 RCL 전이 이력과 증거 종류 다섯을 통째로 훑는다(증거 크기에 선형, 캐시는 조인 색인뿐) | `posttrade/close_history.py:205-223,824,911` | S2 가 지속 잎(000660)에서 호출 시간을 재고, 봉 주기에 비해 크면 증분 캐시를 같은 PR 에 넣는다 |
+| ⑦ | payload 가 만들어지는 자리 | 커널 `MarketFeedContextResolver.resolve`; 스케줄러는 증거 저장소만 갖고 RCL·보유 증명 리더는 없다. 리더는 같은 조립 함수 안에 이미 있다 | `marketfeed/resolver.py:114-119` · `marketfeed/scheduler.py:269-273` · `compose/root.py:233-239,442` | S2 는 조립 루트에서 리더를 스케줄러에 주입한다. 가격 키는 `construction.yaml::price_field_key` 를 그대로 쓴다(D5 의 `price_field_key` 중복 선언은 뺀다) |
+
+S0 표의 «기록된 잎을 새 코드로 부팅 리플레이» 는 코드가 있어야 잴 수 있어 S1 의 수용 기준으로 옮긴다.
