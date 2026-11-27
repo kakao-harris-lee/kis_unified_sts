@@ -35,9 +35,10 @@ def _replayable_trees() -> tuple[str, ...]:
     for candidate in sorted(rp.TENANT_ROOT.iterdir()):
         if not (candidate / "RENDER.yaml").is_file():
             continue
+        # SAFETY: 건너뛰는 사유는 「저널을 렌더가 쓰는 트리」 하나뿐이다 — 모든 ReplayError 를 삼키면 리플레이 가능해야 할 새 트리가 다른 사유로 거부될 때 목록에서 조용히 빠지고, 아래 핀이 그 트리의 정답을 요구하지 않는다
         try:
             found.append(rp.tenant_facts(candidate).tree_id)
-        except rp.ReplayError:
+        except rp.ReplayJournalModeRefused:
             continue
     return tuple(found)
 
@@ -45,6 +46,56 @@ def _replayable_trees() -> tuple[str, ...]:
 def test_every_replayable_shipped_tree_has_a_golden() -> None:
     assert set(_replayable_trees()) == set(GOLDEN_TREES)
     assert len(GOLDEN_TREES) == 5
+
+
+#: 저널 모드만 바꿔 끼우는 최소 매니페스트 — 슬롯 하나와 그 대상 파일이 있어야
+#: ``load_manifest`` 가 통과한다. 방향은 ``substitute`` 라 리플레이가 **저널 모드와
+#: 무관한 사유**로 거부한다.
+_TMP_MANIFEST = """tree_id: "{tree_id}"
+direction:
+  mode: "substitute"
+journal:
+  mode: "{journal_mode}"
+slots:
+  - file: "construction.yaml"
+    key: "account"
+    anchor: 'account: "TBD"'
+    replacement: 'account: "{{value}}"'
+    value: "account"
+"""
+
+
+def _tmp_tree(root: Path, *, tree_id: str, journal_mode: str) -> Path:
+    """``RENDER.yaml`` 과 슬롯 대상 파일만 있는 tenant 트리 하나."""
+    tree = root / tree_id
+    tree.mkdir()
+    (tree / "RENDER.yaml").write_text(
+        _TMP_MANIFEST.format(tree_id=tree_id, journal_mode=journal_mode),
+        encoding="utf-8",
+    )
+    (tree / "construction.yaml").write_text('account: "TBD"\n', encoding="utf-8")
+    return tree
+
+
+def test_a_tree_refused_for_another_reason_is_not_silently_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """저널 모드 아닌 사유로 거부된 트리는 목록에서 빠지지 않고 테스트를 깬다 (#1186)."""
+    _tmp_tree(
+        tmp_path, tree_id="tmp-no-direction", journal_mode=rp.EXTERNAL_JOURNAL_MODE
+    )
+    monkeypatch.setattr(rp, "TENANT_ROOT", tmp_path)
+    with pytest.raises(rp.ReplayError, match="방향을 선언하지 않은 트리다"):
+        _replayable_trees()
+
+
+def test_a_tree_whose_render_writes_the_journal_is_still_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """상주 ``paper`` 트리처럼 저널을 렌더가 쓰는 트리는 정답을 요구하지 않는다."""
+    _tmp_tree(tmp_path, tree_id="tmp-synthetic", journal_mode="synthetic_bootproof")
+    monkeypatch.setattr(rp, "TENANT_ROOT", tmp_path)
+    assert _replayable_trees() == ()
 
 
 def test_every_golden_file_is_committed() -> None:

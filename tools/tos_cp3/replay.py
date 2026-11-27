@@ -72,6 +72,7 @@ __all__ = [
     "DecisionRun",
     "GoldenRun",
     "ReplayError",
+    "ReplayJournalModeRefused",
     "ReplayResult",
     "TenantFacts",
     "bar_label",
@@ -147,6 +148,10 @@ PNL_LABEL = "가상 손익(체결 가정)"
 
 class ReplayError(RuntimeError):
     """리플레이가 거부한 사유 — 지어낸 결정보다 거부가 낫다."""
+
+
+class ReplayJournalModeRefused(ReplayError):
+    """저널을 렌더가 쓰는 트리 — 리플레이가 건넬 외부 저널 자리가 없다."""
 
 
 @dataclass(frozen=True)
@@ -241,7 +246,8 @@ def tenant_facts(tree: str | Path) -> TenantFacts:
     except rpc.RenderError as exc:
         raise ReplayError(f"{tree_dir}: 렌더 매니페스트를 읽지 못했다 — {exc}") from exc
     if manifest.journal_mode != EXTERNAL_JOURNAL_MODE:
-        raise ReplayError(
+        # SAFETY: 이 사유만 자기 예외형을 갖는 이유는 호출자가 사유 **하나만** 건너뛰고 나머지 거부는 전부 올려야 하기 때문이다 — 문구로 거르면 메시지 한 줄 바꾸는 PR 에서 리플레이 가능해야 할 트리가 정답 없이 조용히 빠진다
+        raise ReplayJournalModeRefused(
             f"{manifest.tree_id}: journal.mode 가 {manifest.journal_mode!r} 다. "
             "리플레이는 자기가 만든 저널을 외부 저널로 건네므로 "
             f"{EXTERNAL_JOURNAL_MODE!r} 트리만 돌린다"

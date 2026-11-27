@@ -377,7 +377,7 @@ def test_the_json_output_carries_the_runs_and_the_inspection(
 
 def test_a_synthetic_journal_tree_is_refused() -> None:
     """상주 paper 트리는 자기 저널을 렌더가 쓴다 — 리플레이의 저널이 둘째 원천이 된다."""
-    with pytest.raises(rp.ReplayError, match="journal.mode"):
+    with pytest.raises(rp.ReplayJournalModeRefused, match="journal.mode"):
         rp.tenant_facts("paper")
 
 
