@@ -40,9 +40,10 @@
   ([판정과 근거](plans/2026-11-11-tos-paper-ready-relaxation.md) §6).
 - 지금 재는 것: 대형주 3종목이 매일 매수→매도→해제→재매수를 막힘 없이 도는가
   ([활용 계획](plans/2026-11-19-tos-usage-plan.md) §3 · 운용 규칙 U1~U6).
-- 끝난 것: `sts tos perf` · 종목별 운영 화면 · 카탈로그 `rsi`/`williams_r` 와 두 번째 전략 YAML.
-- 그다음: 리플레이(P3 — `sts tos replay` · CI 리플레이 정답) → 손절·목표(P4). 순서는 [로드맵](plans/2026-11-11-tos-platform-roadmap.md)
-  과 활용 계획 §5.
+- 끝난 것: `sts tos perf` · 종목별 운영 화면 · 카탈로그 `rsi`/`williams_r` 와 두 번째 전략 YAML ·
+  리플레이(P3 — `sts tos replay` · CI 잡 `tos-replay-golden`, 2026-11-27).
+- 그다음: 손절·목표·수량(P4 — [계획](plans/2026-11-27-tos-p4-position-fields-plan.md), 착수 전). 순서는
+  [로드맵](plans/2026-11-11-tos-platform-roadmap.md) 과 활용 계획 §5.
 
 ## CI 가 막는 것
 
