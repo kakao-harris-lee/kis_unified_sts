@@ -302,12 +302,14 @@ def _hhmm(value: Any) -> tuple[int, int]:
 
 def _golden_default_density() -> int:
     """정답 설정의 기본 밀도 게이트 — 리플레이가 돌릴 때 쓰는 그 값."""
-    raw = yaml.safe_load(rp.GOLDEN_CONFIG_PATH.read_text(encoding="utf-8"))
-    value = (raw or {}).get("min_bars_per_day")
-    assert isinstance(
-        value, int
-    ), f"{rp.GOLDEN_CONFIG_PATH}: min_bars_per_day 가 정수가 아니다 ({value!r})"
-    return value
+    # SAFETY: 최상위 기본값이 아니라 run 마다 실제로 넘어가는 값을 본다 — run 하나가 자기 min_bars_per_day 를 덮어쓰면 그 트리만 다른 세션 집합에서 도는데 최상위 값만 보는 핀은 그것을 통과시킨다
+    used = {
+        spec.min_bars_per_day for spec in rp.load_golden_config(rp.GOLDEN_CONFIG_PATH)
+    }
+    assert (
+        len(used) == 1
+    ), f"{rp.GOLDEN_CONFIG_PATH}: run 들이 서로 다른 min_bars_per_day 로 돈다 ({sorted(used)})"
+    return used.pop()
 
 
 def test_every_stock_producer_open_anchor_is_the_one_replay_reads() -> None:
