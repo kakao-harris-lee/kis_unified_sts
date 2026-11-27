@@ -9,8 +9,10 @@ from __future__ import annotations
 import collections
 import gzip
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 from tools.tos_cp3 import replay as rp
 from tools.tos_cp3 import synthetic_bars
@@ -264,8 +266,6 @@ def test_the_fired_rules_are_the_tenants_own_and_cover_entry_exit_eod(
 
 def _declared_rule_ids(tree: str) -> set[str]:
     """그 트리의 전략 YAML 이 선언한 규칙 id 전부 — 기본 결정까지."""
-    import yaml
-
     from tools.tos_cp3 import bars_explain
 
     strategies = sorted((rp.TENANT_ROOT / tree / "strategies").glob("*.yaml"))
@@ -277,6 +277,76 @@ def _declared_rule_ids(tree: str) -> set[str]:
     }
     found.add(bars_explain.rule_id_of((policy.get("default") or {}).get("rationale")))
     return {rule_id for rule_id in found if rule_id}
+
+
+# ---------------------------------------------------------------------------
+# 리플레이가 읽는 값 ↔ 라이브 생산자 설정 (#1186 리뷰 LOW)
+# ---------------------------------------------------------------------------
+
+PRODUCER_DIR = REPO_ROOT / "config" / "tos_probes"
+# SAFETY: 선물 생산자(cp3-live-producer.yaml)는 `open_anchor: auto` 로 시대 규칙을 가리키므로 앵커 핀의 글롭에서 일부러 빠진다 — 이 글롭을 PRODUCER_GLOB 으로 넓히면 "auto" 를 HH:MM 으로 파싱하려다 깨진다(그 값의 핀은 test_cp3_replay.py 의 시대 규칙 테스트다)
+STOCK_PRODUCER_GLOB = "cp3-live-producer-stock-*.yaml"
+PRODUCER_GLOB = "cp3-live-producer*.yaml"
+
+
+def _producer_config(path: Path) -> dict[str, Any]:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(raw, dict), f"{path}: 최상위가 매핑이 아니다"
+    return raw
+
+
+def _hhmm(value: Any) -> tuple[int, int]:
+    hour_text, _, minute_text = str(value).strip().partition(":")
+    return int(hour_text), int(minute_text)
+
+
+def _golden_default_density() -> int:
+    """정답 설정의 기본 밀도 게이트 — 리플레이가 돌릴 때 쓰는 그 값."""
+    raw = yaml.safe_load(rp.GOLDEN_CONFIG_PATH.read_text(encoding="utf-8"))
+    value = (raw or {}).get("min_bars_per_day")
+    assert isinstance(
+        value, int
+    ), f"{rp.GOLDEN_CONFIG_PATH}: min_bars_per_day 가 정수가 아니다 ({value!r})"
+    return value
+
+
+def test_every_stock_producer_open_anchor_is_the_one_replay_reads() -> None:
+    """주식 생산자의 개장 앵커와 리플레이가 읽는 개장 시각은 같은 값이어야 한다."""
+    # SAFETY: 리플레이는 생산자 설정이 아니라 market_schedule.yaml 을 읽는다 — 한쪽만 바뀌면 리플레이의 모든 봉에서 minutes_since_open 이 밀려 entry_window 가 조용히 다른 창이 되고, 결정 정답의 diff 는 그것을 규칙이 바뀐 것과 구별해 주지 않는다
+    configs = sorted(PRODUCER_DIR.glob(STOCK_PRODUCER_GLOB))
+    assert configs, f"{PRODUCER_DIR}/{STOCK_PRODUCER_GLOB}: 생산자 설정이 하나도 없다"
+    expected = rp.configured_open("stock")
+    schedule = rp.MARKET_SCHEDULE_PATH.relative_to(REPO_ROOT)
+    for path in configs:
+        declared = _hhmm(_producer_config(path)["open_anchor"])
+        assert declared == expected, (
+            f"{path.relative_to(REPO_ROOT)}::open_anchor 가 {declared} 인데 "
+            f"{schedule}::market_schedule.stock.regular.open 는 {expected} 다 "
+            "— 한쪽이 움직였고 리플레이는 뒤쪽만 따른다"
+        )
+
+
+def test_every_producer_density_gate_is_the_golden_configs_default() -> None:
+    """생산자 설정의 밀도 게이트와 정답 설정의 기본값은 같은 값이어야 한다."""
+    # SAFETY: 게이트는 어느 날이 프레임에 들어가는지를 정한다 — 두 값이 갈리면 리플레이와 라이브 생산자가 **다른 세션 집합**에서 돌고, 바뀐 결정이 규칙 변경 때문인지 날 집합 변경 때문인지 구별되지 않는다
+    configs = sorted(PRODUCER_DIR.glob(PRODUCER_GLOB))
+    assert configs, f"{PRODUCER_DIR}/{PRODUCER_GLOB}: 생산자 설정이 하나도 없다"
+    expected = _golden_default_density()
+    golden = rp.GOLDEN_CONFIG_PATH.relative_to(REPO_ROOT)
+    carried = 0
+    for path in configs:
+        value = _producer_config(path).get("min_bars_per_day")
+        if value is None:
+            continue
+        carried += 1
+        assert value == expected, (
+            f"{path.relative_to(REPO_ROOT)}::min_bars_per_day 가 {value} 인데 "
+            f"{golden}::min_bars_per_day 는 {expected} 다 "
+            "— 한쪽이 움직였고 리플레이는 뒤쪽으로 돈다"
+        )
+    assert (
+        carried
+    ), f"{PRODUCER_DIR}/{PRODUCER_GLOB}: min_bars_per_day 를 적은 설정이 하나도 없다"
 
 
 def test_the_bars_fixtures_stay_small_enough_to_review() -> None:
