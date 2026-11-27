@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 
 import pytest
 from pydantic import ValidationError
@@ -52,6 +53,15 @@ _ENTRY = 30_000
 _ENTRY_AS_OF = 1_700_000_000_000
 _BAR_MS = 60_000
 _STOP_BP = -50
+
+_INT_FIELD_NAMES: tuple[str, ...] = (
+    "held_qty",
+    "entry_price",
+    "unrealized",
+    "unrealized_bp",
+    "bars_held",
+    "as_of",
+)
 
 
 def _capsule() -> DecisionContextCapsule:
@@ -122,17 +132,33 @@ def _project(**overrides: object) -> PositionContext:
 
 
 def _record(**overrides: object) -> dict[str, object]:
-    """The keyword set :class:`PositionContext` takes directly, for the shape refusals."""
-    arguments: dict[str, object] = {
+    """The keyword set :class:`PositionContext` takes directly, digest-bound to its own content."""
+    content: dict[str, object] = {
         "side": PositionSide.FLAT,
         "held_qty": 0,
+        "entry_price": None,
+        "entry_price_basis": None,
+        "unrealized": None,
+        "unrealized_bp": None,
+        "bars_held": None,
         "source_ref": "ev-send-1",
         "as_of": _ENTRY_AS_OF,
-        "canonical_digest": "pos-0",
-        "canonicalization_version": EV_L1_PROVISIONAL_VERSION,
     }
+    content.update(
+        {name: value for name, value in overrides.items() if name in content}
+    )
+    arguments: dict[str, object] = dict(content)
+    arguments["canonical_digest"] = position_context_digest(scheme=SCHEME, **content)  # type: ignore[arg-type]
+    arguments["canonicalization_version"] = EV_L1_PROVISIONAL_VERSION
     arguments.update(overrides)
     return arguments
+
+
+def _held_dump(**altered: object) -> dict[str, object]:
+    """A valid held record's JSON dump, with the named fields altered and the digest left as it was."""
+    dumped: dict[str, object] = _project(price=_ENTRY - 300).model_dump(mode="json")
+    dumped.update(altered)
+    return dumped
 
 
 def _stop_loss_strategy() -> AuthoredStrategy:
@@ -375,6 +401,114 @@ def test_a_held_record_refuses_every_inconsistent_combination(
 def test_the_held_record_this_table_mutates_is_itself_valid() -> None:
     """(anti-phantom) The refusals above are the overrides' doing, not a broken baseline."""
     assert PositionContext(**_record(**_HELD_RECORD)).held_qty == 1  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------------------
+# the record verifies itself — it refuses what no constructor would ever produce
+# --------------------------------------------------------------------------------------
+
+
+def test_the_reviewed_record_that_was_accepted_is_refused() -> None:
+    """(S1 리뷰 MEDIUM) The reviewer's reproduced input: coerced ints, a bp that disagrees, a free digest."""
+    with pytest.raises(ValidationError):
+        PositionContext(
+            side="LONG",  # type: ignore[arg-type]
+            held_qty=1.0,  # type: ignore[arg-type]
+            entry_price="30000",  # type: ignore[arg-type]
+            entry_price_basis="ORDER",
+            unrealized=5,
+            unrealized_bp=999999,
+            bars_held=0,
+            source_ref="x",
+            as_of=1,
+            canonical_digest="bogus",
+            canonicalization_version="nope",
+        )
+
+
+def test_a_bogus_digest_alone_is_refused() -> None:
+    """(plan P4 §2 D5) Everything else is the kernel's own output — only the digest was replaced."""
+    with pytest.raises(ValidationError, match="is not the digest of its own content"):
+        PositionContext(**_held_dump(canonical_digest="bogus"))  # type: ignore[arg-type]
+
+
+def test_an_unknown_canonicalization_version_is_refused() -> None:
+    """(plan P4 §2 D5) An unresolvable scheme cannot recompute the digest, so nothing is proven."""
+    with pytest.raises(ValidationError, match="no canonicalization scheme registered"):
+        PositionContext(**_held_dump(canonicalization_version="nope"))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("name", "tampered"),
+    [
+        ("side", "SHORT"),
+        ("held_qty", 2),
+        ("entry_price", 30_001),
+        ("entry_price_basis", "ORDER"),
+        ("unrealized", -299),
+        ("unrealized_bp", -99),
+        ("bars_held", 1),
+        ("source_ref", "ev-send-2"),
+        ("as_of", _ENTRY_AS_OF + _BAR_MS),
+    ],
+)
+def test_altering_any_covered_field_under_the_original_digest_is_refused(
+    name: str, tampered: object
+) -> None:
+    """(plan P4 §2 D5) Every field the digest covers is tamper-evident when the record is rebuilt."""
+    with pytest.raises(ValidationError, match="is not the digest of its own content"):
+        PositionContext(**_held_dump(**{name: tampered}))  # type: ignore[arg-type]
+
+
+def test_an_inconsistent_bp_is_refused_even_with_a_recomputed_digest() -> None:
+    """(S1 리뷰 MEDIUM) −300 over 30,000 is −100bp; a digest taken over −99 does not make it true."""
+    arguments = _record(**dict(_HELD_RECORD, unrealized_bp=-99))
+    with pytest.raises(ValidationError, match="disagrees with unrealized"):
+        PositionContext(**arguments)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("name", _INT_FIELD_NAMES)
+@pytest.mark.parametrize("coerce_to", [float, str])
+def test_an_int_slot_refuses_a_float_or_a_numeric_string(
+    name: str, coerce_to: type
+) -> None:
+    """(S1 리뷰 MEDIUM) pydantic would coerce 1.0 and "1" silently, and the digest would not cover them."""
+    original = _held_dump()[name]
+    with pytest.raises(ValidationError, match="must already be of type int"):
+        PositionContext(**_held_dump(**{name: coerce_to(original)}))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("name", ["side", "entry_price_basis", "source_ref"])
+def test_a_str_slot_refuses_bytes(name: str) -> None:
+    """(S1 리뷰 MEDIUM) pydantic decodes b"ORDER" to "ORDER" — a basis a tenant gates on must arrive as a str."""
+    original = _held_dump()[name]
+    with pytest.raises(ValidationError, match="must already be of type str"):
+        PositionContext(**_held_dump(**{name: str(original).encode()}))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("as_of", ["5", 5.0, True, None])
+def test_the_flat_constructor_refuses_a_non_int_as_of(as_of: object) -> None:
+    """(S1 리뷰 LOW) ``as_of="5"`` used to be coerced to 5 while the digest was taken over "5"."""
+    with pytest.raises(ArtifactIntegrityError, match="must be an int instant"):
+        flat_position_context(source_ref="ev-close-1", as_of=as_of, scheme=SCHEME)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        lambda: flat_position_context(
+            source_ref="ev-close-1", as_of=_ENTRY_AS_OF, scheme=SCHEME
+        ),
+        lambda: _project(price=_ENTRY - 300),
+    ],
+)
+def test_a_record_survives_the_json_round_trip_the_next_stage_does(
+    builder: Callable[[], PositionContext],
+) -> None:
+    """(plan P4 §2 D1) The next stage rebuilds this record from an inbox row — equal object, both ways."""
+    context = builder()
+    assert PositionContext.model_validate(context.model_dump(mode="json")) == context
+    assert PositionContext.model_validate_json(context.model_dump_json()) == context
 
 
 # --------------------------------------------------------------------------------------
