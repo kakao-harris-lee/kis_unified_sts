@@ -59,6 +59,15 @@ from tos.dsl.outcome import (
     VectorResolution,
     resolve_vector_realization,
 )
+from tos.dsl.position_context import (
+    ENTRY_PRICE_BASES,
+    POSITION_NAMESPACE,
+    PositionContext,
+    PositionSide,
+    flat_position_context,
+    position_context_digest,
+    project_position_context,
+)
 from tos.dsl.proposal import (
     FLAT_QUANTITY_BASIS,
     Proposal,
@@ -142,6 +151,13 @@ __all__ = [
     "ContextValue",
     "ContextValueView",
     "is_wildcard_field_key",
+    "ENTRY_PRICE_BASES",
+    "POSITION_NAMESPACE",
+    "PositionContext",
+    "PositionSide",
+    "flat_position_context",
+    "position_context_digest",
+    "project_position_context",
     "EvaluationConfig",
     "EvaluationResult",
     "RecordedInputSignature",
