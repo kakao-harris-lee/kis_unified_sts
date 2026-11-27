@@ -12,6 +12,7 @@ from tos.dsl import (
     AuthoredStrategy,
     ContextValueView,
     EvaluationConfig,
+    PositionContext,
     Proposal,
 )
 from tos.engine._base import (
@@ -111,6 +112,11 @@ class TimeAdmissionInputs(FrozenModel):
     health_state: HealthState | None = None
 
 
+def _omit_when_none(value: object) -> bool:
+    """``exclude_if`` predicate for fields added after records of their type were already"""
+    return value is None
+
+
 class DecisionTickPayload(FrozenModel):
     """A ``DECISION_TICK`` payload (design #31 §2.2)."""
 
@@ -119,11 +125,12 @@ class DecisionTickPayload(FrozenModel):
     time: TimeAdmissionInputs = TimeAdmissionInputs()
     reference: OrderingEvent = OrderingEvent()
     value_view: ContextValueView | None = None
-
-
-def _omit_when_none(value: object) -> bool:
-    """``exclude_if`` predicate for fields added after records of their type were already"""
-    return value is None
+    # SAFETY: ``exclude_if`` keeps an unset position out of every dump — a tick that carries
+    # no position must digest exactly as it did before this field existed, or boot replay
+    # re-derives a different event identity and the leaf halts for good.
+    position_context: PositionContext | None = Field(
+        default=None, exclude_if=_omit_when_none
+    )
 
 
 _TRADING_DATE_SHAPE = re.compile(r"[0-9]{8}")

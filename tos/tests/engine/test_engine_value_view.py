@@ -130,11 +130,13 @@ def test_the_field_is_additive_and_defaults_to_none() -> None:
         "time",
         "reference",
         "value_view",
+        "position_context",
     }
     payload = DecisionTickPayload(
         instrument_key=instrument_key(), capsule=issue_capsule()
     )
     assert payload.value_view is None
+    assert payload.position_context is None
 
 
 def test_the_engine_import_closure_allowlist_is_unchanged() -> None:
