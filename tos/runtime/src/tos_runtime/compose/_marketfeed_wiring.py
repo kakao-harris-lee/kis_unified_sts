@@ -19,6 +19,8 @@ from tos_runtime.compose._kis_credential_wiring import (
     kis_mock_credential_session,
     kis_quote_pacing,
 )
+from tos_runtime.compose._riskstate_wiring import build_position_context_reader
+from tos_runtime.compose._types import ConstructionConfig
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.engine.driver import EngineDriver
 from tos_runtime.engine.inbox import SqliteEventInbox
@@ -36,6 +38,9 @@ from tos_runtime.marketfeed.time_projection import (
     _DELAY_BOUND_FIELDS,
     RuntimeTimeProjection,
 )
+from tos_runtime.rcl.projection import ReservationProjectionReader
+from tos_runtime.riskstate.close_bound import EntryCloseBound
+from tos_runtime.riskstate.position_context import EvidencePositionContextReader
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import MonotonicSource
@@ -51,8 +56,10 @@ __all__ = [
     "MARKETFEED_CONFIG_NAME",
     "MarketFeedConfig",
     "MarketFeedConfigError",
+    "PositionContextConfig",
     "build_tick_scheduler",
     "load_marketfeed_config",
+    "load_position_context_config",
     "resolve_kis_instance_rest_bases",
 ]
 
@@ -84,6 +91,14 @@ class MarketFeedConfigError(Exception):
 
 
 @dataclass(frozen=True)
+class PositionContextConfig:
+    """A tree's ``position_context`` block — opt-in per tenant, off by default (plan P4 §2 D5)."""
+
+    enabled: bool
+    bar_interval_ms: int | None
+
+
+@dataclass(frozen=True)
 class MarketFeedConfig:
     """A loaded, validated ``marketfeed.yaml`` (module docstring)."""
 
@@ -100,6 +115,7 @@ class MarketFeedConfig:
     snapshot_age_bound: int
     interval_width: int
     time_evaluate_closed_interval_ms: int
+    position_context: PositionContextConfig | None = None
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
@@ -233,6 +249,61 @@ def _resolve_journal_pass_allowance_ms(
     return value
 
 
+_POSITION_CONTEXT_KEY = "position_context"
+
+_POSITION_CONTEXT_KEYS: frozenset[str] = frozenset({"enabled", "bar_interval_ms"})
+
+
+def _require_position_context(raw: Any, path: Path) -> PositionContextConfig | None:
+    """Validate the optional ``position_context`` block — an absent block is OFF, not a default."""
+    block = raw.get(_POSITION_CONTEXT_KEY) if isinstance(raw, dict) else None
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        raise MarketFeedConfigError(
+            f"{path}: {_POSITION_CONTEXT_KEY!r} must be a mapping of "
+            f"{sorted(_POSITION_CONTEXT_KEYS)}, got {type(block).__name__}"
+        )
+    unknown = sorted(set(block) - _POSITION_CONTEXT_KEYS)
+    if unknown:
+        raise MarketFeedConfigError(
+            f"{path}: {_POSITION_CONTEXT_KEY!r} carries unrecognized key(s) {unknown} — "
+            f"only {sorted(_POSITION_CONTEXT_KEYS)} are read, and a stray key would look "
+            "load-bearing while being ignored"
+        )
+    enabled = block.get("enabled")
+    if not isinstance(enabled, bool):
+        raise MarketFeedConfigError(
+            f"{path}: {_POSITION_CONTEXT_KEY}.enabled is missing, still null (named-TBD), or "
+            f"not a bool (got {enabled!r}) — the position namespace never defaults on"
+        )
+    bar_interval_ms = block.get("bar_interval_ms")
+    if bar_interval_ms is not None and (
+        isinstance(bar_interval_ms, bool)
+        or not isinstance(bar_interval_ms, int)
+        or bar_interval_ms <= 0
+    ):
+        raise MarketFeedConfigError(
+            f"{path}: {_POSITION_CONTEXT_KEY}.bar_interval_ms must be a positive int (got "
+            f"{bar_interval_ms!r}) — ``bars_held`` divides by it"
+        )
+    if enabled and bar_interval_ms is None:
+        raise MarketFeedConfigError(
+            f"{path}: {_POSITION_CONTEXT_KEY}.enabled is true but bar_interval_ms is missing "
+            "or still null (named-TBD) — a declared time-exit bound cannot count bars without "
+            "the tree's own bar period; refusing to boot"
+        )
+    return PositionContextConfig(enabled=enabled, bar_interval_ms=bar_interval_ms)
+
+
+def load_position_context_config(config_dir: Path) -> PositionContextConfig | None:
+    """``marketfeed.yaml``'s ``position_context`` block alone — boot reads it before the rest."""
+    path = config_dir / MARKETFEED_CONFIG_NAME
+    if not path.is_file():
+        return None
+    return _require_position_context(_load_mapping(path), path)
+
+
 def load_marketfeed_config(path: Path) -> MarketFeedConfig:
     """Load and fail-closed-validate ``marketfeed.yaml`` from ``path`` (module docstring)."""
     raw = _load_mapping(path)
@@ -263,6 +334,7 @@ def load_marketfeed_config(path: Path) -> MarketFeedConfig:
         snapshot_age_bound=int_values["snapshot_age_bound"],
         interval_width=int_values["interval_width"],
         time_evaluate_closed_interval_ms=int_values["time_evaluate_closed_interval_ms"],
+        position_context=_require_position_context(raw, path),
     )
 
 
@@ -441,6 +513,54 @@ def _build_time_projection(
     )
 
 
+def _position_context_source(
+    config: MarketFeedConfig,
+    *,
+    config_dir: Path,
+    inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
+    scheme: CanonicalizationScheme,
+    construction: ConstructionConfig | None,
+    reservation_projection: ReservationProjectionReader | None,
+    entry_close_bound_reader: Callable[[], EntryCloseBound] | None,
+) -> EvidencePositionContextReader | None:
+    """The tick-time position projection this tree turned ON, or ``None`` when it did not."""
+    declared = config.position_context
+    if declared is None or not declared.enabled:
+        return None
+    if (
+        construction is None
+        or reservation_projection is None
+        or entry_close_bound_reader is None
+    ):
+        raise MarketFeedConfigError(
+            f"{config_dir}: {_POSITION_CONTEXT_KEY}.enabled is true but this compose passed no "
+            "position evidence (scope, reservation projection, CLOSE-bound reader) — the "
+            "namespace would be silently absent and every rule reading it permanently false; "
+            "refusing to boot"
+        )
+    price_field_key = construction.price_field_key
+    if price_field_key is None:
+        raise MarketFeedConfigError(
+            f"{config_dir}: {_POSITION_CONTEXT_KEY}.enabled is true but construction.yaml "
+            "declares no price_field_key — the bar price a position's unrealized figure is "
+            "taken from must be the SAME admitted value the order's limit price is; refusing "
+            "to boot"
+        )
+    assert declared.bar_interval_ms is not None
+    return build_position_context_reader(
+        config_dir=config_dir,
+        scheme=scheme,
+        construction=construction,
+        evidence_store=evidence_store,
+        inbox=inbox,
+        projection=reservation_projection,
+        close_bound_reader=entry_close_bound_reader,
+        price_field_key=price_field_key,
+        bar_interval_ms=declared.bar_interval_ms,
+    )
+
+
 def build_tick_scheduler(
     *,
     config_dir: Path,
@@ -458,6 +578,9 @@ def build_tick_scheduler(
     runtime_identity: RuntimeIdentity,
     credential_sessions: KisCredentialSessions | None,
     after_pass: Callable[[], None] | None = None,
+    construction: ConstructionConfig | None = None,
+    reservation_projection: ReservationProjectionReader | None = None,
+    entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
 ) -> TickScheduler | None:
     """Build the tick scheduler, or ``None`` when this wave is not configured (module docstring)."""
     config_path = config_dir / MARKETFEED_CONFIG_NAME
@@ -501,4 +624,14 @@ def build_tick_scheduler(
         before_decide=_time_pacer_pass(config, time_service, session_owner, monotonic),
         after_pass=after_pass,
         pass_budget=_pass_budget(config, monotonic),
+        position_context=_position_context_source(
+            config,
+            config_dir=config_dir,
+            inbox=inbox,
+            evidence_store=evidence_store,
+            scheme=scheme,
+            construction=construction,
+            reservation_projection=reservation_projection,
+            entry_close_bound_reader=entry_close_bound_reader,
+        ),
     )

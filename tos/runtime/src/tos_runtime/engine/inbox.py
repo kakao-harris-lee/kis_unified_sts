@@ -216,6 +216,15 @@ class SqliteEventInbox:
         seq, payload_json = row
         return seq, EngineEvent.model_validate(json.loads(payload_json))
 
+    def event_by_id(self, event_id: str) -> EngineEvent | None:
+        """The ONE admitted event ``event_id`` names (the column is UNIQUE), validated."""
+        row = self._conn.execute(
+            "SELECT payload_json FROM events WHERE event_id = ?", (event_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return EngineEvent.model_validate(json.loads(row[0]))
+
     def mark_consumed(self, seq: int, *, evidence_seq: int, generation: int) -> None:
         """Record that ``seq`` was durably consumed, binding it to its evidence receipt."""
         self._conn.execute("BEGIN IMMEDIATE")

@@ -17,6 +17,7 @@ from tos_runtime.compose._types import ConstructionConfig
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.projection import ReservationProjectionReader
 from tos_runtime.riskstate.close_bound import (
     CloseAuthoritySource,
     EntryCloseBound,
@@ -35,9 +36,14 @@ from tos_runtime.riskstate.policies import (
     load_aggregate_risk_policy,
 )
 from tos_runtime.riskstate.position import EvidencePositionReader
+from tos_runtime.riskstate.position_context import EvidencePositionContextReader
 from tos_runtime.riskstate.service import RiskStateService
 
-__all__ = ["RiskPolicyScopeMismatch", "build_risk_state_service"]
+__all__ = [
+    "RiskPolicyScopeMismatch",
+    "build_position_context_reader",
+    "build_risk_state_service",
+]
 
 
 class RiskPolicyScopeMismatch(RuntimeError):
@@ -176,6 +182,45 @@ def _load_and_activate(
     assert p.canonical_digest is not None and a.canonical_digest is not None
     assert a.policy_id is not None and a.policy_generation is not None
     return are_policy, afg_policy, p.canonical_digest, a.canonical_digest
+
+
+def build_position_context_reader(
+    *,
+    config_dir: Path,
+    scheme: CanonicalizationScheme,
+    construction: ConstructionConfig,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    projection: ReservationProjectionReader,
+    close_bound_reader: Callable[[], EntryCloseBound],
+    price_field_key: str,
+    bar_interval_ms: int,
+) -> EvidencePositionContextReader:
+    """Build the tick-time position projection, beside the other position readers it folds."""
+    # SAFETY: the side tokens come from the SAME governed action-flow policy build_risk_state_service folds sealed sends with — a second spelling would make the sealed-send fold and the published side disagree about which direction BUY means
+    buy_token, sell_token = load_action_flow_policy(
+        config_dir / ACTION_FLOW_POLICY_CONFIG_NAME, scheme=scheme
+    ).side_tokens
+    return EvidencePositionContextReader(
+        close_bound_reader=close_bound_reader,
+        position_reader=EvidencePositionReader(
+            evidence_store,
+            account=construction.account,
+            instrument=construction.instrument,
+            buy_side_token=buy_token,
+            sell_side_token=sell_token,
+        ),
+        projection=projection,
+        inbox=inbox,
+        evidence_store=evidence_store,
+        account=construction.account,
+        instrument=construction.instrument,
+        price_field_key=price_field_key,
+        bar_interval_ms=bar_interval_ms,
+        buy_side_token=buy_token,
+        sell_side_token=sell_token,
+        scheme=scheme,
+    )
 
 
 def build_risk_state_service(

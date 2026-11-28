@@ -13,9 +13,11 @@ from tos.engine import InstrumentKey
 from tos.marketfeed import AdmittedValue, RawPayloadPreimage
 
 __all__ = [
+    "AbsentPositionContext",
     "DurableSnapshotStore",
     "MonotonicAnchoredObservation",
     "ObservationIntake",
+    "PositionContextReason",
     "RawObservation",
     "TickOutcome",
     "anchor_observation",
@@ -114,3 +116,29 @@ class TickOutcome(StrEnum):
     SKIPPED_TIME_NOT_EVALUATED = "SKIPPED_TIME_NOT_EVALUATED"
     SKIPPED_TIME_UNANCHORED = "SKIPPED_TIME_UNANCHORED"
     REFUSED_POLICY = "REFUSED_POLICY"
+
+
+class PositionContextReason(StrEnum):
+    """Whether one bar published its ``capsule.position`` namespace — and if not, why."""
+
+    PRESENT = "PRESENT"
+    PRICE_FIELD_UNUSABLE = "PRICE_FIELD_UNUSABLE"
+    STORE_READ_FAILED = "STORE_READ_FAILED"
+    QUANTITY_UNSETTLED = "QUANTITY_UNSETTLED"
+    BOUND_REFUSED = "BOUND_REFUSED"
+    HELD_QUANTITY_UNUSABLE = "HELD_QUANTITY_UNUSABLE"
+    READINGS_DISAGREE = "READINGS_DISAGREE"
+    SIDE_DISAGREES_WITH_SEAL = "SIDE_DISAGREES_WITH_SEAL"
+    ENTRY_SEAL_NOT_SOLE = "ENTRY_SEAL_NOT_SOLE"
+    ENTRY_PRICE_UNUSABLE = "ENTRY_PRICE_UNUSABLE"
+    ENTRY_EVENT_MISSING = "ENTRY_EVENT_MISSING"
+    PROJECTION_REFUSED = "PROJECTION_REFUSED"
+
+
+@dataclass(frozen=True)
+class AbsentPositionContext:
+    """Why this bar carries no proven position, in place of the context (plan P4 §2 D3)."""
+
+    reason: PositionContextReason
+    bound_refusal: str | None = None
+    as_of: int | None = None

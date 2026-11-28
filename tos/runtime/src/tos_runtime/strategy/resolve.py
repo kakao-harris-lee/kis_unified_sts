@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from tos.canonical import ArtifactIntegrityError
-from tos.dsl import EvaluationConfig, ScalarValue
+from tos.dsl import POSITION_NAMESPACE, EvaluationConfig, ScalarValue
 from tos.dsl.serialization import parse_strategy
 from tos.engine import RegistrationRefused, StrategyRegistry
 from tos.engine.admission import (
@@ -15,7 +15,7 @@ from tos.engine.admission import (
     operand_source,
     strategy_admissible,
 )
-from tos.engine.vocabulary import CONFIG_CONTEXT_SOURCE
+from tos.engine.vocabulary import CAPSULE_CONTEXT_SOURCE, CONFIG_CONTEXT_SOURCE
 from tos.workload import RuntimeIdentity
 
 from tos_runtime.evidence.emergency import EmergencyAppendLog, record_halt
@@ -35,6 +35,7 @@ from tos_runtime.strategy.loader import (
 )
 
 __all__ = [
+    "POSITION_DSL_FIELDS",
     "STRATEGIES_DIRNAME",
     "STRATEGY_REFUSED_EVIDENCE_KIND",
     "STRATEGY_SOURCE_ABSENT_EVIDENCE_KIND",
@@ -42,6 +43,17 @@ __all__ = [
     "StrategyRegistryResolutionRefused",
     "resolve_strategy_registry",
 ]
+
+# SAFETY: this tuple must stay exactly what PositionContext.as_environment_mapping projects (the kernel exports no constant for it; test_resolve_position_refs.py pins it against a real record) — a missing name refuses a rule the kernel would have resolved, an extra one admits a rule that is permanently false
+POSITION_DSL_FIELDS: tuple[str, ...] = (
+    "side",
+    "held_qty",
+    "entry_price",
+    "entry_price_basis",
+    "unrealized",
+    "unrealized_bp",
+    "bars_held",
+)
 
 STRATEGIES_DIRNAME = "strategies"
 
@@ -96,6 +108,48 @@ def _config_ref_paths(loaded_strategy: LoadedStrategy) -> tuple[tuple[str, ...],
             ):
                 seen.append(ref)
     return tuple(seen)
+
+
+def _position_ref_paths(loaded_strategy: LoadedStrategy) -> tuple[tuple[str, ...], ...]:
+    """Every DISTINCT ``capsule.position`` ref an outcome-gating comparison reads."""
+    policy = loaded_strategy.strategy.policy
+    if policy is None:  # pragma: no cover - admitted strategies always carry a policy
+        return ()
+    seen: list[tuple[str, ...]] = []
+    for compare in iter_outcome_gating_compares(policy):
+        for operand in (compare.left, compare.right):
+            ref = operand.ref
+            if (
+                operand_source(operand) == CAPSULE_CONTEXT_SOURCE
+                and ref is not None
+                and len(ref) >= 2
+                and ref[1] == POSITION_NAMESPACE
+                and ref not in seen
+            ):
+                seen.append(ref)
+    return tuple(seen)
+
+
+def _refuse_unresolvable_position_refs(
+    loaded: LoadedStrategies, *, position_context_enabled: bool
+) -> None:
+    """Refuse a ``capsule.position`` ref this tree can never resolve (plan P4 §2 D5)."""
+    for entry in loaded.strategies:
+        for ref in _position_ref_paths(entry):
+            # SAFETY: an unresolvable position operand narrows its comparison to False forever, so a declared stop-loss would simply never fire — boot refuses rather than run a tenant whose exit rule is silently dead
+            if not position_context_enabled:
+                raise StrategyLoadError(
+                    f"{entry.path}: rule reads {'.'.join(ref)!r} but this tree's "
+                    f"marketfeed.yaml does not set position_context.enabled: true — the "
+                    "namespace would be absent and every comparison reading it permanently "
+                    "false; refusing rather than admitting a dead rule"
+                )
+            if len(ref) != 3 or ref[2] not in POSITION_DSL_FIELDS:
+                raise StrategyLoadError(
+                    f"{entry.path}: rule reads {'.'.join(ref)!r}, which is not one of the "
+                    f"DSL-visible position values {sorted(POSITION_DSL_FIELDS)} — an unknown "
+                    "name resolves to nothing and would make that comparison permanently false"
+                )
 
 
 def _ref_resolves_in_bindings(
@@ -280,6 +334,7 @@ def resolve_strategy_registry(
     emergency_log: EmergencyAppendLog,
     identity: RuntimeIdentity,
     allow_no_strategies: bool = False,
+    position_context_enabled: bool = False,
 ) -> ResolvedStrategyRegistry:
     """Resolve the ONE strategy source for this compose (module docstring)."""
     strategies_dir = config_dir / STRATEGIES_DIRNAME
@@ -319,6 +374,9 @@ def resolve_strategy_registry(
         )
         loaded_bindings = load_strategy_bindings(bindings_path)
         _resolve_bindings_or_refuse(loaded, loaded_bindings)
+        _refuse_unresolvable_position_refs(
+            loaded, position_context_enabled=position_context_enabled
+        )
     except (StrategyLoadError, StrategyBindingsLoadError) as exc:
         _refuse(evidence_store, emergency_log, identity, str(exc))
         raise StrategyRegistryResolutionRefused(str(exc)) from exc

@@ -1,0 +1,1067 @@
+"""The durable-evidence position projection one tick reads (plan P4 §2 D1/D3, stage S2)."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+import pytest
+from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.capsule.capsule import (
+    CapsuleScope,
+    DecisionContextCapsule,
+    PolicyRef,
+    SafetyCriticalFacts,
+    SnapshotRef,
+)
+from tos.dsl import (
+    ENTRY_PRICE_BASES,
+    ContextValue,
+    ContextValueView,
+    PositionContext,
+    PositionSide,
+)
+from tos.engine import DecisionTickPayload, EngineEvent, EventKind, InstrumentKey
+from tos.rcl import (
+    AppendRefusal,
+    CapacityReservationTransition,
+    CapacityState,
+    CommandType,
+    ReservationScope,
+    TransitionCause,
+)
+from tos.workload import RuntimeIdentity
+from tos_runtime.engine.inbox import SqliteEventInbox
+from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.marketfeed.ports import AbsentPositionContext, PositionContextReason
+from tos_runtime.rcl.log import SqliteCommitLog
+from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.rcl.reservation_identity import permit_reservation_id
+from tos_runtime.riskstate.close_bound import (
+    CloseBoundRefusal,
+    DurableEntryCloseBoundReader,
+    EntryCloseBound,
+)
+from tos_runtime.riskstate.position import EvidencePositionReader, PositionObservation
+from tos_runtime.riskstate.position_context import (
+    ENTRY_PRICE_BASIS_EXECUTION,
+    ENTRY_PRICE_BASIS_ORDER,
+    EvidencePositionContextReader,
+)
+
+_SCHEME = get_scheme(EV_L1_PROVISIONAL_VERSION)
+_ACCOUNT = "88888888-01"
+_INSTRUMENT = "000660"
+_KEY = InstrumentKey(account=_ACCOUNT, instrument=_INSTRUMENT)
+_BUY = "BUY"
+_SELL = "SELL"
+_PRICE_FIELD = "close"
+_BAR_MS = 60_000
+_ENTRY_ATTEMPT = "attempt-position-context-entry"
+_ENTRY_PERMIT = "afg-permit-position-context-entry"
+_PRICE_SCALE = 100
+_ENTRY_PRICE = 7_010_000
+_BAR_PRICE = 7_015_000
+_BARS_HELD = 3
+_ENTRY_AS_OF = 1_700_000_060_000
+_BAR_AS_OF = _ENTRY_AS_OF + _BARS_HELD * _BAR_MS
+
+
+def _capsule(seq: int) -> DecisionContextCapsule:
+    issued = DecisionContextCapsule.issue(
+        scheme=_SCHEME,
+        issuer_principal_id="iss-position-context",
+        critical_input_policy=PolicyRef(policy_id="pol-pc", canonical_digest="pd-pc"),
+        critical_input_snapshot=SnapshotRef(
+            snapshot_id=f"snap-pc-{seq}", canonical_digest=f"snap-pc-digest-{seq}"
+        ),
+        scope=CapsuleScope(
+            environment="non-live-test",
+            account=_ACCOUNT,
+            instrument=_INSTRUMENT,
+            decision_class="entry",
+        ),
+        safety_critical_facts=SafetyCriticalFacts(
+            account=_ACCOUNT,
+            instrument=_INSTRUMENT,
+            direction="LONG",
+            quantity_basis="RISK",
+            unit="SHARES",
+        ),
+    )
+    assert isinstance(issued, DecisionContextCapsule)
+    return issued
+
+
+def _view(
+    *,
+    as_of: int,
+    close: object = _BAR_PRICE,
+    field_key: str = _PRICE_FIELD,
+    seq: int = 1,
+) -> ContextValueView:
+    return ContextValueView(
+        snapshot_id=f"snap-pc-{seq}",
+        snapshot_canonical_digest=f"snap-pc-digest-{seq}",
+        values=(
+            ContextValue(
+                field_key=field_key,
+                value=close,  # type: ignore[arg-type]
+                as_of=as_of,
+                payload_digest=f"payload-pc-{seq}",
+                observation_ref=f"raw-pc-{seq}",
+            ),
+        ),
+        canonical_digest=f"view-pc-digest-{seq}",
+        canonicalization_version=_SCHEME.version,
+    )
+
+
+def _tick_event(*, as_of: int, seq: int = 1) -> EngineEvent:
+    return EngineEvent(
+        kind=EventKind.DECISION_TICK,
+        decision_tick=DecisionTickPayload(
+            instrument_key=_KEY,
+            capsule=_capsule(seq),
+            value_view=_view(as_of=as_of, seq=seq),
+        ),
+    )
+
+
+def _commit(
+    rcl_log: SqliteCommitLog,
+    *,
+    reservation_id: str,
+    from_state: CapacityState,
+    to_state: CapacityState,
+    command_id: str,
+    command_type: CommandType,
+    cause: TransitionCause,
+    finality_witness: bool | None,
+) -> None:
+    identity = RuntimeIdentity(cell_id="pc-test-cell", process_nonce="pc-test-nonce")
+    epoch = rcl_log.current_epoch() or rcl_log.acquire_epoch(identity)
+    view = rcl_log.read_linearizable(writer_epoch=epoch)
+    receipt = rcl_log.apply_reservation_transition(
+        CapacityReservationTransition(
+            reservation_id=reservation_id,
+            writer_epoch=epoch,
+            from_state=from_state,
+            to_state=to_state,
+            scope=ReservationScope(account=_ACCOUNT, instrument=_INSTRUMENT),
+        ),
+        cause,
+        command_type=command_type,
+        command_id=command_id,
+        command_digest=command_id,
+        expected_seq=-1 if view.last_seq is None else view.last_seq,
+        finality_witness=finality_witness,
+    )
+    assert not isinstance(receipt, AppendRefusal), receipt
+
+
+def _record_join(
+    store: SqliteEvidenceStore, *, attempt_id: str, permit_identity: str, event_id: str
+) -> None:
+    """The two rows ``tos_runtime.rcl.reservation_lookup`` joins attempt -> event on."""
+    store.append(
+        {
+            "kind": "FLOW_STEP_ADMITTED",
+            "step": "ATOMIC_COMMIT",
+            "event_id": event_id,
+            "bound_identity": permit_identity,
+        },
+        kind="FLOW_STEP_ADMITTED",
+        record_class="FLOW_STEP_ADMITTED",
+    )
+    store.append(
+        {
+            "kind": "ATTEMPT_REQUEST_CREATED",
+            "event_id": event_id,
+            "attempt_id": attempt_id,
+        },
+        kind="ATTEMPT_REQUEST_CREATED",
+        record_class="ATTEMPT_REQUEST_CREATED",
+    )
+
+
+def _record_seal(
+    store: SqliteEvidenceStore,
+    *,
+    attempt_id: str,
+    side: str,
+    quantity: str,
+    price: object,
+    instrument: str = _INSTRUMENT,
+) -> None:
+    store.append(
+        {
+            "kind": "SEND_SEALED",
+            "attempt_id": attempt_id,
+            "send_seal": {
+                "attempt_id": attempt_id,
+                "instrument_key": {"account": _ACCOUNT, "instrument": instrument},
+                "outbound_side": side,
+                "outbound_quantity": quantity,
+                "outbound_price": price,
+            },
+        },
+        kind="SEND_SEALED",
+        record_class="SEND_SEALED",
+    )
+
+
+def _record_full_fill(
+    store: SqliteEvidenceStore, *, attempt_id: str, filled: str
+) -> None:
+    store.append(
+        {
+            "attempt_id": attempt_id,
+            "instrument_key": {"account": _ACCOUNT, "instrument": _INSTRUMENT},
+            "egress_result_kind": "FULL_FILL",
+            "filled_quantity": filled,
+            "remaining_quantity": "0",
+            "broker_execution_id": f"exec-{attempt_id}",
+        },
+        kind="EGRESS_RESULT_CONSUMED",
+        record_class="EGRESS_RESULT_CONSUMED",
+    )
+    store.append(
+        {"idempotency_key": f"synthetic-fqp-proof:{attempt_id}"},
+        kind="POSTTRADE_FINALITY_PROOF",
+        record_class="POSTTRADE_FINALITY_PROOF",
+    )
+
+
+def _record_fill_observed(
+    store: SqliteEvidenceStore,
+    *,
+    attempt_id: str,
+    avg_execution_price: object,
+    kind: str = "FULL_FILL",
+) -> None:
+    """One ``FILL_OBSERVED`` row exactly as ``posttrade/fill_observer.py::_emit`` writes it."""
+    store.append(
+        {
+            "attempt_id": attempt_id,
+            "kind": kind,
+            "avg_execution_price": avg_execution_price,
+        },
+        kind="FILL_OBSERVED",
+        record_class="FILL_OBSERVED",
+    )
+
+
+def _record_venue_policy(store: SqliteEvidenceStore, *, price_scale: object) -> None:
+    store.append(
+        {"price_scale": price_scale},
+        kind="VENUE_POLICY_BOUND",
+        record_class="VENUE_POLICY_BOUND",
+    )
+
+
+def _reader(
+    rcl_log: SqliteCommitLog,
+    store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    *,
+    price_field_key: str = _PRICE_FIELD,
+    bar_interval_ms: int = _BAR_MS,
+) -> EvidencePositionContextReader:
+    projection = SqliteReservationProjectionReader(rcl_log)
+    return EvidencePositionContextReader(
+        close_bound_reader=DurableEntryCloseBoundReader(
+            rcl_log=rcl_log,
+            evidence_store=store,
+            projection=projection,
+            account=_ACCOUNT,
+            instrument=_INSTRUMENT,
+        ).read,
+        position_reader=EvidencePositionReader(
+            store,
+            account=_ACCOUNT,
+            instrument=_INSTRUMENT,
+            buy_side_token=_BUY,
+            sell_side_token=_SELL,
+        ),
+        projection=projection,
+        inbox=inbox,
+        evidence_store=store,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        price_field_key=price_field_key,
+        bar_interval_ms=bar_interval_ms,
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        scheme=_SCHEME,
+    )
+
+
+def _seed_held_entry(
+    rcl_log: SqliteCommitLog,
+    store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    *,
+    side: str = _BUY,
+    quantity: str = "1",
+    price: object = _ENTRY_PRICE,
+    price_scale: object = _PRICE_SCALE,
+    avg_execution_price: str | None = None,
+    entry_as_of: int = _ENTRY_AS_OF,
+    consumed: bool = True,
+    with_seal: bool = True,
+    with_event: bool = True,
+) -> None:
+    """One proven held entry: its bar event, its join rows, its RCL state and its fill."""
+    _record_venue_policy(store, price_scale=price_scale)
+    event_id = inbox.enqueue(_tick_event(as_of=entry_as_of)).event_id
+    if with_event:
+        _record_join(
+            store,
+            attempt_id=_ENTRY_ATTEMPT,
+            permit_identity=_ENTRY_PERMIT,
+            event_id=event_id,
+        )
+    _commit(
+        rcl_log,
+        reservation_id=str(permit_reservation_id(_ACCOUNT, _INSTRUMENT, _ENTRY_PERMIT)),
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=(
+            CapacityState.POSITION_CONSUMED
+            if consumed
+            else CapacityState.POTENTIALLY_LIVE
+        ),
+        command_id="cmd-position-context-entry",
+        command_type=(
+            CommandType.RELEASE_RESERVATION if consumed else CommandType.BIND_ATTEMPT
+        ),
+        cause=(
+            TransitionCause.FINAL_QUANTITY_PROOF
+            if consumed
+            else TransitionCause.STRONGLY_AUTHORIZED_COMMAND
+        ),
+        finality_witness=True if consumed else None,
+    )
+    if with_seal:
+        _record_seal(
+            store,
+            attempt_id=_ENTRY_ATTEMPT,
+            side=side,
+            quantity=quantity,
+            price=price,
+        )
+    _record_full_fill(store, attempt_id=_ENTRY_ATTEMPT, filled=quantity)
+
+
+def _held(context: object) -> PositionContext:
+    assert isinstance(context, PositionContext), context
+    return context
+
+
+def _absent(context: object) -> AbsentPositionContext:
+    """The absence a read answered with — tests name the REASON, never just "no context"."""
+    assert isinstance(context, AbsentPositionContext), context
+    return context
+
+
+def test_the_two_named_bases_are_exactly_the_kernel_s_own_closed_set() -> None:
+    """Drift guard: the kernel exports the SET, so the runtime names its two members here."""
+    assert {ENTRY_PRICE_BASIS_EXECUTION, ENTRY_PRICE_BASIS_ORDER} == set(
+        ENTRY_PRICE_BASES
+    )
+
+
+def test_a_positively_flat_scope_reads_as_a_flat_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """No seal, no reservation, nothing in flight — FLAT, with no entry field at all."""
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.side is PositionSide.FLAT
+    assert context.held_qty == 0
+    assert context.as_of == _BAR_AS_OF
+    assert context.as_environment_mapping() == {"side": "FLAT", "held_qty": 0}
+    assert context.source_ref.startswith(f"scope:{_ACCOUNT}::{_INSTRUMENT}@evidence:")
+
+
+def test_a_held_long_entry_projects_its_own_unrealized_figures(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Hand-computed: 7_015_000 - 7_010_000 = +5_000 -> +7 bp, three bars held."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.side is PositionSide.LONG
+    assert context.held_qty == 1
+    assert context.entry_price == _ENTRY_PRICE
+    assert context.entry_price_basis == ENTRY_PRICE_BASIS_ORDER
+    assert context.unrealized == 5_000
+    assert context.unrealized_bp == 7
+    assert context.bars_held == _BARS_HELD
+    assert context.source_ref.startswith(f"attempt:{_ENTRY_ATTEMPT}@rcl:")
+
+
+def test_a_held_short_entry_mirrors_the_long_one(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """The SAME prices on the SELL side: the sign flips and nothing else does (symmetry)."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, side=_SELL)
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.side is PositionSide.SHORT
+    assert context.held_qty == 1
+    assert context.unrealized == -5_000
+    assert context.unrealized_bp == -7
+    assert context.bars_held == _BARS_HELD
+
+
+def test_an_unresolved_send_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """A sealed send with no terminal result is in-flight quantity — the namespace is absent."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_seal(
+        evidence_store,
+        attempt_id="attempt-position-context-unresolved",
+        side=_SELL,
+        quantity="1",
+        price=_BAR_PRICE,
+    )
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.QUANTITY_UNSETTLED
+    assert absent.as_of == _BAR_AS_OF
+
+
+def test_a_reservation_that_is_not_a_consumed_position_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """One outstanding non-consumed reservation is neither proven held nor proven flat."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, consumed=False)
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.READINGS_DISAGREE
+
+
+def test_an_unreadable_projection_is_not_flat(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """A bound refusal that means "could not read" must never be reported as FLAT."""
+    reader = _reader(rcl_log, evidence_store, inbox)
+    rcl_log.close()
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.BOUND_REFUSED
+    assert absent.bound_refusal == CloseBoundRefusal.SCOPE_READ_FAILED.value
+
+
+def test_a_missing_seal_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """With no sealed send the fold holds nothing while the close bound still proves one."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, with_seal=False)
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.READINGS_DISAGREE
+
+
+def test_a_seal_outside_this_scope_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """A seal whose instrument_key is another symbol's is folded by neither reading."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, with_seal=False, quantity="1")
+    _record_seal(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        side=_BUY,
+        quantity="1",
+        price=_ENTRY_PRICE,
+        instrument="005930",
+    )
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.READINGS_DISAGREE
+
+
+def test_a_missing_entry_bar_event_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """The join is also what proves the entry fill, so its absence refuses the bound first."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, with_event=False)
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.BOUND_REFUSED
+    assert absent.bound_refusal == "ENTRY_FILL_UNPROVEN"
+
+
+@pytest.mark.parametrize("close", ["7015000", 7_015_000.5, True])
+def test_a_price_field_that_is_not_an_admitted_int_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    close: object,
+) -> None:
+    """The bar price is the EXACT admitted integer or nothing (``admitted_shape_price_from_view``)."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    reader = _reader(rcl_log, evidence_store, inbox)
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF, close=close)))
+    assert absent.reason is PositionContextReason.PRICE_FIELD_UNUSABLE
+
+
+def test_an_absent_price_field_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    reader = _reader(rcl_log, evidence_store, inbox)
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF, field_key="vwap")))
+    assert absent.reason is PositionContextReason.PRICE_FIELD_UNUSABLE
+
+
+def test_an_absent_view_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """No view at all: the reason still names the price field, and carries no bar instant."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    absent = _absent(_reader(rcl_log, evidence_store, inbox).read(None))
+    assert absent.reason is PositionContextReason.PRICE_FIELD_UNUSABLE
+    assert absent.as_of is None
+
+
+def test_a_non_integral_seal_price_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """The seal's price is the view integer — a fractional one is refused, never rounded."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, price="7010000.5")
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.ENTRY_PRICE_UNUSABLE
+
+
+def test_the_broker_average_wins_when_it_scales_to_an_exact_integer(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """70,120 KRW x price_scale 100 = 7_012_000 -> EXECUTION basis and +4 bp."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_fill_observed(
+        evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price="70120"
+    )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == 7_012_000
+    assert context.entry_price_basis == ENTRY_PRICE_BASIS_EXECUTION
+    assert context.unrealized == 3_000
+    assert context.unrealized_bp == 4
+
+
+@pytest.mark.parametrize(
+    "avg_execution_price", ["70100.005", "0", None, "", "not-a-number"]
+)
+def test_an_unusable_broker_average_keeps_the_order_basis(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    avg_execution_price: object,
+) -> None:
+    """A non-integral, absent or non-positive average falls back — it never rounds an entry."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_fill_observed(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        avg_execution_price=avg_execution_price,
+    )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == _ENTRY_PRICE
+    assert context.entry_price_basis == ENTRY_PRICE_BASIS_ORDER
+
+
+def test_an_unknown_price_scale_keeps_the_order_basis(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """With no bound price_scale the broker average cannot be put on the view's scale."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, price_scale="not-an-int")
+    _record_fill_observed(
+        evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price="70120"
+    )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == _ENTRY_PRICE
+    assert context.entry_price_basis == ENTRY_PRICE_BASIS_ORDER
+
+
+def test_two_disagreeing_evidence_readings_leave_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """The sealed-send fold says 2, the close-history remainder says 1 — refuse, never pick."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, quantity="1")
+    _record_seal(
+        evidence_store,
+        attempt_id="attempt-position-context-second",
+        side=_BUY,
+        quantity="1",
+        price=_ENTRY_PRICE,
+    )
+    _record_full_fill(
+        evidence_store, attempt_id="attempt-position-context-second", filled="1"
+    )
+    reader = _reader(rcl_log, evidence_store, inbox)
+    bound = DurableEntryCloseBoundReader(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        projection=SqliteReservationProjectionReader(rcl_log),
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    ).read()
+    assert bound.proven and bound.remaining == Decimal("1")
+    assert (
+        _absent(reader.read(_view(as_of=_BAR_AS_OF))).reason
+        is PositionContextReason.READINGS_DISAGREE
+    )
+
+
+def test_a_bar_older_than_its_own_entry_bar_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """The kernel refuses ``as_of < entry_as_of``; the reader turns that refusal into absence."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    reader = _reader(rcl_log, evidence_store, inbox)
+    absent = _absent(reader.read(_view(as_of=_ENTRY_AS_OF - _BAR_MS, seq=2)))
+    assert absent.reason is PositionContextReason.PROJECTION_REFUSED
+
+
+class _FixedObservation:
+    """A position-reader stand-in: the fold answers one fixed, fully settled net quantity."""
+
+    def __init__(self, confirmed_net: str) -> None:
+        self._net = Decimal(confirmed_net)
+
+    def observe(self) -> PositionObservation:
+        return PositionObservation(
+            scope_key=f"{_ACCOUNT}::{_INSTRUMENT}",
+            confirmed_net=self._net,
+            unknown_buy=Decimal(0),
+            unknown_sell=Decimal(0),
+            in_flight_buy=Decimal(0),
+            in_flight_sell=Decimal(0),
+            attempts_seen=1,
+        )
+
+
+def _proven_bound(*, entry: str = "1", closed: str = "0") -> EntryCloseBound:
+    """A proven CLOSE bound, so a test can drive the ENTRY-side path on its own."""
+    return EntryCloseBound(
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        entry_reservation_id="res-position-context",
+        entry_attempt_id=_ENTRY_ATTEMPT,
+        entry_quantity=Decimal(entry),
+        prior_closed=Decimal(closed),
+        rcl_writer_epoch=1,
+        rcl_last_seq=7,
+        refusal=None,
+    )
+
+
+def _entry_path_reader(
+    rcl_log: SqliteCommitLog,
+    store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    *,
+    bound: EntryCloseBound,
+    confirmed_net: str,
+) -> EvidencePositionContextReader:
+    """The real reader with the two fold readings fixed — isolates the entry-side reasons."""
+    return EvidencePositionContextReader(
+        close_bound_reader=lambda: bound,
+        position_reader=_FixedObservation(confirmed_net),  # type: ignore[arg-type]
+        projection=SqliteReservationProjectionReader(rcl_log),
+        inbox=inbox,
+        evidence_store=store,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        price_field_key=_PRICE_FIELD,
+        bar_interval_ms=_BAR_MS,
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+        scheme=_SCHEME,
+    )
+
+
+def test_two_seals_for_one_entry_attempt_leave_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """An ambiguous entry seal is not an entry price — the reader never picks one of two."""
+    for price in (_ENTRY_PRICE, _ENTRY_PRICE + 100):
+        _record_seal(
+            evidence_store,
+            attempt_id=_ENTRY_ATTEMPT,
+            side=_BUY,
+            quantity="1",
+            price=price,
+        )
+    reader = _entry_path_reader(
+        rcl_log,
+        evidence_store,
+        inbox,
+        bound=_proven_bound(),
+        confirmed_net="1",
+    )
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.ENTRY_SEAL_NOT_SOLE
+
+
+def test_an_entry_with_no_attempt_to_event_join_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """A proven, priced entry whose decision bar cannot be joined has no ``bars_held``."""
+    _record_seal(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        side=_BUY,
+        quantity="1",
+        price=_ENTRY_PRICE,
+    )
+    reader = _entry_path_reader(
+        rcl_log, evidence_store, inbox, bound=_proven_bound(), confirmed_net="1"
+    )
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.ENTRY_EVENT_MISSING
+
+
+def test_a_fully_closed_entry_that_is_still_outstanding_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Remaining 0 on a proven bound is no holding — and never a silently FLAT one either."""
+    reader = _entry_path_reader(
+        rcl_log,
+        evidence_store,
+        inbox,
+        bound=_proven_bound(entry="2", closed="2"),
+        confirmed_net="2",
+    )
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.HELD_QUANTITY_UNUSABLE
+
+
+def test_an_unreadable_evidence_store_is_a_named_store_failure(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """A store defect must look like a store defect, never like "waiting for a fill"."""
+    reader = _reader(rcl_log, evidence_store, inbox)
+    evidence_store.close()
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.STORE_READ_FAILED
+
+
+def test_an_unreadable_inbox_on_the_entry_join_is_a_named_store_failure(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """The same for the LATER reads: a dead inbox does not crash the tick loop."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    reader = _reader(rcl_log, evidence_store, inbox)
+    inbox.close()
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.STORE_READ_FAILED
+
+
+def test_a_programming_error_inside_the_reader_is_never_swallowed(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """The absence reasons cover durable rows only — our own bug must still surface."""
+
+    def _broken() -> EntryCloseBound:
+        raise AttributeError("a defect in our own code, not an unreadable row")
+
+    reader = _entry_path_reader(
+        rcl_log, evidence_store, inbox, bound=_proven_bound(), confirmed_net="1"
+    )
+    reader._close_bound_reader = _broken  # noqa: SLF001
+    with pytest.raises(AttributeError):
+        reader.read(_view(as_of=_BAR_AS_OF))
+
+
+def test_a_net_sign_that_disagrees_with_the_entry_seal_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Reviewer's state: over-closed to -2 then BUY 1 — |net| == remaining, only the side is wrong."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    for nth in (1, 2):
+        orphan = f"attempt-position-context-orphan-close-{nth}"
+        _record_seal(
+            evidence_store,
+            attempt_id=orphan,
+            side=_SELL,
+            quantity="1",
+            price=_BAR_PRICE,
+        )
+        _record_full_fill(evidence_store, attempt_id=orphan, filled="1")
+    reader = _reader(rcl_log, evidence_store, inbox)
+    bound = DurableEntryCloseBoundReader(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        projection=SqliteReservationProjectionReader(rcl_log),
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    ).read()
+    observation = EvidencePositionReader(
+        evidence_store,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+    ).observe()
+    assert bound.proven and bound.remaining == Decimal("1")
+    assert observation.confirmed_net == Decimal("-1")
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.SIDE_DISAGREES_WITH_SEAL
+
+
+def test_an_entry_seal_whose_side_is_no_governed_token_is_unsettled_quantity(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """An unmapped side token makes the fold itself call the quantity unknown, not a direction."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, side="LONG_OPEN")
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.QUANTITY_UNSETTLED
+
+
+def test_an_unmapped_seal_side_alone_still_publishes_nothing(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Belt to the fold's braces: even with both magnitudes agreed, an unmapped side refuses."""
+    _record_seal(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        side="LONG_OPEN",
+        quantity="1",
+        price=_ENTRY_PRICE,
+    )
+    reader = _entry_path_reader(
+        rcl_log, evidence_store, inbox, bound=_proven_bound(), confirmed_net="1"
+    )
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.SIDE_DISAGREES_WITH_SEAL
+
+
+def test_a_partial_then_full_fill_prices_the_entry_off_the_full_one(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """``perf.py`` prices a fill off the LAST ``FULL_FILL`` row and ignores every partial."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_fill_observed(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        avg_execution_price="70500",
+        kind="PARTIAL_FILL",
+    )
+    _record_fill_observed(
+        evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price="70120"
+    )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == 7_012_000
+    assert context.entry_price_basis == ENTRY_PRICE_BASIS_EXECUTION
+
+
+def test_a_later_partial_fill_never_overrides_the_full_fill_average(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Row ORDER does not decide it — the kind does, exactly as ``perf.py`` reads them."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_fill_observed(
+        evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price="70120"
+    )
+    _record_fill_observed(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        avg_execution_price="70500",
+        kind="PARTIAL_FILL",
+    )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == 7_012_000
+
+
+def test_a_partial_fill_alone_keeps_the_order_basis(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """A holding whose only priced row is a PARTIAL_FILL is priced at the order's own limit."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_fill_observed(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        avg_execution_price="70500",
+        kind="PARTIAL_FILL",
+    )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == _ENTRY_PRICE
+    assert context.entry_price_basis == ENTRY_PRICE_BASIS_ORDER
+
+
+def test_two_full_fills_for_one_attempt_take_the_last_average(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """``perf.py``'s ``fills[attempt] = Fill(...)`` keeps the last row, so this does too."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    for average in ("70500", "70120"):
+        _record_fill_observed(
+            evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price=average
+        )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == 7_012_000
+
+
+_REENTRY_ATTEMPT = "attempt-position-context-reentry"
+_REENTRY_PERMIT = "afg-permit-position-context-reentry"
+_CLOSE_ATTEMPT = "attempt-position-context-first-close"
+_REENTRY_PRICE = _ENTRY_PRICE + 20_000
+_REENTRY_AS_OF = _ENTRY_AS_OF + 10 * _BAR_MS
+
+
+def _release(rcl_log: SqliteCommitLog, *, reservation_id: str) -> None:
+    """Take a consumed reservation to RELEASED — the only state that stops being outstanding."""
+    _commit(
+        rcl_log,
+        reservation_id=reservation_id,
+        from_state=CapacityState.POSITION_CONSUMED,
+        to_state=CapacityState.RELEASED,
+        command_id=f"cmd-release-{reservation_id}",
+        command_type=CommandType.RELEASE_RESERVATION,
+        cause=TransitionCause.FINAL_QUANTITY_PROOF,
+        finality_witness=True,
+    )
+
+
+def test_a_re_entry_uses_the_second_entrys_own_seal_price_and_bar(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Two-entry history: the first entry is closed and RELEASED, the second is the holding."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_seal(
+        evidence_store,
+        attempt_id=_CLOSE_ATTEMPT,
+        side=_SELL,
+        quantity="1",
+        price=_BAR_PRICE,
+    )
+    _record_full_fill(evidence_store, attempt_id=_CLOSE_ATTEMPT, filled="1")
+    _release(
+        rcl_log,
+        reservation_id=str(permit_reservation_id(_ACCOUNT, _INSTRUMENT, _ENTRY_PERMIT)),
+    )
+
+    second_event = inbox.enqueue(_tick_event(as_of=_REENTRY_AS_OF, seq=2)).event_id
+    _record_join(
+        evidence_store,
+        attempt_id=_REENTRY_ATTEMPT,
+        permit_identity=_REENTRY_PERMIT,
+        event_id=second_event,
+    )
+    _commit(
+        rcl_log,
+        reservation_id=str(
+            permit_reservation_id(_ACCOUNT, _INSTRUMENT, _REENTRY_PERMIT)
+        ),
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.POSITION_CONSUMED,
+        command_id="cmd-position-context-reentry",
+        command_type=CommandType.RELEASE_RESERVATION,
+        cause=TransitionCause.FINAL_QUANTITY_PROOF,
+        finality_witness=True,
+    )
+    _record_seal(
+        evidence_store,
+        attempt_id=_REENTRY_ATTEMPT,
+        side=_BUY,
+        quantity="1",
+        price=_REENTRY_PRICE,
+    )
+    _record_full_fill(evidence_store, attempt_id=_REENTRY_ATTEMPT, filled="1")
+
+    bar_as_of = _REENTRY_AS_OF + 2 * _BAR_MS
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=bar_as_of, seq=3))
+    )
+    assert context.side is PositionSide.LONG
+    assert context.held_qty == 1
+    assert context.entry_price == _REENTRY_PRICE
+    assert context.bars_held == 2
+    assert context.source_ref.startswith(f"attempt:{_REENTRY_ATTEMPT}@rcl:")

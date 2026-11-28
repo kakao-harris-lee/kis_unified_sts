@@ -455,6 +455,9 @@ def compose_paper_runtime(
         broker_scopes=boot.broker_scopes,
         runtime_identity=boot.identity,
         after_pass=with_authority_heartbeat(composed, fill_observer_pass(composed)),
+        construction=construction,
+        reservation_projection=boot.risk.projection,
+        entry_close_bound_reader=entry_close_bound_reader,
     )
     composed = apply_operations_wiring(
         composed, projection_path=projection_path, backup_root=backup_root

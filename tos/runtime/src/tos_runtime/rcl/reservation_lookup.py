@@ -16,6 +16,7 @@ from tos_runtime.rcl.reservation_identity import (
 
 __all__ = [
     "attempt_id_for_reservation",
+    "event_id_for_attempt",
     "permit_identity_for_attempt",
     "reservation_id_for_attempt",
 ]
@@ -95,6 +96,12 @@ def _with_index(store: SqliteEvidenceStore) -> _JoinIndex:
         index = _INDEXES[store] = _JoinIndex()
     index.absorb(store)
     return index
+
+
+def event_id_for_attempt(store: SqliteEvidenceStore, attempt_id: str) -> str | None:
+    """The ONE inbox ``event_id`` ``attempt_id``'s own ``ATTEMPT_REQUEST_CREATED`` row names."""
+    with _INDEX_LOCK:
+        return _single(_with_index(store).events_by_attempt.get(attempt_id, set()))
 
 
 def permit_identity_for_attempt(
