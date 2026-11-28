@@ -386,6 +386,75 @@ def test_the_same_bars_close_at_the_last_bar_once_the_session_has_ended() -> Non
     assert out["totals"]["hypothetical_pnl_krw"] == "118000"
 
 
+def _round_trip(*, held_qty: int) -> dict[str, Any]:
+    """시뮬레이션이 낸 왕복 하나 — 진입 735.64, 청산 738.58, 보유 ``held_qty``."""
+    return {
+        "entry_time_kst": "09:14",
+        "entry_rule_id": "R1-ENTRY-LONG",
+        "entry_price": 73_564,
+        "held_qty": held_qty,
+        "exit_time_kst": "09:50",
+        "exit_rule_id": "R2-EXIT-VWAP-REVERTED",
+        "exit_price": 73_858,
+    }
+
+
+@pytest.mark.parametrize(
+    ("held_qty", "expected"),
+    [(1, "147000"), (10, "1470000")],
+    ids=["one", "ten"],
+)
+def test_a_simulated_round_trip_is_multiplied_by_the_quantity_it_held(
+    held_qty: int, expected: str
+) -> None:
+    """2.94 포인트 × 50,000 × 보유 수량. 수량 1 이면 결정 짝짓기와 같은 수다."""
+    out = hp.build_hypothetical_pnl(
+        [bar("09:14", 73_564), bar("09:50", 73_858)],
+        direction=hp.LONG,
+        contract=MINI,
+        instrument="A05612",
+        fills={"round_trips": [_round_trip(held_qty=held_qty)], "open_entry": None},
+    )
+    (trade,) = out["trades"]
+    assert trade["points"] == "2.94"
+    assert trade["hypothetical_pnl_krw"] == expected
+    assert out["totals"]["hypothetical_pnl_krw"] == expected
+
+
+def test_a_still_open_simulated_fill_is_marked_at_the_quantity_it_holds() -> None:
+    """평가도 같은 수량을 쓴다 — 한쪽만 곱하면 장중 표와 확정 표가 서로 다른 규모다."""
+    out = hp.build_hypothetical_pnl(
+        [bar("09:14", 73_564), bar("09:50", 73_858)],
+        direction=hp.LONG,
+        contract=MINI,
+        session_ended=False,
+        fills={
+            "round_trips": [],
+            "open_entry": {
+                "entry_time_kst": "09:14",
+                "entry_rule_id": "R1-ENTRY-LONG",
+                "entry_price": 73_564,
+                "held_qty": 10,
+            },
+        },
+    )
+    assert out["open_position"]["points"] == "2.94"
+    assert out["open_position"]["unrealized_pnl_krw"] == "1470000"
+
+
+def test_a_simulated_fill_that_states_no_quantity_holds_one() -> None:
+    """수량을 적지 않은 체결은 1 로 센다 — 0 으로 세면 손익이 조용히 사라진다."""
+    trip = _round_trip(held_qty=1)
+    del trip["held_qty"]
+    out = hp.build_hypothetical_pnl(
+        [bar("09:14", 73_564), bar("09:50", 73_858)],
+        direction=hp.LONG,
+        contract=MINI,
+        fills={"round_trips": [trip], "open_entry": None},
+    )
+    assert out["trades"][0]["hypothetical_pnl_krw"] == "147000"
+
+
 def test_a_session_that_closed_its_position_is_unaffected_by_the_flag() -> None:
     """닫힌 거래는 세션이 돌든 끝났든 같은 수다."""
     bars = [

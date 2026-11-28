@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from tos.brokeradapter import SyntheticFillPolicy, SyntheticPaperTransport
 from tos.canonical import EV_L1_PROVISIONAL_VERSION
 from tos.dsl import (
+    FLAT_QUANTITY_BASIS,
     ContextValue,
     ContextValueView,
     DecisionContextCapsuleRef,
@@ -27,6 +28,7 @@ from tos.egressgw import (
     LotRoundingPolicy,
     OrderConstructionStage,
     ProposedConstructionEnvelope,
+    QuantityDerivation,
     VenueConstraintStage,
     admitted_price_from_view,
     admitted_shape_price_from_view,
@@ -34,6 +36,7 @@ from tos.egressgw import (
     derive_economic_effect_envelope,
     derive_order_size,
     fold_venue_admissibility,
+    resolve_field_per_unit_risk,
 )
 from tos.engine import (
     CAPSULE_CONTEXT_SOURCE,
@@ -857,3 +860,206 @@ def test_the_step3_stage_is_fail_closed_when_the_shape_price_is_unprojectable() 
     assert not_carried.resolved_shape is not None
     assert not_carried.resolved_shape.price is None
     assert verdict.outcome is StageOutcome.UNKNOWN
+
+
+_RISK_UNIT_FIELD = "risk_unit_x100"
+
+
+def _view(**values: ScalarValue) -> ContextValueView:
+    """A resolved value view carrying exactly the named admitted values."""
+    return ContextValueView(
+        snapshot_id="vsnap-risk-unit",
+        snapshot_canonical_digest="snap-digest-risk-unit",
+        values=tuple(
+            ContextValue(
+                field_key=key,
+                value=value,
+                as_of=1_700_000_000_000,
+                payload_digest=f"payload-digest-{key}",
+                observation_ref=f"raw-{key}",
+            )
+            for key, value in values.items()
+        ),
+        canonical_digest="view-digest-risk-unit",
+        canonicalization_version=EV_L1_PROVISIONAL_VERSION,
+    )
+
+
+def _field_sized_envelope(**bound_overrides) -> ProposedConstructionEnvelope:
+    """The baseline envelope, re-authored to read its risk unit from one field."""
+    overrides: dict[str, object] = {
+        "per_unit_risk": None,
+        "per_unit_risk_field_key": _RISK_UNIT_FIELD,
+    }
+    overrides.update(bound_overrides)
+    return proposed_envelope(sizing_bound=sizing_bound(**overrides))
+
+
+def _field_sized(view: ContextValueView | None, **overrides) -> QuantityDerivation:
+    """Resolve the declared risk unit, then derive — the step-2 stage's own order."""
+    envelope = overrides.pop("envelope", _field_sized_envelope())
+    basis = overrides.pop("quantity_basis", "RISK")
+    sized, refused = resolve_field_per_unit_risk(
+        envelope, quantity_basis=basis, view=view
+    )
+    if refused is not None:
+        return refused
+    return derive_order_size(
+        quantity_basis=basis,
+        envelope=sized,
+        price=overrides.pop("price", admitted_price()),
+        venue_constraint=overrides.pop("venue_constraint", venue_quantity_constraint()),
+        held_position=overrides.pop("held_position", None),
+    )
+
+
+def test_an_unset_risk_unit_field_leaves_the_fixed_derivation_untouched() -> None:
+    """(P4 §2 D6) The declaration is opt-in: without it, the SAME envelope and size."""
+    envelope = proposed_envelope()
+    sized, refused = resolve_field_per_unit_risk(
+        envelope, quantity_basis="RISK", view=_view(**{_RISK_UNIT_FIELD: 1})
+    )
+
+    assert sized is envelope
+    assert refused is None
+    assert _derive(envelope=envelope) == _derive(envelope=envelope)
+    assert _derive(envelope=envelope).quantity == Decimal("20")
+
+
+def test_the_risk_unit_is_read_from_the_declared_field() -> None:
+    """(P4 §2 D6) 1000 / 50 = 20 and 1000 / 100 = 10 — the field is the divisor."""
+    fifty = _field_sized(_view(**{_RISK_UNIT_FIELD: 50}))
+    assert fifty.outcome is DerivationOutcome.DERIVED
+    assert fifty.quantity == Decimal("20")
+
+    hundred = _field_sized(_view(**{_RISK_UNIT_FIELD: 100}))
+    assert hundred.outcome is DerivationOutcome.DERIVED
+    assert hundred.quantity == Decimal("10")
+
+
+def test_a_field_sized_quantity_above_the_ceiling_is_denied_never_clamped() -> None:
+    """(ADR-002-020 §9) A field that shrinks the risk unit denies; it never clamps."""
+    result = _field_sized(_view(**{_RISK_UNIT_FIELD: 1}))
+
+    assert result.outcome is DerivationOutcome.DENIED
+    assert "outside the authorized envelope" in (result.denial_reason or "")
+    assert result.quantity is None
+
+
+def test_a_field_sized_quantity_below_the_floor_is_denied_never_raised() -> None:
+    """(§3.1) A risk unit larger than the whole budget is no order, never one lot."""
+    result = _field_sized(_view(**{_RISK_UNIT_FIELD: 2000}))
+
+    assert result.outcome is DerivationOutcome.DENIED
+    assert "yields a non-positive size" in (result.denial_reason or "")
+    assert result.quantity is None
+
+
+def test_a_value_free_tick_denies_the_field_sized_derivation() -> None:
+    """(RFC-005 §7:211) An unknown risk unit is a no-send, never a last-known default."""
+    result = _field_sized(None)
+
+    assert result.outcome is DerivationOutcome.DENIED
+    assert "carries no admitted Critical Input value view" in (
+        result.denial_reason or ""
+    )
+
+
+def test_a_risk_unit_field_the_view_does_not_carry_denies() -> None:
+    """(#32 §2.5) A missing field is a denial, not a silently skipped divisor."""
+    result = _field_sized(_view(close=4200))
+
+    assert result.outcome is DerivationOutcome.DENIED
+    assert "admits no single exact-integer value" in (result.denial_reason or "")
+
+
+@pytest.mark.parametrize("value", [True, False, 50.0, "50"])
+def test_a_non_integer_risk_unit_denies(value: ScalarValue) -> None:
+    """(#32 §2.5) ``True`` is not the risk unit ``1`` and no float projects."""
+    result = _field_sized(_view(**{_RISK_UNIT_FIELD: value}))
+
+    assert result.outcome is DerivationOutcome.DENIED
+    assert "admits no single exact-integer value" in (result.denial_reason or "")
+
+
+@pytest.mark.parametrize("value", [0, -50])
+def test_a_non_positive_risk_unit_denies(value: int) -> None:
+    """(∅ both ways) An explicit zero or a negative unit is no derivation at all."""
+    result = _field_sized(_view(**{_RISK_UNIT_FIELD: value}))
+
+    assert result.outcome is DerivationOutcome.DENIED
+    assert "is not a positive risk unit" in (result.denial_reason or "")
+
+
+def test_declaring_both_a_fixed_risk_unit_and_a_field_key_denies() -> None:
+    """(∅ fail-closed) Two risk units have no single admissible reading."""
+    both = proposed_envelope(
+        sizing_bound=sizing_bound(per_unit_risk_field_key=_RISK_UNIT_FIELD)
+    )
+    result = _field_sized(_view(**{_RISK_UNIT_FIELD: 50}), envelope=both)
+
+    assert result.outcome is DerivationOutcome.DENIED
+    assert "declares both a fixed per_unit_risk" in (result.denial_reason or "")
+
+
+@pytest.mark.parametrize(
+    "fixed_unit", [None, Decimal("50")], ids=["field_only", "both_declared"]
+)
+def test_a_flat_close_is_sized_from_the_held_position_not_the_risk_unit_field(
+    fixed_unit: Decimal | None,
+) -> None:
+    """A declared risk-unit field must never be what refuses an exit (SAFETY line)."""
+    envelope = _field_sized_envelope(
+        per_unit_risk=fixed_unit,
+        admitted_quantity_bases=frozenset({"RISK", FLAT_QUANTITY_BASIS}),
+    )
+    result = _field_sized(
+        None,
+        envelope=envelope,
+        quantity_basis=FLAT_QUANTITY_BASIS,
+        held_position=Decimal("4"),
+    )
+
+    assert result.outcome is DerivationOutcome.DERIVED
+    assert result.quantity == Decimal("4")
+
+
+def test_a_unit_mismatch_still_denies_a_field_sized_derivation() -> None:
+    """(ADR-002-020 §11:301) The field path reaches every bound the fixed path does."""
+    result = _field_sized(
+        _view(**{_RISK_UNIT_FIELD: 50}),
+        venue_constraint=venue_quantity_constraint(
+            quantity_unit=QuantityUnitKind.SHARES
+        ),
+    )
+
+    assert result.outcome is DerivationOutcome.DENIED
+    assert "unit disagreement" in (result.denial_reason or "")
+
+
+def test_the_step2_stage_sizes_from_the_value_view() -> None:
+    """(§3.2 step 2) The stage reads the risk unit off the tick it is deciding on."""
+    stage = _construction_stage(envelope=_field_sized_envelope())
+    verdict = stage(
+        _stage_request(
+            CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION,
+            value_view=_view(**{_RISK_UNIT_FIELD: 100}),
+        )
+    )
+
+    assert verdict.outcome is StageOutcome.ADMIT
+    assert stage.construction is not None
+    assert stage.construction.derivation.quantity == Decimal("10")
+    assert stage.construction.command is not None
+    assert stage.construction.command.axis_value(ConformanceAxis.QUANTITY) == "1E+1"
+
+
+def test_the_step2_stage_denies_a_tick_that_carries_no_risk_unit() -> None:
+    """(fail-closed) The same stage refuses rather than falling back to a constant."""
+    stage = _construction_stage(envelope=_field_sized_envelope())
+    verdict = stage(_stage_request(CommitmentStep.CANDIDATE_COMMAND_CONSTRUCTION))
+
+    assert verdict.outcome is StageOutcome.DENY
+    assert stage.construction is not None
+    assert stage.construction.command is None
+    assert stage.construction.derivation.quantity is None

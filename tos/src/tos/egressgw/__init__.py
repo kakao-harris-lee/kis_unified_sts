@@ -25,6 +25,7 @@ from tos.egressgw.construction import (
     derive_economic_effect_envelope,
     derive_order_size,
     fold_venue_admissibility,
+    resolve_field_per_unit_risk,
 )
 from tos.egressgw.gateway import (
     OUTBOUND_COORDINATE_NAMES,
@@ -136,6 +137,7 @@ __all__ = [
     "derive_economic_effect_envelope",
     "derive_order_size",
     "fold_venue_admissibility",
+    "resolve_field_per_unit_risk",
     "OUTBOUND_COORDINATE_NAMES",
     "UNCERTAIN_RESULT_KINDS",
     "BrokerEgressGateway",

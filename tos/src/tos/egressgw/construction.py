@@ -74,6 +74,7 @@ __all__ = [
     "derive_economic_effect_envelope",
     "derive_order_size",
     "fold_venue_admissibility",
+    "resolve_field_per_unit_risk",
 ]
 
 
@@ -85,6 +86,11 @@ DERIVATION_CONTEXT: Context = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 _DECIDED_RESULTS: frozenset[ConformanceResult] = frozenset(
     {ConformanceResult.CONFORMANT, ConformanceResult.NON_CONFORMANT}
+)
+
+_UNKNOWN_RISK_UNIT = (
+    "an unknown risk unit is a no-send, never a last-known default "
+    "(RFC-005 §7:211; design #34 §3.1 (a))"
 )
 
 
@@ -136,6 +142,71 @@ def admitted_shape_price_from_view(
     """Project one admitted Critical Input value onto an integer venue-shape price (design #36 §4)."""
     magnitude, _admitted = _exact_admitted_int_value(view, field_key=field_key)
     return magnitude
+
+
+def resolve_field_per_unit_risk(
+    envelope: ProposedConstructionEnvelope | None,
+    *,
+    quantity_basis: str | None,
+    view: ContextValueView | None,
+) -> tuple[ProposedConstructionEnvelope | None, QuantityDerivation | None]:
+    """Bind the sizing bound's per-unit risk to one admitted field value, or deny (P4 §2 D6)."""
+    if envelope is None or envelope.sizing_bound is None:
+        return (envelope, None)
+    bound = envelope.sizing_bound
+    field_key = bound.per_unit_risk_field_key
+    if field_key is None:
+        return (envelope, None)
+    # SAFETY: a FLAT close is sized from the proven held position, never from this field, so NOTHING about the field — a missing value or a bound that also declares a fixed unit — may refuse it; refusing an exit over the risk unit it does not use would strand an open position with no declared way out
+    if quantity_basis == FLAT_QUANTITY_BASIS:
+        return (envelope, None)
+    if bound.per_unit_risk is not None:
+        return (
+            None,
+            _denied(
+                f"the sizing bound declares both a fixed per_unit_risk "
+                f"({bound.per_unit_risk}) and per_unit_risk_field_key {field_key!r} — two risk "
+                "units have no single admissible reading, and preferring either one silently "
+                "widens the other (∅ fail-closed, design #34 §7)"
+            ),
+        )
+    if view is None:
+        return (
+            None,
+            _denied(
+                f"per_unit_risk_field_key {field_key!r} is declared but this construction "
+                f"carries no admitted Critical Input value view — {_UNKNOWN_RISK_UNIT}"
+            ),
+        )
+    magnitude, admitted = _exact_admitted_int_value(view, field_key=field_key)
+    if magnitude is None or admitted is None:
+        return (
+            None,
+            _denied(
+                "the value view admits no single exact-integer value for "
+                f"per_unit_risk_field_key {field_key!r} — a missing, duplicated, or non-integer "
+                f"risk unit is never coerced to a number (#32 §2.5); {_UNKNOWN_RISK_UNIT}"
+            ),
+        )
+    if magnitude <= 0:
+        return (
+            None,
+            _denied(
+                f"the admitted value {magnitude} read from per_unit_risk_field_key "
+                f"{field_key!r} is not a positive risk unit — dividing the risk budget by it is "
+                "not a bigger order, it is no derivation"
+            ),
+        )
+    return (
+        envelope.model_copy(
+            update={
+                "sizing_bound": bound.model_copy(
+                    update={"per_unit_risk": Decimal(magnitude)}
+                )
+            }
+        ),
+        None,
+    )
 
 
 def derive_order_size(
@@ -609,12 +680,20 @@ class OrderConstructionStage:
     def __call__(self, request: StageRequest) -> StageVerdict:
         """Run the derivation + compile and return the positive-admit step-2 verdict."""
         proposal = request.proposal
-        derivation = derive_order_size(
-            quantity_basis=getattr(proposal, "quantity_basis", None),
-            envelope=self._envelope,
-            price=self._price_for(request),
-            venue_constraint=self._venue_constraint,
-            held_position=request.held_position_magnitude,
+        quantity_basis = getattr(proposal, "quantity_basis", None)
+        sized, refused = resolve_field_per_unit_risk(
+            self._envelope, quantity_basis=quantity_basis, view=request.value_view
+        )
+        derivation = (
+            refused
+            if refused is not None
+            else derive_order_size(
+                quantity_basis=quantity_basis,
+                envelope=sized,
+                price=self._price_for(request),
+                venue_constraint=self._venue_constraint,
+                held_position=request.held_position_magnitude,
+            )
         )
         self.construction = construct_candidate_command(
             proposal_id=getattr(proposal, "proposal_id", None),

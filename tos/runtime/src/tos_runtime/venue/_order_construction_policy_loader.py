@@ -103,8 +103,11 @@ _SIZING_REQUIRED_INT_FIELDS: tuple[str, ...] = (
     "min_quantity",
     "lot_size",
     "risk_budget",
-    "per_unit_risk",
 )
+
+_PER_UNIT_RISK_KEY = "per_unit_risk"
+
+_PER_UNIT_RISK_FIELD_KEY = "per_unit_risk_field_key"
 
 _AUTHORIZED_AXES_DERIVED_FROM_SCOPE: frozenset[ConformanceAxis] = frozenset(
     {
@@ -232,6 +235,33 @@ def _parse_ocp_runtime_block(
     return canonicalization_version, wire_codec_kind, wire_fields
 
 
+def _parse_per_unit_risk(
+    sizing_raw: dict[str, Any], path: Path, ctx: str
+) -> tuple[Decimal | None, str | None]:
+    """``(fixed risk unit, field key)`` — EXACTLY one of the two is authored (P4 §2 D6)."""
+    field_key = sizing_raw.get(_PER_UNIT_RISK_FIELD_KEY)
+    if field_key is None:
+        return Decimal(require_int(sizing_raw, _PER_UNIT_RISK_KEY, path, ctx)), None
+    # SAFETY: a key with surrounding whitespace is refused HERE, not silently stripped — ' risk_unit_x100' matches no admitted field_key, so trimming it would guess which field the operator meant and leaving it would deny every entry at run time with a denial that names a key the document does not contain
+    if (
+        not isinstance(field_key, str)
+        or not field_key.strip()
+        or field_key != field_key.strip()
+        or field_key == TBD_STR
+    ):
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx}.{_PER_UNIT_RISK_FIELD_KEY} must be a non-empty admitted field "
+            f"key with no surrounding whitespace, or absent — got {field_key!r}"
+        )
+    if sizing_raw.get(_PER_UNIT_RISK_KEY) is not None:
+        raise VenuePolicyConfigError(
+            f"{path}: {ctx} authors both {_PER_UNIT_RISK_KEY!r} and "
+            f"{_PER_UNIT_RISK_FIELD_KEY!r} — exactly one risk unit may be declared, because "
+            "preferring either one silently widens the other"
+        )
+    return None, field_key
+
+
 def _parse_sizing(construction_raw: dict[str, Any], path: Path) -> SizingBound:
     """Parse ``_runtime.construction.sizing`` into a kernel"""
     sizing_raw = require_mapping_key(construction_raw, "sizing", path)
@@ -240,6 +270,7 @@ def _parse_sizing(construction_raw: dict[str, Any], path: Path) -> SizingBound:
         name: require_int(sizing_raw, name, path, ctx)
         for name in _SIZING_REQUIRED_INT_FIELDS
     }
+    per_unit_risk, per_unit_risk_field_key = _parse_per_unit_risk(sizing_raw, path, ctx)
     max_notional = optional_int(sizing_raw, "max_notional", path, ctx)
     lot_rounding_token = require_str(sizing_raw, "lot_rounding", path, ctx)
     try:
@@ -261,7 +292,8 @@ def _parse_sizing(construction_raw: dict[str, Any], path: Path) -> SizingBound:
         )
     return SizingBound(
         risk_budget=Decimal(values["risk_budget"]),
-        per_unit_risk=Decimal(values["per_unit_risk"]),
+        per_unit_risk=per_unit_risk,
+        per_unit_risk_field_key=per_unit_risk_field_key,
         lot_size=Decimal(values["lot_size"]),
         lot_rounding=lot_rounding,
         min_quantity=Decimal(values["min_quantity"]),

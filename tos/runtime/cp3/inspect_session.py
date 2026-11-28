@@ -341,12 +341,14 @@ def _bar_row(
         rules: tuple[RuleView, ...] = ()
         rule_id: str | None = None
         kind: str | None = None
+        basis: str | None = None
     else:
         env = _environment(values, bindings, position.values)
         decision = evaluate_policy(policy, env)
         rules = _evaluate_rules(policy, env, rule_index)
         rule_id, _registered = rule_index[decision.rationale]
         kind = str(decision.kind)
+        basis = None if decision.target is None else decision.target.quantity_basis
 
     shape = _engine_shape(evidence)
     own_shape = (
@@ -382,6 +384,7 @@ def _bar_row(
         position=position.values,
         position_absent_reason=position.absent_reason,
         position_source=position.source,
+        decision_quantity_basis=basis,
     )
 
 
@@ -516,6 +519,9 @@ def _build_report(
         ),
         position_open_fill=None if simulation is None else simulation.open_fill,
         position_live_gap=None if simulation is None else simulation.live_gap,
+        position_entry_refusals=(
+            None if simulation is None else simulation.entry_refusals
+        ),
         session_name=session_name or journal_path.parent.name,
         instrument=instrument,
         strategy_path=content.strategy_path,
@@ -603,6 +609,8 @@ def _evaluate_bars(
                 decision_kind=row.decision_kind,
                 rule_id=row.decision_rule_id,
                 price=price,
+                values=bar.fields,
+                quantity_basis=row.decision_quantity_basis,
                 as_of_ms=bar.as_of_ms,
                 raw_event_id=bar.raw_event_id,
                 time_kst=bar.time_kst,

@@ -15,6 +15,9 @@ from ..inspect_session import inspect_session
 from ..position_sim import (
     DECLARED_UNIT_SOURCE,
     DEFAULT_UNIT_SOURCE,
+    ENTRY_SIZE_DENIED,
+    ENTRY_UNIT_UNAVAILABLE,
+    FIELD_UNIT_SOURCE,
     GAP_EXIT_FIRST_VISIBLE_BAR,
     GAP_REENTRY_NEXT_BAR,
     POSITION_MODE_SIMULATED,
@@ -35,11 +38,15 @@ def _journal(
     windows: Sequence[bool],
     *,
     step_ms: int = _MINUTE_MS,
+    units: Sequence[Any] | None = None,
 ) -> Path:
     """One journal line per ``(price, entry_window)`` pair, one bar apart."""
     lines: list[str] = []
+    risk_units = [None] * len(prices) if units is None else list(units)
     for index, (price, window) in enumerate(zip(prices, windows, strict=True)):
         fields: dict[str, Any] = {"entry_window": window}
+        if risk_units[index] is not None:
+            fields[tree.RISK_UNIT_FIELD] = risk_units[index]
         if price is not None:
             fields[tree.PRICE_FIELD] = price
         lines.append(
@@ -65,12 +72,13 @@ def _inspect(
     windows: Sequence[bool],
     *,
     step_ms: int = _MINUTE_MS,
+    units: Sequence[Any] | None = None,
     **tree_kwargs: Any,
 ) -> InspectReport:
     """Replay one hand-written bar path against a freshly written tenant tree."""
     config_dir = tree.write_tree(root, **tree_kwargs)
     return inspect_session(
-        journal_path=_journal(root, prices, windows, step_ms=step_ms),
+        journal_path=_journal(root, prices, windows, step_ms=step_ms, units=units),
         strategy_path=config_dir / "strategies" / tree.STRATEGY_FILE_NAME,
         bindings_path=config_dir / "strategy_bindings.yaml",
         session_name="s3-fixture",
@@ -426,3 +434,176 @@ def test_the_declared_sizing_bound_is_where_held_qty_comes_from(
     assert declared is not None
     assert (declared.held_qty, declared.held_qty_source) == (1, DEFAULT_UNIT_SOURCE)
     assert declared.held_qty_source != DECLARED_UNIT_SOURCE
+
+
+def test_a_fixed_sizing_bound_still_gives_every_fill_the_same_declared_n(
+    tmp_path: Path,
+) -> None:
+    """(P4 §2 D6) An OCP with a fixed risk unit is read exactly as before S5."""
+    config_dir = tree.write_tree(tmp_path, sizing="fixed")
+    declared = load_simulation_config(config_dir)
+    assert declared is not None
+    assert (declared.held_qty, declared.held_qty_source) == (1, DECLARED_UNIT_SOURCE)
+    assert declared.per_unit_risk_field_key is None
+    assert declared.risk_budget is None
+
+
+def test_the_replay_quantity_follows_the_declared_risk_unit_field(
+    tmp_path: Path,
+) -> None:
+    """(P4 §2 D6 / D7) 1000 / 100 = 10 at the entry bar — the field is the divisor."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_700, 99_500),
+        (True, False, False),
+        units=(100, 100, 100),
+        sizing="field",
+    )
+
+    assert report.position_simulation is not None
+    assert report.position_simulation["held_qty"] is None
+    assert report.position_simulation["held_qty_source"] == FIELD_UNIT_SOURCE
+    assert report.position_simulation["per_unit_risk_field_key"] == tree.RISK_UNIT_FIELD
+    assert report.position_simulation["risk_budget"] == tree.RISK_BUDGET
+    assert report.bars[1].position is not None
+    assert report.bars[1].position["held_qty"] == 10
+    assert _decisions(report) == [
+        tree.ENTRY_RULE_ID,
+        tree.DEFAULT_RULE_ID,
+        tree.STOP_RULE_ID,
+    ]
+    assert [trip["held_qty"] for trip in report.round_trips] == [10]
+    assert f"risk_unit_field {tree.RISK_UNIT_FIELD}" in render_text(report)
+
+
+def test_the_risk_unit_of_the_entry_bar_is_the_one_the_position_carries(
+    tmp_path: Path,
+) -> None:
+    """The size is fixed at the fill, not re-read: a later bar's unit never resizes it."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_700, 99_500),
+        (True, False, False),
+        units=(250, 1, 1),
+        sizing="field",
+    )
+
+    assert report.bars[1].position is not None
+    assert report.bars[1].position["held_qty"] == 4
+    assert report.bars[2].position is not None
+    assert report.bars[2].position["held_qty"] == 4
+
+
+@pytest.mark.parametrize("unit", [None, 0, -100, True, 100.0, "100"], ids=str)
+def test_an_unusable_risk_unit_opens_no_entry_and_is_counted(
+    tmp_path: Path, unit: Any
+) -> None:
+    """Live's derivation denies that send, so the replay opens nothing and says so."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_500),
+        (True, False),
+        units=(unit, 100),
+        sizing="field",
+    )
+
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 1,
+        ENTRY_SIZE_DENIED: 0,
+    }
+    assert report.bars[1].position == {"side": "FLAT", "held_qty": 0}
+    assert report.round_trips == ()
+    assert report.position_open_fill is None
+    text = render_text(report)
+    assert f"entry refused: {ENTRY_UNIT_UNAVAILABLE} 1" in text
+    document = json.loads(render_json(report))
+    assert document["position"]["entry_refusals"] == {
+        ENTRY_UNIT_UNAVAILABLE: 1,
+        ENTRY_SIZE_DENIED: 0,
+    }
+
+
+def test_the_replay_quantity_is_floored_to_the_lot_exactly_as_live_floors_it(
+    tmp_path: Path,
+) -> None:
+    """(M1) FLOOR_TO_LOT: live sends 1000 // 300 = 3, so the replay holds 3, not nothing."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_700, 99_500),
+        (True, False, False),
+        units=(300, 300, 300),
+        sizing="field",
+        lot_rounding="FLOOR_TO_LOT",
+    )
+
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 0,
+        ENTRY_SIZE_DENIED: 0,
+    }
+    assert report.bars[1].position is not None
+    assert report.bars[1].position["held_qty"] == 3
+    assert [trip["held_qty"] for trip in report.round_trips] == [3]
+
+
+def test_a_quantity_the_authored_lot_policy_refuses_opens_no_entry_and_is_counted(
+    tmp_path: Path,
+) -> None:
+    """(M1) EXACT_MULTIPLE_REQUIRED: 1000 / 300 is no exact lot, so live sends nothing."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_500),
+        (True, False),
+        units=(300, 300),
+        sizing="field",
+    )
+
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 0,
+        ENTRY_SIZE_DENIED: 1,
+    }
+    assert report.bars[1].position == {"side": "FLAT", "held_qty": 0}
+    assert report.round_trips == ()
+    text = render_text(report)
+    assert f"{ENTRY_SIZE_DENIED} 1" in text
+
+
+def test_a_quantity_above_the_authorized_ceiling_opens_no_entry_and_is_counted(
+    tmp_path: Path,
+) -> None:
+    """(M1) The envelope's own ceiling denies, never clamps — 10 outside [1, 1] is no send."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_500),
+        (True, False),
+        units=(100, 100),
+        sizing="field",
+        max_quantity=1,
+    )
+
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 0,
+        ENTRY_SIZE_DENIED: 1,
+    }
+    assert report.bars[1].position == {"side": "FLAT", "held_qty": 0}
+    assert report.round_trips == ()
+    document = json.loads(render_json(report))
+    assert document["position"]["entry_refusals"][ENTRY_SIZE_DENIED] == 1
+
+
+def test_a_fixed_n_tree_refuses_no_entry_for_a_missing_risk_unit_field(
+    tmp_path: Path,
+) -> None:
+    """The counters are the field path's own — a fixed-N tree never reaches them."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_500),
+        (True, False),
+        sizing="fixed",
+    )
+
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 0,
+        ENTRY_SIZE_DENIED: 0,
+    }
+    assert report.bars[1].position is not None
+    assert report.bars[1].position["held_qty"] == 1
