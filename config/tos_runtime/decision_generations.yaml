@@ -102,6 +102,12 @@ tenants:
   #     generation 2: the same four rules with that binding set to `false` — the probe rule
   #                   can no longer fire, which is a decision change like any other (this
   #                   file's own warning on 005930 said so in advance).
+  #     generation 3: P4 S4 — two declared exits read `capsule.position.unrealized_bp`
+  #                   (`R5-EXIT-STOP-LOSS` · `R6-EXIT-TAKE-PROFIT`), both entry rules gain a
+  #                   `capsule.position.side EQ "FLAT"` guard, and `stop_loss_bp` /
+  #                   `take_profit_bp` join the bindings
+  #                   (`docs/plans/2026-11-27-tos-p4-position-fields-plan.md` §3 · §11 #3).
+  #                   Six rules, 51 static work steps (budget 64, unchanged).
   #   cp3-setup-d-stock-005380 — 실험 B, RSI / Williams %R 되돌림.
   #     generation 1: born 2026-11-20 under the Setup D contract above.
   #     generation 2: a different strategy file entirely
@@ -111,9 +117,13 @@ tenants:
   #                   has no value during warmup and cannot be published as a number.
   #
   # Both leaves must be archived before this deploys (step 2 above); 005930's is untouched.
+  # ⚠ generation 3 (000660, P4 S4) is a FURTHER re-genesis of that tenant's leaf — and because
+  # a fresh leaf's evidence is empty, `side` reads FLAT even if yesterday's shares are still in
+  # the mock account. Confirm the account is flat in that symbol and flatten it if not, the
+  # evening before — `docs/runbooks/tos-paper-boot.md` §7.2-f-1 («결정 계약을 바꾼 날»).
   cp3-setup-d-stock-000660:
-    generation: 2
-    decision_digest: "sha256:aaa8ba336737c7483f6c9665a3feb7a4598423fb88d8cf52d240c894d324fb85"
+    generation: 3
+    decision_digest: "sha256:d0dc18c69b381abe264be978c158fd24dfa989cf94c2c4f8dff759587e3714de"
 
   cp3-setup-d-stock-005380:
     generation: 2
