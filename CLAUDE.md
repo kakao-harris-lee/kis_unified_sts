@@ -270,6 +270,11 @@ sts tos replay --tree <tree> --from D --to D --data-root data/market
                                   # five shipped trees on the committed SYNTHETIC fixtures and
                                   # compares the decisions; real bars live only on the host
                                   # (`data/` is gitignored and this repo is public)
+sts tos ingest-bars [--write]      # accumulate each session's `producer/market` minute bars
+                                  # into `data/market` so `replay --data-root` has real days.
+                                  # Dry-run unless `--write`; replaces a day only with a copy
+                                  # that CONTAINS it (every existing minute present and
+                                  # agreeing), never on bar count (runbook §7.11)
 sts tos perf                      # fills and PnL per symbol/date, from tenant leaf evidence
 sts tos export-bars <session>     # that session's per-bar review as the dashboard's JSON
 ```
