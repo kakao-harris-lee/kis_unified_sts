@@ -229,19 +229,6 @@ def test_an_unwired_tick_stores_exactly_what_it_stored_before_the_field_existed(
         on_inbox.close()
 
 
-def test_an_unwired_tick_never_reads_the_position_at_all(tmp_path: Path) -> None:
-    """The reader is not merely ignored when off — it is never called (no evidence scan)."""
-    source = _FixedPositionContext(_flat())
-    scheduler, inbox, _evidence_store = _scheduler(
-        tmp_path, name="never", position_context=None
-    )
-    try:
-        assert scheduler.tick_once().outcome is TickOutcome.TICKED
-        assert source.calls == 0
-    finally:
-        inbox.close()
-
-
 def test_one_row_per_reason_change_never_one_per_tick(tmp_path: Path) -> None:
     """A steady absence is recorded ONCE; the recovery back to present is its own row."""
     unsettled = _absent(PositionContextReason.QUANTITY_UNSETTLED)
