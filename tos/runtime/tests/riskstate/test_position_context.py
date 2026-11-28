@@ -839,11 +839,7 @@ def test_a_net_sign_that_disagrees_with_the_entry_seal_leaves_no_context(
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
 ) -> None:
-    """Reviewer's state: prior history over-closed to -2, then a BUY 1 entry nets to -1.
-
-    ``|net| == 1 == remaining``, so the two magnitudes agree and only the DIRECTION is
-    wrong — taking it from the sign alone would publish SHORT for a long entry.
-    """
+    """Reviewer's state: over-closed to -2 then BUY 1 — |net| == remaining, only the side is wrong."""
     _seed_held_entry(rcl_log, evidence_store, inbox)
     for nth in (1, 2):
         orphan = f"attempt-position-context-orphan-close-{nth}"

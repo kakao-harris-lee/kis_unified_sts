@@ -269,7 +269,7 @@ def test_one_row_per_reason_change_never_one_per_tick(tmp_path: Path) -> None:
 
 
 def test_a_different_bound_refusal_is_its_own_row(tmp_path: Path) -> None:
-    """ "Waiting on a send" and "the store could not be read" must not look the same."""
+    """A send in flight and an unreadable store must not look like the same absence."""
     source = _SequencedPositionContext(
         _absent(
             PositionContextReason.BOUND_REFUSED, bound_refusal="HISTORY_READ_FAILED"
