@@ -1712,3 +1712,74 @@ def test_a_datetime_holiday_in_the_tenant_calendar_is_not_counted_as_a_trading_d
     assert any(
         "streak/long: 깨끗한 거래일을 셀 수 없다" in i for i in _issues(board, sb.WARN)
     )
+
+
+def _append_position_absent(
+    state: Path, leaf: str, seq: int, reason: str, refusal: str | None = None
+) -> None:
+    """런타임 ``TickScheduler._record_position_reason`` 의 행 모양 그대로."""
+    _insert(
+        state / LEAVES[leaf] / "evidence.sqlite3",
+        [
+            (
+                seq,
+                sb.POSITION_CONTEXT_ABSENT_KIND,
+                {
+                    "instrument": "A05611",
+                    "reason": reason,
+                    "bound_refusal": refusal,
+                    "as_of_ms": 1_793_000_000_000,
+                },
+            )
+        ],
+    )
+
+
+def test_position_absent_kind_mirrors_the_runtime_constant():
+    assert (
+        f'POSITION_CONTEXT_ABSENT_KIND = "{sb.POSITION_CONTEXT_ABSENT_KIND}"'
+        in SCHEDULER_SRC.read_text(encoding="utf-8")
+    )
+
+
+def test_a_tree_that_enables_no_position_shows_nothing(cfg: sb.BoardConfig):
+    """행이 없는 트리는 셀도 경고도 없다 — 기능을 켜지 않은 트리가 그렇다."""
+    board = _board(cfg, D1022)
+    assert _session(board, "long-20261022")["store"]["position_context"] is None
+    assert not [i for i in _issues(board) if sb.POSITION_CONTEXT_ABSENT_KIND in i]
+
+
+def test_the_latest_absence_reason_is_shown_for_that_tenant(
+    state: Path, cfg: sb.BoardConfig
+):
+    """「체결 대기」와 「손절이 결손으로 꺼짐」을 가르는 한 줄 — 사유와 거부가 함께 나온다."""
+    _append_position_absent(state, "long-A05611", 120101, "QUANTITY_UNSETTLED")
+    _append_position_absent(
+        state, "long-A05611", 120102, "BOUND_REFUSED", refusal="WITNESS_UNAVAILABLE"
+    )
+    board = _board(cfg, D1023)
+    cell = _session(board, "long-20261023")["store"]["position_context"]
+    assert cell == {
+        "seq": 120102,
+        "reason": "BOUND_REFUSED",
+        "bound_refusal": "WITNESS_UNAVAILABLE",
+        "as_of_ms": 1_793_000_000_000,
+    }
+    warns = [i for i in _issues(board, sb.WARN) if sb.POSITION_CONTEXT_ABSENT_KIND in i]
+    assert warns == [
+        f"long-20261023: {sb.POSITION_CONTEXT_ABSENT_KIND} BOUND_REFUSED"
+        " (WITNESS_UNAVAILABLE) seq 120102 — 이 사유가 서 있는 동안 포지션을 읽는 규칙은"
+        " 전부 거짓이다(선언한 손절이 발화하지 않는다)"
+    ]
+    assert not [
+        i for i in _issues(board, sb.BLOCK) if sb.POSITION_CONTEXT_ABSENT_KIND in i
+    ]
+
+
+def test_a_present_row_clears_the_cell(state: Path, cfg: sb.BoardConfig):
+    """사유는 **변할 때만** 기록된다 — 마지막이 PRESENT 면 그 뒤는 전부 포지션을 실었다."""
+    _append_position_absent(state, "long-A05611", 120101, "QUANTITY_UNSETTLED")
+    _append_position_absent(state, "long-A05611", 120102, sb.POSITION_PRESENT_REASON)
+    board = _board(cfg, D1023)
+    assert _session(board, "long-20261023")["store"]["position_context"] is None
+    assert not [i for i in _issues(board) if sb.POSITION_CONTEXT_ABSENT_KIND in i]
