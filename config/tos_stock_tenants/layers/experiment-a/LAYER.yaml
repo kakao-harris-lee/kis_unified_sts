@@ -1,0 +1,21 @@
+# 레이어 `experiment-a` — Setup D LONG + 선언형 손절·목표(계획 P4 S4), M2 프로브 끔.
+# 통째로 덮는 파일은 이 디렉터리에 그대로 있다(README · 전략 · 바인딩). 아래 두 자리는
+# 한 줄·한 블록만 달라서 패치로 적는다.
+
+patches:
+  # 주석 한 줄 — 예산 64 를 정당화하는 실측 정적 스텝 수(31 -> 51).
+  - file: "engine.yaml"
+    key: "engine-step-count"
+    anchor: '# SAFETY: 이 트리의 Setup D 전략 정적 스텝 수는 31 — 31 ≤ 64 이므로 값은 그대로다. 전략을 늘리면 다시 재고 재승인받는다.'
+    replacement: '# SAFETY: 이 트리의 Setup D 전략(실험 A — R1 진입에 FLAT 가드 · R5 손절 · R6 목표를 더한 뒤) 정적 스텝 수는 51 — 51 ≤ 64 이므로 값은 그대로다. 전략을 늘리면 다시 재고 재승인받는다.'
+  # 포지션 이름공간은 트리마다 켠다(계획 §2 D5) — 이 역할만 켠다.
+  - file: "marketfeed.yaml"
+    key: "position-context"
+    anchor: 'interval_width: 10'
+    replacement:
+      - 'interval_width: 10'
+      - ''
+      - '# SAFETY: 이 블록을 끄면 이 트리 전략의 `capsule.position.*` 참조가 부팅에서 거부되고(`tos_runtime/strategy/resolve.py::_refuse_unresolvable_position_refs`), 그 거부마저 없으면 선언한 손절·목표가 매 봉 거짓으로 남아 영영 발화하지 않는다. `bar_interval_ms` 는 이 트리의 봉 주기(1분, `time_evaluate_closed_interval_ms` 와 같은 값)이고 `bars_held` 가 그것으로 나눈다.'
+      - 'position_context:'
+      - '  enabled: true'
+      - '  bar_interval_ms: 60000'

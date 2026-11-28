@@ -1,0 +1,20 @@
+# 레이어 `tenant-000660` — **이 종목 하나에만** 참인 사실. 역할 레이어(`experiment-a`)는
+# 그 역할을 받는 **모든** 종목에 참이어야 하므로, 한 tenant 의 결정 계약 세대 이력처럼 종목
+# 하나에만 해당하는 문장은 여기 둔다. 역할 레이어에 적어두면 같은 역할로 종목을 더하는 순간
+# 새 트리가 남의 이력을 주장하게 되고, 생성물을 손으로 고치면 바이트 동일 게이트가 red 다.
+#
+# `config/tos_stock_tenants/TENANTS.yaml::tenants` 의 이 종목 줄이 `layers: ["tenant-000660"]`
+# 로 이 레이어를 역할 레이어 **뒤에** 적용한다. 앵커는 역할 레이어가 깐 일반형 한 줄이다.
+
+patches:
+  - file: "README.md"
+    key: "decision-generation-history"
+    anchor: '(`config/tos_runtime/decision_generations.yaml` 가 그 이유와 이 tenant 의 `generation` 이력을 적는다).'
+    replacement:
+      - '(`config/tos_runtime/decision_generations.yaml` 가 그 이유를 적는다). 이 tenant 는'
+      - '`generation` **3**: 1 은 11-20 에 프로브를 켠 채 태어난 계약, 2 는 그 바인딩을 끈 계약,'
+      - '3 이 손절·목표를 더한 지금의 계약이다.'
+  - file: "strategy_bindings.yaml"
+    key: "decision-generation-number"
+    anchor: '#   이 tenant 항목의 generation 이 오르고, 이 잎은 재-genesis 해야 배포된다.'
+    replacement: '#   이 tenant 항목이 generation 3 으로 올라갔고, 이 잎은 재-genesis 해야 배포된다.'

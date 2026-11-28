@@ -1,0 +1,10 @@
+# 레이어 `experiment-b` — RSI / Williams %R 되돌림. 전략 파일 이름부터 다르므로
+# (`TENANTS.yaml::roles.experiment-b.strategy_file`) 기본 트리의 Setup D 전략은 렌더에서
+# 빠지고, 필드·신선도 선언·바인딩은 이 디렉터리의 파일이 통째로 덮는다.
+
+patches:
+  # 주석 한 줄 — 예산 64 를 정당화하는 실측 정적 스텝 수(31 -> 18).
+  - file: "engine.yaml"
+    key: "engine-step-count"
+    anchor: '# SAFETY: 이 트리의 Setup D 전략 정적 스텝 수는 31 — 31 ≤ 64 이므로 값은 그대로다. 전략을 늘리면 다시 재고 재승인받는다.'
+    replacement: '# SAFETY: 이 트리의 RSI·%R 되돌림 전략(실험 B) 정적 스텝 수는 18 — 18 ≤ 64 이므로 값은 그대로다. 전략을 늘리면 다시 재고 재승인받는다.'
