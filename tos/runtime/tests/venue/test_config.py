@@ -923,8 +923,16 @@ def test_load_order_construction_policy_sizing_both_risk_units_refused(
 
 @pytest.mark.parametrize(
     "value",
-    ['""', '"   "', '"TBD"', "7", "[]"],
-    ids=["blank", "spaces", "tbd", "int", "list"],
+    [
+        '""',
+        '"   "',
+        '"TBD"',
+        "7",
+        "[]",
+        '" risk_unit_x100"',
+        '"risk_unit_x100 "',
+    ],
+    ids=["blank", "spaces", "tbd", "int", "list", "leading_space", "trailing_space"],
 )
 def test_load_order_construction_policy_sizing_risk_unit_field_key_shape_refused(
     tmp_path: Path, value: str

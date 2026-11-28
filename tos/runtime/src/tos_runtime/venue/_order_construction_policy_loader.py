@@ -242,10 +242,16 @@ def _parse_per_unit_risk(
     field_key = sizing_raw.get(_PER_UNIT_RISK_FIELD_KEY)
     if field_key is None:
         return Decimal(require_int(sizing_raw, _PER_UNIT_RISK_KEY, path, ctx)), None
-    if not isinstance(field_key, str) or not field_key.strip() or field_key == TBD_STR:
+    # SAFETY: a key with surrounding whitespace is refused HERE, not silently stripped — ' risk_unit_x100' matches no admitted field_key, so trimming it would guess which field the operator meant and leaving it would deny every entry at run time with a denial that names a key the document does not contain
+    if (
+        not isinstance(field_key, str)
+        or not field_key.strip()
+        or field_key != field_key.strip()
+        or field_key == TBD_STR
+    ):
         raise VenuePolicyConfigError(
             f"{path}: {ctx}.{_PER_UNIT_RISK_FIELD_KEY} must be a non-empty admitted field "
-            f"key or absent — got {field_key!r}"
+            f"key with no surrounding whitespace, or absent — got {field_key!r}"
         )
     if sizing_raw.get(_PER_UNIT_RISK_KEY) is not None:
         raise VenuePolicyConfigError(
