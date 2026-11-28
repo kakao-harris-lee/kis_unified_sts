@@ -19,7 +19,11 @@
 # ⚠ 트리 하나를 더하는 것으로 **끝이 아니다** — 종목 하나는 다음도 함께 필요하다(각자 자기
 #   목록이 있고, 그 목록들은 서로를 고정한다):
 #     * `tools/tos_cp3/runners/cp3_tenant_daily.sh::STOCK_SYMBOLS` (cron·러너)
-#     * `config/tos_probes/cp3-live-producer-stock-<종목>.yaml` (시세 생산자)
+#     * `config/tos_probes/cp3-live-producer-stock-<종목>.yaml` (시세 생산자 설정 —
+#       `test_a_sibling_tree_names_its_own_symbol_everywhere_it_matters` 가 요구한다)
+#     * `config/execution.yaml::stock_contract_spec` 의 `krx_stock_<종목>` 블록 — 생산자가
+#       `symbol_prefix` 로 계약 스펙을 찾는다. 값은 005930 블록과 같다
+#       (`test_a_sibling_has_a_contract_spec_the_producer_can_resolve` 가 그 동일성을 본다)
 #     * `config/tos_runtime/decision_generations.yaml` (지속 잎의 결정 계약 세대)
 #   `tests/tools/test_tos_stock_tenant_render.py` 가 이 목록과 `STOCK_SYMBOLS` 가 같은
 #   집합인지 본다 — 둘이 갈라지면 렌더된 트리를 아무도 돌리지 않거나 그 반대가 된다.
@@ -61,7 +65,12 @@ roles:
 
 # 종목 하나 = 한 줄. 이 블록은 파일 **맨 끝**에 둔다 — 줄 하나를 덧붙이는 것이 종목 추가의
 # 전부가 되게.
+#
+# 줄의 키는 `symbol` · `name` · `role` · (선택) `layers` 다. `layers` 는 역할 레이어 **뒤에**
+# 덮는 **그 종목만의** 레이어고, 역할 레이어가 모든 종목에 참이게 유지하는 수단이다 — 종목
+# 하나에만 참인 문장(결정 계약 세대 이력 등)은 거기 둔다. 생성물을 손으로 고치는 것은 답이
+# 아니다(바이트 동일 게이트가 red 다).
 tenants:
   - {symbol: "005930", name: "삼성전자", role: "canary"}
-  - {symbol: "000660", name: "SK하이닉스", role: "experiment-a"}
+  - {symbol: "000660", name: "SK하이닉스", role: "experiment-a", layers: ["tenant-000660"]}
   - {symbol: "005380", name: "현대차", role: "experiment-b"}

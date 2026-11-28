@@ -11,7 +11,7 @@
 #       (S4 는 손절·목표만 — 시간 청산 없음). 두 값은 `capsule.position.unrealized_bp` 와
 #       비교되는 bp 이고, 그 값의 부호는 방향을 이미 반영한다(계획 §2 D2).
 # ⚠ 이 네 줄이 결정 계약을 바꾼다 — `config/tos_runtime/decision_generations.yaml` 의
-#   이 tenant 항목이 generation 3 으로 올라갔고, 이 잎은 재-genesis 해야 배포된다.
+#   이 tenant 항목의 generation 이 오르고, 이 잎은 재-genesis 해야 배포된다.
 strategies:
   setup_d_long.strategy:
     config_binding_version: cp3-b1b-bind-1

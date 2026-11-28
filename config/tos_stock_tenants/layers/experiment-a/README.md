@@ -71,9 +71,7 @@ payload·환경·서명이 그대로다), 손절과 목표를 **규칙 두 개�
 `tos/runtime/tests/compose/test_tenant_tree_stock_siblings.py` 가 파일·키 경로 단위로 고정한다.
 
 **decision digest 는 005930 과 다르다** — 규칙과 바인딩이 결정 계약의 일부이기 때문이다
-(`config/tos_runtime/decision_generations.yaml` 가 그 이유를 적는다). 이 tenant 는
-`generation` **3**: 1 은 11-20 에 프로브를 켠 채 태어난 계약, 2 는 그 바인딩을 끈 계약,
-3 이 손절·목표를 더한 지금의 계약이다.
+(`config/tos_runtime/decision_generations.yaml` 가 그 이유와 이 tenant 의 `generation` 이력을 적는다).
 ⚠ generation 이 오른 잎은 **재-genesis** 해야 배포된다(`docs/runbooks/tos-paper-boot.md`
 §7.2-f-1) — 이 종목이 모의 계좌에서 비었는지 GET 으로 확인하고(남아 있으면 모의 주문으로
 정리) 잎을 `archive/` 로 옮긴다. 확인과 정리는 **정규장 안에서** 한다 — 모의 매도는 시간외에
