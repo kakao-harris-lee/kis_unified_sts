@@ -10,9 +10,17 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from tos.dsl import VALUE_NAMESPACE, DecisionPolicy, Operand, ScalarValue
+from tos.dsl import (
+    POSITION_NAMESPACE,
+    VALUE_NAMESPACE,
+    DecisionPolicy,
+    Operand,
+    PositionSide,
+    ScalarValue,
+)
 from tos.dsl.vocabulary import eval_compare, evaluate_policy, resolve_operand
 from tos_runtime.marketfeed.journal import JournalError, JsonLinesObservationJournal
+from tos_runtime.strategy.resolve import POSITION_DSL_FIELDS
 
 from ._base import Cp3RunnerRefusal
 from .inspect_evidence import BarEvidence, read_bar_evidence
@@ -33,6 +41,13 @@ from .inspect_report import (
     render_text,
     value_text,
 )
+from .position_sim import (
+    POSITION_MODE_RECORDED,
+    POSITION_MODE_SIMULATED,
+    PositionSimulation,
+    SimulationConfig,
+    load_simulation_config,
+)
 from .strategy import LoadedStrategyContent, load_strategy_content
 
 __all__ = [
@@ -44,6 +59,7 @@ __all__ = [
 DISPLAY_TZ_ID = "Asia/Seoul"
 
 _CAPSULE_VALUE_PREFIX: tuple[str, ...] = ("capsule", VALUE_NAMESPACE)
+_CAPSULE_POSITION_PREFIX: tuple[str, ...] = ("capsule", POSITION_NAMESPACE)
 _CONFIG_PREFIX: tuple[str, ...] = ("config",)
 
 _BAR_KEY_STAMP_FORMAT = "%Y%m%dT%H%M%S%z"
@@ -60,6 +76,8 @@ def _operand_text(operand: Operand) -> str:
     path = tuple(operand.ref)
     if path[: len(_CAPSULE_VALUE_PREFIX)] == _CAPSULE_VALUE_PREFIX:
         return ".".join(path[len(_CAPSULE_VALUE_PREFIX) :])
+    if path[: len(_CAPSULE_POSITION_PREFIX)] == _CAPSULE_POSITION_PREFIX:
+        return ".".join(path[len(_CAPSULE_POSITION_PREFIX) - 1 :])
     return ".".join(path)
 
 
@@ -77,27 +95,44 @@ def _refuse_unsupported_refs(policy: DecisionPolicy, *, strategy_path: Path) -> 
                     continue
                 path = tuple(operand.ref)
                 supported = (
-                    len(path) == len(_CAPSULE_VALUE_PREFIX) + 1
-                    and path[: len(_CAPSULE_VALUE_PREFIX)] == _CAPSULE_VALUE_PREFIX
-                ) or (
-                    len(path) == len(_CONFIG_PREFIX) + 1
-                    and path[: len(_CONFIG_PREFIX)] == _CONFIG_PREFIX
+                    (
+                        len(path) == len(_CAPSULE_VALUE_PREFIX) + 1
+                        and path[: len(_CAPSULE_VALUE_PREFIX)] == _CAPSULE_VALUE_PREFIX
+                    )
+                    or (
+                        len(path) == len(_CAPSULE_POSITION_PREFIX) + 1
+                        and path[: len(_CAPSULE_POSITION_PREFIX)]
+                        == _CAPSULE_POSITION_PREFIX
+                        and path[-1] in POSITION_DSL_FIELDS
+                    )
+                    or (
+                        len(path) == len(_CONFIG_PREFIX) + 1
+                        and path[: len(_CONFIG_PREFIX)] == _CONFIG_PREFIX
+                    )
                 )
                 if not supported:
                     raise Cp3RunnerRefusal(
                         f"{strategy_path}: rule #{position} compare #{index} names "
                         f"operand ref {path} — this inspector builds only "
-                        f"capsule.{VALUE_NAMESPACE}.<key> and config.<key>, so that "
+                        f"capsule.{VALUE_NAMESPACE}.<key>, "
+                        f"capsule.{POSITION_NAMESPACE}.<one of "
+                        f"{sorted(POSITION_DSL_FIELDS)}> and config.<key>, so that "
                         "ref would resolve to UNKNOWN and print as a failed "
                         "comparison for a value never built. Refusing instead."
                     )
 
 
 def _environment(
-    values: Mapping[str, ScalarValue], bindings: Mapping[str, ScalarValue]
+    values: Mapping[str, ScalarValue],
+    bindings: Mapping[str, ScalarValue],
+    position: Mapping[str, ScalarValue] | None = None,
 ) -> dict[str, object]:
-    """The two-namespace Decision Context environment for one bar."""
-    return {"capsule": {VALUE_NAMESPACE: dict(values)}, "config": dict(bindings)}
+    """The Decision Context environment for one bar, in ``build_environment``'s shape."""
+    capsule: dict[str, object] = {VALUE_NAMESPACE: dict(values)}
+    # SAFETY: the position goes under the SAME reserved capsule key the kernel's build_environment merges it into — a differently-placed namespace would make every authored capsule.position.* comparison UNKNOWN here while live resolved it
+    if position is not None:
+        capsule[POSITION_NAMESPACE] = dict(position)
+    return {"capsule": capsule, "config": dict(bindings)}
 
 
 def _view_diff(
@@ -247,6 +282,44 @@ def _evaluation_source(
     return EVALUATION_JOURNAL_UNJOINED, dict(bar.fields)
 
 
+@dataclass(frozen=True)
+class _BarPosition:
+    """One bar's position inputs, as the environment and the row both carry them."""
+
+    values: Mapping[str, ScalarValue] | None = None
+    absent_reason: str | None = None
+    source: str | None = None
+
+
+def _simulated_position(
+    simulation: PositionSimulation, bar: _JournalBar
+) -> tuple[_BarPosition, int | None]:
+    """``(this bar's simulated position, its declared price)`` — nothing is applied yet."""
+    price = simulation.price_of(bar.fields)
+    context, reason = simulation.context(
+        price=price, as_of_ms=bar.as_of_ms, raw_event_id=bar.raw_event_id
+    )
+    return (
+        _BarPosition(
+            values=None if context is None else context.as_environment_mapping(),
+            absent_reason=reason,
+            source=POSITION_MODE_SIMULATED,
+        ),
+        price,
+    )
+
+
+def _recorded_position(evidence: BarEvidence | None) -> _BarPosition:
+    """The position the ENGINE read for this bar, straight off its inbox payload."""
+    if evidence is None:
+        return _BarPosition(source=POSITION_MODE_RECORDED)
+    return _BarPosition(
+        values=evidence.position_context,
+        absent_reason=evidence.position_absent_reason,
+        source=POSITION_MODE_RECORDED,
+    )
+
+
 def _bar_row(
     bar: _JournalBar,
     evidence: BarEvidence | None,
@@ -255,6 +328,7 @@ def _bar_row(
     rule_index: Mapping[str, tuple[str, object]],
     *,
     evidence_asked: bool,
+    position: _BarPosition = _BarPosition(),
 ) -> BarRow:
     """Build one bar's row, evaluating on the inputs the engine itself used."""
     evaluation, values = _evaluation_source(
@@ -268,7 +342,7 @@ def _bar_row(
         rule_id: str | None = None
         kind: str | None = None
     else:
-        env = _environment(values, bindings)
+        env = _environment(values, bindings, position.values)
         decision = evaluate_policy(policy, env)
         rules = _evaluate_rules(policy, env, rule_index)
         rule_id, _registered = rule_index[decision.rationale]
@@ -305,6 +379,9 @@ def _bar_row(
             and shape != own_shape
         ),
         evidence=evidence,
+        position=position.values,
+        position_absent_reason=position.absent_reason,
+        position_source=position.source,
     )
 
 
@@ -409,11 +486,36 @@ def _build_report(
     window_from: str | None,
     window_to: str | None,
     session_name: str | None,
+    position_mode: str | None = None,
+    simulation: PositionSimulation | None = None,
+    simulation_config: SimulationConfig | None = None,
 ) -> InspectReport:
     """Fold the evaluated rows into the report, counting each population once."""
     tallies = _tallies(rows)
     default_rule_id, _default_kind = content.rule_index[policy.default.rationale]
     return InspectReport(
+        position_mode=position_mode,
+        position_simulation=(
+            None if simulation_config is None else simulation_config.as_json()
+        ),
+        position_absence_counts=(
+            None
+            if position_mode is None
+            else _tally(
+                [
+                    row.position_absent_reason
+                    for row in rows
+                    if row.position_absent_reason is not None
+                ]
+            )
+        ),
+        round_trips=(
+            ()
+            if simulation is None
+            else tuple(trip.as_json() for trip in simulation.round_trips)
+        ),
+        position_open_fill=None if simulation is None else simulation.open_fill,
+        position_live_gap=None if simulation is None else simulation.live_gap,
         session_name=session_name or journal_path.parent.name,
         instrument=instrument,
         strategy_path=content.strategy_path,
@@ -448,6 +550,66 @@ def _build_report(
     )
 
 
+def _config_dir(bindings_path: Path) -> Path:
+    """The tenant config dir — the one directory a boot derives both strategy paths from."""
+    return bindings_path.parent
+
+
+def _held_side(direction: str, *, strategy_path: Path) -> PositionSide:
+    """The side a simulated fill holds — this deployment's one ACTION direction."""
+    # SAFETY: an unnamed direction is refused, not defaulted to LONG — the DSL types target.direction as a free string, and a silently-assumed side would flip every unrealized figure a declared stop-loss is compared against
+    if direction not in (PositionSide.LONG.value, PositionSide.SHORT.value):
+        raise Cp3RunnerRefusal(
+            f"{strategy_path}: its ACTION targets declare direction {direction!r}, which is "
+            f"neither {PositionSide.LONG.value!r} nor {PositionSide.SHORT.value!r} — a "
+            "simulated position cannot be given a side this inspector would have to guess"
+        )
+    return PositionSide(direction)
+
+
+def _evaluate_bars(
+    bars: Sequence[_JournalBar],
+    evidence_by_bar: Mapping[str, BarEvidence],
+    *,
+    policy: DecisionPolicy,
+    content: LoadedStrategyContent,
+    evidence_asked: bool,
+    position_mode: str | None,
+    simulation: PositionSimulation | None,
+) -> list[BarRow]:
+    """Evaluate every bar in journal order, carrying the simulated position forward."""
+    rows: list[BarRow] = []
+    for bar in bars:
+        evidence = evidence_by_bar.get(bar.raw_event_id)
+        price: int | None = None
+        position = _BarPosition()
+        if simulation is not None:
+            position, price = _simulated_position(simulation, bar)
+        elif position_mode is not None:
+            position = _recorded_position(evidence)
+        row = _bar_row(
+            bar,
+            evidence,
+            policy,
+            content.bindings,
+            content.rule_index,
+            evidence_asked=evidence_asked,
+            position=position,
+        )
+        rows.append(row)
+        if simulation is not None:
+            # SAFETY: the fill is applied AFTER this bar was evaluated — live reads the position when the tick is issued, before that bar's decision, so filling before evaluating would let an entry bar's own stop-loss fire on itself
+            simulation.apply(
+                decision_kind=row.decision_kind,
+                rule_id=row.decision_rule_id,
+                price=price,
+                as_of_ms=bar.as_of_ms,
+                raw_event_id=bar.raw_event_id,
+                time_kst=bar.time_kst,
+            )
+    return rows
+
+
 def inspect_session(
     *,
     journal_path: Path,
@@ -459,8 +621,11 @@ def inspect_session(
     session_name: str | None = None,
 ) -> InspectReport:
     """Inspect one recorded session's bars against its own authored policy."""
+    declared = load_simulation_config(_config_dir(bindings_path))
     content = load_strategy_content(
-        strategy_path=strategy_path, bindings_path=bindings_path
+        strategy_path=strategy_path,
+        bindings_path=bindings_path,
+        position_context_enabled=declared is not None,
     )
     policy = content.strategy.policy
     if policy is None:  # pragma: no cover - admission already refused this
@@ -477,17 +642,25 @@ def inspect_session(
         if data_dir
         else {}
     )
-    rows = [
-        _bar_row(
-            bar,
-            evidence_by_bar.get(bar.raw_event_id),
-            policy,
-            content.bindings,
-            content.rule_index,
-            evidence_asked=data_dir is not None,
+    # SAFETY: a recorded session is never simulated — the stored payload is what the engine actually read, so re-deriving a position there would show per-compare verdicts for a holding the engine never saw and hide the very divergence this tool exists to find
+    simulation = (
+        PositionSimulation(
+            declared,
+            side=_held_side(content.direction, strategy_path=strategy_path),
         )
-        for bar in bars
-    ]
+        if declared is not None and data_dir is None
+        else None
+    )
+    position_mode = _position_mode(declared, simulation)
+    rows = _evaluate_bars(
+        bars,
+        evidence_by_bar,
+        policy=policy,
+        content=content,
+        evidence_asked=data_dir is not None,
+        position_mode=position_mode,
+        simulation=simulation,
+    )
     return _build_report(
         rows,
         policy=policy,
@@ -498,7 +671,19 @@ def inspect_session(
         window_from=window_from,
         window_to=window_to,
         session_name=session_name,
+        position_mode=position_mode,
+        simulation=simulation,
+        simulation_config=None if simulation is None else declared,
     )
+
+
+def _position_mode(
+    declared: SimulationConfig | None, simulation: PositionSimulation | None
+) -> str | None:
+    """``"simulated"`` / ``"recorded"``, or ``None`` when this tree enables no position."""
+    if declared is None:
+        return None
+    return POSITION_MODE_SIMULATED if simulation is not None else POSITION_MODE_RECORDED
 
 
 def _parser() -> argparse.ArgumentParser:

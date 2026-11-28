@@ -93,6 +93,11 @@ STANDING_APPROVAL_KINDS: Mapping[str, str] = {
 }
 SEND_SEALED_KIND = "SEND_SEALED"
 HANDLING_STARTED_KIND = "EVENT_HANDLING_STARTED"
+#: 포지션 이름공간을 켠 tenant 가 포지션을 싣지 못한 **사유 변화**마다 남기는 행
+#: (``tos_runtime/marketfeed/scheduler.py::POSITION_CONTEXT_ABSENT_KIND`` — 방화벽상 그
+#: 모듈을 import 할 수 없어 여기 다시 적는다). 켜지 않은 트리에는 이 행이 아예 없다.
+POSITION_CONTEXT_ABSENT_KIND = "POSITION_CONTEXT_ABSENT"
+POSITION_PRESENT_REASON = "PRESENT"
 AUTHORITY_KINDS: tuple[str, ...] = (
     AUTHORITY_WITNESS_LOST_KIND,
     *STANDING_APPROVAL_KINDS.values(),
@@ -500,6 +505,29 @@ def pass_overrun_summary(
     return {"rows": len(rows), "worst": worst}
 
 
+def position_context_absence(
+    rows: Iterable[tuple[int, Mapping[str, Any]]],
+) -> dict[str, Any] | None:
+    """이 구간 끝에 **힘을 갖고 있는** 포지션 부재 사유. ``PRESENT`` 거나 행이 없으면 ``None``."""
+    latest: tuple[int, Mapping[str, Any]] | None = None
+    for seq, payload in rows:
+        if latest is None or seq >= latest[0]:
+            latest = (seq, payload)
+    if latest is None:
+        return None
+    seq, payload = latest
+    reason = payload.get("reason")
+    # SAFETY: 사유는 **변할 때만** 기록된다 — 마지막 행이 PRESENT 면 그 뒤 모든 봉이 포지션을 실었다는 뜻이므로 아무것도 보이지 않아야 한다. 행 수를 세어 보이면 아침에 한 번 비었던 트리가 하루 종일 빨갛게 남는다
+    if not isinstance(reason, str) or reason == POSITION_PRESENT_REASON:
+        return None
+    return {
+        "seq": seq,
+        "reason": reason,
+        "bound_refusal": payload.get("bound_refusal"),
+        "as_of_ms": payload.get("as_of_ms"),
+    }
+
+
 def authority_summary(
     rows: Iterable[tuple[int, str, Mapping[str, Any]]],
     *,
@@ -564,6 +592,7 @@ def read_leaf(data_dir: Path) -> LeafFacts:
                     FIELD_REFUSED_KIND,
                     BAND_OBSERVED_KIND,
                     PASS_OVERRUN_KIND,
+                    POSITION_CONTEXT_ABSENT_KIND,
                     SEND_SEALED_KIND,
                     *AUTHORITY_KINDS,
                 ),
@@ -699,6 +728,7 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
     seq_range = session_seq_range(leaf, ticks)
     band_rows: list[dict[str, Any]] | None
     pass_overrun: dict[str, Any] | None
+    position_context: dict[str, Any] | None = None
     if seq_range is None:
         band_rows = None
         pass_overrun = None
@@ -716,6 +746,11 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
             if lo <= row[0] and (hi is None or row[0] < hi)
         ]
         sends = [seq for seq, kind, _ in in_segment if kind == SEND_SEALED_KIND]
+        position_context = position_context_absence(
+            (seq, p)
+            for seq, kind, p in in_segment
+            if kind == POSITION_CONTEXT_ABSENT_KIND
+        )
         authority = authority_summary(
             (row for row in in_segment if row[1] in AUTHORITY_KINDS),
             first_tick_seq=(
@@ -779,6 +814,7 @@ def store_facts(leaf: LeafFacts, day: str, pre_boot: frozenset[str]) -> dict[str
         "field_refused_non_stale": non_stale_refused,
         "band_observed": band_rows,
         "pass_overrun": pass_overrun,
+        "position_context": position_context,
         "authority": authority,
         "seq_range": list(seq_range) if seq_range else None,
         "code_digests": code_digests,
@@ -890,6 +926,24 @@ def read_tenant_session(
     )
     session.issues = tenant_issues(session, cfg)
     return session
+
+
+def _position_context_issues(
+    absence: Mapping[str, Any] | None,
+) -> list[tuple[str, str]]:
+    """포지션 부재가 남아 있으면 한 줄 — 「체결 대기」와 「손절이 결손으로 꺼짐」을 가른다."""
+    if not absence:
+        return []
+    refusal = absence.get("bound_refusal")
+    detail = f" ({refusal})" if refusal else ""
+    return [
+        (
+            WARN,
+            f"{POSITION_CONTEXT_ABSENT_KIND} {absence.get('reason')}{detail} "
+            f"seq {absence.get('seq')} — 이 사유가 서 있는 동안 포지션을 읽는 규칙은 "
+            "전부 거짓이다(선언한 손절이 발화하지 않는다)",
+        )
+    ]
 
 
 def _overrun_issues(overrun: Mapping[str, Any] | None) -> list[tuple[str, str]]:
@@ -1094,6 +1148,7 @@ def tenant_issues(s: TenantSession, cfg: BoardConfig) -> list[tuple[str, str]]:
                         )
                     )
             issues.extend(_overrun_issues(st["pass_overrun"]))
+            issues.extend(_position_context_issues(st.get("position_context")))
             issues.extend(_authority_issues(st["authority"]))
             if (
                 s.expected_code_digest

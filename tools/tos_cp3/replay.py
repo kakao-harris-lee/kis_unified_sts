@@ -65,9 +65,14 @@ __all__ = [
     "BARS_CSV_COLUMNS",
     "FAKE_ACCOUNT",
     "FAKE_REVISION",
+    "GAP_EXIT_FIRST_VISIBLE_BAR",
+    "GAP_REENTRY_NEXT_BAR",
     "GOLDEN_COLUMNS",
     "GOLDEN_CONFIG_PATH",
     "GOLDEN_SCHEMA",
+    "LIVE_GAP_LABEL",
+    "SIMULATED_MODE",
+    "SIMULATED_POSITION",
     "SOURCE_ID",
     "DecisionRun",
     "GoldenRun",
@@ -135,6 +140,16 @@ MISSING = "-"
 #: 섞이면) 정답 diff 가 먼저 말한다.
 JOURNAL_ONLY = "journal_only"
 
+#: 점검이 «리플레이에서 시뮬레이션한 포지션» 에 쓰는 토큰. 방화벽상 그 모듈
+#: (``tos/runtime/cp3/position_sim.py::POSITION_MODE_SIMULATED``)을 import 할 수 없어
+#: 여기 다시 적는다.
+SIMULATED_MODE = "simulated"
+
+#: 점검이 내는 «라이브가 재현하지 못할 수 있는 결정» 두 수의 키. 같은 이유로(방화벽상
+#: ``tos/runtime/cp3/position_sim.py`` 를 import 할 수 없어) 여기 다시 적는다.
+GAP_REENTRY_NEXT_BAR = "reentry_next_bar"
+GAP_EXIT_FIRST_VISIBLE_BAR = "exit_first_visible_bar"
+
 NOT_AN_ORDER = (
     "리플레이는 신호만 본다 — 승인 · 예약 · venue 한도 · 시간 인정 같은 커널 단계는 "
     "지나지 않는다(계획 §6)."
@@ -143,6 +158,12 @@ NO_POSITION = (
     "포지션을 모른다 — 청산 규칙은 보유 여부와 무관하게 발화하고, 가상 손익이 "
     "진입-청산을 짝짓는다."
 )
+#: 포지션을 켠 트리에서 :data:`NO_POSITION` 자리에 들어가는 문장. 체결 모델 한 줄과
+#: «세션을 넘어 유지된다» 는 점검이 낸 문서에서 그대로 읽어 붙인다.
+SIMULATED_POSITION = "포지션을 시뮬레이션한다"
+#: 두 수가 세는 것 — 시뮬레이션에는 없고 라이브에는 있는 공백(:data:`SIMULATED_POSITION`
+#: 줄의 체결 모델 문장이 그 공백을 말한다).
+LIVE_GAP_LABEL = "라이브가 재현하지 못할 수 있는 결정"
 PNL_LABEL = "가상 손익(체결 가정)"
 
 
@@ -206,6 +227,57 @@ class ReplayResult:
     @property
     def counted_bars(self) -> int:
         return sum(1 for bar in self.bars if bar.get("counted") is True)
+
+    @property
+    def position(self) -> dict[str, Any]:
+        """점검이 낸 ``position`` 블록 — 꺼진 트리는 ``mode`` 가 ``None`` 이다."""
+        raw = self.document.get("position")
+        return dict(raw) if isinstance(raw, dict) else {}
+
+    @property
+    def position_mode(self) -> str | None:
+        """``"simulated"`` · ``"recorded"``, 또는 포지션을 켜지 않은 트리면 ``None``."""
+        mode = self.position.get("mode")
+        return mode if isinstance(mode, str) else None
+
+    @property
+    def round_trips(self) -> list[dict[str, Any]]:
+        """시뮬레이션이 낸 왕복 — 가상 손익이 세는 바로 그 체결들."""
+        raw = self.position.get("round_trips")
+        return [dict(trip) for trip in raw] if isinstance(raw, list) else []
+
+    @property
+    def live_gap(self) -> dict[str, int]:
+        """시뮬레이션에 없고 라이브에 있는 공백의 크기 — 점검이 센 두 수."""
+        raw = self.position.get("live_gap")
+        source = raw if isinstance(raw, dict) else {}
+        return {
+            key: int(source.get(key) or 0)
+            for key in (GAP_REENTRY_NEXT_BAR, GAP_EXIT_FIRST_VISIBLE_BAR)
+        }
+
+    @property
+    def simulation(self) -> dict[str, Any] | None:
+        """리플레이가 쓴 체결 모델의 사실들, 또는 포지션을 켜지 않은 트리면 ``None``."""
+        raw = self.position.get("simulation")
+        # SAFETY: 모드가 simulated 일 때만 사실들을 내놓는다 — 다른 모드(기록된 세션)의 값을 여기로 흘리면 머리와 정답 머리가 시뮬레이션하지 않은 것을 시뮬레이션했다고 적는다
+        if self.position_mode != SIMULATED_MODE or not isinstance(raw, dict):
+            return None
+        return dict(raw)
+
+    @property
+    def position_line(self) -> str:
+        """머리에 적히는 포지션 한 줄 — 꺼진 트리는 §6 의 «포지션을 모른다»."""
+        simulation = self.simulation
+        if simulation is None:
+            return NO_POSITION
+        return (
+            f"{SIMULATED_POSITION} — {simulation.get('fill_model')} "
+            f"{simulation.get('carries_across_sessions')} "
+            f"(price {simulation.get('price_field_key')} · "
+            f"held_qty {simulation.get('held_qty')} "
+            f"[{simulation.get('held_qty_source')}])"
+        )
 
     @property
     def evaluations(self) -> tuple[str, ...]:
@@ -543,6 +615,7 @@ def _replay_in(
         # SAFETY: 점검의 `time_kst` 는 «HH:MM» 뿐이다 — 여러 날을 한 번에 도는 리플레이에서
         # 날짜를 붙이지 않으면 다른 날 09:31 두 개가 한 줄로 접히고 거래도 날짜 없이 적힌다
         bar["time_kst"] = bar_label(bar)
+    fills = _relabel_fills(inspected, bars)
 
     return ReplayResult(
         facts=facts,
@@ -555,9 +628,36 @@ def _replay_in(
         omitted=tuple(produced.omitted),
         document=inspected,
         runs=decision_runs(bars),
-        pnl=_hypothetical(facts, symbol=symbol, render_dir=render_dir, bars=bars),
+        pnl=_hypothetical(
+            facts, symbol=symbol, render_dir=render_dir, bars=bars, fills=fills
+        ),
         bars_source=bars_source,
     )
+
+
+def _relabel_fills(
+    inspected: dict[str, Any], bars: Sequence[Mapping[str, Any]]
+) -> dict[str, Any] | None:
+    """시뮬레이션 체결의 시각을 **날짜까지** 붙인 라벨로 바꾸고 그 체결을 돌려준다."""
+    position = inspected.get("position")
+    if not isinstance(position, dict) or position.get("mode") != SIMULATED_MODE:
+        return None
+    labels = {str(bar.get("raw_event_id")): str(bar.get("time_kst")) for bar in bars}
+    raw_trips = position.get("round_trips")
+    round_trips = raw_trips if isinstance(raw_trips, list) else []
+    for trip in round_trips:
+        for side in ("entry", "exit"):
+            label = labels.get(str(trip.get(f"{side}_raw_event_id")))
+            if label is not None:
+                trip[f"{side}_time_kst"] = label
+    open_entry = position.get("open_fill")
+    if isinstance(open_entry, dict):
+        label = labels.get(str(open_entry.get("entry_raw_event_id")))
+        if label is not None:
+            open_entry["entry_time_kst"] = label
+    else:
+        open_entry = None
+    return {"round_trips": round_trips, "open_entry": open_entry}
 
 
 def _inspect_rendered(
@@ -619,6 +719,7 @@ def _hypothetical(
     symbol: str,
     render_dir: Path,
     bars: Sequence[Mapping[str, Any]],
+    fills: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """«체결됐다면» 손익 — 가격 필드 · 배수 · 프로브 표 전부 설정에서."""
     fields_doc = yaml.safe_load(
@@ -651,6 +752,29 @@ def _hypothetical(
         # SAFETY: 과거 구간은 끝난 세션이다 — 닫지 않으면 진입만 있고 결과 없는 날이
         # 조용히 좋아 보인다
         session_ended=True,
+        # SAFETY: 포지션을 켠 트리는 시뮬레이션이 낸 체결을 그대로 센다 — 여기서 결정을 다시 짝지으면 체결 모델이 둘이 되고, 표가 보여 준 손절 봉과 합계의 거래가 서로 다른 것을 말한다(계획 §4 S3)
+        fills=fills,
+    )
+
+
+def _position_header(result: ReplayResult) -> tuple[tuple[str, str], ...]:
+    """포지션을 켠 트리만 갖는 머리 줄 — 꺼진 트리의 정답은 바이트 동일하게 남는다."""
+    facts = result.simulation
+    if facts is None:
+        return ()
+    gap = result.live_gap
+    return (
+        ("position", SIMULATED_MODE),
+        ("position_price_field", str(facts.get("price_field_key"))),
+        ("position_bar_interval_ms", str(facts.get("bar_interval_ms"))),
+        ("position_held_qty", str(facts.get("held_qty"))),
+        ("position_round_trips", str(len(result.round_trips))),
+        # SAFETY: 정답 머리는 공백의 크기도 적는다 — 「position simulated」만 적힌 머리는 그 표가 라이브와 같다는 주장으로 읽히고, 다음 단계가 그 표에서 손절·목표 임계를 고른다
+        (f"position_{GAP_REENTRY_NEXT_BAR}", str(gap[GAP_REENTRY_NEXT_BAR])),
+        (
+            f"position_{GAP_EXIT_FIRST_VISIBLE_BAR}",
+            str(gap[GAP_EXIT_FIRST_VISIBLE_BAR]),
+        ),
     )
 
 
@@ -673,7 +797,7 @@ def golden_header(result: ReplayResult) -> tuple[tuple[str, str], ...]:
         ("bars_omitted", str(len(result.omitted))),
         ("bars_counted", str(result.counted_bars)),
         ("evaluation", ",".join(result.evaluations) or MISSING),
-    )
+    ) + _position_header(result)
 
 
 def golden_text(result: ReplayResult) -> str:
@@ -949,7 +1073,7 @@ def render_text(result: ReplayResult) -> str:
         f"결정 봉 {result.counted_bars} · 생략 봉 {len(result.omitted)} · "
         f"개장 {result.anchor.kst} ({result.anchor.source})",
         NOT_AN_ORDER,
-        NO_POSITION,
+        result.position_line,
         "",
     ]
     if result.omitted:
@@ -1013,7 +1137,56 @@ def render_text(result: ReplayResult) -> str:
             f"합계에서 뺀 결정 봉: 엔진 것이 아님 {len(skipped)} · "
             f"종가 없음 {len(unpriced)}"
         )
+    lines += _round_trip_lines(result)
     return "\n".join(lines) + "\n"
+
+
+def _round_trip_lines(result: ReplayResult) -> list[str]:
+    """시뮬레이션이 낸 왕복 표 — 꺼진 트리에서는 한 줄도 나오지 않는다."""
+    if result.simulation is None:
+        return []
+    gap = result.live_gap
+    lines = ["", f"시뮬레이션 체결 — 왕복 {len(result.round_trips)}"]
+    lines.append(
+        f"{LIVE_GAP_LABEL}: {GAP_REENTRY_NEXT_BAR} "
+        f"{gap[GAP_REENTRY_NEXT_BAR]} · {GAP_EXIT_FIRST_VISIBLE_BAR} "
+        f"{gap[GAP_EXIT_FIRST_VISIBLE_BAR]} — 라이브는 전송이 미결인 봉에 포지션 "
+        "이름공간이 없어 이 결정을 미루거나 내지 않는다"
+    )
+    lines.append(
+        " ".join(
+            [
+                "진입".ljust(16),
+                "규칙".ljust(18),
+                "청산".ljust(16),
+                "규칙".ljust(18),
+                "보유봉".rjust(6),
+                "미실현".rjust(10),
+                "bp".rjust(7),
+            ]
+        )
+    )
+    for trip in result.round_trips:
+        lines.append(
+            " ".join(
+                [
+                    str(trip.get("entry_time_kst") or MISSING).ljust(16),
+                    str(trip.get("entry_rule_id") or MISSING).ljust(18),
+                    str(trip.get("exit_time_kst") or MISSING).ljust(16),
+                    str(trip.get("exit_rule_id") or MISSING).ljust(18),
+                    str(trip.get("bars_held") or 0).rjust(6),
+                    str(trip.get("unrealized") or 0).rjust(10),
+                    str(trip.get("unrealized_bp") or 0).rjust(7),
+                ]
+            )
+        )
+    open_fill = result.position.get("open_fill")
+    if isinstance(open_fill, dict):
+        lines.append(
+            f"미청산: {open_fill.get('entry_time_kst')} "
+            f"{open_fill.get('entry_rule_id')} @ {open_fill.get('entry_price')}"
+        )
+    return lines
 
 
 def _krw(value: Any) -> str:
@@ -1056,7 +1229,9 @@ def render_json(result: ReplayResult) -> str:
             for raw_event_id, reason in result.omitted
         ],
         "not_an_order": NOT_AN_ORDER,
-        "no_position": NO_POSITION,
+        # SAFETY: 키 이름은 고정이고 값이 그 실행의 포지션 문장이다 — 포지션을 켠 트리에서 「포지션을 모른다」가 남아 있으면 시뮬레이션한 손절을 신호 없는 발화로 읽는다
+        "no_position": result.position_line,
+        "position": result.position,
         "per_session": _per_session(result),
         "decision_runs": [dataclasses.asdict(run) for run in result.runs],
         "hypothetical_pnl": result.pnl,

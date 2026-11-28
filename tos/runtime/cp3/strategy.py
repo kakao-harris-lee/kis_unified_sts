@@ -22,6 +22,7 @@ from tos_runtime.strategy.bindings import (
 from tos_runtime.strategy.loader import load_strategies
 from tos_runtime.strategy.resolve import (
     STRATEGIES_DIRNAME,
+    _refuse_unresolvable_position_refs,
     _register_all,
     _resolve_bindings_or_refuse,
 )
@@ -146,7 +147,10 @@ def _refuse_path_shape(*, strategy_path: Path, bindings_path: Path) -> Path:
 
 
 def load_strategy_content(
-    *, strategy_path: Path, bindings_path: Path
+    *,
+    strategy_path: Path,
+    bindings_path: Path,
+    position_context_enabled: bool = False,
 ) -> LoadedStrategyContent:
     """Load, admit, and bind the strategy through the **production** path."""
     strategies_dir = _refuse_path_shape(
@@ -158,6 +162,10 @@ def load_strategy_content(
         )
         loaded_bindings = load_strategy_bindings(bindings_path)
         _resolve_bindings_or_refuse(loaded, loaded_bindings)
+        # SAFETY: the boot's OWN refusal is reused, not restated — a tree whose rule reads capsule.position.* with the namespace off cannot boot, and an inspector that evaluated it anyway would print that declared stop-loss as merely "false"
+        _refuse_unresolvable_position_refs(
+            loaded, position_context_enabled=position_context_enabled
+        )
         registry = _register_all(loaded, loaded_bindings.strategies)
     except ValueError as exc:
         raise Cp3RunnerRefusal(f"strategy content refused: {exc}") from exc
