@@ -121,9 +121,11 @@ tenants:
   #
   # Both leaves must be archived before this deploys (step 2 above); 005930's is untouched.
   # ⚠ generation 3 (000660, P4 S4) is a FURTHER re-genesis of that tenant's leaf — and because
-  # a fresh leaf's evidence is empty, `side` reads FLAT even if yesterday's shares are still in
-  # the mock account. Confirm the account is flat in that symbol and flatten it if not, the
-  # evening before — `docs/runbooks/tos-paper-boot.md` §7.2-f-1 («결정 계약을 바꾼 날»).
+  # a fresh leaf's evidence is empty, `side` reads FLAT even if the shares are still in the mock
+  # account. Confirm the account is flat in that symbol and flatten it if not DURING regular
+  # hours (a mock SELL is not accepted outside them), then archive the leaf —
+  # `docs/runbooks/tos-paper-boot.md` §7.2-f-1 («결정 계약을 바꾼 날»). If shares turn up only
+  # after the close, the leaf STAYS and the re-genesis waits a day.
   cp3-setup-d-stock-000660:
     generation: 3
     decision_digest: "sha256:29177150eeb4df82ced3034e8c43bea1014fae7e35082950cd3df6a5cb20ec10"
