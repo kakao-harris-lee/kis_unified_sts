@@ -59,6 +59,9 @@ scope:
 # 갱신해 이 규율이 항상 참이 되게 유지한다. 분해는 이 계획 범위 밖;
 # expires_on 경과 시 --check red(운영자 조정 가능한 값).
 #
+# 2026-11-28 기한 연장 2026-12-31 → 2027-03-31 (운영자 결정, 11건 전부): P4 가 커널·런타임을
+# 바꾸는 중이라 지금 분해하면 등급 A 변경이 겹친다. 분해는 P4 뒤 별도 작업으로 잡는다.
+#
 # 2026-11-13 S4 산문 제거 재측정 — 20건 중 9건이 예산 아래로 내려가 삭제됐고 11건을
 # 재등재했다(물리적 순서·decomposition_order 1~11 재계산). 삭제된 9건:
 # `egressgw/construction.py` · `egressgw/records.py` · `afg/predicates.py` ·
@@ -71,7 +74,7 @@ exceptions:
   measured: 1037
   owner: tos-kernel
   decomposition_order: 1
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: >-
     **2026-11-13 S4 산문 제거 재등재 1516→1037(-479)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
     **2026-11-13 S2-b 재등재 1804→1516(-288)**: `_bound_context` 도크스트링에 Mapping 형식은 테스트 접합부라는 문단(리뷰 L1)을 더하고, verify 항목 여섯을 앞 단계로 접고(`_check_identities` · `_check_commitment_epoch` · `_check_venue` · `_check_approval` · `_check_action_flow` 삭제) `_check_construction` 을 명령 존재 + mutation fence 로 줄였다.
@@ -156,7 +159,7 @@ exceptions:
   measured: 351
   owner: tos-runtime
   decomposition_order: 2
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: >-
     **2026-11-23 #1165 OCP effect 차원 교차검증 재등재 346→351(+5)**: `build_risk_state_service(ocp_effect_dimension_ids=frozenset(...))` 5줄. step 2 의 OCP(`loaded_ocp.construction_rules.effect_dimensions`)와 step 6 의 ARE 한도 차원이 함께 보이는 지점은 root.py 뿐이고, 판정 자체는 `compose/_riskstate_wiring.py::_cross_check_ocp_effect_dimensions` 에 있다. 호출 시퀀스 무변경.
     **2026-11-20 #1127 송신 시작 시각 스탬프 재등재 345→346(+1)**: `_finalize(send_time_now=session_facts_owner.local_time_now)` 1줄. 브로커의 주문시각(`ord_tmd`)과 비교할 우리 송신 시작 시각은 거래일자와 **같은 신뢰 시계**에서 와야 하고(하나가 안 읽히면 둘 다 없다), 그 시계를 쥔 `SessionFactsOwner` 와 전송 결선이 함께 보이는 지점은 root.py 뿐이다. 변환 자체는 `calendar/phase.py::local_time_at`(tz 는 calendar.yaml 설정값), 판정은 `posttrade/uncertain_send.py::rows_by_send_time`. 호출 시퀀스 무변경.
@@ -368,7 +371,7 @@ exceptions:
   measured: 244
   owner: tos-kernel
   decomposition_order: 3
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
     2026-09-09 Phase 3 웨이브 3 [KW3-EV] — event_id·bound 값 스탬프 추가에도 11개
     `_halt` 호출부를 `_stop` 클로저로 추출해 304→298(감소 · 래칫 재등록).
@@ -376,7 +379,7 @@ exceptions:
   measured: 227
   owner: tos-kernel
   decomposition_order: 4
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: >-
     **2026-11-13 S4 산문 제거 재등재 269→227(-42)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
@@ -406,7 +409,7 @@ exceptions:
   measured: 158
   owner: tos-kernel
   decomposition_order: 5
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: >-
     **2026-11-13 S4 산문 제거 재등재 246→158(-88)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성.
@@ -415,7 +418,7 @@ exceptions:
   measured: 155
   owner: tos-kernel
   decomposition_order: 6
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: >-
     **2026-11-27 P4 S1 재등재 154→155(+1, 운영자 승인)**: `evaluate_resolved` 호출에 `position_context=payload.position_context` 인자 한 줄.
     Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
@@ -423,7 +426,7 @@ exceptions:
   measured: 127
   owner: tos-kernel
   decomposition_order: 7
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: >-
     **2026-11-13 S4 산문 제거 재등재 223→127(-96)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
     **2026-10-23 재등재 245→239(-6)**: #932 Codex r2 — 송신 컨텍스트의 binding 표를 걷어내고 프로필 자신의 environment_class 만 읽도록 바꾸며 줄었다.
@@ -448,13 +451,13 @@ exceptions:
   measured: 113
   owner: tos-kernel
   decomposition_order: 8
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성
 - target: tos/runtime/src/tos_runtime/compose/_engine_wiring.py::wire_engine_and_driver
   measured: 110
   owner: tos-runtime
   decomposition_order: 9
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: >-
     **2026-11-20 #1127 송신 시작 시각 스탬프 재등재 108→110(+2)**: `send_time_now` 파라미터 1줄 + `build_transport(...)` 호출에 전달 1줄. 이 함수는 전송을 만드는 유일한 자리라 전송이 받는 스탬프 리더도 여기서만 내려간다. 호출 시퀀스 무변경.
     **2026-11-13 S4 산문 제거 재등재 160→108(-52)**: `tools/strip_prose.py` 가 docstring 을 첫 줄만 남기고 주석을 지웠다. 판정 경로는 한 줄도 바뀌지 않았다(도구가 파일마다 docstring 상수를 뺀 `ast.dump` 를 전후 대조한다).
@@ -507,7 +510,7 @@ exceptions:
   measured: 110
   owner: tos-runtime
   decomposition_order: 10
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: >-
     **2026-11-20 #1127 송신 시작 시각 스탬프 재등재 108→110(+2)**: `send_time_now` 파라미터 1줄 + `wire_engine_and_driver(...)` 에 전달 1줄. 전송을 만드는 경로가 root → _finalize → wire_engine_and_driver 하나라 스탬프 리더도 그 경로로만 내려간다. 호출 시퀀스 무변경.
     **2026-11-20 #1125 공유 토큰 캐시 재등재 106→108(+2)**: `_kis_credential_sessions(...)` 호출이 `transport_config` 를 받아 세 줄로 줄바꿈됐다. 그 설정이 `token_cache_path` 를 선언하면 앱 키를 공유하는 tenant 프로세스들이 토큰 한 장을 함께 쓴다(11-20 005930 토큰 충돌). 호출 시퀀스 무변경.
@@ -548,6 +551,6 @@ exceptions:
   measured: 104
   owner: tos-kernel
   decomposition_order: 11
-  expires_on: '2026-12-31'
+  expires_on: '2027-03-31'
   note: Phase 1 작업 6 등재 — 분해는 Phase 1 범위 밖 · 등재는 면허가 아니라 가시성 ·
     커널 라운드 #4 K-3(signer/approval/evidence kwarg 3개 추가)으로 136→151 실측 갱신
