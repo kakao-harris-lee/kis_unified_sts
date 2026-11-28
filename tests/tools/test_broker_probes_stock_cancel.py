@@ -589,9 +589,11 @@ def test_a_weekday_in_a_year_without_listed_holidays_is_admitted(
     """The 2027 cliff, gone (operator directive 2026-11-20).
 
     Before this change the probe refused every date whose year the config did
-    not declare, and the tenant calendar lists 2026 holidays only — so from
+    not declare, and the tenant calendar listed 2026 holidays only — so from
     2027-01-01 P-SC could not run at all. The calendar is known-holidays-only
-    now: an unlisted weekday is a trading day whatever its year.
+    now: an unlisted weekday is a trading day whatever its year. 2026-11-28
+    filled 2027, but the rule is what is asserted, not the coverage — this day
+    is a 2027 weekday the list does not name.
     """
     later = datetime(2027, 11, 2, 10, 0, tzinfo=probes_stock_cancel.KST)  # Tuesday
     record = assert_session_window(load_config(_config_file(tmp_path)), later)
@@ -627,14 +629,21 @@ def test_a_listed_holiday_in_a_later_year_is_still_refused(tmp_path: Path) -> No
 def test_refuses_a_day_kis_says_is_closed(tmp_path: Path, kis_open: _KisOpen) -> None:
     """#1149's failing input: an unlisted holiday — the calendar admits, KIS does not.
 
-    2027-01-01 (신정, a Friday) is in no tenant calendar, so before this gate the
-    probe would have POSTed MOCK orders into a closed market.
+    2027-01-07 (a Thursday) is in no tenant calendar, so without this gate the
+    probe would POST MOCK orders into a market that may be closed anyway — an
+    임시공휴일 nobody has added. The original example was 2027-01-01 (신정);
+    2026-11-28 filled 2027 from the 월력요항, so that day is now LISTED and the
+    calendar check refuses it before KIS is ever asked.
     """
     kis_open.answer = "N"
-    newyear = datetime(2027, 1, 1, 10, 0, tzinfo=probes_stock_cancel.KST)
+    unlisted = datetime(2027, 1, 7, 10, 0, tzinfo=probes_stock_cancel.KST)
     with pytest.raises(ProbeError, match="opnd_yn=N"):
-        assert_session_window(load_config(_config_file(tmp_path)), newyear)
-    assert kis_open.days == [date(2027, 1, 1)]
+        assert_session_window(load_config(_config_file(tmp_path)), unlisted)
+    assert kis_open.days == [date(2027, 1, 7)]
+
+    listed = datetime(2027, 1, 1, 10, 0, tzinfo=probes_stock_cancel.KST)
+    with pytest.raises(ProbeError, match="not a KRX trading day"):
+        assert_session_window(load_config(_config_file(tmp_path)), listed)
 
 
 def test_admits_a_day_kis_says_is_open(tmp_path: Path, kis_open: _KisOpen) -> None:
@@ -714,9 +723,14 @@ def test_a_day_kis_says_is_closed_sends_no_order(
     tmp_path: Path,
     kis_open: _KisOpen,
 ) -> None:
-    """The refusal reaches the run that would place orders, not just the gate."""
+    """The refusal reaches the run that would place orders, not just the gate.
+
+    2027-01-07 is an unlisted weekday — the calendar admits it, so the refusal
+    can only come from KIS. (2027-01-01 would now be refused by the calendar
+    itself, since 2026-11-28 filled 2027, which would not exercise this path.)
+    """
     broker = install(
-        _Broker(), now=datetime(2027, 1, 1, 10, 0, tzinfo=probes_stock_cancel.KST)
+        _Broker(), now=datetime(2027, 1, 7, 10, 0, tzinfo=probes_stock_cancel.KST)
     )
     kis_open.answer = "N"
     with pytest.raises(ProbeError, match="opnd_yn=N"):

@@ -1641,23 +1641,25 @@ def test_a_board_date_in_a_year_without_listed_holidays_still_counts(tmp_path: P
     올렸다. tenant 달력에 2027 휴장일이 0 건이므로 2027-01-01 부터는 누적 절이 **언제나**
     오류였다. 달력은 이제 아는 휴장일만 담고, 적히지 않은 평일은 어느 해든 거래일이다.
 
-    같은 창이 **적힌** 휴장일(2026-12-31 KRX 연말)은 그대로 건너뛴다 — 세지도 깨뜨리지도
-    않는다. 건너뛰지 않았다면 세션 없는 그 날이 ``broke_on`` 으로 올라온다.
+    같은 창이 **적힌** 휴장일은 그대로 건너뛴다 — 세지도 깨뜨리지도 않는다. 건너뛰지
+    않았다면 세션 없는 그 날이 ``broke_on`` 으로 올라온다. 여기서는 2026-12-31(KRX 연말)
+    과 2027-01-01(신정 — 2026-11-28 에 2027 을 월력요항에서 채우면서 적혔다) 둘이다.
+    해가 바뀌어도 세는 것은 여전히 **적히지 않은** 2027 평일(01-04 · 01-05)이다.
     """
     state = tmp_path / "newyear"
     (state / "cp3-sessions").mkdir(parents=True)
     for day in (
         dt.date(2027, 1, 5),
         dt.date(2027, 1, 4),
-        dt.date(2027, 1, 1),  # 신정 — 적히지 않은 평일이라 거래일로 읽힌다
         dt.date(2026, 12, 30),
         dt.date(2026, 12, 29),
+        dt.date(2026, 12, 28),
     ):
         _mk_session(state, "long", day)
     cfg = replace(sb.load_config(), state_dir=state)
     long = _streak(_board(cfg, dt.date(2027, 1, 5), today=dt.date(2027, 1, 11)), "long")
     assert long["error"] is None
-    assert (long["days"], long["start"], long["met"]) == (5, "2026-12-29", True)
+    assert (long["days"], long["start"], long["met"]) == (5, "2026-12-28", True)
     assert (long["broke_on"], long["broke_reason"]) == (None, None)
 
 

@@ -1940,19 +1940,23 @@ def test_a_date_in_a_year_the_calendar_lists_no_holidays_for_still_runs() -> Non
     declaration every December.
 
     The other two directions stay: a LISTED holiday and a weekend are not
-    trading days.
+    trading days. Since 2026-11-28 the calendar also LISTS 2027 (filled from the
+    2027 월력요항), so 2027-01-01 moved from "unlisted, the data settles it" to
+    "listed, skipped" — the rule under test is still that an unlisted weekday
+    (2027-01-07 here) is a trading day in a year nothing else is declared for.
     """
     cal = _tenant_calendar()
     assert cal.is_trading_day(date(2027, 1, 4)) is True
+    assert cal.is_trading_day(date(2027, 1, 7)) is True  # unlisted weekday
     assert cal.is_trading_day(date(2026, 12, 25)) is False  # 크리스마스, listed
     assert cal.is_trading_day(date(2026, 12, 31)) is False  # KRX 연말, listed
+    assert cal.is_trading_day(date(2027, 1, 1)) is False  # 신정, listed 2026-11-28
     assert cal.is_trading_day(date(2027, 1, 2)) is False  # Saturday
 
     # The walk reaches across the year end without refusing, and steps over the
-    # one closed day the calendar DOES list (2026-12-31).
+    # closed days the calendar DOES list (2026-12-31, 2027-01-01).
     assert list(cal.trading_days_before(date(2027, 1, 5), max_calendar_days=10)) == [
         date(2027, 1, 4),
-        date(2027, 1, 1),  # 신정 — closed, but unlisted: the DATA settles it
         date(2026, 12, 30),
         date(2026, 12, 29),
         date(2026, 12, 28),
@@ -2021,17 +2025,19 @@ def test_item5_the_token_cache_is_scoped_to_the_app_key(
 def test_an_unlisted_closed_weekday_is_skipped_by_the_seed_walk(inputs: dict) -> None:
     """The concrete input the dropped coverage declaration used to cover.
 
-    2027-01-01 (신정) is closed, and the tenant calendar does not list it — the
-    exact "a holiday nobody added" the old refusal existed to prevent. The walk
-    now asks the broker for that day, gets no rows at all, and treats it as
-    closed: dropped as :data:`frame.SEED_DROP_NO_RAW_ROWS`, walked past, and
-    recorded. The seed still fills, from the four days that DID answer.
+    2027-01-07 stands in for "a holiday nobody added" — a weekday the tenant
+    calendar does not list, which the broker answers with no rows at all. The
+    walk asks for it, gets nothing, and treats it as closed: dropped as
+    :data:`frame.SEED_DROP_NO_RAW_ROWS`, walked past, and recorded. The seed
+    still fills, from the four days that DID answer.
 
-    2026-12-31 (listed) is the control: it is never even requested.
+    The controls are the LISTED holidays, which are never even requested:
+    2026-12-31 (KRX 연말) and 2027-01-01 (신정 — listed since 2026-11-28 filled
+    2027 from the 월력요항; before that it was this test's unlisted example).
     """
-    target = date(2027, 1, 5)
-    open_days = [date(2026, 12, 28), date(2026, 12, 29), date(2026, 12, 30)]
-    open_days.append(date(2027, 1, 4))
+    target = date(2027, 1, 8)
+    open_days = [date(2026, 12, 30), date(2027, 1, 4), date(2027, 1, 5)]
+    open_days.append(date(2027, 1, 6))
     market = Market(
         sessions={
             day: _session_bars(day, partial(_constant, _seed_scale(index)))
@@ -2056,11 +2062,12 @@ def test_an_unlisted_closed_weekday_is_skipped_by_the_seed_walk(inputs: dict) ->
         assembler=partial(frame_mod.same_contract_seed, instrument=INSTRUMENT),
     )
 
-    assert date(2027, 1, 1) in walked, "an unlisted weekday is walked, not refused"
+    assert date(2027, 1, 7) in walked, "an unlisted weekday is walked, not refused"
     assert date(2026, 12, 31) not in walked, "a listed holiday is never requested"
+    assert date(2027, 1, 1) not in walked, "a listed 2027 holiday is never requested"
     assert seed.days_used == tuple(sorted(open_days))
     dropped = {s.day: s.drop_reason for s in seed.sessions if s.drop_reason}
-    assert dropped == {date(2027, 1, 1): frame_mod.SEED_DROP_NO_RAW_ROWS}
+    assert dropped == {date(2027, 1, 7): frame_mod.SEED_DROP_NO_RAW_ROWS}
     assert seed.capacity >= seed.required
 
 
