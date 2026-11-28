@@ -786,13 +786,33 @@ Parquet 트리를 쥔다(그날의 봉 + 앞선 시드 날들). 아무도 그것
 - 같은 코드·날의 사본은 여러 세션에 있다(LONG·SHORT 가 같은 월물, 주식은 `r1…`, 재실행).
   **봉이 가장 많은 사본, 같으면 세션 날짜가 가장 늦은 사본**을 고른다 — 당일 사본은 15:19
   봉에서 끝나고 종가 단일가 봉은 **다음 날** 세션의 시드 사본에만 있다.
-- 저장소가 이미 쥔 하루보다 봉이 **많을 때만** 쓴다(`write`). 같으면 `same`, 적으면
-  `kept_existing` 이다 — `replace_minute_day` 가 그 날 디렉터리를 먼저 지우므로, 무조건
-  쓰면 늦게 뜬(부분) 세션의 짧은 사본이 온전한 하루를 지운다.
+- **사본끼리 어긋나도 거부하지 않는다.** 브로커가 분봉을 정정하므로 같은 분의 값이 세션마다
+  한 틱씩 다를 수 있다 — 위 규칙(= 가장 나중 브로커 fetch)을 그대로 쓰고, **고른 사본이 다른
+  사본과 어긋나는 분 수**를 줄마다 `사본차`(JSON `copy_disagree`)로 적는다. 평소엔 0 이다.
+- 저장소가 이미 쥔 하루는 **후보가 그 하루를 담고 있을 때만** 덮는다: 기존 분이 **전부** 후보에
+  있고(결손 0) 겹치는 분의 OHLCV 가 **전부 같아야**(어긋 0) 한다. 그 위에서 후보가 더 길면
+  `write`, 분 집합이 같으면 `same`, 기존이 더 긴 상위집합이면 `kept_existing` 이다.
+  둘 중 하나라도 어기면 `refused:existing_disagrees`(종료코드 2)로 **그 날을 건드리지 않고**
+  결손·어긋 분 수를 줄에 적는다 — `replace_minute_day` 가 그 날 디렉터리를 먼저 지우므로,
+  봉 수만 보고 쓰면 다른 출처의 더 긴 사본이 **어디에도 없는** 기존 분과 종가 봉을 지운다
+  (2026-11-28 독립 리뷰가 실제 저장소의 2026-10-08 선물 두 날에서 그 입력을 찾았다:
+  후보가 16 분을 빼먹고 겹치는 모든 칸이 어긋났는데 봉 수만으로 `write` 였다).
+  겹치는 값은 **정확 일치**로 본다 — 양쪽 다 저장소 리더의 같은 정규화(OHLC `float64` ·
+  거래량 `int64`)를 거친 값이고, 허용오차를 두면 정정된 봉이 「같다」로 통과해 조용히 덮인다.
 - 같은 분이 두 번 있으면서 OHLCV 가 어긋나는 사본은 그 날을 **거부**한다
   (`refused:duplicate_timestamps`, 종료코드 2). 세션에 없는 코드·날은 건드리지 않는다.
+- **도는 생산자의 세션은 건너뛴다.** 생산자는 사는 동안 `<session>/producer/market/.session.lock`
+  의 배타 `flock` 을 쥔다(`tools/tos_cp3/live_producer/sinks.py::acquire_session_lock`). 수집은
+  그것을 **막지 않고** 한 번 떠보고, 쥐어져 있으면 그 세션의 사본을 전부 버리고 세션을
+  `skipped:live` 로 적는다 — 자라는 중인 세션으로 결정하면 반쯤 쓰인 하루가 굳는다.
 - 끝에 리플레이의 밀도 게이트(330 봉) 아래로 남는 날을 따로 적는다 — 그 날은 모아도
   리플레이가 버린다.
+- **잠금 둘, 경로 둘.** `--write` 실행은 `<data-root>/.ingest-bars.lock` 의 배타 `flock` 을
+  **기다리지 않고** 잡는다(dry-run 은 잡지 않고, 그 파일을 만들지도 않는다). 아래 cron 줄은
+  그 **바깥에서** `/usr/bin/flock -n /tmp/tos-ingest-bars.cron.lock` 으로 한 번 더 막는다 —
+  §7.2-e 의 함정대로 **경로가 달라야** 바깥·안쪽 잠금이 서로 막지 않는다. 안쪽 잠금이 따로
+  있는 이유는 손으로 돌리는 `sts tos ingest-bars --write` 는 cron 잠금 밖이라는 것이다
+  (겹친 두 쓰기 실행은 같은 날 디렉터리를 지우는 사이에 서로의 part 파일을 지운다).
 
 **손으로 돌릴 때.** 기본 동작은 dry-run 이다. 쓰려면 `--write` 가 필요하다.
 
@@ -808,15 +828,21 @@ sts tos ingest-bars --since 2026-11-01 --json
 주식 콜드 백업 사이). `CRON_TZ=Asia/Seoul` 은 crontab 머리에 이미 있다.
 
 ```cron
-30 16 * * 1-5 cd /home/deploy/project/kis_unified_sts && .venv/bin/python -m tools.tos_cp3.ingest_session_bars --write >> /home/deploy/.local/state/tos/ingest-bars.cron.log 2>&1 # tos-ingest-bars
+30 16 * * 1-5 /usr/bin/flock -n /tmp/tos-ingest-bars.cron.lock /bin/bash -c 'cd /home/deploy/project/kis_unified_sts && .venv/bin/python -m tools.tos_cp3.ingest_session_bars --write' >> /home/deploy/.local/state/tos/ingest-bars.cron.log 2>&1 # tos-ingest-bars
 ```
 
 - ⚠ **D 일의 가장 좋은 사본은 D+1 세션의 시드에서야 나타난다.** 16:30 에 돌면 그날치는
   15:19 봉까지의 사본으로 들어가고, **다음 날 같은 작업이 그 날을 종가 단일가 봉까지 있는
   사본으로 다시 올린다**(`write` 한 줄로 또 뜬다). 따로 보정 절차가 없는 이유다 — 매일
   돌기만 하면 어제 날짜가 하루 늦게 완성된다.
-- 종료코드 2 는 거부가 있었다는 뜻이다(쓸 수 있는 줄은 그래도 썼다). `cron.log` 의 그날
-  `refused:` 줄을 보고 그 코드·날을 손으로 가른다.
+- 종료코드 2 는 거부가 있었다는 뜻이다. **칸은 서로 독립이라 한 칸이 거부당해도 남은
+  `write` 줄은 계속 쓴다** — 저장소가 거부한 칸만 `refused:store_error` 로 그 줄에 사유까지
+  적힌다. `cron.log` 의 그날 `refused:` 줄을 보고 그 코드·날을 손으로 가른다.
+- **쓰기 도중에 죽으면.** `replace_minute_day` 는 그 날 디렉터리를 지우고 다시 쓴다. 쓰는
+  칸은 (위 규칙상) 기존 하루를 전부 담고 값이 같은 사본임이 이미 증명된 칸이므로, 지우기와
+  쓰기 사이에서 죽어도 잃는 것은 **그 세션 사본이 아직 쥐고 있는 봉**뿐이다 — 세션
+  디렉터리가 남아 있는 동안 같은 명령을 다시 돌리면 복구된다. (`--write` 는 저장소 잠금을
+  쥐므로 겹친 두 실행이 서로의 중간 상태를 지우는 일은 없다.)
 
 ### digest 재도출 (런타임 코드를 바꾼 PR)
 
