@@ -263,11 +263,17 @@ black --check .
 mypy shared/ --ignore-missing-imports --no-error-summary
 docker compose up -d              # dashboard + strategy-builder-ui + caddy + redis + prometheus
 sts tos status                    # the one-page operator status board
-sts tos inspect <session>         # per-bar: fields, per-compare pass/fail, decision, halt
+sts tos inspect <session>         # per-bar: fields, per-compare pass/fail, decision, halt, and
+                                  # the position the engine itself read (never a simulation)
 sts tos replay --tree <tree> --from D --to D --data-root data/market
                                   # that tenant's per-bar decisions over past minute bars
-                                  # (signals only, no order path). `--golden check` replays the
-                                  # five shipped trees on the committed SYNTHETIC fixtures and
+                                  # (signals only, no order path; plus a SIMULATED position for a
+                                  # tree that sets marketfeed.yaml::position_context.enabled —
+                                  # one fill model: an ACTION/FLAT decision fills in full at that
+                                  # bar's price_field_key value and is visible from the next bar,
+                                  # and the position carries across sessions). `--golden check`
+                                  # replays the five shipped trees (all with the feature off) on
+                                  # the committed SYNTHETIC fixtures and
                                   # compares the decisions; real bars live only on the host
                                   # (`data/` is gitignored and this repo is public)
 sts tos ingest-bars [--write]      # accumulate each session's `producer/market` minute bars
