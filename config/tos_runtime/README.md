@@ -183,6 +183,28 @@ waiting for) and its `DIRECTION` axis (`LONG`). `finality.yaml::source_revision`
 stays `null`: it is the deploy SHA, which a commit cannot contain, so the
 render writes it.
 
+**The risk unit may be read from a field instead of authored (P4 S5,
+`docs/plans/2026-11-27-tos-p4-position-fields-plan.md` §2 D6).** A tree's
+`order_construction_policy.yaml::_runtime.construction.sizing` declares
+**exactly one** of `per_unit_risk` (a fixed integer, what every shipped tree
+uses today — `1`, with `risk_budget: 1`, so the quantity is one share) and
+`per_unit_risk_field_key` (the name of one admitted Critical Input field). Both
+in one block is refused at load, and so is a blank or still-`TBD` key; the key
+being absent is the fixed form and changes nothing. When the key is set, the
+kernel reads that field off the **same** `ContextValueView` the decision was
+made on — the identical discipline `construction.yaml::price_field_key` uses for
+the limit price: exactly one admitted value, exactly an `int`, strictly
+positive, or the derivation is DENIED with its own reason
+(`egressgw/construction.py::resolve_field_per_unit_risk`). Quantity stays
+`risk_budget / per_unit_risk` floored to the authored lot, and a result outside
+the envelope or the venue bound is still **denied, never clamped** — so a lower
+bound on the risk unit (`max(k * ATR, floor)`) belongs in the tenant's
+`fields.yaml`, which `tos-field-catalog/1` already expresses with `ratio_z` /
+`abs` / `const` plus the `publish` scale (no catalog op was added; the worked
+expression is in `tests/unit/indicators/fields/test_catalog_ops.py`). A FLAT
+close is unaffected: it is sized from the proven held position, so a missing
+risk-unit field can never refuse an exit. No shipped tree sets the key.
+
 **Operator decisions of 2026-09-23 closed two of the three blockers** the
 first cut recorded. The boot label is **`paper`** (the value the venue/OCP
 policies already declare; `critical_input_policy.yaml::environment` now matches

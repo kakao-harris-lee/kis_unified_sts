@@ -533,3 +533,64 @@ class TestConst:
         assert _last(fields, [bar(0, high=1.125, low=1.0, close=1.0)])["probe"] is False
         assert (1.2 - 1.0) < 0.2
         assert _last(fields, [bar(0, high=1.2, low=1.0, close=1.0)])["probe"] is False
+
+
+class TestRiskUnitField:
+    """``tos-field-catalog/1`` already expresses ``max(k * ATR, floor)`` (TOS P4 S5).
+
+    The kernel's sizing can read its per-unit risk from one admitted integer field
+    (``order_construction_policy.yaml::_runtime.construction.sizing
+    .per_unit_risk_field_key``), and plan §2 D6 puts the floor on that unit in the
+    catalog rather than clamping the derived quantity in the kernel. No op was added
+    for it: ``max(a, f) == (a + f + abs(a - f)) / 2`` is three ``ratio_z``, one
+    ``abs`` and four ``const``, and the integer price scale is the ``publish`` scale.
+    """
+
+    #: k = 2, floor = 0.30 price units. ``inv_k`` is 1/k because ``ratio_z``
+    #: divides: ``(atr - 0) / (1/k) == k * atr``.
+    _FIELDS: list[dict[str, Any]] = [
+        {"name": "atr", "op": "atr", "params": {"period": 14}},
+        {"name": "zero", "op": "const", "params": {"value": 0.0}},
+        {"name": "one", "op": "const", "params": {"value": 1.0}},
+        {"name": "two", "op": "const", "params": {"value": 2.0}},
+        {"name": "inv_k", "op": "const", "params": {"value": 0.5}},
+        {"name": "neg_floor", "op": "const", "params": {"value": -0.30}},
+        {"name": "floor", "op": "const", "params": {"value": 0.30}},
+        {"name": "k_atr", "op": "ratio_z", "inputs": ["atr", "zero", "inv_k"]},
+        {"name": "sum", "op": "ratio_z", "inputs": ["k_atr", "neg_floor", "one"]},
+        {"name": "diff", "op": "ratio_z", "inputs": ["k_atr", "floor", "one"]},
+        {"name": "abs_diff", "op": "abs", "inputs": ["diff"]},
+        {"name": "neg_abs", "op": "ratio_z", "inputs": ["zero", "abs_diff", "one"]},
+        {"name": "risk_unit", "op": "ratio_z", "inputs": ["sum", "neg_abs", "two"]},
+    ]
+
+    _PUBLISH: list[dict[str, Any]] = [
+        {
+            "field": "risk_unit",
+            "as": "risk_unit_x100",
+            "scale": {"mult": 100, "round": "half_up"},
+        }
+    ]
+
+    def _published(self, *, high: float, low: float) -> int:
+        """The published integer risk unit for a flat stream of ``high``/``low`` bars."""
+        evaluator = FieldEvaluator(parsed(self._FIELDS, self._PUBLISH))
+        bars = [bar(index, high=high, low=low, close=low) for index in range(20)]
+        record = evaluator.run(bars)[-1]
+        assert record.values["atr"] == pytest.approx(high - low)
+        published = record.published["risk_unit_x100"]
+        assert isinstance(published, int)
+        return published
+
+    def test_the_declared_multiple_of_atr_is_the_unit(self) -> None:
+        """ATR 2.0 with k = 2 is 4.0 price units, published as 400 at scale 100."""
+        assert self._published(high=101.0, low=99.0) == 400
+
+    def test_the_declared_floor_binds_when_the_multiple_falls_below_it(self) -> None:
+        """ATR 0.10 with k = 2 is 0.20, below the 0.30 floor — the floor is published."""
+        assert self._published(high=100.10, low=100.00) == 30
+
+    def test_the_floor_does_not_cap_a_unit_above_it(self) -> None:
+        """``max`` is not ``min``: the boundary case equals the floor, not less."""
+        assert self._published(high=100.15, low=100.00) == 30
+        assert self._published(high=100.20, low=100.00) == 40
