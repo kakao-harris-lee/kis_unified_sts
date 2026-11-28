@@ -44,6 +44,8 @@ __all__ = [
     "DEFAULT_UNIT_SOURCE",
     "ENTRY_PRICE_BASIS",
     "ENTRY_PRICE_BASIS_NOTE",
+    "ENTRY_UNIT_UNAVAILABLE",
+    "FIELD_UNIT_SOURCE",
     "FILL_MODEL",
     "GAP_EXIT_FIRST_VISIBLE_BAR",
     "GAP_REENTRY_NEXT_BAR",
@@ -92,7 +94,11 @@ CARRIES_ACROSS_SESSIONS = (
 
 DECLARED_UNIT_SOURCE = "order_construction_policy risk_budget/per_unit_risk"
 
+FIELD_UNIT_SOURCE = "order_construction_policy risk_budget/per_unit_risk_field_key"
+
 DEFAULT_UNIT_SOURCE = "replay default (one unit)"
+
+ENTRY_UNIT_UNAVAILABLE = "entry_unit_unavailable"
 
 ACTION_KIND = "ACTION"
 
@@ -116,8 +122,10 @@ class SimulationConfig:
 
     price_field_key: str
     bar_interval_ms: int
-    held_qty: int
+    held_qty: int | None
     held_qty_source: str
+    risk_budget: int | None = None
+    per_unit_risk_field_key: str | None = None
 
     def as_json(self) -> dict[str, object]:
         """The facts the report publishes so a reader can check the fill model."""
@@ -126,6 +134,8 @@ class SimulationConfig:
             "bar_interval_ms": self.bar_interval_ms,
             "held_qty": self.held_qty,
             "held_qty_source": self.held_qty_source,
+            "risk_budget": self.risk_budget,
+            "per_unit_risk_field_key": self.per_unit_risk_field_key,
             "entry_price_basis": ENTRY_PRICE_BASIS,
             "entry_price_basis_note": ENTRY_PRICE_BASIS_NOTE,
             "fill_model": FILL_MODEL,
@@ -141,6 +151,7 @@ class RoundTrip:
     entry_time_kst: str
     entry_rule_id: str | None
     entry_price: int
+    held_qty: int
     exit_raw_event_id: str
     exit_time_kst: str
     exit_rule_id: str | None
@@ -156,6 +167,7 @@ class RoundTrip:
             "entry_time_kst": self.entry_time_kst,
             "entry_rule_id": self.entry_rule_id,
             "entry_price": self.entry_price,
+            "held_qty": self.held_qty,
             "exit_raw_event_id": self.exit_raw_event_id,
             "exit_time_kst": self.exit_time_kst,
             "exit_rule_id": self.exit_rule_id,
@@ -174,6 +186,7 @@ class _OpenFill:
     time_kst: str
     rule_id: str | None
     price: int
+    held_qty: int
     as_of_ms: int
     ordinal: int
 
@@ -185,9 +198,30 @@ def _exact_positive_int(value: object) -> int | None:
     return value
 
 
-def _declared_unit(
+def _exact_quotient(budget: Decimal, per_unit: Decimal) -> int | None:
+    """``budget / per_unit`` only when it already IS a positive integer (no rounding)."""
+    if per_unit == 0:
+        return None
+    # SAFETY: only an EXACT positive integer quotient is taken — replay holds no envelope, admitted price or venue constraint, so rounding a fractional quotient here would be a second sizing model whose held_qty a rule can read and disagree with what live sends
+    raw: Decimal = budget / per_unit
+    if raw <= 0 or raw != raw.to_integral_value():
+        return None
+    return int(raw)
+
+
+@dataclass(frozen=True)
+class _DeclaredSizing:
+    """Where one simulated fill's quantity comes from — a fixed N, or a per-bar field."""
+
+    held_qty: int | None
+    source: str
+    risk_budget: int | None = None
+    per_unit_risk_field_key: str | None = None
+
+
+def _declared_sizing(
     config_dir: Path, *, scheme: CanonicalizationScheme
-) -> tuple[int, str]:
+) -> _DeclaredSizing:
     """The quantity one simulated fill holds, and where that number came from."""
     path = config_dir / ORDER_CONSTRUCTION_POLICY_CONFIG_NAME
     try:
@@ -195,15 +229,24 @@ def _declared_unit(
             path, scheme=scheme
         ).construction_rules.sizing_bound
     except _UNREADABLE_POLICY:
-        return _DEFAULT_UNIT, DEFAULT_UNIT_SOURCE
+        return _DeclaredSizing(_DEFAULT_UNIT, DEFAULT_UNIT_SOURCE)
     budget, per_unit = bound.risk_budget, bound.per_unit_risk
-    if budget is None or per_unit is None or per_unit == 0:
-        return _DEFAULT_UNIT, DEFAULT_UNIT_SOURCE
-    # SAFETY: only an EXACT positive integer quotient is taken — replay holds no envelope, admitted price or venue constraint, so rounding a fractional quotient here would be a second sizing model whose held_qty a rule can read and disagree with what live sends
-    raw: Decimal = Decimal(budget) / Decimal(per_unit)
-    if raw <= 0 or raw != raw.to_integral_value():
-        return _DEFAULT_UNIT, DEFAULT_UNIT_SOURCE
-    return int(raw), DECLARED_UNIT_SOURCE
+    field_key = bound.per_unit_risk_field_key
+    if field_key is not None:
+        # SAFETY: a non-positive budget leaves risk_budget None, which opens NO simulated entry — live's derivation denies a budget it cannot divide, so standing in one unit here would show a holding live never had
+        authored = budget if budget is not None and budget > 0 else None
+        return _DeclaredSizing(
+            None,
+            FIELD_UNIT_SOURCE,
+            None if authored is None else int(authored),
+            field_key,
+        )
+    if budget is None or per_unit is None:
+        return _DeclaredSizing(_DEFAULT_UNIT, DEFAULT_UNIT_SOURCE)
+    quantity = _exact_quotient(budget, per_unit)
+    if quantity is None:
+        return _DeclaredSizing(_DEFAULT_UNIT, DEFAULT_UNIT_SOURCE)
+    return _DeclaredSizing(quantity, DECLARED_UNIT_SOURCE)
 
 
 def load_simulation_config(
@@ -232,12 +275,14 @@ def load_simulation_config(
             "must be the SAME admitted value the order's limit price is"
         )
     assert declared.bar_interval_ms is not None
-    held_qty, source = _declared_unit(config_dir, scheme=scheme)
+    sizing = _declared_sizing(config_dir, scheme=scheme)
     return SimulationConfig(
         price_field_key=price_field_key,
         bar_interval_ms=declared.bar_interval_ms,
-        held_qty=held_qty,
-        held_qty_source=source,
+        held_qty=sizing.held_qty,
+        held_qty_source=sizing.source,
+        risk_budget=sizing.risk_budget,
+        per_unit_risk_field_key=sizing.per_unit_risk_field_key,
     )
 
 
@@ -261,6 +306,7 @@ class PositionSimulation:
         self._exit_ordinal: int | None = None
         self._reentry_next_bar = 0
         self._exit_first_visible_bar = 0
+        self._entry_unit_unavailable = 0
 
     @property
     def round_trips(self) -> tuple[RoundTrip, ...]:
@@ -276,6 +322,11 @@ class PositionSimulation:
         }
 
     @property
+    def entry_refusals(self) -> dict[str, int]:
+        """The entries this replay did NOT open because live's derivation would deny them."""
+        return {ENTRY_UNIT_UNAVAILABLE: self._entry_unit_unavailable}
+
+    @property
     def open_fill(self) -> dict[str, object] | None:
         """The still-open simulated entry at the end of the replay, or ``None``."""
         held = self._open
@@ -286,11 +337,25 @@ class PositionSimulation:
             "entry_time_kst": held.time_kst,
             "entry_rule_id": held.rule_id,
             "entry_price": held.price,
+            "held_qty": held.held_qty,
         }
 
     def price_of(self, values: Mapping[str, ScalarValue]) -> int | None:
         """This bar's declared price field as a positive int, or ``None``."""
         return _exact_positive_int(values.get(self._config.price_field_key))
+
+    def _entry_unit(self, values: Mapping[str, ScalarValue]) -> int | None:
+        """One simulated entry's size — the fixed N, or this bar's declared risk unit."""
+        config = self._config
+        if config.held_qty is not None:
+            return config.held_qty
+        budget, field_key = config.risk_budget, config.per_unit_risk_field_key
+        if budget is None or field_key is None:
+            return None
+        per_unit = _exact_positive_int(values.get(field_key))
+        if per_unit is None:
+            return None
+        return _exact_quotient(Decimal(budget), Decimal(per_unit))
 
     def context(
         self, *, price: int | None, as_of_ms: int, raw_event_id: str
@@ -328,7 +393,7 @@ class PositionSimulation:
             return (
                 project_position_context(
                     side=self._side,
-                    held_qty=self._config.held_qty,
+                    held_qty=held.held_qty,
                     entry_price=held.price,
                     entry_price_basis=ENTRY_PRICE_BASIS,
                     entry_as_of=held.as_of_ms,
@@ -349,6 +414,7 @@ class PositionSimulation:
         decision_kind: str | None,
         rule_id: str | None,
         price: int | None,
+        values: Mapping[str, ScalarValue],
         as_of_ms: int,
         raw_event_id: str,
         time_kst: str,
@@ -360,6 +426,11 @@ class PositionSimulation:
             return
         held = self._open
         if decision_kind == ACTION_KIND and held is None:
+            unit = self._entry_unit(values)
+            if unit is None:
+                # SAFETY: an unreadable risk unit opens NO simulated entry — live's own derivation denies that send (egressgw resolve_field_per_unit_risk), so opening one here would show a holding, a declared stop and a round trip live never had
+                self._entry_unit_unavailable += 1
+                return
             if self._exit_ordinal == self._ordinal - 1:
                 self._reentry_next_bar += 1
             self._open = _OpenFill(
@@ -367,6 +438,7 @@ class PositionSimulation:
                 time_kst=time_kst,
                 rule_id=rule_id,
                 price=price,
+                held_qty=unit,
                 as_of_ms=as_of_ms,
                 ordinal=self._ordinal,
             )
@@ -385,6 +457,7 @@ class PositionSimulation:
                 entry_time_kst=held.time_kst,
                 entry_rule_id=held.rule_id,
                 entry_price=held.price,
+                held_qty=held.held_qty,
                 exit_raw_event_id=raw_event_id,
                 exit_time_kst=time_kst,
                 exit_rule_id=rule_id,

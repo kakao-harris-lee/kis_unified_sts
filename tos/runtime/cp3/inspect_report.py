@@ -185,6 +185,7 @@ class InspectReport:
     round_trips: tuple[Mapping[str, object], ...] = ()
     position_open_fill: Mapping[str, object] | None = None
     position_live_gap: Mapping[str, int] | None = None
+    position_entry_refusals: Mapping[str, int] | None = None
 
 
 def _no_position_text(row: BarRow) -> str:
@@ -247,6 +248,7 @@ def _position_header_lines(report: InspectReport) -> list[str]:
         f"position  {report.position_mode} · price {simulated.get('price_field_key')}"
         f" · bar {simulated.get('bar_interval_ms')}ms"
         f" · held_qty {simulated.get('held_qty')} ({simulated.get('held_qty_source')})"
+        f" · risk_unit_field {simulated.get('per_unit_risk_field_key')}"
         f" · entry_price_basis {simulated.get('entry_price_basis')}",
         f"          {simulated.get('fill_model')}",
         f"          {simulated.get('entry_price_basis_note')}",
@@ -423,6 +425,7 @@ def _round_trip_lines(report: InspectReport) -> list[str]:
     if report.position_simulation is None:
         return lines
     lines.append(_live_gap_line(report))
+    lines.append(_tally_line("entry refused", report.position_entry_refusals or {}))
     if not report.round_trips and report.position_open_fill is None:
         lines.append("  simulated round trips: (none)")
         return lines
@@ -631,6 +634,11 @@ def render_json(report: InspectReport) -> str:
                 None
                 if report.position_live_gap is None
                 else dict(report.position_live_gap)
+            ),
+            "entry_refusals": (
+                None
+                if report.position_entry_refusals is None
+                else dict(report.position_entry_refusals)
             ),
         },
     }

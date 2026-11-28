@@ -516,6 +516,9 @@ def _build_report(
         ),
         position_open_fill=None if simulation is None else simulation.open_fill,
         position_live_gap=None if simulation is None else simulation.live_gap,
+        position_entry_refusals=(
+            None if simulation is None else simulation.entry_refusals
+        ),
         session_name=session_name or journal_path.parent.name,
         instrument=instrument,
         strategy_path=content.strategy_path,
@@ -603,6 +606,7 @@ def _evaluate_bars(
                 decision_kind=row.decision_kind,
                 rule_id=row.decision_rule_id,
                 price=price,
+                values=bar.fields,
                 as_of_ms=bar.as_of_ms,
                 raw_event_id=bar.raw_event_id,
                 time_kst=bar.time_kst,

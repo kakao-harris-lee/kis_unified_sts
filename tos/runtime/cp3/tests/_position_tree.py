@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 INSTRUMENT = "000660"
@@ -25,6 +26,32 @@ ENTRY_RULE_ID = "R3-ENTRY"
 DEFAULT_RULE_ID = "R0-DEFAULT-NO-ACTION"
 
 STRATEGY_FILE_NAME = "position_setup_d.strategy.yaml"
+
+OCP_FILE_NAME = "order_construction_policy.yaml"
+
+#: The admitted field a ``sizing: "field"`` tree reads its risk unit from (P4 S5).
+RISK_UNIT_FIELD = "risk_unit_x100"
+
+#: That tree's authored risk budget, in the same integer scale as the field.
+RISK_BUDGET = 1000
+
+#: The shipped stock OCP is the only loadable one in the repo, so the fixtures
+#: re-author ITS sizing block rather than hand-rolling a second OCP document.
+_SHIPPED_OCP = (
+    Path(__file__).resolve().parents[4]
+    / "config"
+    / "tos_runtime"
+    / "cp3-setup-d-stock-000660"
+    / OCP_FILE_NAME
+)
+
+#: The two deployment coordinates the committed tree leaves operator-fill. The
+#: loader refuses ``"TBD"``, so an unfilled copy would load as "no policy" and
+#: the fixtures would silently fall back to the replay default unit.
+_OCP_COORDINATES: tuple[tuple[str, str], ...] = (
+    (r'^(\s*accounts:) \["TBD"\]$', rf'\g<1> ["{ACCOUNT}"]'),
+    (r'^(\s*instruments:) \["TBD"\]$', rf'\g<1> ["{INSTRUMENT}"]'),
+)
 
 _MARKETFEED = """position_context:
   enabled: {enabled}
@@ -117,6 +144,31 @@ _TAIL = """  default:
 """
 
 
+def _substituted(text: str, pattern: str, replacement: str) -> str:
+    """``text`` with the ONE line ``pattern`` matches replaced, or a named failure."""
+    out, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
+    assert count == 1, f"{_SHIPPED_OCP}: {pattern!r} matched {count} lines, expected 1"
+    return out
+
+
+def ocp_yaml(*, sizing: str, risk_budget: int = RISK_BUDGET) -> str:
+    """The shipped stock OCP with its coordinates filled and its sizing re-authored."""
+    text = _SHIPPED_OCP.read_text(encoding="utf-8")
+    for pattern, replacement in _OCP_COORDINATES:
+        text = _substituted(text, pattern, replacement)
+    if sizing == "fixed":
+        return text
+    assert sizing == "field", f"unknown sizing mode {sizing!r}"
+    text = _substituted(
+        text,
+        r"^(\s*)per_unit_risk: 1$",
+        rf'\g<1>per_unit_risk_field_key: "{RISK_UNIT_FIELD}"',
+    )
+    return _substituted(
+        text, r"^(\s*)risk_budget: 1$", rf"\g<1>risk_budget: {risk_budget}"
+    )
+
+
 def strategy_yaml(
     *, direction: str = "LONG", flat_guard: bool = True, position_refs: bool = True
 ) -> str:
@@ -166,6 +218,8 @@ def write_tree(
     flat_guard: bool = True,
     position_refs: bool = True,
     marketfeed: bool = True,
+    sizing: str | None = None,
+    risk_budget: int = RISK_BUDGET,
 ) -> Path:
     """Write the config dir an inspection reads, and return it."""
     config_dir = root / "render"
@@ -201,4 +255,8 @@ def write_tree(
         ),
         encoding="utf-8",
     )
+    if sizing is not None:
+        (config_dir / OCP_FILE_NAME).write_text(
+            ocp_yaml(sizing=sizing, risk_budget=risk_budget), encoding="utf-8"
+        )
     return config_dir
