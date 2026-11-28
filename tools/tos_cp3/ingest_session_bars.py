@@ -33,6 +33,7 @@ __all__ = [
     "DUPLICATE_DISAGREE",
     "EXISTING_DISAGREE",
     "INGEST_LOCK_NAME",
+    "READ_ERROR",
     "REFUSED_PREFIX",
     "SCHEMA",
     "SESSION_LOCK_NAME",
@@ -73,6 +74,18 @@ REFUSED_PREFIX = "refused:"
 DUPLICATE_DISAGREE = "duplicate_timestamps"
 EXISTING_DISAGREE = "existing_disagrees"
 STORE_ERROR = "store_error"
+READ_ERROR = "read_error"
+
+DAY_KEY_FORMAT = "%Y%m%d"
+
+READ_ERRORS: tuple[type[BaseException], ...]
+try:
+    import duckdb
+except ImportError:  # pragma: no cover - 리더가 없으면 저장소가 먼저 거부한다
+    READ_ERRORS = ()
+else:
+    # SAFETY: 깨진 part 파일에 저장소 리더가 내는 예외는 이 둘이다 — 더 넓게 잡으면 질의 오타나 메모리 고갈 같은 우리 쪽 버그가 「그 칸만 거부」로 묻히고, 더 좁게 잡으면 트레이스백이 되어 남은 칸이 쓰이지도 보고되지도 않는다
+    READ_ERRORS = (duckdb.InvalidInputException, duckdb.IOException)
 
 SKIPPED_LIVE = "skipped:live"
 
@@ -218,8 +231,11 @@ def _producer_running(market_root: Path) -> bool:
     """도는 생산자가 세션 잠금을 쥐고 있는가 — 기다리지 않고, 없으면 만들지 않는다."""
     try:
         handle = (market_root / SESSION_LOCK_NAME).open("r", encoding="utf-8")
-    except OSError:
+    except FileNotFoundError:
         return False
+    except OSError:
+        # SAFETY: 잠금 파일이 있는데 열리지 않으면(권한·I/O) 생산자가 도는지 알 수 없다 — 「안 돈다」로 보면 자라는 중인 세션의 반쯤 쓰인 하루가 과거 저장소에 굳는다
+        return True
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
     except OSError:
@@ -247,8 +263,9 @@ def _ingest_lock(data_root: Path) -> IO[str]:
     return handle
 
 
-def _session_dirs(sessions_root: Path) -> list[SessionDir]:
+def _session_dirs(sessions_root: Path, *, today: date) -> list[SessionDir]:
     """``<label>-YYYYMMDD`` 세션 디렉터리 전부 — 생산자 저장소를 쥔 것만."""
+    today_key = today.strftime(DAY_KEY_FORMAT)
     try:
         entries = sorted(sessions_root.iterdir())
     except OSError as exc:
@@ -263,13 +280,16 @@ def _session_dirs(sessions_root: Path) -> list[SessionDir]:
         market_root = path.joinpath(*PRODUCER_MARKET_SUBDIR)
         if not market_root.is_dir():
             continue
+        day_key = matched.group("day")
+        # SAFETY: 오늘 날짜의 세션만 잠금을 떠본다 — 떠보는 쪽의 공유 flock 이 그 순간 부팅하는 생산자의 배타 flock 을 막아 생산자가 자기 세션을 거부하고, 지난 날짜의 세션은 애초에 살아 있을 수 없다
+        live = day_key == today_key and _producer_running(market_root)
         found.append(
             SessionDir(
                 name=path.name,
-                day_key=matched.group("day"),
+                day_key=day_key,
                 mtime=path.stat().st_mtime,
                 market_root=market_root,
-                live=_producer_running(market_root),
+                live=live,
             )
         )
     return found
@@ -306,7 +326,12 @@ def _day_frames(
 ) -> Iterator[tuple[date, Any]]:
     """그 세션이 쥔 ``(거래일, 프레임)`` — 저장소 자신의 리더로 한 번에 읽는다."""
     store = ParquetMarketDataStore(root=market_root, asset_class=asset_class)
-    frame = store.get_minute_bars(code)
+    try:
+        frame = store.get_minute_bars(code)
+    except READ_ERRORS as exc:
+        # SAFETY: 세션 사본을 못 읽으면 그 코드의 어느 날이 그 안에 있었는지도 알 수 없다 — 트레이스백으로 터지면 그날 수집은 아무 칸도 올리지 않으므로, 읽지 못한 경로를 이름 부르고 거부한다
+        where = market_root / asset_class / TIMEFRAME / f"{CODE_PREFIX}{code}"
+        raise IngestRefusal(f"{where}: 세션 사본을 읽지 못했다 ({exc})") from exc
     if frame.empty:
         return
     for day, group in frame.groupby(frame["datetime"].dt.date, sort=True):
@@ -346,9 +371,12 @@ def collect(
     *,
     since: date | None = None,
     until: date | None = None,
+    today: date | None = None,
 ) -> tuple[list[SessionDir], dict[BarKey, Candidate], dict[BarKey, str]]:
     """세션 전부를 훑어 칸마다 사본 하나를 고른다. 거부한 칸은 따로 돌려준다."""
-    sessions = _session_dirs(sessions_root)
+    sessions = _session_dirs(
+        sessions_root, today=status_board.today_kst() if today is None else today
+    )
     chosen: dict[BarKey, Candidate] = {}
     refused: dict[BarKey, str] = {}
     pooled: dict[BarKey, Cells] = {}
@@ -391,25 +419,34 @@ def collect(
     return sessions, chosen, refused
 
 
-def _existing_cells(data_root: Path, keys: Sequence[BarKey]) -> dict[BarKey, Cells]:
-    """과거 저장소가 이미 쥔 분과 그 값 — 칸마다. 비었거나 없는 칸은 빠진다."""
+def _existing_cells(
+    data_root: Path, keys: Sequence[BarKey]
+) -> tuple[dict[BarKey, Cells], dict[BarKey, str]]:
+    """과거 저장소가 이미 쥔 분과 그 값 — 칸마다. 읽지 못한 칸은 따로 돌려준다."""
     days_by_code: dict[tuple[AssetClass, str], list[date]] = {}
     for key in keys:
         days_by_code.setdefault((key.asset_class, key.code), []).append(key.day)
     held: dict[BarKey, Cells] = {}
+    unread: dict[BarKey, str] = {}
     for (asset_class, code), days in days_by_code.items():
         # SAFETY: 코드 디렉터리가 없으면 읽지 않는다 — 저장소 리더는 그때 자산군 전체를 훑으므로, 세션이 처음 쥔 코드 하나가 수만 개 Parquet 를 한 질의에 읽어 이 호스트의 메모리를 먹는다
         if not (data_root / asset_class / TIMEFRAME / f"{CODE_PREFIX}{code}").is_dir():
             continue
         store = ParquetMarketDataStore(root=data_root, asset_class=asset_class)
-        frame = store.get_minute_bars(code, start=min(days), end=max(days))
+        try:
+            frame = store.get_minute_bars(code, start=min(days), end=max(days))
+        except READ_ERRORS as exc:
+            # SAFETY: 깨진 part 파일 한 장은 그 코드의 기존 하루를 읽을 수 없게 한다 — 읽히지 않는 것을 「없다」로 보면 replace_minute_day 가 그 날 디렉터리를 지우고 멀쩡한 봉까지 어디에도 없는 채로 덮는다
+            for day in days:
+                unread[BarKey(asset_class, code, day)] = str(exc)
+            continue
         if frame.empty:
             continue
         wanted = set(days)
         for day, group in frame.groupby(frame["datetime"].dt.date, sort=True):
             if day in wanted:
                 held[BarKey(asset_class, code, day)] = _cells(group)
-    return held
+    return held, unread
 
 
 def _against_existing(held: Cells, candidate: Candidate) -> tuple[int, int, int]:
@@ -449,10 +486,23 @@ def plan(
 ) -> Plan:
     """고른 사본을 저장소가 이미 쥔 것과 대어 보고 조치를 정한다."""
     keys = sorted({*chosen, *refused})
-    existing = _existing_cells(data_root, keys)
+    existing, unread = _existing_cells(data_root, keys)
     rows: list[Row] = []
     for key in keys:
         held = existing.get(key, {})
+        failure = unread.get(key)
+        if failure is not None:
+            rows.append(
+                Row(
+                    key=key,
+                    session=MISSING,
+                    candidate_bars=0,
+                    existing_bars=0,
+                    action=f"{REFUSED_PREFIX}{READ_ERROR}",
+                    detail=failure,
+                )
+            )
+            continue
         reason = refused.get(key)
         if reason is not None:
             rows.append(
@@ -503,10 +553,21 @@ def apply(
             written += store.replace_minute_day(
                 row.key.code, row.key.day, chosen[row.key].frame
             )
-        except MarketDataStoreError as exc:
+        except (MarketDataStoreError, OSError) as exc:
             # SAFETY: 칸은 서로 독립이므로 한 칸의 저장소 거부로 멈추지 않는다 — 멈추면 남은 칸은 쓰이지도 보고되지도 않고 운영자는 그날 무엇이 안 올라갔는지 로그에서 알 수 없다
-            failed[row.key] = str(exc)
+            failed[row.key] = _store_failure(exc, row)
     return written, failed
+
+
+def _store_failure(exc: BaseException, row: Row) -> str:
+    """저장소가 거부한 칸의 사유 — 봉을 쥐고 있던 하루면 이미 지워졌다고 적는다."""
+    if not row.existing_bars:
+        return str(exc)
+    # SAFETY: replace_minute_day 는 쓰기 전에 그 날 디렉터리를 지우므로 쓰다가 실패한 칸은 봉을 쥐고 있던 하루가 빈 채로 남는다 — 줄에 적지 않으면 운영자는 다시 돌려야 하는 칸을 로그에서 가려낼 수 없다
+    return (
+        f"{exc} — 기존 {row.existing_bars} 봉이 있던 그 날 디렉터리는 쓰기 전에 "
+        "이미 지워졌다, 이 칸은 다시 돌려야 한다"
+    )
 
 
 def _with_failures(plan_result: Plan, failed: dict[BarKey, str]) -> Plan:
@@ -654,6 +715,7 @@ def run(
     data_root: Path | None = None,
     since: date | None = None,
     until: date | None = None,
+    today: date | None = None,
     write: bool = False,
     init: bool = False,
     as_json: bool = False,
@@ -676,13 +738,15 @@ def run(
             "새 저장소를 여는 것이 맞다면 --init 을 준다"
         )
     if not write:
-        dry, _chosen = _planned(resolved_sessions, resolved_data, since, until, write)
+        dry, _chosen = _planned(
+            resolved_sessions, resolved_data, since, until, today, write
+        )
         return _render(dry, as_json=as_json)
     resolved_data.mkdir(parents=True, exist_ok=True)
     handle = _ingest_lock(resolved_data)
     try:
         plan_result, chosen = _planned(
-            resolved_sessions, resolved_data, since, until, write
+            resolved_sessions, resolved_data, since, until, today, write
         )
         _written, failed = apply(plan_result, chosen, data_root=resolved_data)
         if failed:
@@ -697,9 +761,12 @@ def _planned(
     data_root: Path,
     since: date | None,
     until: date | None,
+    today: date | None,
     write: bool,
 ) -> tuple[Plan, dict[BarKey, Candidate]]:
-    sessions, chosen, refused = collect(sessions_root, since=since, until=until)
+    sessions, chosen, refused = collect(
+        sessions_root, since=since, until=until, today=today
+    )
     return (
         plan(
             sessions,

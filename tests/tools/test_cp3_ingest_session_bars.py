@@ -20,11 +20,13 @@ from tools.tos_cp3.live_producer.sinks import acquire_session_lock
 from tools.tos_cp3.produce_fields import DEFAULT_MIN_BARS_PER_DAY, load_bars
 
 # SAFETY: 분봉은 전부 합성이고 저장소는 전부 tmp_path 안이다 — 실제 시세나 호스트의 data/ · ~/.local/state/tos 를 끌어오면 이 공개 저장소의 고정본에 시세 데이터가 실린다
-STOCK = "005930"
+STOCK, OTHER = "005930", "000660"
 FRONT, NEXT = "A05612", "A05701"
 D24, D25, D26 = dt.date(2026, 11, 24), dt.date(2026, 11, 25), dt.date(2026, 11, 26)
 
 FULL_BARS = DEFAULT_MIN_BARS_PER_DAY + 51
+
+CORRUPT_PART = b"not a parquet file"
 
 
 def _rows(
@@ -65,6 +67,19 @@ def _data_root(tmp_path: Path) -> Path:
     for asset_class in ing.ASSET_CLASSES:
         (data_root / asset_class / ing.TIMEFRAME).mkdir(parents=True)
     return data_root
+
+
+def _day_dir(root: Path, code: str, day: dt.date) -> Path:
+    """그 코드·날의 분봉 파티션 — 저장소가 part 파일을 두는 바로 그 디렉터리."""
+    return (
+        root
+        / "stock"
+        / ing.TIMEFRAME
+        / f"code={code}"
+        / f"year={day.year}"
+        / f"month={day.month:02d}"
+        / f"day={day.isoformat()}"
+    )
 
 
 def _listing(root: Path) -> dict[str, str]:
@@ -421,7 +436,7 @@ def test_a_session_whose_producer_holds_the_lock_is_skipped(tmp_path: Path) -> N
     handle = acquire_session_lock(root / live / "producer" / "market")
     try:
         text, code = ing.run(
-            sessions_root=root, data_root=_data_root(tmp_path), as_json=True
+            sessions_root=root, data_root=_data_root(tmp_path), today=D26, as_json=True
         )
     finally:
         handle.close()
@@ -432,6 +447,65 @@ def test_a_session_whose_producer_holds_the_lock_is_skipped(tmp_path: Path) -> N
         {"session": live, "action": ing.SKIPPED_LIVE}
     ]
     assert _actions(text) == {(STOCK, D24.isoformat()): ing.ACTION_WRITE}
+
+
+def test_only_a_session_dated_today_is_probed_for_the_lock(tmp_path: Path) -> None:
+    """지난 날짜의 세션은 떠보지 않는다 — 떠보는 공유 잠금이 부팅하는 생산자를 막는다."""
+    root = tmp_path / "cp3-sessions"
+    held = "stock-r1-20261125"
+    _session_store(root, held, asset_class="stock").append_minute_bars(
+        _rows(STOCK, D24, FULL_BARS)
+    )
+    data_root = _data_root(tmp_path)
+    handle = acquire_session_lock(root / held / "producer" / "market")
+    try:
+        earlier, earlier_code = ing.run(
+            sessions_root=root, data_root=data_root, today=D26, as_json=True
+        )
+        current, current_code = ing.run(
+            sessions_root=root, data_root=data_root, today=D25, as_json=True
+        )
+    finally:
+        handle.close()
+
+    assert (earlier_code, current_code) == (0, 0)
+    assert json.loads(earlier)["skipped_sessions"] == []
+    assert _actions(earlier) == {(STOCK, D24.isoformat()): ing.ACTION_WRITE}
+    assert json.loads(current)["skipped_sessions"] == [
+        {"session": held, "action": ing.SKIPPED_LIVE}
+    ]
+    assert _actions(current) == {}
+
+
+def test_an_unreadable_session_lock_counts_as_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """잠금 파일이 열리지 않으면 「안 돈다」가 아니다 — 알 수 없으면 건너뛴다."""
+    root = tmp_path / "cp3-sessions"
+    live = "stock-r1-20261126"
+    _session_store(root, live, asset_class="stock").append_minute_bars(
+        _rows(STOCK, D25, FULL_BARS)
+    )
+    lock = root / live / "producer" / "market" / ing.SESSION_LOCK_NAME
+    lock.write_text("", encoding="utf-8")
+
+    opener = Path.open
+
+    def guarded(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name == ing.SESSION_LOCK_NAME:
+            raise PermissionError(13, "합성 권한 거부")
+        return opener(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded)
+    text, code = ing.run(
+        sessions_root=root, data_root=_data_root(tmp_path), today=D26, as_json=True
+    )
+
+    assert code == 0
+    assert json.loads(text)["skipped_sessions"] == [
+        {"session": live, "action": ing.SKIPPED_LIVE}
+    ]
+    assert _actions(text) == {}
 
 
 def test_a_second_write_run_refuses_while_the_lock_is_held(
@@ -490,6 +564,99 @@ def test_a_store_error_leaves_the_other_keys_written(
     stored = ParquetMarketDataStore(root=data_root, asset_class="stock")
     assert len(stored.get_minute_bars(STOCK, start=D25, end=D25)) == FULL_BARS
     assert stored.get_minute_bars(STOCK, start=D24, end=D24).empty
+
+
+def test_an_oserror_after_the_day_was_removed_is_a_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """지우기 뒤의 ``OSError`` 도 그 칸만 거부다 — 그 날이 비었다는 것까지 줄에 적는다."""
+    full = _rows(STOCK, D24, FULL_BARS)
+    root = tmp_path / "cp3-sessions"
+    store = _session_store(root, "stock-r1-20261126", asset_class="stock")
+    store.append_minute_bars(full)
+    store.append_minute_bars(_rows(STOCK, D25, FULL_BARS))
+
+    data_root = _data_root(tmp_path)
+    ParquetMarketDataStore(root=data_root, asset_class="stock").append_minute_bars(
+        _pick(full, 0, 1)
+    )
+
+    original = ParquetMarketDataStore._append_bars
+
+    def flaky(self: Any, timeframe: str, rows: Any) -> int:
+        if D24 in set(rows["datetime"].dt.date):
+            raise OSError(28, "합성 디스크 꽉 찼다")
+        return int(original(self, timeframe, rows))
+
+    monkeypatch.setattr(ParquetMarketDataStore, "_append_bars", flaky)
+
+    text, code = ing.run(sessions_root=root, data_root=data_root, write=True)
+    assert code == 2
+    assert f"{ing.REFUSED_PREFIX}{ing.STORE_ERROR}" in text
+    assert "합성 디스크 꽉 찼다" in text
+    assert "기존 2 봉이 있던 그 날 디렉터리는 쓰기 전에 이미 지워졌다" in text
+    assert text.startswith("분봉 수집 (write)")
+    assert f"합계: {ing.ACTION_WRITE} 1 · " in text
+
+    stored = ParquetMarketDataStore(root=data_root, asset_class="stock")
+    assert len(stored.get_minute_bars(STOCK, start=D25, end=D25)) == FULL_BARS
+    assert stored.get_minute_bars(STOCK, start=D24, end=D24).empty
+
+
+def test_a_corrupt_existing_day_refuses_only_that_key(tmp_path: Path) -> None:
+    """기존 저장소의 깨진 part 파일은 그 코드만 거부한다 — 다른 코드는 계속 쓴다."""
+    root = tmp_path / "cp3-sessions"
+    store = _session_store(root, "stock-r1-20261126", asset_class="stock")
+    store.append_minute_bars(_rows(STOCK, D25, FULL_BARS))
+    store.append_minute_bars(_rows(OTHER, D25, FULL_BARS, base=50.0))
+
+    data_root = _data_root(tmp_path)
+    ParquetMarketDataStore(root=data_root, asset_class="stock").append_minute_bars(
+        _rows(STOCK, D25, 4)
+    )
+    corrupt = _day_dir(data_root, STOCK, D25)
+    (corrupt / "part-x.parquet").write_bytes(CORRUPT_PART)
+    before = _listing(corrupt)
+
+    text, code = ing.run(
+        sessions_root=root, data_root=data_root, write=True, as_json=True
+    )
+    assert code == 2
+    assert _actions(text) == {
+        (STOCK, D25.isoformat()): f"{ing.REFUSED_PREFIX}{ing.READ_ERROR}",
+        (OTHER, D25.isoformat()): ing.ACTION_WRITE,
+    }
+    assert _listing(corrupt) == before
+    stored = ParquetMarketDataStore(root=data_root, asset_class="stock")
+    assert len(stored.get_minute_bars(OTHER, start=D25, end=D25)) == FULL_BARS
+
+
+def test_a_corrupt_session_copy_refuses_the_whole_run(tmp_path: Path) -> None:
+    """세션 사본이 깨졌으면 그 경로를 이름 불러 거부한다 — 트레이스백이 아니다."""
+    root = tmp_path / "cp3-sessions"
+    market = root / "stock-r1-20261126" / "producer" / "market"
+    _session_store(root, "stock-r1-20261126", asset_class="stock").append_minute_bars(
+        _rows(STOCK, D25, FULL_BARS)
+    )
+    (_day_dir(market, STOCK, D25) / "part-x.parquet").write_bytes(CORRUPT_PART)
+
+    data_root = _data_root(tmp_path)
+    with pytest.raises(ing.IngestRefusal) as refusal:
+        ing.run(sessions_root=root, data_root=data_root, write=True)
+    assert f"code={STOCK}" in str(refusal.value)
+
+    assert (
+        ing.main(
+            [
+                "--sessions-root",
+                str(root),
+                "--data-root",
+                str(data_root),
+                "--write",
+            ]
+        )
+        == 2
+    )
 
 
 def test_replay_can_load_the_ingested_day(sessions: Path, tmp_path: Path) -> None:
