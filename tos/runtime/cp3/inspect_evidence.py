@@ -12,9 +12,11 @@ from typing import Any
 
 from pydantic import ValidationError
 from tos.canonical import ArtifactIntegrityError
-from tos.dsl import ContextValueView, ScalarValue
+from tos.dsl import ContextValueView, PositionContext, ScalarValue
 from tos_runtime.engine.inbox import INBOX_SCHEMA_VERSION
 from tos_runtime.evidence.store import EVIDENCE_SCHEMA_VERSION
+from tos_runtime.marketfeed.ports import PositionContextReason
+from tos_runtime.marketfeed.scheduler import POSITION_CONTEXT_ABSENT_KIND
 from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME, MARKETFEED_SCHEMA_VERSION
 from tos_runtime.operations.backup_set import EVIDENCE_FILE_NAME, INBOX_FILE_NAME
 
@@ -23,6 +25,7 @@ from ._base import Cp3RunnerRefusal
 __all__ = [
     "DECISION_TICK_KIND",
     "EVIDENCE_KINDS_OF_INTEREST",
+    "POSITION_CONTEXT_ABSENT_KIND",
     "BarEvidence",
     "read_bar_evidence",
 ]
@@ -46,6 +49,10 @@ class BarEvidence:
     event_id: str | None = None
     value_view: Mapping[str, ScalarValue] | None = None
     value_view_refusal: str | None = None
+    position_context: Mapping[str, ScalarValue] | None = None
+    position_context_refusal: str | None = None
+    position_absent_reason: str | None = None
+    position_bound_refusal: str | None = None
     outcome_type: str | None = None
     outcome_halt_reason: str | None = None
     consumed_halt_reason: str | None = None
@@ -80,6 +87,7 @@ class _Tick:
     handling_started_seq: int | None
     consumed_seq: int | None
     value_view_raw: Any
+    position_context_raw: Any = None
 
     @property
     def complete(self) -> bool:
@@ -191,6 +199,7 @@ def _ticks_by_snapshot(
                 handling_started_seq=None if started is None else int(started),
                 consumed_seq=None if consumed is None else int(consumed),
                 value_view_raw=tick.get("value_view"),
+                position_context_raw=tick.get("position_context"),
             )
         )
     return ticks
@@ -209,6 +218,67 @@ def _projected_view(
     except (ValidationError, ArtifactIntegrityError) as exc:
         return None, f"value_view is not a readable ContextValueView: {exc}"
     return view.as_environment_mapping(), None
+
+
+def _projected_position(
+    raw: Any,
+) -> tuple[Mapping[str, ScalarValue] | None, str | None]:
+    """``(the position the ENGINE read, refusal)`` from a stored tick payload."""
+    if raw is None:
+        return None, None
+    if not isinstance(raw, dict):
+        return None, f"position_context is {type(raw).__name__}, not a JSON object"
+    try:
+        # SAFETY: the stored row is re-validated, never trusted as read — the record recomputes its own digest and bp figure, so a tampered holding cannot be shown here as the thing a declared stop-loss was compared against
+        context = PositionContext.model_validate(raw)
+    except (ValidationError, ArtifactIntegrityError) as exc:
+        return None, f"position_context is not a readable PositionContext: {exc}"
+    return context.as_environment_mapping(), None
+
+
+def _absence_streaks(
+    connection: sqlite3.Connection, *, path: Path
+) -> list[tuple[int, str, str | None]]:
+    """``(seq, reason, bound_refusal)`` for every recorded position-absence CHANGE."""
+    rows = _query(
+        connection,
+        path=path,
+        sql="SELECT seq, payload_json FROM entries WHERE kind = ? ORDER BY seq",
+        params=(POSITION_CONTEXT_ABSENT_KIND,),
+    )
+    out: list[tuple[int, str, str | None]] = []
+    for seq, payload_json in rows:
+        try:
+            envelope = json.loads(payload_json)
+        except json.JSONDecodeError:
+            continue
+        payload = envelope.get("payload") if isinstance(envelope, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        reason = payload.get("reason")
+        refusal = payload.get("bound_refusal")
+        if isinstance(reason, str):
+            out.append(
+                (int(seq), reason, refusal if isinstance(refusal, str) else None)
+            )
+    return out
+
+
+def _absence_in_force(
+    streaks: Sequence[tuple[int, str, str | None]], *, at_seq: int | None
+) -> tuple[str | None, str | None]:
+    """The absence reason in force at ``at_seq`` — recorded on change, carried forward."""
+    if at_seq is None:
+        return None, None
+    reason: str | None = None
+    refusal: str | None = None
+    for seq, recorded, bound_refusal in streaks:
+        if seq > at_seq:
+            break
+        reason, refusal = recorded, bound_refusal
+    if reason is None or reason == PositionContextReason.PRESENT.value:
+        return None, None
+    return reason, refusal
 
 
 def _records_in_window(
@@ -376,6 +446,7 @@ def read_bar_evidence(
             evidence, path=evidence_path, expected=EVIDENCE_SCHEMA_VERSION
         )
         records = _records_in_window(evidence, path=evidence_path, low=low, high=high)
+        streaks = _absence_streaks(evidence, path=evidence_path)
     for raw_event_id, (snapshot_id, tick) in resolved.items():
         window = [
             record
@@ -383,12 +454,21 @@ def read_bar_evidence(
             if (tick.handling_started_seq or 0) < record[0] <= (tick.consumed_seq or 0)
         ]
         view, view_refusal = _projected_view(tick.value_view_raw)
+        position, position_refusal = _projected_position(tick.position_context_raw)
+        # SAFETY: the absence row is appended BEFORE the tick is enqueued, so the reason in force for this bar is the last one at or before its handling seq — reading the tick's own evidence window instead would show every bar as "no reason recorded"
+        absent_reason, bound_refusal = _absence_in_force(
+            streaks, at_seq=tick.handling_started_seq
+        )
         out[raw_event_id] = BarEvidence(
             raw_event_id=raw_event_id,
             snapshot_id=snapshot_id,
             event_id=tick.event_id,
             value_view=view,
             value_view_refusal=view_refusal,
+            position_context=position,
+            position_context_refusal=position_refusal,
+            position_absent_reason=None if position is not None else absent_reason,
+            position_bound_refusal=None if position is not None else bound_refusal,
             **vars(_window_facts(window)),
         )
     return out

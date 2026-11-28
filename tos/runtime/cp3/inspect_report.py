@@ -24,6 +24,7 @@ __all__ = [
     "RuleSummary",
     "RuleView",
     "halt_label",
+    "position_text",
     "render_json",
     "render_text",
     "value_text",
@@ -98,6 +99,9 @@ class BarRow:
     engine_shape: str | None
     decision_disagrees: bool
     evidence: BarEvidence | None
+    position: Mapping[str, ScalarValue] | None = None
+    position_absent_reason: str | None = None
+    position_source: str | None = None
 
     @property
     def flags(self) -> str:
@@ -174,6 +178,26 @@ class InspectReport:
     halt_counts: Mapping[str, int]
     unjoined_counts: Mapping[str, int]
     view_refusal_counts: Mapping[str, int]
+    position_mode: str | None = None
+    position_simulation: Mapping[str, object] | None = None
+    position_absence_counts: Mapping[str, int] | None = None
+    round_trips: tuple[Mapping[str, object], ...] = ()
+    position_open_fill: Mapping[str, object] | None = None
+
+
+def position_text(row: BarRow) -> str:
+    """One bar's position cell — the values its rules read, or why there were none."""
+    values = row.position
+    if values is None:
+        return f"absent:{row.position_absent_reason or '-'}"
+    side = value_text(values.get("side"))
+    if side == "FLAT":
+        return "FLAT"
+    return (
+        f"{side} {value_text(values.get('held_qty'))} "
+        f"{value_text(values.get('unrealized_bp'))}bp "
+        f"{value_text(values.get('bars_held'))}b"
+    )
 
 
 def _marks(row: BarRow, position: int) -> str:
@@ -196,6 +220,25 @@ def _populations(report: InspectReport) -> str:
         f"{report.counted_bars} counted on {source} · "
         f"{report.withheld_bars} withheld · {report.substituted_bars} journal-substituted"
     )
+
+
+def _position_header_lines(report: InspectReport) -> list[str]:
+    """The ``position`` header block — nothing at all when this tree enables none."""
+    if report.position_mode is None:
+        return []
+    simulated = report.position_simulation
+    if simulated is None:
+        return [
+            f"position  {report.position_mode} — 엔진이 payload 에 실어 읽은 값 그대로"
+        ]
+    return [
+        f"position  {report.position_mode} · price {simulated.get('price_field_key')}"
+        f" · bar {simulated.get('bar_interval_ms')}ms"
+        f" · held_qty {simulated.get('held_qty')} ({simulated.get('held_qty_source')})"
+        f" · entry_price_basis {simulated.get('entry_price_basis')}",
+        f"          {simulated.get('fill_model')}",
+        f"          {simulated.get('carries_across_sessions')}",
+    ]
 
 
 def _header_lines(report: InspectReport) -> list[str]:
@@ -221,6 +264,7 @@ def _header_lines(report: InspectReport) -> list[str]:
     else:
         lines.append(f"evidence  {report.data_dir}")
     lines.append(f"bars      {_populations(report)}")
+    lines += _position_header_lines(report)
     lines.append("")
     lines.append("rules (comparison order, as authored):")
     for rule in report.rules:
@@ -238,6 +282,8 @@ _TABLE_LEGEND = (
     "V=view≠journal D=decision≠engine W=withheld U=journal-substituted):"
 )
 
+_POSITION_COLUMN_WIDTH = 30
+
 
 def _bar_cells(
     report: InspectReport, row: BarRow, widths: Mapping[str, int]
@@ -245,6 +291,8 @@ def _bar_cells(
     """One bar's table cells, left to right."""
     cells = [f"{row.time_kst:<6}", row.flags]
     cells += [f"{value_text(row.fields.get(key)):>11}" for key in _NUMERIC_COLUMNS]
+    if report.position_mode is not None:
+        cells.append(f"{position_text(row):<{_POSITION_COLUMN_WIDTH}}")
     cells += [
         f"{_marks(row, rule.position):<{widths[rule.label]}}" for rule in report.rules
     ]
@@ -275,6 +323,8 @@ def _bar_table(report: InspectReport) -> list[str]:
     }
     head = [f"{'time':<6}", "VDWU"]
     head += [f"{key:>11}" for key in _NUMERIC_COLUMNS]
+    if report.position_mode is not None:
+        head.append(f"{'position':<{_POSITION_COLUMN_WIDTH}}")
     head += [f"{rule.label:<{widths[rule.label]}}" for rule in report.rules]
     head += [f"{'decision':<24}", f"{'outcome':<20}", "halt"]
     lines = ["", _TABLE_LEGEND, " ".join(head).rstrip()]
@@ -332,9 +382,70 @@ def _summary_lines(report: InspectReport) -> list[str]:
     return lines
 
 
+_ROUND_TRIP_COLUMNS = ("entry", "rule", "exit", "rule", "bars", "unrealized", "bp")
+
+
+def _round_trip_lines(report: InspectReport) -> list[str]:
+    """The simulated round trips — the same fills the hypothetical PnL counts."""
+    if report.position_mode is None:
+        return []
+    lines: list[str] = [""]
+    counts = report.position_absence_counts or {}
+    lines.append(_tally_line("position absent", counts))
+    # SAFETY: a recorded session has no simulated fills at all, so it gets no round-trip block — printing "(none)" there would read as "this session traded nothing" rather than "nothing was simulated"
+    if report.position_simulation is None:
+        return lines
+    if not report.round_trips and report.position_open_fill is None:
+        lines.append("  simulated round trips: (none)")
+        return lines
+    lines.append(f"  simulated round trips: {len(report.round_trips)}")
+    lines.append(
+        "      "
+        + " ".join(
+            [
+                f"{_ROUND_TRIP_COLUMNS[0]:<16}",
+                f"{_ROUND_TRIP_COLUMNS[1]:<24}",
+                f"{_ROUND_TRIP_COLUMNS[2]:<16}",
+                f"{_ROUND_TRIP_COLUMNS[3]:<24}",
+                f"{_ROUND_TRIP_COLUMNS[4]:>5}",
+                f"{_ROUND_TRIP_COLUMNS[5]:>11}",
+                f"{_ROUND_TRIP_COLUMNS[6]:>7}",
+            ]
+        )
+    )
+    for trip in report.round_trips:
+        lines.append(
+            "      "
+            + " ".join(
+                [
+                    f"{value_text(trip.get('entry_time_kst')):<16}",
+                    f"{value_text(trip.get('entry_rule_id')):<24}",
+                    f"{value_text(trip.get('exit_time_kst')):<16}",
+                    f"{value_text(trip.get('exit_rule_id')):<24}",
+                    f"{value_text(trip.get('bars_held')):>5}",
+                    f"{value_text(trip.get('unrealized')):>11}",
+                    f"{value_text(trip.get('unrealized_bp')):>7}",
+                ]
+            )
+        )
+    open_fill = report.position_open_fill
+    if open_fill is not None:
+        lines.append(
+            f"      still open: {value_text(open_fill.get('entry_time_kst'))} "
+            f"{value_text(open_fill.get('entry_rule_id'))} @ "
+            f"{value_text(open_fill.get('entry_price'))}"
+        )
+    return lines
+
+
 def render_text(report: InspectReport) -> str:
     """The whole report as the operator table (header + legend + bars + summary)."""
-    lines = _header_lines(report) + _bar_table(report) + _summary_lines(report)
+    lines = (
+        _header_lines(report)
+        + _bar_table(report)
+        + _summary_lines(report)
+        + _round_trip_lines(report)
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -349,6 +460,14 @@ def _evidence_json(evidence: BarEvidence) -> dict[str, object]:
             None if evidence.value_view is None else dict(evidence.value_view)
         ),
         "value_view_refusal": evidence.value_view_refusal,
+        "position_context": (
+            None
+            if evidence.position_context is None
+            else dict(evidence.position_context)
+        ),
+        "position_context_refusal": evidence.position_context_refusal,
+        "position_absent_reason": evidence.position_absent_reason,
+        "position_bound_refusal": evidence.position_bound_refusal,
         "outcome_type": evidence.outcome_type,
         "outcome_halt_reason": evidence.outcome_halt_reason,
         "consumed_halt_reason": evidence.consumed_halt_reason,
@@ -380,6 +499,9 @@ def _bar_json(row: BarRow) -> dict[str, object]:
         "decision_disagrees": row.decision_disagrees,
         "decision_rule_id": row.decision_rule_id,
         "decision_kind": row.decision_kind,
+        "position": None if row.position is None else dict(row.position),
+        "position_absent_reason": row.position_absent_reason,
+        "position_source": row.position_source,
         "rules": [
             {
                 "label": view.label,
@@ -439,6 +561,7 @@ def _summary_json(report: InspectReport) -> dict[str, object]:
         "evidence_halts": dict(report.halt_counts),
         "unjoined": dict(report.unjoined_counts),
         "value_view_refused": dict(report.view_refusal_counts),
+        "position_absent": dict(report.position_absence_counts or {}),
     }
 
 
@@ -463,5 +586,19 @@ def render_json(report: InspectReport) -> str:
         },
         "bars": [_bar_json(row) for row in report.bars],
         "summary": _summary_json(report),
+        "position": {
+            "mode": report.position_mode,
+            "simulation": (
+                None
+                if report.position_simulation is None
+                else dict(report.position_simulation)
+            ),
+            "round_trips": [dict(trip) for trip in report.round_trips],
+            "open_fill": (
+                None
+                if report.position_open_fill is None
+                else dict(report.position_open_fill)
+            ),
+        },
     }
     return json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
