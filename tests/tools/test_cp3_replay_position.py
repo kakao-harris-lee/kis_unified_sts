@@ -439,10 +439,12 @@ def test_an_open_simulated_fill_is_marked_not_closed_while_the_session_runs() ->
 def test_the_output_counts_the_entries_the_risk_unit_field_refused(
     enabled: rp.ReplayResult,
 ) -> None:
-    """P4 S5: a field-sized tree opens no entry on a bar whose risk unit is unreadable."""
+    """P4 S5: a field-sized tree opens no entry on a bar live's derivation refuses."""
     refusals = enabled.entry_refusals
-    assert set(refusals) == {rp.ENTRY_UNIT_UNAVAILABLE}
-    # 이 트리는 고정 N(1/1)이라 그 경로에 닿지 않는다 — 0 이 참이고, 0 도 적힌다.
-    assert refusals[rp.ENTRY_UNIT_UNAVAILABLE] == 0
+    # 이 트리는 고정 N(1/1)이라 두 경로에 닿지 않는다 — 0 이 참이고, 0 도 적힌다.
+    assert refusals == {rp.ENTRY_UNIT_UNAVAILABLE: 0, rp.ENTRY_SIZE_DENIED: 0}
     text = rp.render_text(enabled)
-    assert f"{rp.ENTRY_REFUSED_LABEL}: {rp.ENTRY_UNIT_UNAVAILABLE} 0" in text
+    assert (
+        f"{rp.ENTRY_REFUSED_LABEL}: {rp.ENTRY_UNIT_UNAVAILABLE} 0 · "
+        f"{rp.ENTRY_SIZE_DENIED} 0" in text
+    )

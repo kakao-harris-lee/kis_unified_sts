@@ -103,6 +103,9 @@ class BarRow:
     position: Mapping[str, ScalarValue] | None = None
     position_absent_reason: str | None = None
     position_source: str | None = None
+    #: The authored ``target.quantity_basis`` of this bar's own decision — the value
+    #: live's proposal carries into the quantity derivation.
+    decision_quantity_basis: str | None = None
 
     @property
     def flags(self) -> str:

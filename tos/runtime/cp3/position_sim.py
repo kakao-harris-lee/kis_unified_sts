@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from pydantic import ValidationError
 from tos.canonical import (
     EV_L1_PROVISIONAL_VERSION,
     ArtifactIntegrityError,
@@ -14,12 +15,25 @@ from tos.canonical import (
     get_scheme,
 )
 from tos.dsl import (
+    ContextValue,
+    ContextValueView,
     PositionContext,
     PositionSide,
     ScalarValue,
     flat_position_context,
     project_position_context,
 )
+from tos.egressgw import (
+    AdmittedPriceObservation,
+    DerivationOutcome,
+    ProposedConstructionEnvelope,
+    SizingBound,
+    VenueQuantityConstraint,
+    derive_order_size,
+    resolve_field_per_unit_risk,
+)
+from tos.engine import CAPSULE_CONTEXT_SOURCE
+from tos.ioc import QuantityUnitKind
 from tos_runtime.compose._construction_config import (
     CONSTRUCTION_CONFIG_NAME,
     ConstructionConfigError,
@@ -44,6 +58,7 @@ __all__ = [
     "DEFAULT_UNIT_SOURCE",
     "ENTRY_PRICE_BASIS",
     "ENTRY_PRICE_BASIS_NOTE",
+    "ENTRY_SIZE_DENIED",
     "ENTRY_UNIT_UNAVAILABLE",
     "FIELD_UNIT_SOURCE",
     "FILL_MODEL",
@@ -100,6 +115,8 @@ DEFAULT_UNIT_SOURCE = "replay default (one unit)"
 
 ENTRY_UNIT_UNAVAILABLE = "entry_unit_unavailable"
 
+ENTRY_SIZE_DENIED = "entry_size_denied"
+
 ACTION_KIND = "ACTION"
 
 FLAT_KIND = "FLAT"
@@ -107,6 +124,9 @@ FLAT_KIND = "FLAT"
 _DEFAULT_UNIT = 1
 
 _SOURCE_REF_PREFIX = "replay:"
+
+# SAFETY: the stand-in quantity unit is the SAME object on the bound and on the venue constraint, so the kernel's unit-agreement check passes without replay naming a unit it has not read — it loads no venue policy, and printing a market fact nothing on disk says would be a claim about the venue
+_SIMULATED_QUANTITY_UNIT = QuantityUnitKind.BASE_UNIT
 
 _UNREADABLE_POLICY: tuple[type[Exception], ...] = (
     VenuePolicyConfigError,
@@ -126,6 +146,7 @@ class SimulationConfig:
     held_qty_source: str
     risk_budget: int | None = None
     per_unit_risk_field_key: str | None = None
+    sizing_bound: SizingBound | None = None
 
     def as_json(self) -> dict[str, object]:
         """The facts the report publishes so a reader can check the fill model."""
@@ -202,7 +223,7 @@ def _exact_quotient(budget: Decimal, per_unit: Decimal) -> int | None:
     """``budget / per_unit`` only when it already IS a positive integer (no rounding)."""
     if per_unit == 0:
         return None
-    # SAFETY: only an EXACT positive integer quotient is taken — replay holds no envelope, admitted price or venue constraint, so rounding a fractional quotient here would be a second sizing model whose held_qty a rule can read and disagree with what live sends
+    # SAFETY: the FIXED-N path takes only an EXACT positive integer quotient and otherwise stands in one unit — it is a known simplification that skips the authored lot policy and the quantity bounds (the field path below runs live's own derivation instead), and rounding a fractional quotient here would be a second sizing model whose held_qty a rule can read and disagree with what live sends
     raw: Decimal = budget / per_unit
     if raw <= 0 or raw != raw.to_integral_value():
         return None
@@ -217,6 +238,7 @@ class _DeclaredSizing:
     source: str
     risk_budget: int | None = None
     per_unit_risk_field_key: str | None = None
+    sizing_bound: SizingBound | None = None
 
 
 def _declared_sizing(
@@ -233,13 +255,13 @@ def _declared_sizing(
     budget, per_unit = bound.risk_budget, bound.per_unit_risk
     field_key = bound.per_unit_risk_field_key
     if field_key is not None:
-        # SAFETY: a non-positive budget leaves risk_budget None, which opens NO simulated entry — live's derivation denies a budget it cannot divide, so standing in one unit here would show a holding live never had
-        authored = budget if budget is not None and budget > 0 else None
+        # SAFETY: the WHOLE loaded bound is carried, not just the budget — live sizes every entry inside this envelope's lot policy, quantity floor/ceiling and notional ceiling, so a replay that divided the budget alone would stand in a quantity live denies, and a rule would read a holding live never had
         return _DeclaredSizing(
             None,
             FIELD_UNIT_SOURCE,
-            None if authored is None else int(authored),
+            None if budget is None else int(budget),
             field_key,
+            bound,
         )
     if budget is None or per_unit is None:
         return _DeclaredSizing(_DEFAULT_UNIT, DEFAULT_UNIT_SOURCE)
@@ -283,6 +305,7 @@ def load_simulation_config(
         held_qty_source=sizing.source,
         risk_budget=sizing.risk_budget,
         per_unit_risk_field_key=sizing.per_unit_risk_field_key,
+        sizing_bound=sizing.sizing_bound,
     )
 
 
@@ -306,7 +329,10 @@ class PositionSimulation:
         self._exit_ordinal: int | None = None
         self._reentry_next_bar = 0
         self._exit_first_visible_bar = 0
-        self._entry_unit_unavailable = 0
+        self._refusals: dict[str, int] = {
+            ENTRY_UNIT_UNAVAILABLE: 0,
+            ENTRY_SIZE_DENIED: 0,
+        }
 
     @property
     def round_trips(self) -> tuple[RoundTrip, ...]:
@@ -323,8 +349,14 @@ class PositionSimulation:
 
     @property
     def entry_refusals(self) -> dict[str, int]:
-        """The entries this replay did NOT open because live's derivation would deny them."""
-        return {ENTRY_UNIT_UNAVAILABLE: self._entry_unit_unavailable}
+        """The entries this replay did NOT open, by what live's own derivation denied.
+
+        ``entry_unit_unavailable`` is a risk unit the bar does not admit (absent,
+        duplicated, non-integer, or non-positive); ``entry_size_denied`` is a unit
+        that WAS read and whose quantity the authored lot policy, the quantity
+        floor / ceiling or the notional ceiling then refused.
+        """
+        return dict(self._refusals)
 
     @property
     def open_fill(self) -> dict[str, object] | None:
@@ -344,18 +376,104 @@ class PositionSimulation:
         """This bar's declared price field as a positive int, or ``None``."""
         return _exact_positive_int(values.get(self._config.price_field_key))
 
-    def _entry_unit(self, values: Mapping[str, ScalarValue]) -> int | None:
-        """One simulated entry's size — the fixed N, or this bar's declared risk unit."""
+    def _risk_unit_view(
+        self,
+        values: Mapping[str, ScalarValue],
+        *,
+        field_key: str,
+        as_of_ms: int,
+        raw_event_id: str,
+    ) -> ContextValueView:
+        """This bar's declared risk unit as the one admitted value view live reads it from."""
+        source_ref = f"{_SOURCE_REF_PREFIX}{raw_event_id}"
+        raw = values.get(field_key)
+        digest = self._scheme.compute_digest(
+            {"source_ref": source_ref, "as_of": as_of_ms, "field_key": field_key}
+        )
+        # SAFETY: a value the DSL cannot carry is LEFT OUT rather than coerced, so the kernel denies it as a missing risk unit — projecting it as a number would size an entry off something no admitted field ever held
+        entries = (
+            (
+                ContextValue(
+                    field_key=field_key,
+                    value=raw,
+                    as_of=as_of_ms,
+                    payload_digest=self._scheme.compute_digest(
+                        {"field_key": field_key, "value": raw, "as_of": as_of_ms}
+                    ),
+                    observation_ref=source_ref,
+                ),
+            )
+            if isinstance(raw, (bool, int, float, str))
+            else ()
+        )
+        return ContextValueView(
+            snapshot_id=source_ref,
+            snapshot_canonical_digest=digest,
+            values=entries,
+            canonical_digest=digest,
+            canonicalization_version=self._scheme.version,
+        )
+
+    def _entry_unit(
+        self,
+        values: Mapping[str, ScalarValue],
+        *,
+        quantity_basis: str | None,
+        price: int,
+        as_of_ms: int,
+        raw_event_id: str,
+    ) -> tuple[int | None, str | None]:
+        """``(one simulated entry's size, the refusal counted)`` — one of the two is ``None``."""
         config = self._config
         if config.held_qty is not None:
-            return config.held_qty
-        budget, field_key = config.risk_budget, config.per_unit_risk_field_key
-        if budget is None or field_key is None:
-            return None
-        per_unit = _exact_positive_int(values.get(field_key))
-        if per_unit is None:
-            return None
-        return _exact_quotient(Decimal(budget), Decimal(per_unit))
+            return config.held_qty, None
+        bound = config.sizing_bound
+        field_key = None if bound is None else bound.per_unit_risk_field_key
+        if bound is None or field_key is None:
+            return None, ENTRY_UNIT_UNAVAILABLE
+        # SAFETY: the stand-in venue constraint IS the bound — compose already refuses to boot a tree whose bound is wider than its venue policy (_cross_check_ocp_sizing_bound), so this is as strict as the constraint live derives against, and replay reads no venue policy to copy
+        constraint = VenueQuantityConstraint(
+            lot_size=bound.lot_size,
+            min_quantity=bound.min_quantity,
+            max_quantity=bound.max_quantity,
+            quantity_unit=_SIMULATED_QUANTITY_UNIT,
+        )
+        try:
+            envelope = ProposedConstructionEnvelope(
+                sizing_bound=bound.model_copy(
+                    update={"quantity_unit": _SIMULATED_QUANTITY_UNIT}
+                )
+            )
+            view = self._risk_unit_view(
+                values,
+                field_key=field_key,
+                as_of_ms=as_of_ms,
+                raw_event_id=raw_event_id,
+            )
+        # SAFETY: a key the kernel refuses to CARRY (a wildcard / 'latest' form the OCP loader still admits as a non-empty string) is counted, not raised — live would never match it and would deny that send, so crashing the inspection here would lose every other bar's row over one unauthorable key
+        except (ValidationError, ArtifactIntegrityError):
+            return None, ENTRY_UNIT_UNAVAILABLE
+        sized, refused = resolve_field_per_unit_risk(
+            envelope, quantity_basis=quantity_basis, view=view
+        )
+        if refused is not None:
+            return None, ENTRY_UNIT_UNAVAILABLE
+        derived = derive_order_size(
+            quantity_basis=quantity_basis,
+            envelope=sized,
+            price=AdmittedPriceObservation(
+                source=CAPSULE_CONTEXT_SOURCE,
+                value=Decimal(price),
+                snapshot_digest=f"{_SOURCE_REF_PREFIX}{raw_event_id}",
+            ),
+            venue_constraint=constraint,
+        )
+        if derived.outcome is not DerivationOutcome.DERIVED:
+            return None, ENTRY_SIZE_DENIED
+        quantity = derived.quantity
+        assert quantity is not None
+        # SAFETY: an authored lot_size is an integer (the OCP loader reads it with require_int), so every quantity the kernel admits is a whole lot multiple and int() truncates nothing — a truncated held_qty would be a size live never sends, read by the very rules that decide the exit
+        return int(quantity), None
 
     def context(
         self, *, price: int | None, as_of_ms: int, raw_event_id: str
@@ -415,6 +533,7 @@ class PositionSimulation:
         rule_id: str | None,
         price: int | None,
         values: Mapping[str, ScalarValue],
+        quantity_basis: str | None,
         as_of_ms: int,
         raw_event_id: str,
         time_kst: str,
@@ -426,10 +545,17 @@ class PositionSimulation:
             return
         held = self._open
         if decision_kind == ACTION_KIND and held is None:
-            unit = self._entry_unit(values)
+            unit, refused = self._entry_unit(
+                values,
+                quantity_basis=quantity_basis,
+                price=price,
+                as_of_ms=as_of_ms,
+                raw_event_id=raw_event_id,
+            )
             if unit is None:
-                # SAFETY: an unreadable risk unit opens NO simulated entry — live's own derivation denies that send (egressgw resolve_field_per_unit_risk), so opening one here would show a holding, a declared stop and a round trip live never had
-                self._entry_unit_unavailable += 1
+                # SAFETY: a size live's own derivation refuses opens NO simulated entry — the kernel decides it here (egressgw resolve_field_per_unit_risk + derive_order_size), so opening one would show a holding, a declared stop and a round trip live never had
+                assert refused is not None
+                self._refusals[refused] += 1
                 return
             if self._exit_ordinal == self._ordinal - 1:
                 self._reentry_next_bar += 1

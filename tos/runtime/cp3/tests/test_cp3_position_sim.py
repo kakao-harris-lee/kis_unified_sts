@@ -15,6 +15,7 @@ from ..inspect_session import inspect_session
 from ..position_sim import (
     DECLARED_UNIT_SOURCE,
     DEFAULT_UNIT_SOURCE,
+    ENTRY_SIZE_DENIED,
     ENTRY_UNIT_UNAVAILABLE,
     FIELD_UNIT_SOURCE,
     GAP_EXIT_FIRST_VISIBLE_BAR,
@@ -493,7 +494,7 @@ def test_the_risk_unit_of_the_entry_bar_is_the_one_the_position_carries(
     assert report.bars[2].position["held_qty"] == 4
 
 
-@pytest.mark.parametrize("unit", [None, 0, -100, 300, True, 100.0, "100"], ids=str)
+@pytest.mark.parametrize("unit", [None, 0, -100, True, 100.0, "100"], ids=str)
 def test_an_unusable_risk_unit_opens_no_entry_and_is_counted(
     tmp_path: Path, unit: Any
 ) -> None:
@@ -506,20 +507,93 @@ def test_an_unusable_risk_unit_opens_no_entry_and_is_counted(
         sizing="field",
     )
 
-    assert report.position_entry_refusals == {ENTRY_UNIT_UNAVAILABLE: 1}
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 1,
+        ENTRY_SIZE_DENIED: 0,
+    }
     assert report.bars[1].position == {"side": "FLAT", "held_qty": 0}
     assert report.round_trips == ()
     assert report.position_open_fill is None
     text = render_text(report)
     assert f"entry refused: {ENTRY_UNIT_UNAVAILABLE} 1" in text
     document = json.loads(render_json(report))
-    assert document["position"]["entry_refusals"] == {ENTRY_UNIT_UNAVAILABLE: 1}
+    assert document["position"]["entry_refusals"] == {
+        ENTRY_UNIT_UNAVAILABLE: 1,
+        ENTRY_SIZE_DENIED: 0,
+    }
+
+
+def test_the_replay_quantity_is_floored_to_the_lot_exactly_as_live_floors_it(
+    tmp_path: Path,
+) -> None:
+    """(M1) FLOOR_TO_LOT: live sends 1000 // 300 = 3, so the replay holds 3, not nothing."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_700, 99_500),
+        (True, False, False),
+        units=(300, 300, 300),
+        sizing="field",
+        lot_rounding="FLOOR_TO_LOT",
+    )
+
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 0,
+        ENTRY_SIZE_DENIED: 0,
+    }
+    assert report.bars[1].position is not None
+    assert report.bars[1].position["held_qty"] == 3
+    assert [trip["held_qty"] for trip in report.round_trips] == [3]
+
+
+def test_a_quantity_the_authored_lot_policy_refuses_opens_no_entry_and_is_counted(
+    tmp_path: Path,
+) -> None:
+    """(M1) EXACT_MULTIPLE_REQUIRED: 1000 / 300 is no exact lot, so live sends nothing."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_500),
+        (True, False),
+        units=(300, 300),
+        sizing="field",
+    )
+
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 0,
+        ENTRY_SIZE_DENIED: 1,
+    }
+    assert report.bars[1].position == {"side": "FLAT", "held_qty": 0}
+    assert report.round_trips == ()
+    text = render_text(report)
+    assert f"{ENTRY_SIZE_DENIED} 1" in text
+
+
+def test_a_quantity_above_the_authorized_ceiling_opens_no_entry_and_is_counted(
+    tmp_path: Path,
+) -> None:
+    """(M1) The envelope's own ceiling denies, never clamps — 10 outside [1, 1] is no send."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_500),
+        (True, False),
+        units=(100, 100),
+        sizing="field",
+        max_quantity=1,
+    )
+
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 0,
+        ENTRY_SIZE_DENIED: 1,
+    }
+    assert report.bars[1].position == {"side": "FLAT", "held_qty": 0}
+    assert report.round_trips == ()
+    document = json.loads(render_json(report))
+    assert document["position"]["entry_refusals"][ENTRY_SIZE_DENIED] == 1
 
 
 def test_a_fixed_n_tree_refuses_no_entry_for_a_missing_risk_unit_field(
     tmp_path: Path,
 ) -> None:
-    """The counter is the field path's own — a fixed-N tree never reaches it."""
+    """The counters are the field path's own — a fixed-N tree never reaches them."""
     report = _inspect(
         tmp_path,
         (_ENTRY_PRICE, 99_500),
@@ -527,6 +601,9 @@ def test_a_fixed_n_tree_refuses_no_entry_for_a_missing_risk_unit_field(
         sizing="fixed",
     )
 
-    assert report.position_entry_refusals == {ENTRY_UNIT_UNAVAILABLE: 0}
+    assert report.position_entry_refusals == {
+        ENTRY_UNIT_UNAVAILABLE: 0,
+        ENTRY_SIZE_DENIED: 0,
+    }
     assert report.bars[1].position is not None
     assert report.bars[1].position["held_qty"] == 1

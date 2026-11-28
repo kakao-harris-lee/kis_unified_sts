@@ -64,6 +64,7 @@ from tools.tos_cp3.produce_fields import (  # noqa: E402
 __all__ = [
     "BARS_CSV_COLUMNS",
     "ENTRY_REFUSED_LABEL",
+    "ENTRY_SIZE_DENIED",
     "ENTRY_UNIT_UNAVAILABLE",
     "FAKE_ACCOUNT",
     "FAKE_REVISION",
@@ -152,9 +153,12 @@ SIMULATED_MODE = "simulated"
 GAP_REENTRY_NEXT_BAR = "reentry_next_bar"
 GAP_EXIT_FIRST_VISIBLE_BAR = "exit_first_visible_bar"
 
-#: 점검이 내는 «리스크 단위를 읽지 못해 열지 않은 진입» 의 수의 키. 같은 이유로 여기
-#: 다시 적는다.
+#: 점검이 내는 «라이브의 수량 도출이 거부해 열지 않은 진입» 두 수의 키. 같은 이유로
+#: 여기 다시 적는다. ``entry_unit_unavailable`` 은 그 봉이 리스크 단위 자체를 인정하지
+#: 못한 것(없음 · 정수 아님 · 양수 아님)이고, ``entry_size_denied`` 는 단위는 읽혔지만
+#: 그 수량을 저작된 lot 정책 · 수량 상·하한 · 명목 한도가 거부한 것이다.
 ENTRY_UNIT_UNAVAILABLE = "entry_unit_unavailable"
+ENTRY_SIZE_DENIED = "entry_size_denied"
 
 NOT_AN_ORDER = (
     "리플레이는 신호만 본다 — 승인 · 예약 · venue 한도 · 시간 인정 같은 커널 단계는 "
@@ -171,7 +175,7 @@ SIMULATED_POSITION = "포지션을 시뮬레이션한다"
 #: 줄의 체결 모델 문장이 그 공백을 말한다).
 LIVE_GAP_LABEL = "라이브가 재현하지 못할 수 있는 결정"
 
-ENTRY_REFUSED_LABEL = "리스크 단위를 읽지 못해 열지 않은 진입"
+ENTRY_REFUSED_LABEL = "라이브의 수량 도출이 거부해 열지 않은 진입"
 PNL_LABEL = "가상 손익(체결 가정)"
 
 
@@ -269,7 +273,10 @@ class ReplayResult:
         """리플레이가 **열지 않은** 진입의 수 — 라이브의 도출도 거부하는 봉들."""
         raw = self.position.get("entry_refusals")
         source = raw if isinstance(raw, dict) else {}
-        return {ENTRY_UNIT_UNAVAILABLE: int(source.get(ENTRY_UNIT_UNAVAILABLE) or 0)}
+        return {
+            key: int(source.get(key) or 0)
+            for key in (ENTRY_UNIT_UNAVAILABLE, ENTRY_SIZE_DENIED)
+        }
 
     @property
     def simulation(self) -> dict[str, Any] | None:
@@ -1168,11 +1175,12 @@ def _round_trip_lines(result: ReplayResult) -> list[str]:
         f"{gap[GAP_EXIT_FIRST_VISIBLE_BAR]} — 라이브는 전송이 미결인 봉에 포지션 "
         "이름공간이 없어 이 결정을 미루거나 내지 않는다"
     )
-    refused = result.entry_refusals[ENTRY_UNIT_UNAVAILABLE]
-    # SAFETY: 리스크 단위를 필드에서 읽는 트리의 「열지 않은 진입」 수를 적는다 — 적지 않으면 진입이 적었던 날이 규칙 때문인지 그 필드의 결손 때문인지 표만 보고는 알 수 없다
+    refused = result.entry_refusals
+    # SAFETY: 리스크 단위를 필드에서 읽는 트리의 「열지 않은 진입」 수를 사유별로 적는다 — 적지 않으면 진입이 적었던 날이 규칙 때문인지, 그 필드의 결손 때문인지, 수량이 봉투 밖이었기 때문인지 표만 보고는 알 수 없다
     lines.append(
-        f"{ENTRY_REFUSED_LABEL}: {ENTRY_UNIT_UNAVAILABLE} {refused} — 라이브의 수량 "
-        "도출도 그 봉의 전송을 거부한다"
+        f"{ENTRY_REFUSED_LABEL}: "
+        + " · ".join(f"{key} {refused[key]}" for key in refused)
+        + " — 라이브의 수량 도출도 그 봉의 전송을 거부한다"
     )
     lines.append(
         " ".join(

@@ -35,6 +35,11 @@ RISK_UNIT_FIELD = "risk_unit_x100"
 #: That tree's authored risk budget, in the same integer scale as the field.
 RISK_BUDGET = 1000
 
+#: The quantity ceiling a ``sizing: "field"`` tree authors. The shipped tree's own
+#: ceiling is ``1``, which would DENY 1000 / 100 = 10 — the derivation live runs is
+#: bounded, so a fixture that wants the quantity admitted must author room for it.
+FIELD_MAX_QUANTITY = 10
+
 #: The shipped stock OCP is the only loadable one in the repo, so the fixtures
 #: re-author ITS sizing block rather than hand-rolling a second OCP document.
 _SHIPPED_OCP = (
@@ -151,7 +156,13 @@ def _substituted(text: str, pattern: str, replacement: str) -> str:
     return out
 
 
-def ocp_yaml(*, sizing: str, risk_budget: int = RISK_BUDGET) -> str:
+def ocp_yaml(
+    *,
+    sizing: str,
+    risk_budget: int = RISK_BUDGET,
+    max_quantity: int = FIELD_MAX_QUANTITY,
+    lot_rounding: str | None = None,
+) -> str:
     """The shipped stock OCP with its coordinates filled and its sizing re-authored."""
     text = _SHIPPED_OCP.read_text(encoding="utf-8")
     for pattern, replacement in _OCP_COORDINATES:
@@ -164,6 +175,15 @@ def ocp_yaml(*, sizing: str, risk_budget: int = RISK_BUDGET) -> str:
         r"^(\s*)per_unit_risk: 1$",
         rf'\g<1>per_unit_risk_field_key: "{RISK_UNIT_FIELD}"',
     )
+    text = _substituted(
+        text, r"^(\s*)max_quantity: 1$", rf"\g<1>max_quantity: {max_quantity}"
+    )
+    if lot_rounding is not None:
+        text = _substituted(
+            text,
+            r'^(\s*)lot_rounding: "EXACT_MULTIPLE_REQUIRED"$',
+            rf'\g<1>lot_rounding: "{lot_rounding}"',
+        )
     return _substituted(
         text, r"^(\s*)risk_budget: 1$", rf"\g<1>risk_budget: {risk_budget}"
     )
@@ -220,6 +240,8 @@ def write_tree(
     marketfeed: bool = True,
     sizing: str | None = None,
     risk_budget: int = RISK_BUDGET,
+    max_quantity: int = FIELD_MAX_QUANTITY,
+    lot_rounding: str | None = None,
 ) -> Path:
     """Write the config dir an inspection reads, and return it."""
     config_dir = root / "render"
@@ -257,6 +279,12 @@ def write_tree(
     )
     if sizing is not None:
         (config_dir / OCP_FILE_NAME).write_text(
-            ocp_yaml(sizing=sizing, risk_budget=risk_budget), encoding="utf-8"
+            ocp_yaml(
+                sizing=sizing,
+                risk_budget=risk_budget,
+                max_quantity=max_quantity,
+                lot_rounding=lot_rounding,
+            ),
+            encoding="utf-8",
         )
     return config_dir
