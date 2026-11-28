@@ -48,6 +48,8 @@ _SEND_SEALED_KIND = "SEND_SEALED"
 
 _FILL_OBSERVED_KIND = "FILL_OBSERVED"
 
+_FULL_FILL_TOKEN = "FULL_FILL"
+
 _VENUE_POLICY_BOUND_KIND = "VENUE_POLICY_BOUND"
 
 # SAFETY: only a durable row's own read/decode/validation failure becomes STORE_READ_FAILED — a TypeError or KeyError from OUR code must crash the tick loudly instead of looking like "position unknown" on every bar for the rest of the session
@@ -89,12 +91,6 @@ def _decimal(value: object) -> Decimal | None:
         except (ValueError, ArithmeticError, InvalidOperation):
             return None
     return None
-
-
-def _reads_positive(value: object) -> bool:
-    """Whether ``value`` reads as a strictly positive number (``perf.py``'s own ``_positive``)."""
-    magnitude = _decimal(value)
-    return magnitude is not None and magnitude > 0
 
 
 def _exact_positive_int(value: object) -> int | None:
@@ -327,19 +323,20 @@ class EvidencePositionContextReader:
 
     def _execution_price(self, attempt_id: str, *, seal_seq: int) -> int | None:
         """``avg_execution_price`` in VIEW scale, or ``None`` when absent or not exactly scaled."""
-        observed = [
-            payload.get("avg_execution_price")
+        # SAFETY: only a FULL_FILL row, and the LAST of them — that is the one row `tools/tos_cp3/perf.py` prices a fill from (`fills[attempt] = Fill(...)` keeps the last FULL_FILL and ignores every PARTIAL_FILL), so a partial fill's running average never becomes the entry price of the whole holding
+        full = [
+            payload
             for _seq, payload in _payload_rows(
                 self._evidence_store, _FILL_OBSERVED_KIND
             )
             if payload.get("attempt_id") == attempt_id
+            and payload.get("kind") == _FULL_FILL_TOKEN
         ]
-        priced = [value for value in observed if _reads_positive(value)]
-        if not priced:
+        if not full:
             return None
-        average = _decimal(priced[-1])
+        average = _decimal(full[-1].get("avg_execution_price"))
         scale = self._price_scale_at(seal_seq)
-        if average is None or scale is None:
+        if average is None or average <= 0 or scale is None:
             return None
         # SAFETY: the broker average is in whole currency units while the seal's price is the view integer, so the tree's own price_scale is what puts them on one scale, and an inexact product keeps the ORDER basis rather than rounding an entry price every declared bound divides by
         return _exact_positive_int(average * Decimal(scale))

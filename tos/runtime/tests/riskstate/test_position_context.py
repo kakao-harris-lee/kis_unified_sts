@@ -232,6 +232,25 @@ def _record_full_fill(
     )
 
 
+def _record_fill_observed(
+    store: SqliteEvidenceStore,
+    *,
+    attempt_id: str,
+    avg_execution_price: object,
+    kind: str = "FULL_FILL",
+) -> None:
+    """One ``FILL_OBSERVED`` row exactly as ``posttrade/fill_observer.py::_emit`` writes it."""
+    store.append(
+        {
+            "attempt_id": attempt_id,
+            "kind": kind,
+            "avg_execution_price": avg_execution_price,
+        },
+        kind="FILL_OBSERVED",
+        record_class="FILL_OBSERVED",
+    )
+
+
 def _record_venue_policy(store: SqliteEvidenceStore, *, price_scale: object) -> None:
     store.append(
         {"price_scale": price_scale},
@@ -556,10 +575,8 @@ def test_the_broker_average_wins_when_it_scales_to_an_exact_integer(
 ) -> None:
     """70,120 KRW x price_scale 100 = 7_012_000 -> EXECUTION basis and +4 bp."""
     _seed_held_entry(rcl_log, evidence_store, inbox)
-    evidence_store.append(
-        {"attempt_id": _ENTRY_ATTEMPT, "avg_execution_price": "70120"},
-        kind="FILL_OBSERVED",
-        record_class="FILL_OBSERVED",
+    _record_fill_observed(
+        evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price="70120"
     )
     context = _held(
         _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
@@ -581,10 +598,10 @@ def test_an_unusable_broker_average_keeps_the_order_basis(
 ) -> None:
     """A non-integral, absent or non-positive average falls back — it never rounds an entry."""
     _seed_held_entry(rcl_log, evidence_store, inbox)
-    evidence_store.append(
-        {"attempt_id": _ENTRY_ATTEMPT, "avg_execution_price": avg_execution_price},
-        kind="FILL_OBSERVED",
-        record_class="FILL_OBSERVED",
+    _record_fill_observed(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        avg_execution_price=avg_execution_price,
     )
     context = _held(
         _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
@@ -600,10 +617,8 @@ def test_an_unknown_price_scale_keeps_the_order_basis(
 ) -> None:
     """With no bound price_scale the broker average cannot be put on the view's scale."""
     _seed_held_entry(rcl_log, evidence_store, inbox, price_scale="not-an-int")
-    evidence_store.append(
-        {"attempt_id": _ENTRY_ATTEMPT, "avg_execution_price": "70120"},
-        kind="FILL_OBSERVED",
-        record_class="FILL_OBSERVED",
+    _record_fill_observed(
+        evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price="70120"
     )
     context = _held(
         _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
@@ -892,3 +907,165 @@ def test_an_unmapped_seal_side_alone_still_publishes_nothing(
     )
     absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
     assert absent.reason is PositionContextReason.SIDE_DISAGREES_WITH_SEAL
+
+
+def test_a_partial_then_full_fill_prices_the_entry_off_the_full_one(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """``perf.py`` prices a fill off the LAST ``FULL_FILL`` row and ignores every partial."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_fill_observed(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        avg_execution_price="70500",
+        kind="PARTIAL_FILL",
+    )
+    _record_fill_observed(
+        evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price="70120"
+    )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == 7_012_000
+    assert context.entry_price_basis == ENTRY_PRICE_BASIS_EXECUTION
+
+
+def test_a_later_partial_fill_never_overrides_the_full_fill_average(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Row ORDER does not decide it — the kind does, exactly as ``perf.py`` reads them."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_fill_observed(
+        evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price="70120"
+    )
+    _record_fill_observed(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        avg_execution_price="70500",
+        kind="PARTIAL_FILL",
+    )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == 7_012_000
+
+
+def test_a_partial_fill_alone_keeps_the_order_basis(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """A holding whose only priced row is a PARTIAL_FILL is priced at the order's own limit."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_fill_observed(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        avg_execution_price="70500",
+        kind="PARTIAL_FILL",
+    )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == _ENTRY_PRICE
+    assert context.entry_price_basis == ENTRY_PRICE_BASIS_ORDER
+
+
+def test_two_full_fills_for_one_attempt_take_the_last_average(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """``perf.py``'s ``fills[attempt] = Fill(...)`` keeps the last row, so this does too."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    for average in ("70500", "70120"):
+        _record_fill_observed(
+            evidence_store, attempt_id=_ENTRY_ATTEMPT, avg_execution_price=average
+        )
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert context.entry_price == 7_012_000
+
+
+_REENTRY_ATTEMPT = "attempt-position-context-reentry"
+_REENTRY_PERMIT = "afg-permit-position-context-reentry"
+_CLOSE_ATTEMPT = "attempt-position-context-first-close"
+_REENTRY_PRICE = _ENTRY_PRICE + 20_000
+_REENTRY_AS_OF = _ENTRY_AS_OF + 10 * _BAR_MS
+
+
+def _release(rcl_log: SqliteCommitLog, *, reservation_id: str) -> None:
+    """Take a consumed reservation to RELEASED — the only state that stops being outstanding."""
+    _commit(
+        rcl_log,
+        reservation_id=reservation_id,
+        from_state=CapacityState.POSITION_CONSUMED,
+        to_state=CapacityState.RELEASED,
+        command_id=f"cmd-release-{reservation_id}",
+        command_type=CommandType.RELEASE_RESERVATION,
+        cause=TransitionCause.FINAL_QUANTITY_PROOF,
+        finality_witness=True,
+    )
+
+
+def test_a_re_entry_uses_the_second_entrys_own_seal_price_and_bar(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Two-entry history: the first entry is closed and RELEASED, the second is the holding."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    _record_seal(
+        evidence_store,
+        attempt_id=_CLOSE_ATTEMPT,
+        side=_SELL,
+        quantity="1",
+        price=_BAR_PRICE,
+    )
+    _record_full_fill(evidence_store, attempt_id=_CLOSE_ATTEMPT, filled="1")
+    _release(
+        rcl_log,
+        reservation_id=str(permit_reservation_id(_ACCOUNT, _INSTRUMENT, _ENTRY_PERMIT)),
+    )
+
+    second_event = inbox.enqueue(_tick_event(as_of=_REENTRY_AS_OF, seq=2)).event_id
+    _record_join(
+        evidence_store,
+        attempt_id=_REENTRY_ATTEMPT,
+        permit_identity=_REENTRY_PERMIT,
+        event_id=second_event,
+    )
+    _commit(
+        rcl_log,
+        reservation_id=str(
+            permit_reservation_id(_ACCOUNT, _INSTRUMENT, _REENTRY_PERMIT)
+        ),
+        from_state=CapacityState.COMMITTED_UNBOUND,
+        to_state=CapacityState.POSITION_CONSUMED,
+        command_id="cmd-position-context-reentry",
+        command_type=CommandType.RELEASE_RESERVATION,
+        cause=TransitionCause.FINAL_QUANTITY_PROOF,
+        finality_witness=True,
+    )
+    _record_seal(
+        evidence_store,
+        attempt_id=_REENTRY_ATTEMPT,
+        side=_BUY,
+        quantity="1",
+        price=_REENTRY_PRICE,
+    )
+    _record_full_fill(evidence_store, attempt_id=_REENTRY_ATTEMPT, filled="1")
+
+    bar_as_of = _REENTRY_AS_OF + 2 * _BAR_MS
+    context = _held(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=bar_as_of, seq=3))
+    )
+    assert context.side is PositionSide.LONG
+    assert context.held_qty == 1
+    assert context.entry_price == _REENTRY_PRICE
+    assert context.bars_held == 2
+    assert context.source_ref.startswith(f"attempt:{_REENTRY_ATTEMPT}@rcl:")
