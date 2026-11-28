@@ -775,6 +775,49 @@ sqlite3 "file:$DATA/evidence.sqlite3?mode=ro&immutable=1" \
 
 (⚠ `immutable=1` — §4-A-1 의 관용구다. `mode=ro` 만으로는 `-shm` 을 쓴다.)
 
+### 7.11 분봉 수집 — 세션이 쥔 분봉을 과거 저장소로 (운영자 결정 2026-11-28)
+
+**무엇을 하나.** tenant 세션은 저마다 `producer/market` 에 과거 저장소와 **같은 모양**의
+Parquet 트리를 쥔다(그날의 봉 + 앞선 시드 날들). 아무도 그것을 과거 저장소
+(`config/storage.yaml::market_data.parquet.root` = `data/market`)로 옮기지 않아서
+`sts tos replay --data-root data/market` 이 읽을 수 있는 날이 2026-10-08 에서 멈춰 있었다.
+`sts tos ingest-bars` 가 그 사본들을 모아 하루 단위로 올린다.
+
+- 같은 코드·날의 사본은 여러 세션에 있다(LONG·SHORT 가 같은 월물, 주식은 `r1…`, 재실행).
+  **봉이 가장 많은 사본, 같으면 세션 날짜가 가장 늦은 사본**을 고른다 — 당일 사본은 15:19
+  봉에서 끝나고 종가 단일가 봉은 **다음 날** 세션의 시드 사본에만 있다.
+- 저장소가 이미 쥔 하루보다 봉이 **많을 때만** 쓴다(`write`). 같으면 `same`, 적으면
+  `kept_existing` 이다 — `replace_minute_day` 가 그 날 디렉터리를 먼저 지우므로, 무조건
+  쓰면 늦게 뜬(부분) 세션의 짧은 사본이 온전한 하루를 지운다.
+- 같은 분이 두 번 있으면서 OHLCV 가 어긋나는 사본은 그 날을 **거부**한다
+  (`refused:duplicate_timestamps`, 종료코드 2). 세션에 없는 코드·날은 건드리지 않는다.
+- 끝에 리플레이의 밀도 게이트(330 봉) 아래로 남는 날을 따로 적는다 — 그 날은 모아도
+  리플레이가 버린다.
+
+**손으로 돌릴 때.** 기본 동작은 dry-run 이다. 쓰려면 `--write` 가 필요하다.
+
+```bash
+cd $MAIN
+sts tos ingest-bars                      # 계획만 (dry-run)
+sts tos ingest-bars --write              # 실제로 올린다
+sts tos ingest-bars --since 2026-11-01 --json
+```
+
+**제안 crontab 줄 (운영자가 설치한다 — 이 저장소의 스크립트는 crontab 을 건드리지 않는다).**
+빈 평일 슬롯은 16:30 이다(15:45 paper stop · 18:00/18:20/18:40 콜드 백업 · 19:00/19:05/19:10
+주식 콜드 백업 사이). `CRON_TZ=Asia/Seoul` 은 crontab 머리에 이미 있다.
+
+```cron
+30 16 * * 1-5 cd /home/deploy/project/kis_unified_sts && .venv/bin/python -m tools.tos_cp3.ingest_session_bars --write >> /home/deploy/.local/state/tos/ingest-bars.cron.log 2>&1 # tos-ingest-bars
+```
+
+- ⚠ **D 일의 가장 좋은 사본은 D+1 세션의 시드에서야 나타난다.** 16:30 에 돌면 그날치는
+  15:19 봉까지의 사본으로 들어가고, **다음 날 같은 작업이 그 날을 종가 단일가 봉까지 있는
+  사본으로 다시 올린다**(`write` 한 줄로 또 뜬다). 따로 보정 절차가 없는 이유다 — 매일
+  돌기만 하면 어제 날짜가 하루 늦게 완성된다.
+- 종료코드 2 는 거부가 있었다는 뜻이다(쓸 수 있는 줄은 그래도 썼다). `cron.log` 의 그날
+  `refused:` 줄을 보고 그 코드·날을 손으로 가른다.
+
 ### digest 재도출 (런타임 코드를 바꾼 PR)
 
 `tos/src` · `tos/runtime/src` 를 바꾼 PR 은 **같은 PR 에서** 한 명령을 돌린다 — 세 트리
