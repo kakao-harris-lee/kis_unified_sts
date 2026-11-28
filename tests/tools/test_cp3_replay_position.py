@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import shutil
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -9,6 +11,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
+import yaml
 
 from tools.tos_cp3 import hypothetical_pnl as hp
 from tools.tos_cp3 import replay as rp
@@ -17,10 +20,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 SHIPPED_TREE = REPO_ROOT / "config" / "tos_runtime" / "cp3-setup-d-stock-000660"
 SYMBOL = "000660"
-STOP_RULE_ID = "R5-STOP-LOSS"
-#: 합성 봉은 한 봉에 ±50(≈5bp)씩 움직인다 — 진입 다음 봉의 역행에서 반드시 걸리는 폭을
-#: 골라, 손절이 **실제로 발화하는** 구간을 만든다.
-STOP_LOSS_BP = -1
+
+#: 포지션을 **켜지 않은** 출하 트리 — 꺼진 경로의 기준선. S4 가 000660 을 켰으므로
+#: 카나리아가 그 자리를 받는다(`test_marketfeed_position_context_config.py` 가 어느 트리가
+#: 켜졌는지 고정한다).
+OFF_TREE = "cp3-setup-d-stock-005930"
+OFF_SYMBOL = "005930"
+
+STOP_RULE_ID = "R5-EXIT-STOP-LOSS"
+TARGET_RULE_ID = "R6-EXIT-TAKE-PROFIT"
+
+#: 합성 봉은 한 봉에 ±50(≈5bp)씩 움직이고 11 봉마다 방향이 바뀐다 — 출하 폭(수십 bp)은
+#: 이 프레임에서 닿지 않는다. 손절이 **실제로 발화하는** 구간을 만들려고 사본에서만 이
+#: 폭으로 좁히고, 목표는 발화하지 않을 만큼 멀리 둔다(손절을 가리지 않게).
+TIGHT_STOP_LOSS_BP = -1
+UNREACHABLE_TAKE_PROFIT_BP = 100_000
 
 #: 트리가 선언한 체결가 필드의 배수(``fields.yaml::publish`` 의 ``close_x100``).
 PRICE_SCALE = 100
@@ -31,46 +45,16 @@ BROKER_PROFILE_REL = (
     "../../../docs/broker-profiles/KIS-BROKER-CAPABILITY-PROFILE-draft.yaml"
 )
 
-_FLAT_GUARD = """        - left:
-            ref: [capsule, position, side]
-          op: EQ
-          right:
-            const: "FLAT"
-"""
-
-_STOP_RULE = f"""    - all_of:
-        - left:
-            ref: [capsule, position, side]
-          op: NE
-          right:
-            const: "FLAT"
-        - left:
-            ref: [capsule, position, unrealized_bp]
-          op: LE
-          right:
-            ref: [config, stop_loss_bp]
-      decision:
-        kind: FLAT
-        rationale: >-
-          {STOP_RULE_ID}: the declared stop is reached — go flat.
-        target:
-          kind: FLAT
-          account: *account
-          instrument: *instrument
-          direction: SHORT
-          position_effect: CLOSE
-          rationale: >-
-            {STOP_RULE_ID}: close the long at its declared stop.
-"""
-
-#: 출하 트리의 두 번째 규칙(VWAP 복귀 청산)이 시작하는 자리 — 손절 규칙을 그 앞에 끼운다.
-_VWAP_RULE_HEAD = """    - all_of:
-        - left:
-            ref: [capsule, resolved_values, vwap_reverted]
-"""
-
 SESSIONS = (date(2026, 9, 14), date(2026, 9, 15))
 BARS_PER_SESSION = 380
+
+
+def shipped_bindings() -> dict[str, Any]:
+    """출하 트리가 선언한 바인딩 그대로 — 임계값을 이 파일에 다시 적지 않는다."""
+    document = yaml.safe_load(
+        (SHIPPED_TREE / "strategy_bindings.yaml").read_text(encoding="utf-8")
+    )
+    return dict(document["strategies"]["setup_d_long.strategy"]["bindings"])
 
 
 def _frame() -> pd.DataFrame:
@@ -94,35 +78,24 @@ def _frame() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _position_tree(root: Path) -> Path:
-    """출하 트리 사본에 포지션 이름공간과 손절 규칙 하나를 더한 tenant 트리."""
-    import shutil
+def _rebind(path: Path, key: str, value: int) -> None:
+    """바인딩 한 줄의 값만 바꾼다 — 덧붙이면 같은 키가 두 번 나와 하나가 조용히 이긴다."""
+    text = path.read_text(encoding="utf-8")
+    pattern = rf"^(\s*{re.escape(key)}:) *-?\d+$"
+    replaced, count = re.subn(
+        pattern, rf"\1 {value}", text, count=1, flags=re.MULTILINE
+    )
+    assert count == 1, f"{path}: {key} 를 한 줄로 찾지 못했다 (출하 트리가 바뀌었다)"
+    path.write_text(replaced, encoding="utf-8")
 
-    tree = root / "cp3-setup-d-stock-000660"
+
+def _narrowed_tree(root: Path, *, stop_bp: int, target_bp: int) -> Path:
+    """출하 트리 사본 — 바뀌는 것은 두 임계값**뿐**이다(규칙도 이름공간도 출하 그대로)."""
+    tree = root / SHIPPED_TREE.name
     shutil.copytree(SHIPPED_TREE, tree)
-
-    marketfeed = tree / "marketfeed.yaml"
-    marketfeed.write_text(
-        marketfeed.read_text(encoding="utf-8")
-        + "\nposition_context:\n  enabled: true\n  bar_interval_ms: 60000\n",
-        encoding="utf-8",
-    )
-    strategy = tree / "strategies" / "setup_d_long.strategy.yaml"
-    text = strategy.read_text(encoding="utf-8")
-    text = text.replace(
-        "  rules:\n    - all_of:\n", f"  rules:\n    - all_of:\n{_FLAT_GUARD}", 1
-    )
-    # SAFETY: 손절 규칙은 진입 **뒤**, 나머지 청산 **앞**에 넣는다 — `*account` 별칭은
-    # 첫 규칙의 target 에서 정의되므로 더 앞에 두면 YAML 이 정의 전 별칭을 만나고,
-    # 더 뒤에 두면 기존 VWAP 청산이 먼저 맞아 손절이 한 번도 발화하지 않는다.
-    text = text.replace(_VWAP_RULE_HEAD, f"{_STOP_RULE}{_VWAP_RULE_HEAD}", 1)
-    strategy.write_text(text, encoding="utf-8")
-
     bindings = tree / "strategy_bindings.yaml"
-    bindings.write_text(
-        bindings.read_text(encoding="utf-8") + f"      stop_loss_bp: {STOP_LOSS_BP}\n",
-        encoding="utf-8",
-    )
+    _rebind(bindings, "stop_loss_bp", stop_bp)
+    _rebind(bindings, "take_profit_bp", target_bp)
     absolute = REPO_ROOT / BROKER_PROFILE_REL.removeprefix("../../../")
     for name in ("broker_scopes.yaml", "RENDER.yaml"):
         path = tree / name
@@ -135,17 +108,27 @@ def _position_tree(root: Path) -> Path:
 
 @pytest.fixture(scope="module")
 def enabled(tmp_path_factory: pytest.TempPathFactory) -> rp.ReplayResult:
-    """포지션을 켠 트리를 합성 봉으로 한 번 리플레이한 결과(모듈 전체가 공유)."""
-    tree = _position_tree(tmp_path_factory.mktemp("position-tree"))
+    """출하 트리 — 두 임계값만 이 프레임에서 손절이 걸리는 폭으로 좁힌 사본."""
+    tree = _narrowed_tree(
+        tmp_path_factory.mktemp("position-tree"),
+        stop_bp=TIGHT_STOP_LOSS_BP,
+        target_bp=UNREACHABLE_TAKE_PROFIT_BP,
+    )
     return rp.replay(tree, symbol=SYMBOL, bars=_frame(), min_bars_per_day=0)
 
 
 @pytest.fixture(scope="module")
-def disabled() -> rp.ReplayResult:
-    """같은 봉으로 출하(꺼진) 트리를 리플레이한 결과 — 비교의 기준선."""
+def shipped() -> rp.ReplayResult:
+    """임계값까지 **출하 그대로** 돌린 결과 — 리플레이가 읽는 것이 그 값임을 본다."""
     return rp.replay(
-        "cp3-setup-d-stock-000660", symbol=SYMBOL, bars=_frame(), min_bars_per_day=0
+        SHIPPED_TREE.name, symbol=SYMBOL, bars=_frame(), min_bars_per_day=0
     )
+
+
+@pytest.fixture(scope="module")
+def disabled() -> rp.ReplayResult:
+    """포지션을 켜지 않은 출하 트리를 같은 봉으로 — 꺼진 경로의 기준선."""
+    return rp.replay(OFF_TREE, symbol=OFF_SYMBOL, bars=_frame(), min_bars_per_day=0)
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +161,7 @@ def test_the_declared_stop_rule_can_fire_only_because_the_position_is_visible(
         "R2-EXIT-VWAP-REVERTED",
         "R3-EXIT-EOD",
         STOP_RULE_ID,
+        TARGET_RULE_ID,
     }
     held = [
         bar
@@ -190,8 +174,37 @@ def test_the_declared_stop_rule_can_fire_only_because_the_position_is_visible(
     for bar in stops:
         position = bar["position"]
         assert position["side"] == "LONG"
-        assert position["unrealized_bp"] <= STOP_LOSS_BP
+        assert position["unrealized_bp"] <= TIGHT_STOP_LOSS_BP
     assert all(bar.get("position_source") == rp.SIMULATED_MODE for bar in enabled.bars)
+
+
+def test_the_guarded_entry_never_fires_on_a_bar_that_already_holds(
+    enabled: rp.ReplayResult,
+) -> None:
+    """출하 R1 의 `side EQ "FLAT"` 가드 — 리플레이의 봉별 포지션으로 읽은 그대로."""
+    entries = [
+        bar for bar in enabled.bars if bar.get("decision_rule_id") == "R1-ENTRY-LONG"
+    ]
+    assert entries, "진입이 없으면 가드를 시험하지 못한다"
+    for bar in entries:
+        assert (bar.get("position") or {}).get("side") == "FLAT", bar["time_kst"]
+
+
+def test_the_shipped_bounds_are_what_the_shipped_tree_replays_with(
+    shipped: rp.ReplayResult,
+) -> None:
+    """임계값을 좁히지 않은 출하 트리도 포지션을 싣고, 발화한 청산은 출하 폭을 지킨다."""
+    bounds = shipped_bindings()
+    assert shipped.position_mode == rp.SIMULATED_MODE
+    for bar in shipped.bars:
+        rule_id = bar.get("decision_rule_id")
+        if rule_id not in (STOP_RULE_ID, TARGET_RULE_ID):
+            continue
+        unrealized_bp = bar["position"]["unrealized_bp"]
+        if rule_id == STOP_RULE_ID:
+            assert unrealized_bp <= bounds["stop_loss_bp"], bar["time_kst"]
+        else:
+            assert unrealized_bp >= bounds["take_profit_bp"], bar["time_kst"]
 
 
 def test_the_hypothetical_pnl_counts_exactly_the_simulated_fills(
