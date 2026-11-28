@@ -56,6 +56,24 @@ _PRIMARY_SYMBOL = "005930"
 _EXPERIMENT_A = "000660"  # Setup D LONG with the M2 probe binding OFF
 _EXPERIMENT_B = "005380"  # RSI / Williams %R reversion — its own strategy file
 
+#: The declared tenant list the trees are rendered from, and the two experiment ROLES in it.
+#: What a tree differs from 005930 in is decided by its ROLE, not by its symbol, so the
+#: declarations below are keyed by role and the role of each shipped tree is read off this
+#: list — a SECOND tenant of either role is then classified by the same row, which is what
+#: "adding a symbol is one list line" has to mean here as well.
+_TENANT_LIST = _REPO_ROOT / "config" / "tos_stock_tenants" / "TENANTS.yaml"
+_ROLE_A = "experiment-a"
+_ROLE_B = "experiment-b"
+
+
+def _declared_roles() -> dict[str, str]:
+    """``symbol -> role``, from the list the renderer itself reads."""
+    raw = yaml.safe_load(_TENANT_LIST.read_text(encoding="utf-8"))
+    return {str(entry["symbol"]): str(entry["role"]) for entry in raw["tenants"]}
+
+
+_ROLE_OF = _declared_roles()
+
 #: 실험 A's two declared position exits (P4 S4). The ids are read back off the shipped file
 #: by `test_experiment_a_rule_order_*`, so a renamed rule goes red rather than untested.
 _STOP_RULE_ID = "R5-EXIT-STOP-LOSS"
@@ -95,11 +113,11 @@ _DIFFERS: dict[str, frozenset[str] | None] = {
     ),
 }
 
-#: What ONE sibling differs in because of its role. An entry here REPLACES the file's
-#: :data:`_DIFFERS` row for that symbol, so a role change has to be written down twice:
-#: once as the config edit and once here.
-_DIFFERS_BY_SYMBOL: dict[str, dict[str, frozenset[str] | None]] = {
-    _EXPERIMENT_A: {
+#: What a sibling differs in because of its ROLE. An entry here REPLACES the file's
+#: :data:`_DIFFERS` row for every tenant of that role, so a role change has to be written
+#: down twice: once as the config edit and once here.
+_DIFFERS_BY_ROLE: dict[str, dict[str, frozenset[str] | None]] = {
+    _ROLE_A: {
         # P4 S4 (`docs/plans/2026-11-27-tos-p4-position-fields-plan.md` §3): this tenant is
         # the first to declare stop-loss / take-profit exits in YAML, so four of its files
         # move off 005930's. Each difference below is checked key-path by key-path, and the
@@ -140,7 +158,7 @@ _DIFFERS_BY_SYMBOL: dict[str, dict[str, frozenset[str] | None]] = {
         # Comment only — the static step count the budget is justified against (31 -> 51).
         "engine.yaml": frozenset(),
     },
-    _EXPERIMENT_B: {
+    _ROLE_B: {
         # A different strategy altogether, so the declaration, the field list its consumers
         # apply freshness bounds to, and the bindings are all its own. The policy IDENTITY
         # keys stay pinned as everywhere else — only the lists below them move.
@@ -163,9 +181,9 @@ _DIFFERS_BY_SYMBOL: dict[str, dict[str, frozenset[str] | None]] = {
     },
 }
 
-#: symbol -> (files the sibling has and 005930 does not, files 005930 has and it does not).
-_FILE_SET_DELTA: dict[str, tuple[frozenset[str], frozenset[str]]] = {
-    _EXPERIMENT_B: (
+#: role -> (files the sibling has and 005930 does not, files 005930 has and it does not).
+_FILE_SET_DELTA_BY_ROLE: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    _ROLE_B: (
         frozenset({"strategies/rsi_wr_reversion_long.strategy.yaml"}),
         frozenset({"strategies/setup_d_long.strategy.yaml"}),
     ),
@@ -206,13 +224,33 @@ def _covered(path: str, allowed: frozenset[str]) -> bool:
     return any(path == a or path.startswith(a + ".") for a in allowed)
 
 
+def _role(symbol: str) -> str:
+    """``symbol``'s declared role — a shipped tree with no list line is a failure."""
+    role = _ROLE_OF.get(symbol)
+    assert role is not None, f"{symbol}: a shipped tree with no line in {_TENANT_LIST}"
+    return role
+
+
+def _other_roles_symbols() -> tuple[str, ...]:
+    """Every shipped tree whose role is NOT experiment-a — the role that reads a position."""
+    found = tuple(
+        symbol for symbol in (_PRIMARY_SYMBOL, *_SIBLINGS) if _role(symbol) != _ROLE_A
+    )
+    assert (
+        found
+    ), "every shipped tree is experiment-a — the contrast below proves nothing"
+    return found
+
+
 def _declared_differences(symbol: str) -> dict[str, frozenset[str] | None]:
-    """The files ``symbol`` may differ in, with the role overrides applied."""
-    return {**_DIFFERS, **_DIFFERS_BY_SYMBOL.get(symbol, {})}
+    """The files ``symbol`` may differ in, with its role's overrides applied."""
+    return {**_DIFFERS, **_DIFFERS_BY_ROLE.get(_role(symbol), {})}
 
 
 def _expected_files(symbol: str) -> set[str]:
-    added, removed = _FILE_SET_DELTA.get(symbol, (frozenset(), frozenset()))
+    added, removed = _FILE_SET_DELTA_BY_ROLE.get(
+        _role(symbol), (frozenset(), frozenset())
+    )
     primary = _files(_STOCK)
     assert (
         removed <= primary
@@ -229,9 +267,28 @@ def test_three_stock_tenants_ship() -> None:
     assert all(symbol.isdigit() and len(symbol) == 6 for symbol in _SIBLINGS), _SIBLINGS
 
 
+def test_every_difference_declaration_is_keyed_by_a_declared_role() -> None:
+    """A renamed role must go red here, not silently stop classifying a tree's files.
+
+    The two tables above are keyed by role so a SECOND tenant of a role needs no new row.
+    That only holds while every key is a role the list actually declares and every shipped
+    tree has a line in it.
+    """
+    declared = set(yaml.safe_load(_TENANT_LIST.read_text(encoding="utf-8"))["roles"])
+    assert {_ROLE_A, _ROLE_B} <= declared, sorted(declared)
+    assert set(_DIFFERS_BY_ROLE) <= declared, sorted(set(_DIFFERS_BY_ROLE) - declared)
+    assert set(_FILE_SET_DELTA_BY_ROLE) <= declared, sorted(
+        set(_FILE_SET_DELTA_BY_ROLE) - declared
+    )
+    shipped = set(_SIBLINGS) | {_PRIMARY_SYMBOL}
+    assert shipped <= set(_ROLE_OF), sorted(shipped - set(_ROLE_OF))
+    assert _ROLE_OF[_EXPERIMENT_A] == _ROLE_A
+    assert _ROLE_OF[_EXPERIMENT_B] == _ROLE_B
+
+
 @pytest.mark.parametrize("symbol", _SIBLINGS)
 def test_a_sibling_tree_has_exactly_the_primary_trees_files(symbol: str) -> None:
-    """Same file set as 005930, except where :data:`_FILE_SET_DELTA` says otherwise."""
+    """Same file set as 005930, except where :data:`_FILE_SET_DELTA_BY_ROLE` says so."""
     assert _files(_tree(symbol)) == _expected_files(symbol)
 
 
@@ -240,7 +297,7 @@ def test_a_sibling_tree_has_exactly_the_primary_trees_files(symbol: str) -> None
 def test_every_file_is_a_byte_copy_or_differs_only_where_declared(
     name: str, symbol: str
 ) -> None:
-    _, removed = _FILE_SET_DELTA.get(symbol, (frozenset(), frozenset()))
+    _, removed = _FILE_SET_DELTA_BY_ROLE.get(_role(symbol), (frozenset(), frozenset()))
     if name in removed:
         assert not (
             _tree(symbol) / name
@@ -536,8 +593,9 @@ def test_experiment_a_declares_the_position_namespace_its_rules_read() -> None:
     marketfeed = yaml.safe_load((tree / "marketfeed.yaml").read_text(encoding="utf-8"))
     assert declared.bar_interval_ms == marketfeed["time_evaluate_closed_interval_ms"]
 
-    # 005930 and 005380 stay off, which is what keeps THEIR payload path byte-identical.
-    for symbol in (_PRIMARY_SYMBOL, _EXPERIMENT_B):
+    # Every tree of another role stays off, which is what keeps THEIR payload path
+    # byte-identical. Resolved by role, so a second tenant of either role is covered.
+    for symbol in _other_roles_symbols():
         assert load_position_context_config(_tree(symbol)) is None, symbol
 
 
@@ -707,9 +765,9 @@ def test_experiment_a_decides_nothing_when_the_position_namespace_is_absent(
     assert reverted.rationale.startswith("R2-EXIT-VWAP-REVERTED:")
 
 
-def test_experiment_a_is_the_only_tree_declaring_a_bp_bound() -> None:
+def test_only_the_experiment_a_role_declares_a_bp_bound() -> None:
     """A bound with no namespace, or a namespace with no bound, is the drift to catch."""
-    for symbol in (_PRIMARY_SYMBOL, _EXPERIMENT_B):
+    for symbol in _other_roles_symbols():
         document = yaml.safe_load(
             (_tree(symbol) / STRATEGY_BINDINGS_FILE_NAME).read_text(encoding="utf-8")
         )
