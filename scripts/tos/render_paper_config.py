@@ -102,6 +102,7 @@ __all__ = [
     "RenderManifest",
     "RenderResult",
     "Slot",
+    "apply_rules",
     "check",
     "load_manifest",
     "main",
@@ -1171,6 +1172,19 @@ def _apply_rules(config_dir: Path, rules: Iterable[Rule]) -> None:
             )
         lines[matches[0]] = rule.replacement
         path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def apply_rules(config_dir: Path, rules: Iterable[Rule]) -> None:
+    """The public name of :func:`_apply_rules`, for the other renderer in this directory.
+
+    ``scripts/tos/render_stock_tenant_trees.py`` (plan S6) renders the COMMITTED stock tenant
+    trees from one declared symbol list and applies its role patches through this function, so
+    "an anchor line matches EXACTLY ONCE or the render refuses" has one implementation for
+    both renderers. A delegating wrapper rather than a rename: :func:`render` keeps calling
+    the private name, which is what ``tests/unit/scripts/test_render_paper_config.py``
+    monkeypatches to prove a mid-render failure leaves no partial output.
+    """
+    _apply_rules(config_dir, rules)
 
 
 def _subprocess_env() -> dict[str, str]:

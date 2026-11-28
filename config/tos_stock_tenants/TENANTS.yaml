@@ -1,0 +1,67 @@
+# 주식 tenant 목록 — `config/tos_runtime/cp3-setup-d-stock-*` 트리는 전부 여기서 렌더된다.
+#
+# 렌더러: `scripts/tos/render_stock_tenant_trees.py`
+#   `python scripts/tos/render_stock_tenant_trees.py`           # 커밋본이 렌더 결과와 같은지
+#   `python scripts/tos/render_stock_tenant_trees.py --write`   # 커밋본을 다시 쓴다
+# 게이트: `tests/tools/test_tos_stock_tenant_render.py` (필수 체크 `tos-firewall`, 경로 게이팅
+#   없음 — README 만 손으로 고친 PR 도 걸린다).
+#
+# ⚠ 이 파일은 승인된 VALUE 파일이 아니다(`config/tos_runtime/decision_generations.yaml` 와
+#   같은 standing): 런타임이 읽지 않고, 배포값은 전부 기본 트리와 레이어 파일에 있다. 여기
+#   있는 것은 «어느 종목이 어떤 역할로 도는가» 하나다.
+#
+# ⚠ **종목 하나를 더하는 일이 이 파일 한 줄인 이유**(계획
+#   `docs/plans/2026-11-27-tos-p4-position-fields-plan.md` §4 S6). 기본 트리는 카나리아
+#   `cp3-setup-d-stock-005930` **그 자체**다(네 번째 사본이 아니다). 출하된 주식 트리는 모두
+#   그 트리에서 ① 아래 `occurrences` 가 적은 파일·횟수만큼 종목·종목명·전략 파일 리터럴을
+#   바꾸고 ② 역할의 레이어를 순서대로 덮은 결과다.
+#
+# ⚠ 트리 하나를 더하는 것으로 **끝이 아니다** — 종목 하나는 다음도 함께 필요하다(각자 자기
+#   목록이 있고, 그 목록들은 서로를 고정한다):
+#     * `tools/tos_cp3/runners/cp3_tenant_daily.sh::STOCK_SYMBOLS` (cron·러너)
+#     * `config/tos_probes/cp3-live-producer-stock-<종목>.yaml` (시세 생산자)
+#     * `config/tos_runtime/decision_generations.yaml` (지속 잎의 결정 계약 세대)
+#   `tests/tools/test_tos_stock_tenant_render.py` 가 이 목록과 `STOCK_SYMBOLS` 가 같은
+#   집합인지 본다 — 둘이 갈라지면 렌더된 트리를 아무도 돌리지 않거나 그 반대가 된다.
+
+schema: "tos-stock-tenants/1"
+
+base:
+  tree: "config/tos_runtime/cp3-setup-d-stock-005930"
+  symbol: "005930"
+  symbol_name: "삼성전자"
+  strategy_file: "strategies/setup_d_long.strategy.yaml"
+  # 기본 트리에서 각 리터럴이 나오는 파일과 **실측 횟수**. 여기 없는 파일에 하나라도 나오면
+  # 렌더가 거부한다(`verify_base_occurrences`) — 짧은 표가 안전한 이유가 그 스캔이다.
+  occurrences:
+    symbol:
+      README.md: 3
+      RENDER.yaml: 2
+      critical_input_policy.yaml: 2
+      fields.yaml: 1
+      venue_constraint_policy.yaml: 5
+    symbol_name:
+      README.md: 1
+    strategy_file:
+      README.md: 1
+      RENDER.yaml: 3
+
+layers_root: "config/tos_stock_tenants/layers"
+
+# 역할 = 덮는 레이어의 순서. `derived` 는 「카나리아에서 갈라져 나왔다」는 사실만 담고
+# (VCP 머리말·승인 줄), 실험 레이어가 그 위에 전략·필드·바인딩을 올린다.
+roles:
+  canary:
+    layers: []
+  experiment-a:
+    layers: ["derived", "experiment-a"]
+  experiment-b:
+    layers: ["derived", "experiment-b"]
+    strategy_file: "strategies/rsi_wr_reversion_long.strategy.yaml"
+
+# 종목 하나 = 한 줄. 이 블록은 파일 **맨 끝**에 둔다 — 줄 하나를 덧붙이는 것이 종목 추가의
+# 전부가 되게.
+tenants:
+  - {symbol: "005930", name: "삼성전자", role: "canary"}
+  - {symbol: "000660", name: "SK하이닉스", role: "experiment-a"}
+  - {symbol: "005380", name: "현대차", role: "experiment-b"}

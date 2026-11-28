@@ -1,0 +1,24 @@
+# CP-3 tenant (Setup D / LONG) — config-sourced 피연산자 바인딩.
+# 실험 A({{SYMBOL}}): Setup D LONG 만으로 돈다 — R1 진입(FLAT 일 때만) · R5 손절 · R6 목표 ·
+#                 R2 VWAP 복귀 · R3 EOD.
+# `m2_probe_entry_enabled: false` 이므로 R4-M2-PROBE-ENTRY-LONG 은 규칙 파일에 남아 있어도
+# 결코 발화하지 않는다(그 규칙의 셋째 비교가 `entry_window EQ config.m2_probe_entry_enabled`
+# 라서 진입창이 열린 바에서 true == false 가 되어 거짓).
+# 출처: docs/plans/2026-11-19-tos-usage-plan.md §4.1 표 · 운영자 결정 2026-11-19 §8-②
+#       「채택 — R4 는 005930 에만 남긴다」. 카나리아(005930)는 켠 채로 둔다
+#       (운영자 2026-11-18 「R4 프로브 진입 규칙은 켜둬」).
+# 손절·목표: docs/plans/2026-11-27-tos-p4-position-fields-plan.md §3 · §11 결정 3·7
+#       (S4 는 손절·목표만 — 시간 청산 없음). 두 값은 `capsule.position.unrealized_bp` 와
+#       비교되는 bp 이고, 그 값의 부호는 방향을 이미 반영한다(계획 §2 D2).
+# ⚠ 이 네 줄이 결정 계약을 바꾼다 — `config/tos_runtime/decision_generations.yaml` 의
+#   이 tenant 항목이 generation 3 으로 올라갔고, 이 잎은 재-genesis 해야 배포된다.
+strategies:
+  setup_d_long.strategy:
+    config_binding_version: cp3-b1b-bind-1
+    bindings:
+      z_entry_max_x1000: -1800
+      m2_probe_entry_enabled: false
+      # 손절 폭(bp, 음수) — R5 가 `unrealized_bp LE` 로 읽는다.
+      stop_loss_bp: -100
+      # 목표 폭(bp, 양수) — R6 가 `unrealized_bp GE` 로 읽는다.
+      take_profit_bp: 150
