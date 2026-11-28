@@ -951,6 +951,7 @@ def test_a_field_sized_quantity_below_the_floor_is_denied_never_raised() -> None
     result = _field_sized(_view(**{_RISK_UNIT_FIELD: 2000}))
 
     assert result.outcome is DerivationOutcome.DENIED
+    assert "yields a non-positive size" in (result.denial_reason or "")
     assert result.quantity is None
 
 
@@ -1001,10 +1002,16 @@ def test_declaring_both_a_fixed_risk_unit_and_a_field_key_denies() -> None:
     assert "declares both a fixed per_unit_risk" in (result.denial_reason or "")
 
 
-def test_a_flat_close_is_sized_from_the_held_position_not_the_risk_unit_field() -> None:
+@pytest.mark.parametrize(
+    "fixed_unit", [None, Decimal("50")], ids=["field_only", "both_declared"]
+)
+def test_a_flat_close_is_sized_from_the_held_position_not_the_risk_unit_field(
+    fixed_unit: Decimal | None,
+) -> None:
     """A declared risk-unit field must never be what refuses an exit (SAFETY line)."""
     envelope = _field_sized_envelope(
-        admitted_quantity_bases=frozenset({"RISK", FLAT_QUANTITY_BASIS})
+        per_unit_risk=fixed_unit,
+        admitted_quantity_bases=frozenset({"RISK", FLAT_QUANTITY_BASIS}),
     )
     result = _field_sized(
         None,

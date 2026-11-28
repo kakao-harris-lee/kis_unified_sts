@@ -157,6 +157,9 @@ def resolve_field_per_unit_risk(
     field_key = bound.per_unit_risk_field_key
     if field_key is None:
         return (envelope, None)
+    # SAFETY: a FLAT close is sized from the proven held position, never from this field, so NOTHING about the field — a missing value or a bound that also declares a fixed unit — may refuse it; refusing an exit over the risk unit it does not use would strand an open position with no declared way out
+    if quantity_basis == FLAT_QUANTITY_BASIS:
+        return (envelope, None)
     if bound.per_unit_risk is not None:
         return (
             None,
@@ -167,9 +170,6 @@ def resolve_field_per_unit_risk(
                 "widens the other (∅ fail-closed, design #34 §7)"
             ),
         )
-    # SAFETY: a FLAT close is sized from the proven held position, never from this field — refusing an exit because a risk-unit field went missing would strand an open position with no declared way out
-    if quantity_basis == FLAT_QUANTITY_BASIS:
-        return (envelope, None)
     if view is None:
         return (
             None,
