@@ -11,8 +11,12 @@ from typing import Any
 
 import pytest
 
-from shared.storage.market_data_store import ParquetMarketDataStore
+from shared.storage.market_data_store import (
+    MarketDataStoreError,
+    ParquetMarketDataStore,
+)
 from tools.tos_cp3 import ingest_session_bars as ing
+from tools.tos_cp3.live_producer.sinks import acquire_session_lock
 from tools.tos_cp3.produce_fields import DEFAULT_MIN_BARS_PER_DAY, load_bars
 
 # SAFETY: 분봉은 전부 합성이고 저장소는 전부 tmp_path 안이다 — 실제 시세나 호스트의 data/ · ~/.local/state/tos 를 끌어오면 이 공개 저장소의 고정본에 시세 데이터가 실린다
@@ -42,6 +46,11 @@ def _rows(
     ]
 
 
+def _pick(rows: list[dict[str, Any]], *indexes: int) -> list[dict[str, Any]]:
+    """같은 봉들의 부분집합 — 겹치는 분은 값이 글자 그대로 일치한다."""
+    return [rows[index] for index in indexes]
+
+
 def _session_store(
     root: Path, session: str, *, asset_class: str
 ) -> ParquetMarketDataStore:
@@ -59,9 +68,11 @@ def _data_root(tmp_path: Path) -> Path:
 
 
 def _listing(root: Path) -> dict[str, str]:
-    """경로 → 내용 해시. dry-run 이 정말 아무것도 바꾸지 않았는지 보는 눈."""
+    """경로 → 내용 해시 (잠금 파일 제외). 봉이 바뀌었는지 보는 눈."""
     found: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
+        if path.name == ing.INGEST_LOCK_NAME:
+            continue
         key = str(path.relative_to(root))
         found[key] = (
             hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "dir"
@@ -120,13 +131,14 @@ def test_tie_on_bar_count_takes_the_later_session(tmp_path: Path) -> None:
 
 
 def test_dry_run_writes_nothing(sessions: Path, tmp_path: Path) -> None:
-    """기본 동작은 dry-run — 디렉터리 목록도 파일 해시도 그대로다."""
+    """기본 동작은 dry-run — 목록도 해시도 그대로고 잠금 파일도 만들지 않는다."""
     data_root = _data_root(tmp_path)
     before = _listing(data_root)
     text, code = ing.run(sessions_root=sessions, data_root=data_root)
     assert code == 0
     assert ing.ACTION_WRITE in text
     assert _listing(data_root) == before
+    assert not (data_root / ing.INGEST_LOCK_NAME).exists()
 
 
 def test_write_then_second_run_is_a_no_op(sessions: Path, tmp_path: Path) -> None:
@@ -298,6 +310,186 @@ def test_dry_run_and_write_together_are_refused(sessions: Path, tmp_path: Path) 
         )
         == 2
     )
+
+
+def _one_day(
+    tmp_path: Path, *, session_rows: list[dict[str, Any]], held: list[dict]
+) -> tuple[Path, Path]:
+    """세션 하나 · 저장소에 이미 있는 하루 하나 — ``(세션 루트, 저장소 루트)``."""
+    root = tmp_path / "cp3-sessions"
+    _session_store(root, "stock-r1-20261126", asset_class="stock").append_minute_bars(
+        session_rows
+    )
+    data_root = _data_root(tmp_path)
+    ParquetMarketDataStore(root=data_root, asset_class="stock").append_minute_bars(held)
+    return root, data_root
+
+
+def test_a_candidate_missing_an_existing_minute_is_refused(tmp_path: Path) -> None:
+    """후보가 더 길어도 기존 분 하나를 빼먹으면 거부다 — 봉 수만 보면 그 분이 사라진다."""
+    full = _rows(STOCK, D25, 6)
+    root, data_root = _one_day(tmp_path, session_rows=full[:3], held=_pick(full, 0, 5))
+    before = _listing(data_root)
+
+    text, code = ing.run(
+        sessions_root=root, data_root=data_root, write=True, as_json=True
+    )
+    assert code == 2
+    (row,) = _rows_of(text)
+    assert row["action"] == f"{ing.REFUSED_PREFIX}{ing.EXISTING_DISAGREE}"
+    assert (row["candidate_bars"], row["existing_bars"]) == (3, 2)
+    assert (row["existing_missing"], row["existing_disagree"]) == (1, 0)
+    assert _listing(data_root) == before
+
+
+def test_an_agreeing_superset_is_written(tmp_path: Path) -> None:
+    """기존 분을 전부 담고 값이 같은 더 긴 사본은 쓴다 — 결과는 후보 그대로다."""
+    full = _rows(STOCK, D25, 3)
+    root, data_root = _one_day(tmp_path, session_rows=full, held=_pick(full, 0, 1))
+
+    text, code = ing.run(
+        sessions_root=root, data_root=data_root, write=True, as_json=True
+    )
+    assert code == 0
+    (row,) = _rows_of(text)
+    assert row["action"] == ing.ACTION_WRITE
+    assert (row["existing_missing"], row["existing_disagree"]) == (0, 0)
+
+    stored = ParquetMarketDataStore(root=data_root, asset_class="stock")
+    frame = stored.get_minute_bars(STOCK, start=D25, end=D25)
+    assert [stamp.to_pydatetime() for stamp in frame["datetime"]] == [
+        entry["datetime"] for entry in full
+    ]
+    for column in ("open", "high", "low", "close", "volume"):
+        assert list(frame[column]) == [entry[column] for entry in full]
+
+
+@pytest.mark.parametrize("column", ["open", "high", "low", "close", "volume"])
+def test_one_disagreeing_overlapping_cell_is_refused(
+    tmp_path: Path, column: str
+) -> None:
+    """겹치는 분 하나가 어긋나면 거부다 — 어느 쪽이 브로커 값인지 말할 수 없다."""
+    full = _rows(STOCK, D25, 3)
+    revised = {**full[1], column: full[1][column] + 1}
+    root, data_root = _one_day(tmp_path, session_rows=full, held=[full[0], revised])
+    before = _listing(data_root)
+
+    text, code = ing.run(
+        sessions_root=root, data_root=data_root, write=True, as_json=True
+    )
+    assert code == 2
+    (row,) = _rows_of(text)
+    assert row["action"] == f"{ing.REFUSED_PREFIX}{ing.EXISTING_DISAGREE}"
+    assert (row["existing_missing"], row["existing_disagree"]) == (0, 1)
+    assert _listing(data_root) == before
+
+
+def test_copies_that_disagree_with_each_other_are_counted_not_refused(
+    tmp_path: Path,
+) -> None:
+    """사본끼리 어긋난 분은 줄에 센다 — 고르는 규칙은 그대로고 거부하지 않는다."""
+    root = tmp_path / "cp3-sessions"
+    seed = _rows(STOCK, D25, 4)
+    _session_store(root, "stock-r1-20261125", asset_class="stock").append_minute_bars(
+        [seed[0], {**seed[1], "close": seed[1]["close"] + 0.05}, seed[2]]
+    )
+    _session_store(root, "stock-r1-20261126", asset_class="stock").append_minute_bars(
+        seed
+    )
+
+    text, code = ing.run(
+        sessions_root=root, data_root=_data_root(tmp_path), as_json=True
+    )
+    assert code == 0
+    (row,) = _rows_of(text)
+    assert row["session"] == "stock-r1-20261126"
+    assert row["action"] == ing.ACTION_WRITE
+    assert row["copy_disagree"] == 1
+    assert json.loads(text)["totals"]["copy_disagree"] == 1
+
+
+def test_a_session_whose_producer_holds_the_lock_is_skipped(tmp_path: Path) -> None:
+    """생산자가 세션 잠금을 쥐고 있으면 그 세션의 사본은 전부 건너뛴다."""
+    root = tmp_path / "cp3-sessions"
+    live = "stock-r1-20261126"
+    _session_store(root, live, asset_class="stock").append_minute_bars(
+        _rows(STOCK, D25, FULL_BARS)
+    )
+    _session_store(root, "stock-r1-20261125", asset_class="stock").append_minute_bars(
+        _rows(STOCK, D24, FULL_BARS)
+    )
+    handle = acquire_session_lock(root / live / "producer" / "market")
+    try:
+        text, code = ing.run(
+            sessions_root=root, data_root=_data_root(tmp_path), as_json=True
+        )
+    finally:
+        handle.close()
+
+    assert code == 0
+    document = json.loads(text)
+    assert document["skipped_sessions"] == [
+        {"session": live, "action": ing.SKIPPED_LIVE}
+    ]
+    assert _actions(text) == {(STOCK, D24.isoformat()): ing.ACTION_WRITE}
+
+
+def test_a_second_write_run_refuses_while_the_lock_is_held(
+    sessions: Path, tmp_path: Path
+) -> None:
+    """쓰기 실행은 저장소 잠금을 배타로 잡는다 — 겹치면 기다리지 않고 거부다."""
+    data_root = _data_root(tmp_path)
+    before = _listing(data_root)
+    handle = ing._ingest_lock(data_root)
+    try:
+        assert (
+            ing.main(
+                [
+                    "--sessions-root",
+                    str(sessions),
+                    "--data-root",
+                    str(data_root),
+                    "--write",
+                ]
+            )
+            == 2
+        )
+    finally:
+        handle.close()
+    assert _listing(data_root) == before
+
+
+def test_a_store_error_leaves_the_other_keys_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """한 칸이 저장소에 거부당해도 남은 칸은 쓰고, 거부당한 칸을 그 줄에 적는다."""
+    root = tmp_path / "cp3-sessions"
+    store = _session_store(root, "stock-r1-20261126", asset_class="stock")
+    store.append_minute_bars(_rows(STOCK, D24, FULL_BARS))
+    store.append_minute_bars(_rows(STOCK, D25, FULL_BARS))
+
+    original = ParquetMarketDataStore.replace_minute_day
+
+    def flaky(self: Any, symbol: str, trading_day: Any, rows: Any) -> int:
+        if trading_day == D24:
+            raise MarketDataStoreError("합성 고장")
+        return int(original(self, symbol, trading_day, rows))
+
+    monkeypatch.setattr(ParquetMarketDataStore, "replace_minute_day", flaky)
+
+    data_root = _data_root(tmp_path)
+    text, code = ing.run(
+        sessions_root=root, data_root=data_root, write=True, as_json=True
+    )
+    assert code == 2
+    assert _actions(text) == {
+        (STOCK, D24.isoformat()): f"{ing.REFUSED_PREFIX}{ing.STORE_ERROR}",
+        (STOCK, D25.isoformat()): ing.ACTION_WRITE,
+    }
+    assert "합성 고장" in text
+    stored = ParquetMarketDataStore(root=data_root, asset_class="stock")
+    assert len(stored.get_minute_bars(STOCK, start=D25, end=D25)) == FULL_BARS
+    assert stored.get_minute_bars(STOCK, start=D24, end=D24).empty
 
 
 def test_replay_can_load_the_ingested_day(sessions: Path, tmp_path: Path) -> None:

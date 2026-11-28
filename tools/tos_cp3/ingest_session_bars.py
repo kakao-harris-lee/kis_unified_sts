@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import sys
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
-from typing import Any, get_args
+from typing import IO, Any, get_args
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -30,8 +31,13 @@ __all__ = [
     "ACTION_SAME",
     "ACTION_WRITE",
     "DUPLICATE_DISAGREE",
+    "EXISTING_DISAGREE",
+    "INGEST_LOCK_NAME",
     "REFUSED_PREFIX",
     "SCHEMA",
+    "SESSION_LOCK_NAME",
+    "SKIPPED_LIVE",
+    "STORE_ERROR",
     "BarKey",
     "Candidate",
     "IngestRefusal",
@@ -65,6 +71,14 @@ ACTION_SAME = "same"
 ACTION_KEPT = "kept_existing"
 REFUSED_PREFIX = "refused:"
 DUPLICATE_DISAGREE = "duplicate_timestamps"
+EXISTING_DISAGREE = "existing_disagrees"
+STORE_ERROR = "store_error"
+
+SKIPPED_LIVE = "skipped:live"
+
+INGEST_LOCK_NAME = ".ingest-bars.lock"
+
+SESSION_LOCK_NAME = ".session.lock"
 
 MISSING = "-"
 
@@ -90,6 +104,7 @@ class SessionDir:
     day_key: str
     mtime: float
     market_root: Path
+    live: bool = False
 
     @property
     def rank(self) -> tuple[str, float, str]:
@@ -105,6 +120,7 @@ class Candidate:
     rank: tuple[str, float, str]
     bars: int
     frame: Any
+    copy_disagree: int = 0
 
 
 @dataclass(frozen=True)
@@ -116,10 +132,19 @@ class Row:
     candidate_bars: int
     existing_bars: int
     action: str
+    existing_missing: int = 0
+    existing_disagree: int = 0
+    copy_disagree: int = 0
+    detail: str = ""
 
     @property
     def refused(self) -> bool:
         return self.action.startswith(REFUSED_PREFIX)
+
+    @property
+    def has_candidate(self) -> bool:
+        """사본을 고른 줄인가 — 사본 자체를 거부한 줄에는 셀 수가 없다."""
+        return self.session != MISSING
 
     @property
     def resulting_bars(self) -> int:
@@ -143,6 +168,7 @@ class Plan:
     sessions: int
     rows: tuple[Row, ...]
     write: bool
+    skipped: tuple[str, ...] = ()
 
     @property
     def totals(self) -> dict[str, int]:
@@ -152,11 +178,14 @@ class Plan:
             ACTION_KEPT: 0,
             "refused": 0,
             "thin": 0,
+            "copy_disagree": 0,
         }
         for row in self.rows:
             counted["refused" if row.refused else row.action] += 1
             if row.thin:
                 counted["thin"] += 1
+            if row.copy_disagree:
+                counted["copy_disagree"] += 1
         return counted
 
     @property
@@ -185,6 +214,39 @@ def _looks_like_store(data_root: Path) -> bool:
     )
 
 
+def _producer_running(market_root: Path) -> bool:
+    """도는 생산자가 세션 잠금을 쥐고 있는가 — 기다리지 않고, 없으면 만들지 않는다."""
+    try:
+        handle = (market_root / SESSION_LOCK_NAME).open("r", encoding="utf-8")
+    except OSError:
+        return False
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    else:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+    finally:
+        handle.close()
+
+
+def _ingest_lock(data_root: Path) -> IO[str]:
+    """쓰기 실행의 배타 잠금 — 겹치면 기다리지 않고 거부한다."""
+    path = data_root / INGEST_LOCK_NAME
+    handle = path.open("a", encoding="utf-8")
+    try:
+        # SAFETY: 겹친 두 쓰기 실행은 replace_minute_day 가 같은 날 디렉터리를 지우는 사이에 서로의 part 파일을 지운다 — 기다리는 대신 비켜나야 반쯤 쓰인 하루가 남지 않는다
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        raise IngestRefusal(
+            f"{path}: 다른 수집 실행이 이 저장소를 쥐고 있다 ({exc}) — "
+            "그 실행이 끝난 뒤에 다시 돈다"
+        ) from exc
+    return handle
+
+
 def _session_dirs(sessions_root: Path) -> list[SessionDir]:
     """``<label>-YYYYMMDD`` 세션 디렉터리 전부 — 생산자 저장소를 쥔 것만."""
     try:
@@ -207,6 +269,7 @@ def _session_dirs(sessions_root: Path) -> list[SessionDir]:
                 day_key=matched.group("day"),
                 mtime=path.stat().st_mtime,
                 market_root=market_root,
+                live=_producer_running(market_root),
             )
         )
     return found
@@ -260,6 +323,24 @@ def _better(incumbent: Candidate | None, challenger: Candidate) -> bool:
     return challenger.rank > incumbent.rank
 
 
+Cells = dict[Any, set[tuple[Any, ...]]]
+
+
+def _cells(frame: Any) -> Cells:
+    """분 → 그 분에 실린 OHLCV 값들. 중복 분이 어긋나면 값이 둘 이상이다."""
+    found: Cells = {}
+    for record in frame[["datetime", *OHLCV_COLUMNS]].itertuples(index=False):
+        stamp, *values = record
+        found.setdefault(stamp, set()).add(tuple(values))
+    return found
+
+
+def _copy_disagreements(cells: Cells, pooled: Cells) -> int:
+    """고른 사본이 같은 칸의 다른 사본과 어긋나는 분 수."""
+    # SAFETY: 사본끼리 어긋나도 거부하지 않고 「봉이 많은 쪽, 같으면 나중 세션」(= 가장 나중 브로커 fetch)을 그대로 쓴다 — 브로커가 분봉을 정정하므로 거부는 멀쩡한 하루를 영구히 막고, 대신 어긋난 분 수를 줄마다 적어 조용히 고르지 않는다
+    return sum(1 for stamp in cells if len(pooled.get(stamp, set())) > 1)
+
+
 def collect(
     sessions_root: Path,
     *,
@@ -270,7 +351,11 @@ def collect(
     sessions = _session_dirs(sessions_root)
     chosen: dict[BarKey, Candidate] = {}
     refused: dict[BarKey, str] = {}
+    pooled: dict[BarKey, Cells] = {}
     for session in sessions:
+        if session.live:
+            # SAFETY: 도는 생산자의 세션은 아직 자라는 중이다 — 그 사본으로 결정하면 반쯤 쓰인 하루가 과거 저장소에 굳고, 생산자가 그 뒤에 쓴 분들은 다음 실행이 올 때까지 리플레이에 없다
+            continue
         for asset_class in ASSET_CLASSES:
             for code in _codes(session.market_root, asset_class):
                 for day, frame in _day_frames(
@@ -285,6 +370,9 @@ def collect(
                     if deduped is None:
                         refused[key] = DUPLICATE_DISAGREE
                         continue
+                    bucket = pooled.setdefault(key, {})
+                    for stamp, values in _cells(deduped).items():
+                        bucket.setdefault(stamp, set()).update(values)
                     challenger = Candidate(
                         session=session.name,
                         rank=session.rank,
@@ -295,15 +383,20 @@ def collect(
                         chosen[key] = challenger
     for key in refused:
         chosen.pop(key, None)
+    for key, candidate in list(chosen.items()):
+        chosen[key] = replace(
+            candidate,
+            copy_disagree=_copy_disagreements(_cells(candidate.frame), pooled[key]),
+        )
     return sessions, chosen, refused
 
 
-def _existing_bars(data_root: Path, keys: Sequence[BarKey]) -> dict[BarKey, int]:
-    """과거 저장소가 이미 쥔 봉 수 — 칸마다."""
+def _existing_cells(data_root: Path, keys: Sequence[BarKey]) -> dict[BarKey, Cells]:
+    """과거 저장소가 이미 쥔 분과 그 값 — 칸마다. 비었거나 없는 칸은 빠진다."""
     days_by_code: dict[tuple[AssetClass, str], list[date]] = {}
     for key in keys:
         days_by_code.setdefault((key.asset_class, key.code), []).append(key.day)
-    counted: dict[BarKey, int] = {}
+    held: dict[BarKey, Cells] = {}
     for (asset_class, code), days in days_by_code.items():
         # SAFETY: 코드 디렉터리가 없으면 읽지 않는다 — 저장소 리더는 그때 자산군 전체를 훑으므로, 세션이 처음 쥔 코드 하나가 수만 개 Parquet 를 한 질의에 읽어 이 호스트의 메모리를 먹는다
         if not (data_root / asset_class / TIMEFRAME / f"{CODE_PREFIX}{code}").is_dir():
@@ -312,9 +405,37 @@ def _existing_bars(data_root: Path, keys: Sequence[BarKey]) -> dict[BarKey, int]
         frame = store.get_minute_bars(code, start=min(days), end=max(days))
         if frame.empty:
             continue
+        wanted = set(days)
         for day, group in frame.groupby(frame["datetime"].dt.date, sort=True):
-            counted[BarKey(asset_class, code, day)] = int(group["datetime"].nunique())
-    return counted
+            if day in wanted:
+                held[BarKey(asset_class, code, day)] = _cells(group)
+    return held
+
+
+def _against_existing(held: Cells, candidate: Candidate) -> tuple[int, int, int]:
+    """``(후보에 없는 기존 분, 겹치는 분 중 어긋난 분, 후보가 새로 쥔 분)``."""
+    # SAFETY: 양쪽 모두 저장소 리더가 같은 _normalize_frame 으로 돌려준 값(OHLC float64 · volume int64)이므로 정확 일치로 비교한다 — 허용오차를 두면 정정된 봉이 「같다」로 통과해 조용히 덮인다
+    offered = _cells(candidate.frame)
+    missing = sum(1 for stamp in held if stamp not in offered)
+    disagree = sum(
+        1
+        for stamp, values in held.items()
+        if stamp in offered and offered[stamp] != values
+    )
+    added = sum(1 for stamp in offered if stamp not in held)
+    return missing, disagree, added
+
+
+def _action(held: Cells, *, missing: int, disagree: int, added: int) -> str:
+    """그 칸의 조치 — 기존 하루를 담고 있는 사본만 쓴다."""
+    if not held:
+        return ACTION_WRITE
+    # SAFETY: replace_minute_day 는 그 날 디렉터리를 먼저 지우므로 봉 수만 보고 쓰면 더 긴 다른 출처의 사본이 기존 분과 종가 봉을 어디에도 없는 채로 지운다 — 기존 분 전부를 담고 겹치는 분이 전부 같은 사본만 쓴다
+    if disagree or (missing and added):
+        return f"{REFUSED_PREFIX}{EXISTING_DISAGREE}"
+    if missing:
+        return ACTION_KEPT
+    return ACTION_WRITE if added else ACTION_SAME
 
 
 def plan(
@@ -328,10 +449,10 @@ def plan(
 ) -> Plan:
     """고른 사본을 저장소가 이미 쥔 것과 대어 보고 조치를 정한다."""
     keys = sorted({*chosen, *refused})
-    existing = _existing_bars(data_root, keys)
+    existing = _existing_cells(data_root, keys)
     rows: list[Row] = []
     for key in keys:
-        held = existing.get(key, 0)
+        held = existing.get(key, {})
         reason = refused.get(key)
         if reason is not None:
             rows.append(
@@ -339,26 +460,23 @@ def plan(
                     key=key,
                     session=MISSING,
                     candidate_bars=0,
-                    existing_bars=held,
+                    existing_bars=len(held),
                     action=f"{REFUSED_PREFIX}{reason}",
                 )
             )
             continue
         candidate = chosen[key]
-        # SAFETY: replace_minute_day 는 그 날 디렉터리를 먼저 지운다 — 봉 수를 보지 않고 쓰면 늦게 뜬(부분) 세션의 짧은 사본이 이미 온전한 하루를 지우고 복구할 원본이 없다
-        if candidate.bars > held:
-            action = ACTION_WRITE
-        elif candidate.bars == held:
-            action = ACTION_SAME
-        else:
-            action = ACTION_KEPT
+        missing, disagree, added = _against_existing(held, candidate)
         rows.append(
             Row(
                 key=key,
                 session=candidate.session,
                 candidate_bars=candidate.bars,
-                existing_bars=held,
-                action=action,
+                existing_bars=len(held),
+                action=_action(held, missing=missing, disagree=disagree, added=added),
+                existing_missing=missing,
+                existing_disagree=disagree,
+                copy_disagree=candidate.copy_disagree,
             )
         )
     return Plan(
@@ -367,14 +485,16 @@ def plan(
         sessions=len(sessions),
         rows=tuple(rows),
         write=write,
+        skipped=tuple(session.name for session in sessions if session.live),
     )
 
 
 def apply(
     plan_result: Plan, chosen: dict[BarKey, Candidate], *, data_root: Path
-) -> int:
-    """``write`` 줄만 저장소에 올린다. 올린 봉 수를 돌려준다."""
+) -> tuple[int, dict[BarKey, str]]:
+    """``write`` 줄만 올린다. ``(올린 봉 수, 저장소가 거부한 칸)``."""
     written = 0
+    failed: dict[BarKey, str] = {}
     for row in plan_result.rows:
         if row.action != ACTION_WRITE:
             continue
@@ -384,11 +504,26 @@ def apply(
                 row.key.code, row.key.day, chosen[row.key].frame
             )
         except MarketDataStoreError as exc:
-            raise IngestRefusal(
-                f"{row.key.asset_class} {row.key.code} {row.key.day}: "
-                f"저장소가 거부했다 ({exc})"
-            ) from exc
-    return written
+            # SAFETY: 칸은 서로 독립이므로 한 칸의 저장소 거부로 멈추지 않는다 — 멈추면 남은 칸은 쓰이지도 보고되지도 않고 운영자는 그날 무엇이 안 올라갔는지 로그에서 알 수 없다
+            failed[row.key] = str(exc)
+    return written, failed
+
+
+def _with_failures(plan_result: Plan, failed: dict[BarKey, str]) -> Plan:
+    """저장소가 거부한 칸을 그 줄에 적는다 — 종료코드도 따라 2 가 된다."""
+    rows = tuple(
+        (
+            replace(
+                row,
+                action=f"{REFUSED_PREFIX}{STORE_ERROR}",
+                detail=failed[row.key],
+            )
+            if row.key in failed and row.action == ACTION_WRITE
+            else row
+        )
+        for row in plan_result.rows
+    )
+    return replace(plan_result, rows=rows)
 
 
 def _cell(value: int, *, blank: bool) -> str:
@@ -399,12 +534,16 @@ def render_text(plan_result: Plan) -> str:
     """사람이 읽는 표 — 자산군마다 한 덩이, 끝에 합계."""
     mode = "write" if plan_result.write else "dry-run"
     lines = [
-        f"분봉 수집 ({mode}) · 세션 {plan_result.sessions} · "
-        f"칸 {len(plan_result.rows)}",
+        f"분봉 수집 ({mode}) · 세션 {plan_result.sessions} "
+        f"(건너뜀 {len(plan_result.skipped)}) · 칸 {len(plan_result.rows)}",
         f"세션 루트 {plan_result.sessions_root}",
         f"저장소   {plan_result.data_root}",
         "",
     ]
+    for name in plan_result.skipped:
+        lines.append(f"{name} — {SKIPPED_LIVE} (생산자가 세션 잠금을 쥐고 있다)")
+    if plan_result.skipped:
+        lines.append("")
     for asset_class in ASSET_CLASSES:
         rows = [row for row in plan_result.rows if row.key.asset_class == asset_class]
         if not rows:
@@ -418,19 +557,26 @@ def render_text(plan_result: Plan) -> str:
                     "세션".ljust(24),
                     "후보".rjust(6),
                     "기존".rjust(6),
+                    "결손".rjust(6),
+                    "어긋".rjust(6),
+                    "사본차".rjust(6),
                     "조치",
                 ]
             )
         )
         for row in rows:
+            unknown = not row.has_candidate
             lines.append(
                 " ".join(
                     [
                         row.key.code.ljust(10),
                         row.key.day.isoformat().ljust(10),
                         row.session.ljust(24),
-                        _cell(row.candidate_bars, blank=row.refused).rjust(6),
+                        _cell(row.candidate_bars, blank=unknown).rjust(6),
                         _cell(row.existing_bars, blank=False).rjust(6),
+                        _cell(row.existing_missing, blank=unknown).rjust(6),
+                        _cell(row.existing_disagree, blank=unknown).rjust(6),
+                        _cell(row.copy_disagree, blank=unknown).rjust(6),
                         row.action,
                     ]
                 )
@@ -444,6 +590,13 @@ def render_text(plan_result: Plan) -> str:
         f"{ACTION_KEPT} {totals[ACTION_KEPT]} · "
         f"refused {totals['refused']}"
     )
+    lines.append(f"사본끼리 어긋난 분이 있는 칸: {totals['copy_disagree']}")
+    for row in plan_result.rows:
+        if row.detail:
+            lines.append(
+                f"  {row.key.asset_class} {row.key.code} "
+                f"{row.key.day.isoformat()} — {row.detail}"
+            )
     thin = [row for row in plan_result.rows if row.thin]
     lines.append(
         f"리플레이 밀도 게이트({DEFAULT_MIN_BARS_PER_DAY}) 아래로 남는 날: {len(thin)}"
@@ -467,16 +620,25 @@ def render_json(plan_result: Plan) -> str:
         "data_root": str(plan_result.data_root),
         "sessions": plan_result.sessions,
         "min_bars_per_day": DEFAULT_MIN_BARS_PER_DAY,
+        "skipped_sessions": [
+            {"session": name, "action": SKIPPED_LIVE} for name in plan_result.skipped
+        ],
         "rows": [
             {
                 "asset_class": row.key.asset_class,
                 "code": row.key.code,
                 "day": row.key.day.isoformat(),
                 "session": row.session,
-                "candidate_bars": None if row.refused else row.candidate_bars,
+                "candidate_bars": row.candidate_bars if row.has_candidate else None,
                 "existing_bars": row.existing_bars,
+                "existing_missing": row.existing_missing if row.has_candidate else None,
+                "existing_disagree": (
+                    row.existing_disagree if row.has_candidate else None
+                ),
+                "copy_disagree": row.copy_disagree if row.has_candidate else None,
                 "resulting_bars": row.resulting_bars,
                 "action": row.action,
+                "detail": row.detail,
                 "thin": row.thin,
             }
             for row in plan_result.rows
@@ -513,17 +675,45 @@ def run(
             f"{resolved_data}: 분봉 저장소로 보이지 않는다 ({expected} 가 없다) — "
             "새 저장소를 여는 것이 맞다면 --init 을 준다"
         )
-    sessions, chosen, refused = collect(resolved_sessions, since=since, until=until)
-    plan_result = plan(
-        sessions,
+    if not write:
+        dry, _chosen = _planned(resolved_sessions, resolved_data, since, until, write)
+        return _render(dry, as_json=as_json)
+    resolved_data.mkdir(parents=True, exist_ok=True)
+    handle = _ingest_lock(resolved_data)
+    try:
+        plan_result, chosen = _planned(
+            resolved_sessions, resolved_data, since, until, write
+        )
+        _written, failed = apply(plan_result, chosen, data_root=resolved_data)
+        if failed:
+            plan_result = _with_failures(plan_result, failed)
+    finally:
+        handle.close()
+    return _render(plan_result, as_json=as_json)
+
+
+def _planned(
+    sessions_root: Path,
+    data_root: Path,
+    since: date | None,
+    until: date | None,
+    write: bool,
+) -> tuple[Plan, dict[BarKey, Candidate]]:
+    sessions, chosen, refused = collect(sessions_root, since=since, until=until)
+    return (
+        plan(
+            sessions,
+            chosen,
+            refused,
+            sessions_root=sessions_root,
+            data_root=data_root,
+            write=write,
+        ),
         chosen,
-        refused,
-        sessions_root=resolved_sessions,
-        data_root=resolved_data,
-        write=write,
     )
-    if write:
-        apply(plan_result, chosen, data_root=resolved_data)
+
+
+def _render(plan_result: Plan, *, as_json: bool) -> tuple[str, int]:
     text = render_json(plan_result) if as_json else render_text(plan_result)
     return text, plan_result.exit_code
 
@@ -533,7 +723,8 @@ def _parser() -> argparse.ArgumentParser:
         prog="tools.tos_cp3.ingest_session_bars",
         description=(
             "tenant 세션이 쥔 분봉을 과거 저장소로 모은다. 기본은 dry-run 이고, "
-            "쓰려면 --write 를 준다. 더 긴 하루를 더 짧은 하루로 덮지 않는다."
+            "쓰려면 --write 를 준다. 이미 있는 하루는 그 분을 전부 담고 겹치는 "
+            "분이 전부 같은 사본으로만 덮는다 — 봉 수만으로는 덮지 않는다."
         ),
     )
     parser.add_argument(
