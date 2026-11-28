@@ -10,6 +10,7 @@ from tos.dsl import PositionContext, PositionSide
 from tos.engine import DecisionTickPayload, EngineEvent, EventKind
 from tos.rcl import CapacityState
 from tos_runtime.compose._riskstate_wiring import build_position_context_reader
+from tos_runtime.marketfeed.ports import AbsentPositionContext, PositionContextReason
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.riskstate.close_bound import DurableEntryCloseBoundReader
 from tos_runtime.riskstate.position_context import (
@@ -59,6 +60,12 @@ def _reader(
         price_field_key=price_field_key,
         bar_interval_ms=bar_interval_ms,
     )
+
+
+def _held(reading: object) -> PositionContext:
+    """The context a read answered with — never an absence."""
+    assert isinstance(reading, PositionContext), reading
+    return reading
 
 
 def _view(*, seq: int, close: int):
@@ -129,10 +136,11 @@ def test_a_fresh_boot_with_no_entry_reads_as_proven_flat(
     runtime = _boot_synthetic(config_dir_with_risk_state, data_dir, custody_root)
     try:
         _reach_trusted(runtime)
-        context = _reader(runtime, config_dir_with_risk_state).read(
-            _view(seq=_LATER_SEQ, close=_LATER_CLOSE)
+        context = _held(
+            _reader(runtime, config_dir_with_risk_state).read(
+                _view(seq=_LATER_SEQ, close=_LATER_CLOSE)
+            )
         )
-        assert context is not None
         assert context.side is PositionSide.FLAT
         assert context.held_qty == 0
     finally:
@@ -157,12 +165,11 @@ def test_an_uncorroborated_entry_fill_leaves_the_namespace_absent(
         assert [state for _id, state in _reservations(runtime)] == [
             CapacityState.COMMITTED_UNBOUND
         ], _reservations(runtime)
-        assert (
-            _reader(runtime, config_dir_with_risk_state).read(
-                _view(seq=_LATER_SEQ, close=_LATER_CLOSE)
-            )
-            is None
+        absent = _reader(runtime, config_dir_with_risk_state).read(
+            _view(seq=_LATER_SEQ, close=_LATER_CLOSE)
         )
+        assert isinstance(absent, AbsentPositionContext), absent
+        assert absent.reason is PositionContextReason.READINGS_DISAGREE
     finally:
         _close_runtime(runtime)
 
@@ -189,8 +196,7 @@ def test_a_filled_entry_projects_a_held_context_the_recorded_tick_then_keeps(
 
         entry_quantity = _derived_quantity(runtime)
         reader = _reader(runtime, config_dir_with_risk_state)
-        context = reader.read(_view(seq=_LATER_SEQ, close=_LATER_CLOSE))
-        assert context is not None
+        context = _held(reader.read(_view(seq=_LATER_SEQ, close=_LATER_CLOSE)))
         assert context.side is PositionSide.LONG
         assert context.held_qty == entry_quantity
         assert context.entry_price == fx.CROSSING_CLOSE
@@ -207,7 +213,9 @@ def test_a_filled_entry_projects_a_held_context_the_recorded_tick_then_keeps(
 
         # SAFETY: the live ledger changes AFTER the tick and the recorded payload must not — that is the whole reason the context is computed before enqueue
         _seal_an_extra_unresolved_send(runtime)
-        assert reader.read(_view(seq=_LATER_SEQ + 1, close=_LATER_CLOSE)) is None
+        after = reader.read(_view(seq=_LATER_SEQ + 1, close=_LATER_CLOSE))
+        assert isinstance(after, AbsentPositionContext), after
+        assert after.reason is PositionContextReason.QUANTITY_UNSETTLED
         assert _stored_position_contexts(runtime) == [recorded]
     finally:
         _close_runtime(runtime)

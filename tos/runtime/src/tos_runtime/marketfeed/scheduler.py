@@ -21,9 +21,11 @@ from tos_runtime.evidence.store import SqliteEvidenceStore
 from tos_runtime.marketfeed.capsule import CapsuleIssuer
 from tos_runtime.marketfeed.policy import LoadedCriticalInputPolicy
 from tos_runtime.marketfeed.ports import (
+    AbsentPositionContext,
     DurableSnapshotStore,
     MonotonicAnchoredObservation,
     ObservationIntake,
+    PositionContextReason,
     RawObservation,
     TickOutcome,
     anchor_observation,
@@ -34,6 +36,7 @@ from tos_runtime.time.service import TrustworthyTimeService
 from tos_runtime.time.sources import MonotonicSource
 
 __all__ = [
+    "POSITION_CONTEXT_ABSENT_KIND",
     "MultiInstrumentRefused",
     "PassBudget",
     "PositionContextSource",
@@ -48,8 +51,10 @@ __all__ = [
 class PositionContextSource(Protocol):
     """The injected durable-evidence position projection (plan P4 §2 D1; stage S2)."""
 
-    def read(self, view: ContextValueView | None) -> PositionContext | None:
-        """This bar's proven position, or ``None`` when any part of it is not established."""
+    def read(
+        self, view: ContextValueView | None
+    ) -> PositionContext | AbsentPositionContext:
+        """This bar's proven position, or the reason it is not established."""
         ...
 
 
@@ -114,6 +119,9 @@ _MARKETFEED_QUEUED_UNTIL_RECOVERY_KIND = "MARKETFEED_QUEUED_UNTIL_RECOVERY"
 _MARKETFEED_FIELD_REFUSED_KIND = "MARKETFEED_FIELD_REFUSED"
 
 _MARKETFEED_PASS_OVERRUN_KIND = "MARKETFEED_PASS_OVERRUN"
+
+# SAFETY: without this row an enabled tenant whose position is unknown has every position rule false and NOTHING in evidence saying why — the operator cannot tell "waiting for a fill" from "the declared stop-loss is disabled by a store defect"
+POSITION_CONTEXT_ABSENT_KIND = "POSITION_CONTEXT_ABSENT"
 
 
 def _require_single_instrument(instruments: Sequence[str]) -> str:
@@ -201,6 +209,10 @@ class TickScheduler:
         self._after_pass = after_pass
         self._pass_budget = pass_budget
         self._position_context = position_context
+        self._last_position_reason: tuple[PositionContextReason, str | None] = (
+            PositionContextReason.PRESENT,
+            None,
+        )
         self._instrument = _require_single_instrument(instruments)
         self._instrument_class = instrument_class
         self._account = account
@@ -313,8 +325,9 @@ class TickScheduler:
         # SAFETY: the position is read HERE, before enqueue, and travels in the payload — boot replay re-derives decisions from the inbox row alone, so a read at evaluation time would see a different ledger after a restart, diverge, and halt that leaf for good
         if self._position_context is None:
             return payload
-        context = self._position_context.read(payload.value_view)
-        if context is None:
+        reading = self._position_context.read(payload.value_view)
+        self._record_position_reason(reading)
+        if isinstance(reading, AbsentPositionContext):
             return payload
         # SAFETY: a fresh payload, never model_copy(update=…) — that path skips validation, so a context whose digest does not bind its own content would reach the inbox and be trusted on the next boot as if the kernel had projected it
         return DecisionTickPayload(
@@ -323,7 +336,33 @@ class TickScheduler:
             time=payload.time,
             reference=payload.reference,
             value_view=payload.value_view,
-            position_context=context,
+            position_context=reading,
+        )
+
+    def _record_position_reason(
+        self, reading: PositionContext | AbsentPositionContext
+    ) -> None:
+        """One row per CHANGE of reason — the fill observer's own per-streak recording shape."""
+        if isinstance(reading, AbsentPositionContext):
+            reason, refusal, as_of = (
+                reading.reason,
+                reading.bound_refusal,
+                reading.as_of,
+            )
+        else:
+            reason, refusal, as_of = PositionContextReason.PRESENT, None, reading.as_of
+        if (reason, refusal) == self._last_position_reason:
+            return
+        self._last_position_reason = (reason, refusal)
+        self._evidence_store.append(
+            {
+                "instrument": self._instrument,
+                "reason": reason.value,
+                "bound_refusal": refusal,
+                "as_of_ms": as_of,
+            },
+            kind=POSITION_CONTEXT_ABSENT_KIND,
+            record_class=POSITION_CONTEXT_ABSENT_KIND,
         )
 
     def _record_field_refusals(

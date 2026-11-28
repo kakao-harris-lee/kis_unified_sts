@@ -32,11 +32,16 @@ from tos.rcl import (
 from tos.workload import RuntimeIdentity
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
+from tos_runtime.marketfeed.ports import AbsentPositionContext, PositionContextReason
 from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
 from tos_runtime.rcl.reservation_identity import permit_reservation_id
-from tos_runtime.riskstate.close_bound import DurableEntryCloseBoundReader
-from tos_runtime.riskstate.position import EvidencePositionReader
+from tos_runtime.riskstate.close_bound import (
+    CloseBoundRefusal,
+    DurableEntryCloseBoundReader,
+    EntryCloseBound,
+)
+from tos_runtime.riskstate.position import EvidencePositionReader, PositionObservation
 from tos_runtime.riskstate.position_context import (
     ENTRY_PRICE_BASIS_EXECUTION,
     ENTRY_PRICE_BASIS_ORDER,
@@ -326,8 +331,14 @@ def _seed_held_entry(
     _record_full_fill(store, attempt_id=_ENTRY_ATTEMPT, filled=quantity)
 
 
-def _held(context: PositionContext | None) -> PositionContext:
-    assert context is not None
+def _held(context: object) -> PositionContext:
+    assert isinstance(context, PositionContext), context
+    return context
+
+
+def _absent(context: object) -> AbsentPositionContext:
+    """The absence a read answered with — tests name the REASON, never just "no context"."""
+    assert isinstance(context, AbsentPositionContext), context
     return context
 
 
@@ -405,7 +416,11 @@ def test_an_unresolved_send_leaves_no_context(
         quantity="1",
         price=_BAR_PRICE,
     )
-    assert _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF)) is None
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.QUANTITY_UNSETTLED
+    assert absent.as_of == _BAR_AS_OF
 
 
 def test_a_reservation_that_is_not_a_consumed_position_leaves_no_context(
@@ -415,7 +430,10 @@ def test_a_reservation_that_is_not_a_consumed_position_leaves_no_context(
 ) -> None:
     """One outstanding non-consumed reservation is neither proven held nor proven flat."""
     _seed_held_entry(rcl_log, evidence_store, inbox, consumed=False)
-    assert _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF)) is None
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.READINGS_DISAGREE
 
 
 def test_an_unreadable_projection_is_not_flat(
@@ -426,7 +444,9 @@ def test_an_unreadable_projection_is_not_flat(
     """A bound refusal that means "could not read" must never be reported as FLAT."""
     reader = _reader(rcl_log, evidence_store, inbox)
     rcl_log.close()
-    assert reader.read(_view(as_of=_BAR_AS_OF)) is None
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.BOUND_REFUSED
+    assert absent.bound_refusal == CloseBoundRefusal.SCOPE_READ_FAILED.value
 
 
 def test_a_missing_seal_leaves_no_context(
@@ -434,9 +454,12 @@ def test_a_missing_seal_leaves_no_context(
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
 ) -> None:
-    """A proven holding with no sealed send has no entry price to divide by."""
+    """With no sealed send the fold holds nothing while the close bound still proves one."""
     _seed_held_entry(rcl_log, evidence_store, inbox, with_seal=False)
-    assert _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF)) is None
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.READINGS_DISAGREE
 
 
 def test_a_seal_outside_this_scope_leaves_no_context(
@@ -444,7 +467,7 @@ def test_a_seal_outside_this_scope_leaves_no_context(
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
 ) -> None:
-    """A seal whose instrument_key is another symbol's is not this scope's entry price."""
+    """A seal whose instrument_key is another symbol's is folded by neither reading."""
     _seed_held_entry(rcl_log, evidence_store, inbox, with_seal=False, quantity="1")
     _record_seal(
         evidence_store,
@@ -454,7 +477,10 @@ def test_a_seal_outside_this_scope_leaves_no_context(
         price=_ENTRY_PRICE,
         instrument="005930",
     )
-    assert _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF)) is None
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.READINGS_DISAGREE
 
 
 def test_a_missing_entry_bar_event_leaves_no_context(
@@ -462,9 +488,13 @@ def test_a_missing_entry_bar_event_leaves_no_context(
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
 ) -> None:
-    """Without the attempt -> event join there is no entry bar instant, so no bars_held."""
+    """The join is also what proves the entry fill, so its absence refuses the bound first."""
     _seed_held_entry(rcl_log, evidence_store, inbox, with_event=False)
-    assert _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF)) is None
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.BOUND_REFUSED
+    assert absent.bound_refusal == "ENTRY_FILL_UNPROVEN"
 
 
 @pytest.mark.parametrize("close", ["7015000", 7_015_000.5, True])
@@ -477,7 +507,8 @@ def test_a_price_field_that_is_not_an_admitted_int_leaves_no_context(
     """The bar price is the EXACT admitted integer or nothing (``admitted_shape_price_from_view``)."""
     _seed_held_entry(rcl_log, evidence_store, inbox)
     reader = _reader(rcl_log, evidence_store, inbox)
-    assert reader.read(_view(as_of=_BAR_AS_OF, close=close)) is None
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF, close=close)))
+    assert absent.reason is PositionContextReason.PRICE_FIELD_UNUSABLE
 
 
 def test_an_absent_price_field_leaves_no_context(
@@ -487,7 +518,8 @@ def test_an_absent_price_field_leaves_no_context(
 ) -> None:
     _seed_held_entry(rcl_log, evidence_store, inbox)
     reader = _reader(rcl_log, evidence_store, inbox)
-    assert reader.read(_view(as_of=_BAR_AS_OF, field_key="vwap")) is None
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF, field_key="vwap")))
+    assert absent.reason is PositionContextReason.PRICE_FIELD_UNUSABLE
 
 
 def test_an_absent_view_leaves_no_context(
@@ -495,8 +527,11 @@ def test_an_absent_view_leaves_no_context(
     evidence_store: SqliteEvidenceStore,
     inbox: SqliteEventInbox,
 ) -> None:
+    """No view at all: the reason still names the price field, and carries no bar instant."""
     _seed_held_entry(rcl_log, evidence_store, inbox)
-    assert _reader(rcl_log, evidence_store, inbox).read(None) is None
+    absent = _absent(_reader(rcl_log, evidence_store, inbox).read(None))
+    assert absent.reason is PositionContextReason.PRICE_FIELD_UNUSABLE
+    assert absent.as_of is None
 
 
 def test_a_non_integral_seal_price_leaves_no_context(
@@ -506,7 +541,10 @@ def test_a_non_integral_seal_price_leaves_no_context(
 ) -> None:
     """The seal's price is the view integer — a fractional one is refused, never rounded."""
     _seed_held_entry(rcl_log, evidence_store, inbox, price="7010000.5")
-    assert _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF)) is None
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.ENTRY_PRICE_UNUSABLE
 
 
 def test_the_broker_average_wins_when_it_scales_to_an_exact_integer(
@@ -598,7 +636,10 @@ def test_two_disagreeing_evidence_readings_leave_no_context(
         instrument=_INSTRUMENT,
     ).read()
     assert bound.proven and bound.remaining == Decimal("1")
-    assert reader.read(_view(as_of=_BAR_AS_OF)) is None
+    assert (
+        _absent(reader.read(_view(as_of=_BAR_AS_OF))).reason
+        is PositionContextReason.READINGS_DISAGREE
+    )
 
 
 def test_a_bar_older_than_its_own_entry_bar_leaves_no_context(
@@ -609,4 +650,166 @@ def test_a_bar_older_than_its_own_entry_bar_leaves_no_context(
     """The kernel refuses ``as_of < entry_as_of``; the reader turns that refusal into absence."""
     _seed_held_entry(rcl_log, evidence_store, inbox)
     reader = _reader(rcl_log, evidence_store, inbox)
-    assert reader.read(_view(as_of=_ENTRY_AS_OF - _BAR_MS, seq=2)) is None
+    absent = _absent(reader.read(_view(as_of=_ENTRY_AS_OF - _BAR_MS, seq=2)))
+    assert absent.reason is PositionContextReason.PROJECTION_REFUSED
+
+
+class _FixedObservation:
+    """A position-reader stand-in: the fold answers one fixed, fully settled net quantity."""
+
+    def __init__(self, confirmed_net: str) -> None:
+        self._net = Decimal(confirmed_net)
+
+    def observe(self) -> PositionObservation:
+        return PositionObservation(
+            scope_key=f"{_ACCOUNT}::{_INSTRUMENT}",
+            confirmed_net=self._net,
+            unknown_buy=Decimal(0),
+            unknown_sell=Decimal(0),
+            in_flight_buy=Decimal(0),
+            in_flight_sell=Decimal(0),
+            attempts_seen=1,
+        )
+
+
+def _proven_bound(*, entry: str = "1", closed: str = "0") -> EntryCloseBound:
+    """A proven CLOSE bound, so a test can drive the ENTRY-side path on its own."""
+    return EntryCloseBound(
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        entry_reservation_id="res-position-context",
+        entry_attempt_id=_ENTRY_ATTEMPT,
+        entry_quantity=Decimal(entry),
+        prior_closed=Decimal(closed),
+        rcl_writer_epoch=1,
+        rcl_last_seq=7,
+        refusal=None,
+    )
+
+
+def _entry_path_reader(
+    rcl_log: SqliteCommitLog,
+    store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+    *,
+    bound: EntryCloseBound,
+    confirmed_net: str,
+) -> EvidencePositionContextReader:
+    """The real reader with the two fold readings fixed — isolates the entry-side reasons."""
+    return EvidencePositionContextReader(
+        close_bound_reader=lambda: bound,
+        position_reader=_FixedObservation(confirmed_net),  # type: ignore[arg-type]
+        projection=SqliteReservationProjectionReader(rcl_log),
+        inbox=inbox,
+        evidence_store=store,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        price_field_key=_PRICE_FIELD,
+        bar_interval_ms=_BAR_MS,
+        scheme=_SCHEME,
+    )
+
+
+def test_two_seals_for_one_entry_attempt_leave_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """An ambiguous entry seal is not an entry price — the reader never picks one of two."""
+    for price in (_ENTRY_PRICE, _ENTRY_PRICE + 100):
+        _record_seal(
+            evidence_store,
+            attempt_id=_ENTRY_ATTEMPT,
+            side=_BUY,
+            quantity="1",
+            price=price,
+        )
+    reader = _entry_path_reader(
+        rcl_log,
+        evidence_store,
+        inbox,
+        bound=_proven_bound(),
+        confirmed_net="1",
+    )
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.ENTRY_SEAL_NOT_SOLE
+
+
+def test_an_entry_with_no_attempt_to_event_join_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """A proven, priced entry whose decision bar cannot be joined has no ``bars_held``."""
+    _record_seal(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        side=_BUY,
+        quantity="1",
+        price=_ENTRY_PRICE,
+    )
+    reader = _entry_path_reader(
+        rcl_log, evidence_store, inbox, bound=_proven_bound(), confirmed_net="1"
+    )
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.ENTRY_EVENT_MISSING
+
+
+def test_a_fully_closed_entry_that_is_still_outstanding_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Remaining 0 on a proven bound is no holding — and never a silently FLAT one either."""
+    reader = _entry_path_reader(
+        rcl_log,
+        evidence_store,
+        inbox,
+        bound=_proven_bound(entry="2", closed="2"),
+        confirmed_net="2",
+    )
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.HELD_QUANTITY_UNUSABLE
+
+
+def test_an_unreadable_evidence_store_is_a_named_store_failure(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """A store defect must look like a store defect, never like "waiting for a fill"."""
+    reader = _reader(rcl_log, evidence_store, inbox)
+    evidence_store.close()
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.STORE_READ_FAILED
+
+
+def test_an_unreadable_inbox_on_the_entry_join_is_a_named_store_failure(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """The same for the LATER reads: a dead inbox does not crash the tick loop."""
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    reader = _reader(rcl_log, evidence_store, inbox)
+    inbox.close()
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.STORE_READ_FAILED
+
+
+def test_a_programming_error_inside_the_reader_is_never_swallowed(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """The absence reasons cover durable rows only — our own bug must still surface."""
+
+    def _broken() -> EntryCloseBound:
+        raise AttributeError("a defect in our own code, not an unreadable row")
+
+    reader = _entry_path_reader(
+        rcl_log, evidence_store, inbox, bound=_proven_bound(), confirmed_net="1"
+    )
+    reader._close_bound_reader = _broken  # noqa: SLF001
+    with pytest.raises(AttributeError):
+        reader.read(_view(as_of=_BAR_AS_OF))
