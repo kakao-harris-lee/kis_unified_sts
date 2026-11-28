@@ -230,6 +230,39 @@ def test_the_golden_header_of_an_enabled_tree_names_the_position(
     assert header["position_round_trips"] == str(len(enabled.round_trips))
 
 
+def test_the_output_counts_the_decisions_live_may_not_reproduce(
+    enabled: rp.ReplayResult,
+) -> None:
+    """공백의 크기를 말로만 적지 않는다 — 다음 단계가 이 표에서 임계를 고른다."""
+    gap = enabled.live_gap
+    assert set(gap) == {rp.GAP_REENTRY_NEXT_BAR, rp.GAP_EXIT_FIRST_VISIBLE_BAR}
+    # 첫 보인 봉에서 닫힌 왕복은 왕복 전체의 부분집합이고, 재진입은 그 왕복 수를 넘지 않는다.
+    assert 0 <= gap[rp.GAP_EXIT_FIRST_VISIBLE_BAR] <= len(enabled.round_trips)
+    assert 0 <= gap[rp.GAP_REENTRY_NEXT_BAR] <= len(enabled.round_trips)
+    # 이 합성 경로는 청산 바로 다음 봉에서 다시 진입 창이 열린다 — 0 이면 세지 않은 것이다.
+    assert gap[rp.GAP_REENTRY_NEXT_BAR] > 0
+    text = rp.render_text(enabled)
+    assert f"{rp.LIVE_GAP_LABEL}: {rp.GAP_REENTRY_NEXT_BAR} " in text
+    assert "전송이 미결인 봉에 포지션 이름공간이 없어" in text
+    header = dict(rp.golden_header(enabled))
+    assert header[f"position_{rp.GAP_REENTRY_NEXT_BAR}"] == str(
+        gap[rp.GAP_REENTRY_NEXT_BAR]
+    )
+    assert header[f"position_{rp.GAP_EXIT_FIRST_VISIBLE_BAR}"] == str(
+        gap[rp.GAP_EXIT_FIRST_VISIBLE_BAR]
+    )
+
+
+def test_the_published_fill_model_line_carries_lives_absence_gap(
+    enabled: rp.ReplayResult,
+) -> None:
+    """머리 한 줄이 «라이브와 같다» 로 읽히면 다음 단계가 과대평가된 임계를 고른다."""
+    line = enabled.position_line
+    assert "전송이 미결인 동안" in line
+    assert "side EQ FLAT" in line
+    assert line in rp.render_text(enabled)
+
+
 # ---------------------------------------------------------------------------
 # 꺼진 트리 — 바이트 동일
 # ---------------------------------------------------------------------------
@@ -245,6 +278,7 @@ def test_an_off_tree_keeps_the_no_position_sentence_and_no_position_header(
     assert rp.NO_POSITION in text
     assert rp.SIMULATED_POSITION not in text
     assert "시뮬레이션 체결" not in text
+    assert rp.LIVE_GAP_LABEL not in text
     assert not [key for key, _value in rp.golden_header(disabled) if "position" in key]
 
 

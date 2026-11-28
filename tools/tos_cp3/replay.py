@@ -65,9 +65,12 @@ __all__ = [
     "BARS_CSV_COLUMNS",
     "FAKE_ACCOUNT",
     "FAKE_REVISION",
+    "GAP_EXIT_FIRST_VISIBLE_BAR",
+    "GAP_REENTRY_NEXT_BAR",
     "GOLDEN_COLUMNS",
     "GOLDEN_CONFIG_PATH",
     "GOLDEN_SCHEMA",
+    "LIVE_GAP_LABEL",
     "SIMULATED_MODE",
     "SIMULATED_POSITION",
     "SOURCE_ID",
@@ -142,6 +145,11 @@ JOURNAL_ONLY = "journal_only"
 #: 여기 다시 적는다.
 SIMULATED_MODE = "simulated"
 
+#: 점검이 내는 «라이브가 재현하지 못할 수 있는 결정» 두 수의 키. 같은 이유로(방화벽상
+#: ``tos/runtime/cp3/position_sim.py`` 를 import 할 수 없어) 여기 다시 적는다.
+GAP_REENTRY_NEXT_BAR = "reentry_next_bar"
+GAP_EXIT_FIRST_VISIBLE_BAR = "exit_first_visible_bar"
+
 NOT_AN_ORDER = (
     "리플레이는 신호만 본다 — 승인 · 예약 · venue 한도 · 시간 인정 같은 커널 단계는 "
     "지나지 않는다(계획 §6)."
@@ -153,6 +161,9 @@ NO_POSITION = (
 #: 포지션을 켠 트리에서 :data:`NO_POSITION` 자리에 들어가는 문장. 체결 모델 한 줄과
 #: «세션을 넘어 유지된다» 는 점검이 낸 문서에서 그대로 읽어 붙인다.
 SIMULATED_POSITION = "포지션을 시뮬레이션한다"
+#: 두 수가 세는 것 — 시뮬레이션에는 없고 라이브에는 있는 공백(:data:`SIMULATED_POSITION`
+#: 줄의 체결 모델 문장이 그 공백을 말한다).
+LIVE_GAP_LABEL = "라이브가 재현하지 못할 수 있는 결정"
 PNL_LABEL = "가상 손익(체결 가정)"
 
 
@@ -234,6 +245,16 @@ class ReplayResult:
         """시뮬레이션이 낸 왕복 — 가상 손익이 세는 바로 그 체결들."""
         raw = self.position.get("round_trips")
         return [dict(trip) for trip in raw] if isinstance(raw, list) else []
+
+    @property
+    def live_gap(self) -> dict[str, int]:
+        """시뮬레이션에 없고 라이브에 있는 공백의 크기 — 점검이 센 두 수."""
+        raw = self.position.get("live_gap")
+        source = raw if isinstance(raw, dict) else {}
+        return {
+            key: int(source.get(key) or 0)
+            for key in (GAP_REENTRY_NEXT_BAR, GAP_EXIT_FIRST_VISIBLE_BAR)
+        }
 
     @property
     def simulation(self) -> dict[str, Any] | None:
@@ -741,12 +762,19 @@ def _position_header(result: ReplayResult) -> tuple[tuple[str, str], ...]:
     facts = result.simulation
     if facts is None:
         return ()
+    gap = result.live_gap
     return (
         ("position", SIMULATED_MODE),
         ("position_price_field", str(facts.get("price_field_key"))),
         ("position_bar_interval_ms", str(facts.get("bar_interval_ms"))),
         ("position_held_qty", str(facts.get("held_qty"))),
         ("position_round_trips", str(len(result.round_trips))),
+        # SAFETY: 정답 머리는 공백의 크기도 적는다 — 「position simulated」만 적힌 머리는 그 표가 라이브와 같다는 주장으로 읽히고, 다음 단계가 그 표에서 손절·목표 임계를 고른다
+        (f"position_{GAP_REENTRY_NEXT_BAR}", str(gap[GAP_REENTRY_NEXT_BAR])),
+        (
+            f"position_{GAP_EXIT_FIRST_VISIBLE_BAR}",
+            str(gap[GAP_EXIT_FIRST_VISIBLE_BAR]),
+        ),
     )
 
 
@@ -1117,7 +1145,14 @@ def _round_trip_lines(result: ReplayResult) -> list[str]:
     """시뮬레이션이 낸 왕복 표 — 꺼진 트리에서는 한 줄도 나오지 않는다."""
     if result.simulation is None:
         return []
+    gap = result.live_gap
     lines = ["", f"시뮬레이션 체결 — 왕복 {len(result.round_trips)}"]
+    lines.append(
+        f"{LIVE_GAP_LABEL}: {GAP_REENTRY_NEXT_BAR} "
+        f"{gap[GAP_REENTRY_NEXT_BAR]} · {GAP_EXIT_FIRST_VISIBLE_BAR} "
+        f"{gap[GAP_EXIT_FIRST_VISIBLE_BAR]} — 라이브는 전송이 미결인 봉에 포지션 "
+        "이름공간이 없어 이 결정을 미루거나 내지 않는다"
+    )
     lines.append(
         " ".join(
             [
