@@ -99,8 +99,10 @@
 - 대상: `cp3-setup-d-stock-000660`(실험 A). 카나리아 005930 은 건드리지 않는다 — 그 트리는 전략이 아니라
   경로 생존을 잰다.
 - 규칙(순서가 뜻이다 — 위에서 첫 번째로 맞는 것):
-  1. 손절: `side NE FLAT` ∧ `unrealized_bp LE config.stop_loss_bp` → FLAT
-  2. 목표: `side NE FLAT` ∧ `unrealized_bp GE config.take_profit_bp` → FLAT
+  1. 손절: `side EQ LONG` ∧ `unrealized_bp LE config.stop_loss_bp` → FLAT
+  2. 목표: `side EQ LONG` ∧ `unrealized_bp GE config.take_profit_bp` → FLAT
+     (S4 리뷰에서 `NE FLAT` → `EQ LONG` 으로 좁혔다. 실제 순서는 R1 · 손절 · 목표 · R2 · R3 — R1 이 YAML 앵커를 정의한다.
+     확정값은 손절 −100bp · 목표 +150bp, 운영자 2026-11-28.)
   3. ~~시간: `side NE FLAT` ∧ `bars_held GE config.max_bars_held` → FLAT~~ — **첫 적용에서 뺀다**(§11 결정 3)
   4. 기존 R2(VWAP 복귀) · R3(EOD)
   5. 기존 R1 진입에 `side EQ FLAT` 을 더한다(지금은 capacity 단계가 대신 막는다 — 결정이 깨끗해진다)
