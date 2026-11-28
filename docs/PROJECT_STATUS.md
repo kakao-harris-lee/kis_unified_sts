@@ -51,8 +51,14 @@
   ([활용 계획](plans/2026-11-19-tos-usage-plan.md) §3 · 운용 규칙 U1~U6).
 - 끝난 것: `sts tos perf` · 종목별 운영 화면 · 카탈로그 `rsi`/`williams_r` 와 두 번째 전략 YAML ·
   리플레이(P3 — `sts tos replay` · CI 잡 `tos-replay-golden`, 2026-11-27).
-- 그다음: 손절·목표·수량(P4 — [계획](plans/2026-11-27-tos-p4-position-fields-plan.md), 착수 전). 순서는
-  [로드맵](plans/2026-11-11-tos-platform-roadmap.md) 과 활용 계획 §5.
+- 손절·목표·수량(P4 — [계획](plans/2026-11-27-tos-p4-position-fields-plan.md)): 구현 단계 S0–S6 은
+  2026-11-28 에 전부 머지됐다(#1190 · #1195 · #1196 · #1197 · #1198 · #1200). **남은 것은 관측이다** —
+  ① 000660 새 잎(generation 3)의 첫 부팅(2026-11-30), ② 보유 중 포지션 값이 실제로 실리는지,
+  ③ MOCK 에서 손절이 체결되는 날. 수량의 위험 단위 필드(`per_unit_risk_field_key`)는 **어느 트리도
+  켜지 않았다** — 켜는 PR 이 #1199 를 함께 닫는다. 선물 두 트리에 같은 규칙을 적용하는 일은 ①~③ 뒤다.
+- 주식 트리는 `config/tos_stock_tenants/TENANTS.yaml` 에서 렌더한다(생성물은 손으로 고치지 않는다 —
+  `python scripts/tos/render_stock_tenant_trees.py` 가 검사, `--write` 가 재생성).
+- 그다음: 성과 측정(P5). 순서는 [로드맵](plans/2026-11-11-tos-platform-roadmap.md) 과 활용 계획 §5.
 
 ## CI 가 막는 것
 
