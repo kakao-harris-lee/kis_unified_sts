@@ -500,10 +500,15 @@ cd $MAIN && PYTHONPATH=$MAIN CP3_EXPECT_ACCOUNT_FP=<같은 지문> \
   .venv/bin/python -m tools.tos_cp3.ops.mock_flatten <종목> \
   --transport-yaml $ST/cp3-setup-d-stock-<종목>-ops/kis_mock_transport.yaml; echo "rc=$?"
 # rc 0 = `<종목> flat` — 매도가 체결되고 잔고가 0 이 됐다(또는 애초에 0 이었다).
-# rc 1 = 브로커가 그 매도를 거부했다(`sell http … rt_cd …`) — 사유를 보고 다시.
+# rc 1 = 거부되었거나 읽지 못했다 — **stderr 를 읽을 것**. 브로커가 그 매도를 거부했거나
+#        (`sell http … rt_cd …` 가 stdout 에) 잔고를 못 읽었거나 전송이 실패했다
+#        (`tools/tos_cp3/ops/mock_flatten.py` 가 세 경우 모두 1 로 끝낸다).
 # rc 3 = 보냈지만 10×3 s 안에 0 이 되지 않았다 — 체결을 기다렸다가 ① 로 재확인한다.
 # rc 2 = 사전조건 거부. 보낸 것은 없다.
 # ⛔ 이 도구는 **모의 계좌 전용**이고 계좌 지문이 맞지 않으면 아무것도 보내지 않는다.
+# ⚠ ① 의 rc 3 이 **보유가 아니라 미체결 주문** 때문이었으면(`<종목> open orders [...]`)
+#   이 도구는 아무것도 취소하지 않는다 — 보유가 0 이므로 `rc 0 flat` 이라 답하고 끝난다.
+#   그 주문은 **모의투자 HTS 에서 손으로** 취소한다(런타임에 취소가 없다 · #948).
 ```
 
 **③ 잎을 보관한다.** 지우지 않는다 — append-only 증거다.
