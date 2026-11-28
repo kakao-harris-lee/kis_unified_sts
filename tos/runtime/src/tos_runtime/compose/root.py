@@ -28,10 +28,7 @@ from tos_runtime.compose._broker_posttrade_wiring import (
 from tos_runtime.compose._finalize_wiring import _finalize
 from tos_runtime.compose._held_position_wiring import HeldPositionBridge
 from tos_runtime.compose._kis_credential_wiring import KisCredentialSessionsCell
-from tos_runtime.compose._marketfeed_wiring import (
-    PositionEvidenceSeam,
-    build_tick_scheduler,
-)
+from tos_runtime.compose._marketfeed_wiring import build_tick_scheduler
 from tos_runtime.compose._operations_wiring import apply_operations_wiring
 from tos_runtime.compose._recovery_wiring import apply_recovery_barrier
 from tos_runtime.compose._release_wiring import apply_release_wiring
@@ -77,7 +74,10 @@ from tos_runtime.risk.aggregate import (
     AggregateRiskDecisionInputs,
 )
 from tos_runtime.risk.flow import ActionFlowDecisionInputs
-from tos_runtime.riskstate.close_bound import CloseAuthoritySource
+from tos_runtime.riskstate.close_bound import (
+    CloseAuthoritySource,
+    DurableEntryCloseBoundReader,
+)
 from tos_runtime.time.sources import (
     MonotonicSource,
 )
@@ -230,17 +230,18 @@ def compose_paper_runtime(
         trading_date_reader=trading_date_reader,
     )
 
-    position_evidence = PositionEvidenceSeam(
+    entry_close_bound_reader = DurableEntryCloseBoundReader(
         rcl_log=boot.rcl.rcl_log,
         evidence_store=boot.infra.evidence_store,
         projection=boot.risk.projection,
-        construction=construction,
-    )
+        account=construction.account,
+        instrument=construction.instrument,
+    ).read
     construction_stages = _build_construction_stages(
         construction,
         venue_service=venue_service,
         loaded_ocp=loaded_ocp,
-        entry_close_bound_reader=position_evidence.close_bound_reader,
+        entry_close_bound_reader=entry_close_bound_reader,
     )
     risk_providers = build_risk_state_providers(
         config_dir=config_dir,
@@ -400,7 +401,7 @@ def compose_paper_runtime(
                 else posttrade.held_position_bridge.cell.validate_consumed
             ),
             close_authority=_close_authority_for(transport_kind),
-            entry_close_bound_reader=position_evidence.close_bound_reader,
+            entry_close_bound_reader=entry_close_bound_reader,
         )
     composed.risk_state = risk_state_cell["service"]
     composed = apply_session_wiring(
@@ -454,7 +455,9 @@ def compose_paper_runtime(
         broker_scopes=boot.broker_scopes,
         runtime_identity=boot.identity,
         after_pass=with_authority_heartbeat(composed, fill_observer_pass(composed)),
-        position_evidence=position_evidence,
+        construction=construction,
+        reservation_projection=boot.risk.projection,
+        entry_close_bound_reader=entry_close_bound_reader,
     )
     composed = apply_operations_wiring(
         composed, projection_path=projection_path, backup_root=backup_root

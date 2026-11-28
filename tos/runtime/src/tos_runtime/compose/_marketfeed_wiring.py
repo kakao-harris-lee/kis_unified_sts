@@ -19,6 +19,7 @@ from tos_runtime.compose._kis_credential_wiring import (
     kis_mock_credential_session,
     kis_quote_pacing,
 )
+from tos_runtime.compose._riskstate_wiring import build_position_context_reader
 from tos_runtime.compose._types import ConstructionConfig
 from tos_runtime.custody.ports import CredentialCustody
 from tos_runtime.engine.driver import EngineDriver
@@ -37,17 +38,8 @@ from tos_runtime.marketfeed.time_projection import (
     _DELAY_BOUND_FIELDS,
     RuntimeTimeProjection,
 )
-from tos_runtime.rcl.log import SqliteCommitLog
 from tos_runtime.rcl.projection import ReservationProjectionReader
-from tos_runtime.riskstate.close_bound import (
-    DurableEntryCloseBoundReader,
-    EntryCloseBound,
-)
-from tos_runtime.riskstate.policies import (
-    ACTION_FLOW_POLICY_CONFIG_NAME,
-    load_action_flow_policy,
-)
-from tos_runtime.riskstate.position import EvidencePositionReader
+from tos_runtime.riskstate.close_bound import EntryCloseBound
 from tos_runtime.riskstate.position_context import EvidencePositionContextReader
 from tos_runtime.time.config import TrustworthyTimeConfig
 from tos_runtime.time.service import TrustworthyTimeService
@@ -65,7 +57,6 @@ __all__ = [
     "MarketFeedConfig",
     "MarketFeedConfigError",
     "PositionContextConfig",
-    "PositionEvidenceSeam",
     "build_tick_scheduler",
     "load_marketfeed_config",
     "load_position_context_config",
@@ -522,96 +513,51 @@ def _build_time_projection(
     )
 
 
-class PositionEvidenceSeam:
-    """One tenant scope's durable position readers, built once (plan P4 §2 D1; stage S2)."""
-
-    def __init__(
-        self,
-        *,
-        rcl_log: SqliteCommitLog,
-        evidence_store: SqliteEvidenceStore,
-        projection: ReservationProjectionReader,
-        construction: ConstructionConfig,
-    ) -> None:
-        """Bind the seam to this boot's durable stores and the scope ``construction`` names."""
-        self._evidence_store = evidence_store
-        self._projection = projection
-        self._construction = construction
-        self.close_bound_reader: Callable[[], EntryCloseBound] = (
-            DurableEntryCloseBoundReader(
-                rcl_log=rcl_log,
-                evidence_store=evidence_store,
-                projection=projection,
-                account=construction.account,
-                instrument=construction.instrument,
-            ).read
-        )
-
-    def position_context_reader(
-        self,
-        *,
-        config_dir: Path,
-        inbox: SqliteEventInbox,
-        bar_interval_ms: int,
-        scheme: CanonicalizationScheme,
-    ) -> EvidencePositionContextReader:
-        """The tick-time projection — the price field is the ORDER's own, never a second key."""
-        construction = self._construction
-        price_field_key = construction.price_field_key
-        if price_field_key is None:
-            raise MarketFeedConfigError(
-                f"{config_dir}: {_POSITION_CONTEXT_KEY}.enabled is true but "
-                "construction.yaml declares no price_field_key — the bar price a position's "
-                "unrealized figure is taken from must be the SAME admitted value the order's "
-                "limit price is; refusing to boot"
-            )
-        buy_token, sell_token = load_action_flow_policy(
-            config_dir / ACTION_FLOW_POLICY_CONFIG_NAME, scheme=scheme
-        ).side_tokens
-        return EvidencePositionContextReader(
-            close_bound_reader=self.close_bound_reader,
-            position_reader=EvidencePositionReader(
-                self._evidence_store,
-                account=construction.account,
-                instrument=construction.instrument,
-                buy_side_token=buy_token,
-                sell_side_token=sell_token,
-            ),
-            projection=self._projection,
-            inbox=inbox,
-            evidence_store=self._evidence_store,
-            account=construction.account,
-            instrument=construction.instrument,
-            price_field_key=price_field_key,
-            bar_interval_ms=bar_interval_ms,
-            scheme=scheme,
-        )
-
-
 def _position_context_source(
     config: MarketFeedConfig,
-    seam: PositionEvidenceSeam | None,
     *,
     config_dir: Path,
     inbox: SqliteEventInbox,
+    evidence_store: SqliteEvidenceStore,
     scheme: CanonicalizationScheme,
+    construction: ConstructionConfig | None,
+    reservation_projection: ReservationProjectionReader | None,
+    entry_close_bound_reader: Callable[[], EntryCloseBound] | None,
 ) -> EvidencePositionContextReader | None:
     """The tick-time position projection this tree turned ON, or ``None`` when it did not."""
     declared = config.position_context
     if declared is None or not declared.enabled:
         return None
-    if seam is None:
+    if (
+        construction is None
+        or reservation_projection is None
+        or entry_close_bound_reader is None
+    ):
         raise MarketFeedConfigError(
             f"{config_dir}: {_POSITION_CONTEXT_KEY}.enabled is true but this compose passed no "
-            "position-evidence seam — the namespace would be silently absent and every rule "
-            "reading it permanently false; refusing to boot"
+            "position evidence (scope, reservation projection, CLOSE-bound reader) — the "
+            "namespace would be silently absent and every rule reading it permanently false; "
+            "refusing to boot"
+        )
+    price_field_key = construction.price_field_key
+    if price_field_key is None:
+        raise MarketFeedConfigError(
+            f"{config_dir}: {_POSITION_CONTEXT_KEY}.enabled is true but construction.yaml "
+            "declares no price_field_key — the bar price a position's unrealized figure is "
+            "taken from must be the SAME admitted value the order's limit price is; refusing "
+            "to boot"
         )
     assert declared.bar_interval_ms is not None
-    return seam.position_context_reader(
+    return build_position_context_reader(
         config_dir=config_dir,
-        inbox=inbox,
-        bar_interval_ms=declared.bar_interval_ms,
         scheme=scheme,
+        construction=construction,
+        evidence_store=evidence_store,
+        inbox=inbox,
+        projection=reservation_projection,
+        close_bound_reader=entry_close_bound_reader,
+        price_field_key=price_field_key,
+        bar_interval_ms=declared.bar_interval_ms,
     )
 
 
@@ -632,7 +578,9 @@ def build_tick_scheduler(
     runtime_identity: RuntimeIdentity,
     credential_sessions: KisCredentialSessions | None,
     after_pass: Callable[[], None] | None = None,
-    position_evidence: PositionEvidenceSeam | None = None,
+    construction: ConstructionConfig | None = None,
+    reservation_projection: ReservationProjectionReader | None = None,
+    entry_close_bound_reader: Callable[[], EntryCloseBound] | None = None,
 ) -> TickScheduler | None:
     """Build the tick scheduler, or ``None`` when this wave is not configured (module docstring)."""
     config_path = config_dir / MARKETFEED_CONFIG_NAME
@@ -678,9 +626,12 @@ def build_tick_scheduler(
         pass_budget=_pass_budget(config, monotonic),
         position_context=_position_context_source(
             config,
-            position_evidence,
             config_dir=config_dir,
             inbox=inbox,
+            evidence_store=evidence_store,
             scheme=scheme,
+            construction=construction,
+            reservation_projection=reservation_projection,
+            entry_close_bound_reader=entry_close_bound_reader,
         ),
     )

@@ -9,11 +9,9 @@ import pytest
 from tos.dsl import PositionContext, PositionSide
 from tos.engine import DecisionTickPayload, EngineEvent, EventKind
 from tos.rcl import CapacityState
-from tos_runtime.compose._marketfeed_wiring import (
-    MarketFeedConfigError,
-    PositionEvidenceSeam,
-)
+from tos_runtime.compose._riskstate_wiring import build_position_context_reader
 from tos_runtime.rcl.projection import SqliteReservationProjectionReader
+from tos_runtime.riskstate.close_bound import DurableEntryCloseBoundReader
 from tos_runtime.riskstate.position_context import (
     ENTRY_PRICE_BASIS_ORDER,
     EvidencePositionContextReader,
@@ -40,16 +38,26 @@ _LATER_CLOSE = fx.CROSSING_CLOSE + 4_499
 def _reader(
     runtime, config_dir: Path, *, bar_interval_ms: int = _BAR_MS
 ) -> EvidencePositionContextReader:
-    return PositionEvidenceSeam(
-        rcl_log=runtime.rcl_log,
-        evidence_store=runtime.evidence_store,
-        projection=SqliteReservationProjectionReader(runtime.rcl_log),
-        construction=fx.construction_config(),
-    ).position_context_reader(
+    construction = fx.construction_config()
+    projection = SqliteReservationProjectionReader(runtime.rcl_log)
+    price_field_key = construction.price_field_key
+    assert price_field_key is not None
+    return build_position_context_reader(
         config_dir=config_dir,
-        inbox=runtime.inbox,
-        bar_interval_ms=bar_interval_ms,
         scheme=fx.SCHEME,
+        construction=construction,
+        evidence_store=runtime.evidence_store,
+        inbox=runtime.inbox,
+        projection=projection,
+        close_bound_reader=DurableEntryCloseBoundReader(
+            rcl_log=runtime.rcl_log,
+            evidence_store=runtime.evidence_store,
+            projection=projection,
+            account=construction.account,
+            instrument=construction.instrument,
+        ).read,
+        price_field_key=price_field_key,
+        bar_interval_ms=bar_interval_ms,
     )
 
 
@@ -201,29 +209,5 @@ def test_a_filled_entry_projects_a_held_context_the_recorded_tick_then_keeps(
         _seal_an_extra_unresolved_send(runtime)
         assert reader.read(_view(seq=_LATER_SEQ + 1, close=_LATER_CLOSE)) is None
         assert _stored_position_contexts(runtime) == [recorded]
-    finally:
-        _close_runtime(runtime)
-
-
-def test_a_tree_without_a_price_field_key_cannot_build_the_reader(
-    config_dir_with_risk_state: Path, data_dir: Path, custody_root: Path
-) -> None:
-    """The bar price must be the ORDER's own admitted value — there is no second key to fall to."""
-    fx.write_band_strategy_file(config_dir_with_risk_state)
-    runtime = _boot_synthetic(config_dir_with_risk_state, data_dir, custody_root)
-    try:
-        seam = PositionEvidenceSeam(
-            rcl_log=runtime.rcl_log,
-            evidence_store=runtime.evidence_store,
-            projection=SqliteReservationProjectionReader(runtime.rcl_log),
-            construction=fx.construction_config(price_field_key=None),
-        )
-        with pytest.raises(MarketFeedConfigError, match="price_field_key"):
-            seam.position_context_reader(
-                config_dir=config_dir_with_risk_state,
-                inbox=runtime.inbox,
-                bar_interval_ms=_BAR_MS,
-                scheme=fx.SCHEME,
-            )
     finally:
         _close_runtime(runtime)

@@ -9,10 +9,15 @@ import pytest
 import yaml
 from tos_runtime.compose._marketfeed_wiring import (
     MARKETFEED_CONFIG_NAME,
+    MarketFeedConfig,
     MarketFeedConfigError,
+    _position_context_source,
     load_marketfeed_config,
     load_position_context_config,
 )
+from tos_runtime.riskstate.close_bound import EntryCloseBound
+
+from . import _fixtures as fx
 
 _BASE: dict[str, Any] = {
     "instruments": ["000660"],
@@ -107,6 +112,65 @@ def test_a_block_that_is_not_a_mapping_refuses_the_boot(
     _write(tmp_path, block)
     with pytest.raises(MarketFeedConfigError, match="must be a mapping"):
         load_position_context_config(tmp_path)
+
+
+_NEVER_READ = EntryCloseBound(
+    account="never-read",
+    instrument="never-read",
+    entry_reservation_id=None,
+    entry_attempt_id=None,
+    entry_quantity=None,
+    prior_closed=None,
+    rcl_writer_epoch=None,
+    rcl_last_seq=None,
+    refusal="NEVER_READ",
+)
+
+
+def _source(tmp_path: Path, block: Any = "ABSENT", **overrides: Any) -> Any:
+    """``_position_context_source`` over a loaded config, every seam absent unless overridden."""
+    config: MarketFeedConfig = load_marketfeed_config(_write(tmp_path, block))
+    kwargs: dict[str, Any] = {
+        "config_dir": tmp_path,
+        "inbox": None,
+        "evidence_store": None,
+        "scheme": fx.SCHEME,
+        "construction": None,
+        "reservation_projection": None,
+        "entry_close_bound_reader": None,
+    }
+    kwargs.update(overrides)
+    return _position_context_source(config, **kwargs)
+
+
+@pytest.mark.parametrize("block", ["ABSENT", {"enabled": False}])
+def test_a_disabled_tree_builds_no_source_and_needs_no_evidence(
+    tmp_path: Path, block: Any
+) -> None:
+    """Off is off — no reader is built, so nothing of the position path runs for that tree."""
+    assert _source(tmp_path, block) is None
+
+
+def test_an_enabled_tree_whose_compose_passed_no_evidence_refuses_the_boot(
+    tmp_path: Path,
+) -> None:
+    """A silently absent namespace makes every rule that reads it permanently false."""
+    with pytest.raises(MarketFeedConfigError, match="position evidence"):
+        _source(tmp_path, {"enabled": True, "bar_interval_ms": 60_000})
+
+
+def test_an_enabled_tree_with_no_construction_price_field_key_refuses_the_boot(
+    tmp_path: Path,
+) -> None:
+    """The bar price must be the ORDER's own admitted value — there is no second key to fall to."""
+    with pytest.raises(MarketFeedConfigError, match="price_field_key"):
+        _source(
+            tmp_path,
+            {"enabled": True, "bar_interval_ms": 60_000},
+            construction=fx.construction_config(price_field_key=None),
+            reservation_projection=object(),
+            entry_close_bound_reader=lambda: _NEVER_READ,
+        )
 
 
 def test_every_shipped_tree_declares_no_position_context_yet(tmp_path: Path) -> None:
