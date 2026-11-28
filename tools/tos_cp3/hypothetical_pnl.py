@@ -147,6 +147,67 @@ def _note(bar: Mapping[str, Any], kind: Any, reason: str | None) -> dict[str, An
     return note
 
 
+def _fill_bar(values: Mapping[str, Any], prefix: str) -> dict[str, Any]:
+    """One side of a simulated fill, in the bar shape :func:`_trade` reads."""
+    return {
+        "time_kst": values.get(f"{prefix}_time_kst"),
+        "decision_rule_id": values.get(f"{prefix}_rule_id"),
+    }
+
+
+def _fill_price(raw: Any, contract: Contract) -> Decimal | None:
+    """A simulated fill's integer price in index points, or ``None`` when unreadable."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        return Decimal(str(raw)) / Decimal(contract.price_scale)
+    except (InvalidOperation, ArithmeticError):
+        return None
+
+
+def _last_priced(
+    bars: Sequence[Mapping[str, Any]], contract: Contract
+) -> tuple[Mapping[str, Any], Decimal] | None:
+    """The last bar whose close is readable, for marking or forcing an open position."""
+    found: tuple[Mapping[str, Any], Decimal] | None = None
+    for bar in bars:
+        price = _price(bar, contract)
+        if price is not None:
+            found = (bar, price)
+    return found
+
+
+def _simulated_pairs(
+    fills: Mapping[str, Any],
+    *,
+    direction: str,
+    contract: Contract,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """``(trades, still-open entry)`` from the SIMULATION's own fills (plan P4 §4 S3)."""
+    trades: list[dict[str, Any]] = []
+    for trip in fills.get("round_trips") or []:
+        entry_price = _fill_price(trip.get("entry_price"), contract)
+        exit_price = _fill_price(trip.get("exit_price"), contract)
+        if entry_price is None or exit_price is None:
+            continue
+        trades.append(
+            _trade(
+                {"bar": _fill_bar(trip, "entry"), "price": entry_price},
+                _fill_bar(trip, "exit"),
+                exit_price,
+                direction,
+                contract,
+            )
+        )
+    raw_open = fills.get("open_entry")
+    if not isinstance(raw_open, Mapping):
+        return trades, None
+    open_price = _fill_price(raw_open.get("entry_price"), contract)
+    if open_price is None:
+        return trades, None
+    return trades, {"bar": _fill_bar(raw_open, "entry"), "price": open_price}
+
+
 def _not_an_engine_decision(bar: Mapping[str, Any]) -> str | None:
     """이 봉의 결정을 엔진이 낸 것으로 볼 수 없는 사유, 볼 수 있으면 ``None``.
 
@@ -170,6 +231,7 @@ def build_hypothetical_pnl(
     instrument: str | None = None,
     probe_rule_ids: frozenset[str] = frozenset(),
     session_ended: bool = True,
+    fills: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """진입 판단 봉과 다음 청산 판단 봉을 짝지어 «체결됐다면» 손익을 센다.
 
@@ -202,6 +264,11 @@ def build_hypothetical_pnl(
         session_ended: 그 세션이 끝났는지. 거짓이면 마지막까지 열린 포지션을
             닫지 않고 ``open_position`` 으로 낸다. 모르면 호출자가 거짓을
             준다 — 끝났다고 가정하면 장중에 가짜 청산이 기록된다.
+        fills: 포지션을 켠 트리의 **시뮬레이션이 낸 체결**
+            (``{"round_trips": [...], "open_entry": {...}}``). 주면 이 함수는
+            결정을 짝짓지 않고 그 체결을 그대로 센다 — 체결 모델이 둘이 되면
+            리플레이가 보여 주는 손절과 가상 손익이 서로 다른 거래를 말한다
+            (계획 §4 S3). 포지션을 켜지 않은 트리는 ``None`` 이고 출력은 그대로다.
 
     Returns:
         ``trades`` · ``totals`` · ``assumptions`` 를 담은 블록. 실현 손익과 같은
@@ -212,6 +279,23 @@ def build_hypothetical_pnl(
     skipped: list[dict[str, Any]] = []
     open_entry: dict[str, Any] | None = None
     last_priced: tuple[Mapping[str, Any], Decimal] | None = None
+
+    if fills is not None:
+        # SAFETY: 시뮬레이션이 낸 체결만 센다 — 같은 봉들을 여기서 다시 짝지으면 체결 모델이 둘이 되고, 리플레이가 보여 준 손절 봉과 합계의 거래가 서로 다른 것을 말한다
+        trades, open_entry = _simulated_pairs(
+            fills, direction=direction, contract=contract
+        )
+        return _document(
+            trades,
+            open_entry=open_entry,
+            last_priced=_last_priced(bars, contract),
+            unpriced=unpriced,
+            skipped=skipped,
+            direction=direction,
+            contract=contract,
+            instrument=instrument,
+            session_ended=session_ended,
+        )
 
     for bar in bars:
         price = _price(bar, contract)
@@ -243,6 +327,32 @@ def build_hypothetical_pnl(
             trades.append(_trade(open_entry, bar, price, direction, contract))
             open_entry = None
 
+    return _document(
+        trades,
+        open_entry=open_entry,
+        last_priced=last_priced,
+        unpriced=unpriced,
+        skipped=skipped,
+        direction=direction,
+        contract=contract,
+        instrument=instrument,
+        session_ended=session_ended,
+    )
+
+
+def _document(
+    trades: list[dict[str, Any]],
+    *,
+    open_entry: dict[str, Any] | None,
+    last_priced: tuple[Mapping[str, Any], Decimal] | None,
+    unpriced: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    direction: str,
+    contract: Contract,
+    instrument: str | None,
+    session_ended: bool,
+) -> dict[str, Any]:
+    """미청산 포지션 처리와 합계 — 결정 짝짓기와 시뮬레이션 체결이 공유하는 꼬리."""
     open_position: dict[str, Any] | None = None
     if open_entry is not None and last_priced is not None:
         bar, price = last_priced
