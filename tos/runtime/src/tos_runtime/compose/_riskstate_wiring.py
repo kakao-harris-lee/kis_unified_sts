@@ -217,6 +217,8 @@ def build_position_context_reader(
         instrument=construction.instrument,
         price_field_key=price_field_key,
         bar_interval_ms=bar_interval_ms,
+        buy_side_token=buy_token,
+        sell_side_token=sell_token,
         scheme=scheme,
     )
 

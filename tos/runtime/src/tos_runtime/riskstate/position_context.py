@@ -18,6 +18,7 @@ from tos.dsl import (
 )
 from tos.egressgw import admitted_shape_price_from_view
 from tos.engine import EventKind, InstrumentKey
+from tos.position import sign_of
 
 from tos_runtime.engine.inbox import SqliteEventInbox
 from tos_runtime.evidence.store import SqliteEvidenceStore
@@ -148,6 +149,8 @@ class EvidencePositionContextReader:
         instrument: str,
         price_field_key: str,
         bar_interval_ms: int,
+        buy_side_token: str,
+        sell_side_token: str,
         scheme: CanonicalizationScheme,
     ) -> None:
         """Bind this reader to one tenant scope's durable stores and its declared price field."""
@@ -159,6 +162,8 @@ class EvidencePositionContextReader:
         self._key = InstrumentKey(account=account, instrument=instrument)
         self._price_field_key = price_field_key
         self._bar_interval_ms = bar_interval_ms
+        self._buy_side_token = buy_side_token
+        self._sell_side_token = sell_side_token
         self._scheme = scheme
 
     def read(
@@ -238,13 +243,17 @@ class EvidencePositionContextReader:
         priced = self._entry_price(attempt_id)
         if isinstance(priced, _Reason):
             return _absent(priced, as_of=as_of)
+        entry_price, basis, seal_sign = priced
+        net_sign = 1 if confirmed_net > 0 else -1
+        # SAFETY: the published direction must be the one the ENTRY SEAL sent, not just the sign of the net — prior history that over-closed to -2 plus a BUY 1 entry nets to -1 with |net| == remaining, and taking the sign alone would publish SHORT for a long holding and flip the unrealized figure every declared stop-loss is compared against
+        if seal_sign != net_sign:
+            return _absent(_Reason.SIDE_DISAGREES_WITH_SEAL, as_of=as_of)
         entry_as_of = self._entry_as_of(attempt_id)
         if isinstance(entry_as_of, _Reason):
             return _absent(entry_as_of, as_of=as_of)
-        entry_price, basis = priced
         try:
             return project_position_context(
-                side=(PositionSide.LONG if confirmed_net > 0 else PositionSide.SHORT),
+                side=(PositionSide.LONG if net_sign > 0 else PositionSide.SHORT),
                 held_qty=int(remaining),
                 entry_price=entry_price,
                 entry_price_basis=basis,
@@ -266,8 +275,8 @@ class EvidencePositionContextReader:
         last_seq, _digest, _generation = self._evidence_store.last_committed()
         return -1 if last_seq is None else int(last_seq)
 
-    def _entry_seal(self, attempt_id: str) -> tuple[int, object] | _Reason:
-        """``(seq, outbound_price)`` of ``attempt_id``'s own in-scope ``SEND_SEALED`` row."""
+    def _entry_seal(self, attempt_id: str) -> tuple[int, object, object] | _Reason:
+        """``(seq, outbound_price, outbound_side)`` of ``attempt_id``'s own in-scope seal row."""
         matched = [
             (seq, payload["send_seal"])
             for seq, payload in _payload_rows(self._evidence_store, _SEND_SEALED_KIND)
@@ -279,7 +288,7 @@ class EvidencePositionContextReader:
         seq, seal = matched[0]
         if not isinstance(seal, dict) or not self._seal_in_scope(seal):
             return _Reason.ENTRY_SEAL_NOT_SOLE
-        return seq, seal.get("outbound_price")
+        return seq, seal.get("outbound_price"), seal.get("outbound_side")
 
     def _seal_in_scope(self, seal: dict[str, object]) -> bool:
         """Whether a seal's ``instrument_key`` is this reader's own scope."""
@@ -291,22 +300,30 @@ class EvidencePositionContextReader:
             self._key.instrument,
         )
 
-    def _entry_price(self, attempt_id: str) -> tuple[int, str] | _Reason:
-        """``(entry price in view scale, basis)`` — the broker average when it converts exactly."""
+    def _entry_price(self, attempt_id: str) -> tuple[int, str, int] | _Reason:
+        """``(entry price in view scale, basis, the seal's own direction sign)``."""
         try:
             seal = self._entry_seal(attempt_id)
             if isinstance(seal, _Reason):
                 return seal
-            seal_seq, raw_price = seal
+            seal_seq, raw_price, raw_side = seal
             order_price = _exact_positive_int(raw_price)
+            # SAFETY: the seal's side is mapped by the kernel's own sign_of against the SAME governed tokens the sealed-send fold uses — a second table here could call BUY long while the fold called it short
+            sign = sign_of(
+                raw_side if isinstance(raw_side, str) else None,
+                buy_side_token=self._buy_side_token,
+                sell_side_token=self._sell_side_token,
+            )
+            if sign is None:
+                return _Reason.SIDE_DISAGREES_WITH_SEAL
             if order_price is None:
                 return _Reason.ENTRY_PRICE_UNUSABLE
             executed = self._execution_price(attempt_id, seal_seq=seal_seq)
         except _UNREADABLE:
             return _Reason.STORE_READ_FAILED
         if executed is None:
-            return order_price, ENTRY_PRICE_BASIS_ORDER
-        return executed, ENTRY_PRICE_BASIS_EXECUTION
+            return order_price, ENTRY_PRICE_BASIS_ORDER, sign
+        return executed, ENTRY_PRICE_BASIS_EXECUTION, sign
 
     def _execution_price(self, attempt_id: str, *, seal_seq: int) -> int | None:
         """``avg_execution_price`` in VIEW scale, or ``None`` when absent or not exactly scaled."""

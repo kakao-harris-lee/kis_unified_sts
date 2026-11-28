@@ -271,6 +271,8 @@ def _reader(
         instrument=_INSTRUMENT,
         price_field_key=price_field_key,
         bar_interval_ms=bar_interval_ms,
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
         scheme=_SCHEME,
     )
 
@@ -706,6 +708,8 @@ def _entry_path_reader(
         instrument=_INSTRUMENT,
         price_field_key=_PRICE_FIELD,
         bar_interval_ms=_BAR_MS,
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
         scheme=_SCHEME,
     )
 
@@ -813,3 +817,78 @@ def test_a_programming_error_inside_the_reader_is_never_swallowed(
     reader._close_bound_reader = _broken  # noqa: SLF001
     with pytest.raises(AttributeError):
         reader.read(_view(as_of=_BAR_AS_OF))
+
+
+def test_a_net_sign_that_disagrees_with_the_entry_seal_leaves_no_context(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Reviewer's state: prior history over-closed to -2, then a BUY 1 entry nets to -1.
+
+    ``|net| == 1 == remaining``, so the two magnitudes agree and only the DIRECTION is
+    wrong — taking it from the sign alone would publish SHORT for a long entry.
+    """
+    _seed_held_entry(rcl_log, evidence_store, inbox)
+    for nth in (1, 2):
+        orphan = f"attempt-position-context-orphan-close-{nth}"
+        _record_seal(
+            evidence_store,
+            attempt_id=orphan,
+            side=_SELL,
+            quantity="1",
+            price=_BAR_PRICE,
+        )
+        _record_full_fill(evidence_store, attempt_id=orphan, filled="1")
+    reader = _reader(rcl_log, evidence_store, inbox)
+    bound = DurableEntryCloseBoundReader(
+        rcl_log=rcl_log,
+        evidence_store=evidence_store,
+        projection=SqliteReservationProjectionReader(rcl_log),
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+    ).read()
+    observation = EvidencePositionReader(
+        evidence_store,
+        account=_ACCOUNT,
+        instrument=_INSTRUMENT,
+        buy_side_token=_BUY,
+        sell_side_token=_SELL,
+    ).observe()
+    assert bound.proven and bound.remaining == Decimal("1")
+    assert observation.confirmed_net == Decimal("-1")
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.SIDE_DISAGREES_WITH_SEAL
+
+
+def test_an_entry_seal_whose_side_is_no_governed_token_is_unsettled_quantity(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """An unmapped side token makes the fold itself call the quantity unknown, not a direction."""
+    _seed_held_entry(rcl_log, evidence_store, inbox, side="LONG_OPEN")
+    absent = _absent(
+        _reader(rcl_log, evidence_store, inbox).read(_view(as_of=_BAR_AS_OF))
+    )
+    assert absent.reason is PositionContextReason.QUANTITY_UNSETTLED
+
+
+def test_an_unmapped_seal_side_alone_still_publishes_nothing(
+    rcl_log: SqliteCommitLog,
+    evidence_store: SqliteEvidenceStore,
+    inbox: SqliteEventInbox,
+) -> None:
+    """Belt to the fold's braces: even with both magnitudes agreed, an unmapped side refuses."""
+    _record_seal(
+        evidence_store,
+        attempt_id=_ENTRY_ATTEMPT,
+        side="LONG_OPEN",
+        quantity="1",
+        price=_ENTRY_PRICE,
+    )
+    reader = _entry_path_reader(
+        rcl_log, evidence_store, inbox, bound=_proven_bound(), confirmed_net="1"
+    )
+    absent = _absent(reader.read(_view(as_of=_BAR_AS_OF)))
+    assert absent.reason is PositionContextReason.SIDE_DISAGREES_WITH_SEAL
