@@ -21,7 +21,7 @@
 | `cp3-setup-d-long` | SYNTHETIC 미니선물 | Setup D LONG 신호 관측 | 08:38 |
 | `cp3-setup-d-short` | SYNTHETIC 미니선물 | 대칭 관측 | 08:40 |
 | `cp3-setup-d-stock-005930` | KIS **MOCK** 주식 | 카나리아 — 주문 경로가 매일 살아 있는지 | 08:53 |
-| `cp3-setup-d-stock-000660` | KIS **MOCK** 주식 | 실험 A — Setup D LONG (R4 프로브 끔) | 08:55 |
+| `cp3-setup-d-stock-000660` | KIS **MOCK** 주식 | 실험 A — Setup D LONG (R4 프로브 끔) · **YAML 손절·목표**(`position_context` 켬) | 08:55 |
 | `cp3-setup-d-stock-005380` | KIS **MOCK** 주식 | 실험 B — RSI / Williams %R 되돌림 | 08:57 |
 
 주식 셋의 역할은 갈라져 있다([활용 계획](plans/2026-11-19-tos-usage-plan.md) §4.1, 2026-11-27
@@ -29,6 +29,15 @@
 (`strategy_bindings.yaml::m2_probe_entry_enabled: true`) — 전략이 아니라 「경로가 살아 있나」를
 매일 잰다. 000660 은 같은 값이 `false` 라 Setup D LONG 규칙만 발화하고, 005380 은
 `strategies/rsi_wr_reversion_long.strategy.yaml` 로 돈다(Setup D 를 쓰지 않는다).
+
+000660 은 **포지션 값을 읽는 첫 tenant** 다([P4 계획](plans/2026-11-27-tos-p4-position-fields-plan.md)
+§3): `marketfeed.yaml::position_context` 를 켜고, 손절(`R5-EXIT-STOP-LOSS`)과
+목표(`R6-EXIT-TAKE-PROFIT`)를 `strategy_bindings.yaml` 의 두 숫자(`stop_loss_bp` ·
+`take_profit_bp`, bp 단위)로 선언한다. 두 진입 규칙(R1 · R4)에는
+`capsule.position.side EQ "FLAT"` 가드가 붙었다. 시간 청산은 없다(운영자 결정 2026-11-28 §11 #3).
+다른 네 트리는 `position_context` 를 켜지 않으므로 payload·환경·서명이 그대로다.
+⚠ 규칙이 바뀌었으니 이 트리의 잎은 **재-genesis** 해야 배포된다
+([런북](runbooks/tos-paper-boot.md) §7.2-f-1).
 
 콜드 백업은 18:00(paper) · 18:20(LONG) · 18:40(SHORT) · 19:00/19:05/19:10(주식 005930·000660·005380) 에 돈다
 ([런북](runbooks/tos-evidence-cold-backup.md)). 부팅·재시작 절차는

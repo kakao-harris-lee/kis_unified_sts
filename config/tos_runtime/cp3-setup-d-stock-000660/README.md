@@ -10,18 +10,44 @@ CP-3 **주식 tenant** 설정 트리 — 종목 **000660(SK하이닉스)**.
 MOCK 주문 scope, band 원천, 체결·완결·해제, 상시 승인, R4 M2 프로브, 하지 않는 것까지 전부
 거기 적혀 있고 이 트리도 같다. 여기에는 **다른 것만** 적는다.
 
-## 역할: 실험 A — Setup D LONG, R4 프로브 끔
+## 역할: 실험 A — Setup D LONG, R4 프로브 끔, YAML 손절·목표 켬
 
 `docs/plans/2026-11-19-tos-usage-plan.md` §4.1 의 역할 분담(운영자 결정 2026-11-19 §8-②
 「채택 — R4 는 005930 에만 남긴다」): 005930 은 주문 경로가 매일 살아 있는지 재는 **카나리아**
-(R4 프로브 유지), 이 트리는 **실험 A**(Setup D LONG: R1 진입 · R2 VWAP 복귀 · R3 EOD),
-005380 은 실험 B(RSI / Williams %R 되돌림)다.
+(R4 프로브 유지), 이 트리는 **실험 A**, 005380 은 실험 B(RSI / Williams %R 되돌림)다.
 
 끄는 방법은 바인딩 한 줄이다 — `strategy_bindings.yaml::m2_probe_entry_enabled: false`.
 규칙 `R4-M2-PROBE-ENTRY-LONG` 은 전략 파일에 **그대로 남고** 발화만 하지 않는다(그 규칙의
-둘째 비교가 `entry_window EQ config.m2_probe_entry_enabled` 이므로 진입창이 열린 바에서
-`true == false` 로 거짓). 규칙을 지우지 않는 이유: 전략 파일이 005930 과 바이트 동일로
-남아야 두 tenant 의 차이가 **바인딩 한 줄**로만 읽힌다.
+셋째 비교가 `entry_window EQ config.m2_probe_entry_enabled` 이므로 진입창이 열린 바에서
+`true == false` 로 거짓).
+
+## 포지션 값을 읽는 첫 tenant (P4 S4)
+
+`docs/plans/2026-11-27-tos-p4-position-fields-plan.md` §3 의 첫 적용. 이 트리만
+`marketfeed.yaml::position_context` 를 켜고(나머지 네 트리는 꺼진 채로 — 그래서 그들의
+payload·환경·서명이 그대로다), 손절과 목표를 **규칙 두 개와 숫자 두 개**로 선언한다.
+
+규칙 순서가 뜻이다(첫 일치가 결정):
+
+| # | 규칙 | 조건 | 결정 |
+| --- | --- | --- | --- |
+| 1 | `R1-ENTRY-LONG` | `position.side EQ "FLAT"` ∧ Setup D 다섯 게이트 | ACTION |
+| 2 | `R5-EXIT-STOP-LOSS` | `side NE "FLAT"` ∧ `unrealized_bp LE config.stop_loss_bp` | FLAT |
+| 3 | `R6-EXIT-TAKE-PROFIT` | `side NE "FLAT"` ∧ `unrealized_bp GE config.take_profit_bp` | FLAT |
+| 4 | `R2-EXIT-VWAP-REVERTED` | `vwap_reverted` | FLAT |
+| 5 | `R3-EXIT-EOD` | `eod` | FLAT |
+| 6 | `R4-M2-PROBE-ENTRY-LONG` | `side EQ "FLAT"` ∧ 진입창 ∧ 프로브 바인딩 | ACTION (이 트리에서 꺼짐) |
+
+- **R1 이 첫 자리에 남는다.** 그 target 이 `&account`·`&instrument` 앵커를 **정의**하므로
+  청산 규칙을 앞으로 옮기면 YAML 이 정의 전 별칭을 만나 파일이 통째로 로드되지 않는다.
+  `side EQ "FLAT"` 가드가 있어 보유 중에는 발화하지 않으니 청산을 가리지 않는다.
+- **시간 청산은 없다**(운영자 결정 2026-11-28 §11 #3: `bars_held` 는 벽시계로 세므로
+  주식을 다음 날로 넘기면 첫 봉에 ~1,000봉이 된다).
+- **이름공간이 없는 봉에서는 아무것도 발화하지 않는다.** 모르는 피연산자는 그 비교를
+  거짓으로 만들고(`tos/src/tos/dsl/vocabulary.py::eval_compare`) `NE` 도 예외가 아니다 —
+  손절·목표도, 가드가 붙은 두 진입도 발화하지 않는다(계획 §2 D3). R2·R3 는
+  `resolved_values` 만 읽으므로 그대로다.
+- 두 숫자를 바꾸는 것은 `strategy_bindings.yaml` 두 줄 + generation 재도출이다.
 
 ## 005930 트리와 다른 것
 
@@ -30,20 +56,25 @@ MOCK 주문 scope, band 원천, 체결·완결·해제, 상시 승인, R4 M2 프
 | `RENDER.yaml` | `tree_id` · `instrument.pattern: "000660"` | 트리는 단일 종목이다(아래) |
 | `venue_constraint_policy.yaml` | `policy_id` · `scope.instruments` 슬롯 · `approved_by` · `effective_from` · 헤더의 종목·근거 | 내용이 다르니 id 도 다르다(LONG 헤더의 규칙). 호가단위 사다리는 **가격대별**이라 종목과 무관하게 같다 |
 | `critical_input_policy.yaml` | `policy_id` · `issuer_principal_id` | 같은 규칙 |
-| `strategy_bindings.yaml` | `m2_probe_entry_enabled: false` | 실험 A — 위 절 |
+| `strategy_bindings.yaml` | `m2_probe_entry_enabled: false` · `stop_loss_bp` · `take_profit_bp` | 실험 A — 위 두 절 |
+| `marketfeed.yaml` | `position_context: {enabled: true, bar_interval_ms: 60000}` | 포지션 값은 트리마다 켠다 — 위 절 |
+| `strategies/setup_d_long.strategy.yaml` | R5 · R6 두 규칙 + R1·R4 의 FLAT 가드 | 같은 절 |
+| `engine.yaml` | 주석의 정적 스텝 수(31 → 51) | 예산 64 는 그대로 — 51 ≤ 64 |
 | `fields.yaml` · `fill_observer.yaml` | 주석의 종목·생산자 설정 경로 | 런타임이 읽는 값은 005930 과 같다 |
 
-나머지 파일은 005930 트리와 **바이트 동일**이다 — `strategies/setup_d_long.strategy.yaml`
-(R1~R3 + R4 M2 프로브) · `engine.yaml` · `authority.yaml` · `calendar.yaml` ·
+나머지 파일은 005930 트리와 **바이트 동일**이다 — `authority.yaml` · `calendar.yaml` ·
 `broker_scopes.yaml` · `broker_facts.yaml` · `egress_coordinates.yaml` · `release.yaml`
 전부 포함. 이 분류는
 `tos/runtime/tests/compose/test_tenant_tree_stock_siblings.py` 가 파일·키 경로 단위로 고정한다.
 
-**decision digest 는 005930 과 다르다** — 바인딩 한 줄이 결정 계약의 일부이기 때문이다
+**decision digest 는 005930 과 다르다** — 규칙과 바인딩이 결정 계약의 일부이기 때문이다
 (`config/tos_runtime/decision_generations.yaml` 가 그 이유를 적는다). 이 tenant 는
-`generation` **2**: 1 은 11-20 에 프로브를 켠 채 태어난 계약이고, 2 가 지금의 계약이다.
+`generation` **3**: 1 은 11-20 에 프로브를 켠 채 태어난 계약, 2 는 그 바인딩을 끈 계약,
+3 이 손절·목표를 더한 지금의 계약이다.
 ⚠ generation 이 오른 잎은 **재-genesis** 해야 배포된다(`docs/runbooks/tos-paper-boot.md`
-§7.2-f) — 계좌 평탄을 GET 으로 확인한 뒤 잎을 `archive/` 로 옮긴다.
+§7.2-f-1) — 전날 장 마감 뒤 이 종목이 모의 계좌에서 비었는지 GET 으로 확인하고(남아 있으면
+모의 주문으로 정리) 잎을 `archive/` 로 옮긴다. 새 잎의 증거는 비어 있어서, 남은 주식이
+있어도 `side` 는 FLAT 으로 읽힌다 — 진입이 발화하고 그 주식의 손절은 영영 발화하지 않는다.
 
 ## 호가단위 사다리는 종목별이 아니다
 

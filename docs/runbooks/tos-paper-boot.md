@@ -450,6 +450,62 @@ bash <(git -C $MAIN show origin/main:tools/tos_cp3/runners/setup_stock_mock_once
   1주 롱이 남는다 — 평탄하게 하려면 모의투자 HTS 에서 손으로 판다. ⛔ 청산을 제안별 승인 파일로 **절대** 승인하지 않는다(두 번째 1주를 **산다**).
 - **genesis** = 빈 잎 `$ST/cp3-setup-d-stock-005930-data/005930` 에 대한 첫 `run`(러너가 잎을 만든다 · 되돌릴 수 없다 · 승인 행위는 없다). 다음 날부터는 같은 잎을 잇는다.
 
+##### 7.2-f-1 결정 계약을 바꾼 날 — 새 잎을 열기 전날 (장 마감 뒤)
+
+`config/tos_runtime/decision_generations.yaml` 의 그 tenant `generation` 이 올라간 PR 을
+머지했으면, **다음 부팅 전에** 이 절을 돌린다. 안 돌리면 그 잎은 못 올라온다 —
+부팅이 inbox 의 지난 이벤트를 **오늘의** 전략으로 다시 도출해 기록과 대조하고
+(`tos_runtime/compose/_boot_integrity.py::verify_engine_replay_or_halt`), 규칙이 바뀐 날은
+전부 어긋나 `EngineReplayDiverged` 로 거부되며 그 거부가 영구 `REPLAY_DIVERGED` 행을 쓴다
+(복구 장벽은 그 수가 0 이어야 한다 — 2026-11-12 `stock-r1-20261112`, 1075/1075).
+
+⚠ **래퍼는 잎을 치워 주지 않는다.** `cp3_tenant_daily.sh` 는 잎이 있으면
+`PREFLIGHT leaf … present (continues)` 를 적고 그 잎을 **잇는다**(같은 파일 680-683행;
+`decision_generations.yaml` 를 읽지도 않는다 — 그 파일은 CI 의 핀이다). generation 을
+올리는 것은 **누군가 이 절을 돌려야 한다고 소리 내어 말하는 행위**일 뿐이고, 잎을 옮기는
+것이 실제 일이다.
+
+**① 그 종목이 모의 계좌에서 비었는지 본다 (GET 전용 · 아무것도 보내지 않는다).**
+새 잎의 증거는 비어 있어서, 전날 주식이 남아 있어도 `side` 는 FLAT 으로 읽힌다 — 진입
+규칙이 발화하고 **남은 주식의 손절은 영영 발화하지 않는다**(계획 §3 · §11 결정 4).
+
+```bash
+cd $MAIN && PYTHONPATH=$MAIN CP3_EXPECT_ACCOUNT_FP=<모의 주식 계좌 지문 12hex> \
+  TOS_ENV_MOCK=$MAIN/.env.mock \
+  .venv/bin/python -m tools.tos_cp3.ops.mock_flat_check <종목> \
+  --transport-yaml $ST/cp3-setup-d-stock-<종목>-ops/kis_mock_transport.yaml; echo "rc=$?"
+# rc 0 = `<종목> flat (no holding, no order working)` — 보유도 미체결 주문도 없다. 진행.
+# rc 3 = 보유가 있거나 그 종목에 미체결 주문이 걸려 있다(출력이 `holdings {...}` 또는
+#        `<종목> open orders [...]` 로 어느 쪽인지 말한다) → ②
+# rc 1 = 잔고/주문 조회를 못 읽었다(토큰·전송) → 다시. 추측으로 진행하지 않는다.
+# rc 2 = 사전조건 거부(계좌 지문 없음 · .env.mock 없음) — 계좌를 추정하지 않는다.
+# 지문은 §7.2-f 의 「계좌 지문은 필수다」 블록으로 한 번 구해 둔다(비밀값 아님).
+```
+
+**② 남아 있으면 모의 주문으로 정리한다 (MOCK 전용 · 시장가 전량 매도).**
+
+```bash
+cd $MAIN && PYTHONPATH=$MAIN CP3_EXPECT_ACCOUNT_FP=<같은 지문> \
+  TOS_ENV_MOCK=$MAIN/.env.mock \
+  .venv/bin/python -m tools.tos_cp3.ops.mock_flatten <종목> \
+  --transport-yaml $ST/cp3-setup-d-stock-<종목>-ops/kis_mock_transport.yaml; echo "rc=$?"
+# rc 0 = `<종목> flat` — 매도가 체결되고 잔고가 0 이 됐다(또는 애초에 0 이었다).
+# rc 1 = 브로커가 그 매도를 거부했다(`sell http … rt_cd …`) — 사유를 보고 다시.
+# rc 3 = 보냈지만 10×3 s 안에 0 이 되지 않았다 — 체결을 기다렸다가 ① 로 재확인한다.
+# rc 2 = 사전조건 거부. 보낸 것은 없다.
+# ⛔ 이 도구는 **모의 계좌 전용**이고 계좌 지문이 맞지 않으면 아무것도 보내지 않는다.
+```
+
+**③ 잎을 보관한다.** 지우지 않는다 — append-only 증거다.
+
+```bash
+LEAF=$ST/cp3-setup-d-stock-<종목>-data/<종목>
+mkdir -p $(dirname $LEAF)/archive && mv -n $LEAF $(dirname $LEAF)/archive/<종목>.gen<이전>.$(TZ=Asia/Seoul date +%Y%m%d)
+```
+
+**④ 다음 아침 preflight 가 `absent (first session genesis)` 라고 말하는지 본다**(§7.2-f 의
+`--preflight`). `present (continues)` 면 ③ 이 안 된 것이고, 그 세션은 거부된다.
+
 **손으로 시작 — 재기동(`RUN=2`), 또는 cron 줄을 끈 날.** 창 08:52–09:05: 첫 행은 09:01:0x 에 오고 첫 행 대기 상한이 600 s. cron 의 `r1` 이 08:53/08:55/08:57 에 이 블록과 같은 일을 한다. LONG 08:38·SHORT 08:40 는 **선물** REAL 키, 주식 세션은 **주식** REAL 키(생산자·band)와 모의 키(런타임) — 지문이 서로 달라 선물과는 분당 1회 토큰 발급이 겹치지 않는다. 주식끼리는 겹치므로 `SYM_BOOT_DELAY` 를 둔다(아래).
 
 블록은 **종목 인자 하나**로 움직인다. 맨 앞 세 줄만 고치면 어느 주식 tenant 든 시작한다 —
