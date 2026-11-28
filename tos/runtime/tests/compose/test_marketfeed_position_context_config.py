@@ -173,13 +173,31 @@ def test_an_enabled_tree_with_no_construction_price_field_key_refuses_the_boot(
         )
 
 
-def test_every_shipped_tree_declares_no_position_context_yet(tmp_path: Path) -> None:
-    """Completion 3: this PR ships the feature OFF for every tree under ``config/``."""
+#: The ONE shipped tree that turns the namespace on (P4 S4 — the plan's §3 first
+#: application). Every other tree stays off, which is what keeps its payload, environment
+#: and signature byte-identical to the pre-P4 path (plan completion 3).
+_TREES_WITH_POSITION_CONTEXT: frozenset[str] = frozenset({"cp3-setup-d-stock-000660"})
+
+
+def test_exactly_the_declared_shipped_trees_turn_the_namespace_on(
+    tmp_path: Path,
+) -> None:
+    """Completion 3: opt-in per tree, and the opt-in set is written down right here."""
     del tmp_path
     repo_root = Path(__file__).resolve().parents[4]
     trees = sorted(
         (repo_root / "config" / "tos_runtime").glob(f"*/{MARKETFEED_CONFIG_NAME}")
     )
     assert trees, "no shipped tenant tree marketfeed.yaml found"
+    carrying: set[str] = set()
     for path in trees:
-        assert load_position_context_config(path.parent) is None, path
+        declared = load_position_context_config(path.parent)
+        if declared is None:
+            continue
+        # SAFETY: a tree that merely CARRIES the block is counted here, enabled or not — a
+        # `position_context: {enabled: false}` landing unlisted is the next switch-on
+        # arriving without anyone saying out loud that the leaf must be re-genesis'd.
+        carrying.add(path.parent.name)
+        assert declared.enabled is True, path
+        assert declared.bar_interval_ms == 60_000, path
+    assert carrying == set(_TREES_WITH_POSITION_CONTEXT), carrying
