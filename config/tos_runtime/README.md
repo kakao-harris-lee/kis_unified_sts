@@ -63,6 +63,45 @@ The KRX 호가가격단위 ladder is chosen by price, not by symbol, so
 모의투자 stock account and its app key but never a custody root — read the siblings'
 `README.md` for what that sharing does and does not cost.
 
+### 주식 트리는 종목 목록에서 렌더된다 — 종목 추가 = 목록 한 줄
+
+세 주식 트리는 손으로 베낀 사본이 **아니다**: 전부 `config/tos_stock_tenants/TENANTS.yaml`
+의 종목 목록에서 렌더된 결과이고, 기본 트리는 카나리아 `cp3-setup-d-stock-005930` **자체**다
+(네 번째 사본은 없다 — 계획 `docs/plans/2026-11-27-tos-p4-position-fields-plan.md` §4 S6).
+
+```bash
+python scripts/tos/render_stock_tenant_trees.py           # 커밋본 == 렌더 결과인가 (게이트)
+python scripts/tos/render_stock_tenant_trees.py --write    # 목록·레이어를 고친 뒤 다시 쓴다
+```
+
+- **종목 치환.** 종목·종목명·전략 파일 리터럴은 목록의 `base.occurrences` 가 적은 파일에서
+  적힌 횟수만큼 바뀐다. 기본 트리의 **다른** 파일에 그 리터럴이 하나라도 생기면 렌더가
+  거부한다 — 짧은 표가 주장이 아니라 실측인 이유다.
+- **역할 차이는 레이어로 선언한다.** `config/tos_stock_tenants/layers/<레이어>/` 의 파일은
+  같은 이름의 기본 파일을 통째로 덮고, `LAYER.yaml::patches` 는 앵커된 한 줄을 바꾼다(앵커는
+  정확히 1회 맞아야 한다 — 엔진은 `scripts/tos/render_paper_config.py::apply_rules` 하나다).
+  레이어 안에서 `{{SYMBOL}}`·`{{SYMBOL_NAME}}` 은 그 tenant 의 값이고, 그냥 적힌 `005930` 은
+  카나리아를 가리키는 말이므로 그대로 남는다.
+
+| 레이어 | 통째로 덮는 파일 (이유) | 패치 (앵커 한 줄) |
+| --- | --- | --- |
+| `derived` | — | `venue_constraint_policy.yaml` 다섯 자리 — 머리말의 유래 3 줄 · 승인 줄 · 발효일 |
+| `experiment-a` | `README.md`(역할 산문) · `strategy_bindings.yaml` · `strategies/setup_d_long.strategy.yaml`(R5·R6 와 FLAT 가드) | `engine.yaml` 스텝 수 주석 · `marketfeed.yaml::position_context` 블록 |
+| `experiment-b` | `README.md` · `fields.yaml`(다른 지표 집합) · `critical_input_policy.yaml`(그 집합의 신선도 선언) · `strategy_bindings.yaml` · `strategies/rsi_wr_reversion_long.strategy.yaml` | `engine.yaml` 스텝 수 주석 |
+
+- **게이트:** `tests/tools/test_tos_stock_tenant_render.py` (필수 체크 `tos-firewall`, 경로
+  게이팅 없음). 생성물을 손으로 고친 PR 과 목록·레이어만 고치고 다시 렌더하지 않은 PR 이
+  **양쪽 다** red 다. `README.md` 만 고친 PR 도 걸린다 — 레거시 `test` 워크플로는 `**.md` 를
+  무시하므로 이 배터리가 그 구멍을 메운다.
+- **트리 하나로 끝이 아니다.** 종목 하나에는 러너 목록
+  (`tools/tos_cp3/runners/cp3_tenant_daily.sh::STOCK_SYMBOLS`) · 시세 생산자 설정
+  (`config/tos_probes/cp3-live-producer-stock-<종목>.yaml`) · 결정 세대
+  (`decision_generations.yaml`) · cron 설치가 함께 필요하다. 한 줄이 된 것은 **트리**다.
+  러너 목록과 이 목록이 같은 집합인지는 위 테스트가 본다.
+- ⚠ 레이어의 `README.md` 는 **역할의 산문**이다. 실험 A 의 것은 000660 의 generation 이력
+  문장을 담고 있어서, 같은 역할로 새 종목을 더하면 그 한 문장이 새 tenant 에는 맞지 않는다 —
+  렌더 뒤 그 문장을 손본다. 지금 일반화하지 않는 이유는 출하된 세 트리의 바이트 동일 고정이다.
+
 `decision_generations.yaml` sits beside the trees rather than inside one. It is not an
 approved value file: it pins each persistent-leaf tenant's **parsed** decision contract
 (rules, decision bindings, and `engine.yaml`'s two bounds) to a committed generation token,
