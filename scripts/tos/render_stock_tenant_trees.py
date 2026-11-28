@@ -32,8 +32,11 @@ shipped stock tree is that tree with
 1. the base symbol/name/strategy-path literals replaced by the tenant's, in exactly the
    files and counts the list declares (an occurrence anywhere else refuses — that is what
    keeps a short count table honest), and
-2. the tenant's ROLE layers applied in order: every file in a layer directory replaces the
-   base's copy whole, and ``LAYER.yaml::patches`` replaces single anchored lines.
+2. the tenant's ROLE layers applied in order, then the layers its own list line declares:
+   every file in a layer directory replaces the base's copy whole, and
+   ``LAYER.yaml::patches`` replaces single anchored lines. A role layer must be true of
+   EVERY symbol that takes the role, so a fact about one tenant (its decision-generation
+   history) goes in a per-tenant layer rather than being hand-edited into the output.
 
 Layer content is written with ``{{SYMBOL}}`` / ``{{SYMBOL_NAME}}`` tokens; a BARE ``005930``
 inside a layer is kept as-is, because there it means the canary tenant the prose points at,
@@ -103,6 +106,9 @@ _TOKEN_RE = re.compile(r"\{\{([A-Za-z_]+)\}\}")
 #: A KRX stock code as every stock tree already writes it (``RENDER.yaml::instrument.pattern``).
 _SYMBOL_RE = re.compile(r"[0-9]{6}")
 
+#: Characters a tenant NAME may not carry.
+_NAME_REFUSED_RE = re.compile(r'["\\\x00-\x1f\x7f]')
+
 #: The literal kinds the base tree is retargeted on, in application order.
 _OCCURRENCE_KINDS: tuple[str, ...] = ("symbol", "symbol_name", "strategy_file")
 
@@ -114,6 +120,10 @@ class Tenant:
     symbol: str
     name: str
     role: str
+    #: Layers applied AFTER the role's, declared on the tenant's own line. The one place a
+    #: fact about THIS tenant may live without the role layer claiming it of every symbol
+    #: that shares the role (its decision-generation history, for instance).
+    layers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -180,6 +190,36 @@ def _require(raw: Any, *, where: str, kind: type = str) -> Any:
     return raw
 
 
+def _within(path: Path, root: Path, *, where: str) -> Path:
+    """``path`` resolved, refused unless it stays inside ``root``.
+
+    # SAFETY: every path in the list and in a layer manifest is DATA. Without this, a
+    # `base.tree`, `layers_root`, layer name or `patch.file` holding `../` reads files from
+    # outside the checkout into a committed tree, and `--write` then writes outside it.
+    """
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root.resolve()):
+        raise RenderError(
+            f"{where}: {path} resolves outside {root} ({resolved}) — every path in the "
+            "list and in a layer manifest stays inside the checkout it is relative to"
+        )
+    return resolved
+
+
+def _refuse_symlinks(root: Path, *, where: str) -> None:
+    """Refuse any symlink under ``root``.
+
+    # SAFETY: `_relative_files` admits a symlink as an ordinary file, so a link inside the
+    # base tree or a layer would be READ THROUGH — content from outside the checkout copied
+    # into a committed tree, with every containment check above seeing only the link's path.
+    """
+    links = sorted(
+        str(path.relative_to(root)) for path in root.rglob("*") if path.is_symlink()
+    )
+    if links:
+        raise RenderError(f"{where}: symlink(s) refused: {links}")
+
+
 def _relative_files(root: Path) -> tuple[str, ...]:
     return tuple(
         sorted(
@@ -198,9 +238,11 @@ def _load_yaml(path: Path, *, where: str) -> dict[str, Any]:
     return raw
 
 
-def _load_layer(name: str, directory: Path) -> Layer:
+def _load_layer(name: str, layers_root: Path, *, base_tree: Path) -> Layer:
+    directory = _within(layers_root / name, layers_root, where=f"layer {name!r}")
     if not directory.is_dir():
         raise RenderError(f"layer {name!r}: directory not found: {directory}")
+    _refuse_symlinks(directory, where=f"layer {name!r}")
     files = tuple(
         rel for rel in _relative_files(directory) if rel != LAYER_MANIFEST_NAME
     )
@@ -226,6 +268,8 @@ def _load_layer(name: str, directory: Path) -> Layer:
             )
             if patch.key in seen:
                 raise RenderError(f"{where}: duplicate patch key {patch.key!r}")
+            # The rendered tree has the base tree's layout, so containment holds there too.
+            _within(base_tree / patch.file, base_tree, where=f"{where}.file")
             seen.add(patch.key)
             patches.append(patch)
     if not files and not patches:
@@ -269,9 +313,14 @@ def load_tenants(path: Path, *, repo_root: Path = _REPO_ROOT) -> StockTenants:
     base_raw = raw.get("base")
     if not isinstance(base_raw, dict):
         raise RenderError(f"{path}: base must be a mapping")
-    base_tree = repo_root / _require(base_raw.get("tree"), where=f"{path}: base.tree")
+    base_tree = _within(
+        repo_root / _require(base_raw.get("tree"), where=f"{path}: base.tree"),
+        repo_root,
+        where=f"{path}: base.tree",
+    )
     if not base_tree.is_dir():
         raise RenderError(f"{path}: base.tree not found: {base_tree}")
+    _refuse_symlinks(base_tree, where=f"{path}: base.tree")
     base_symbol = _require(base_raw.get("symbol"), where=f"{path}: base.symbol")
     if not _SYMBOL_RE.fullmatch(base_symbol):
         raise RenderError(f"{path}: base.symbol refused: {base_symbol!r}")
@@ -297,8 +346,10 @@ def load_tenants(path: Path, *, repo_root: Path = _REPO_ROOT) -> StockTenants:
         where=f"{path}: base.occurrences",
     )
 
-    layers_root = repo_root / _require(
-        raw.get("layers_root"), where=f"{path}: layers_root"
+    layers_root = _within(
+        repo_root / _require(raw.get("layers_root"), where=f"{path}: layers_root"),
+        repo_root,
+        where=f"{path}: layers_root",
     )
     roles_raw = raw.get("roles")
     if not isinstance(roles_raw, dict) or not roles_raw:
@@ -316,9 +367,14 @@ def load_tenants(path: Path, *, repo_root: Path = _REPO_ROOT) -> StockTenants:
             raise RenderError(f"{where}.layers: expected a list of layer names")
         for layer_name in declared:
             if layer_name not in layers:
-                layers[layer_name] = _load_layer(layer_name, layers_root / layer_name)
+                layers[layer_name] = _load_layer(
+                    layer_name, layers_root, base_tree=base_tree
+                )
         strategy_file = entry.get("strategy_file", base_strategy_file)
         _require(strategy_file, where=f"{where}.strategy_file")
+        _within(
+            base_tree / str(strategy_file), base_tree, where=f"{where}.strategy_file"
+        )
         if strategy_file != base_strategy_file and not any(
             strategy_file in layers[layer_name].files for layer_name in declared
         ):
@@ -339,11 +395,39 @@ def load_tenants(path: Path, *, repo_root: Path = _REPO_ROOT) -> StockTenants:
         where = f"{path}: tenants[{index}]"
         if not isinstance(entry, dict):
             raise RenderError(f"{where}: expected a mapping, got {entry!r}")
+        stray = sorted(set(entry) - {"symbol", "name", "role", "layers"})
+        if stray:
+            raise RenderError(
+                f"{where}: unknown key(s) {stray!r} — a misspelled one would be silently "
+                "ignored (the line's keys are symbol, name, role, layers)"
+            )
+        declared_layers = entry.get("layers", [])
+        if not isinstance(declared_layers, list) or any(
+            not isinstance(item, str) for item in declared_layers
+        ):
+            raise RenderError(f"{where}.layers: expected a list of layer names")
         tenant = Tenant(
             symbol=_require(entry.get("symbol"), where=f"{where}.symbol"),
             name=_require(entry.get("name"), where=f"{where}.name"),
             role=_require(entry.get("role"), where=f"{where}.role"),
+            layers=tuple(declared_layers),
         )
+        refused = _NAME_REFUSED_RE.search(tenant.name)
+        if refused is not None:
+            # SAFETY: the name is substituted into DOUBLE-QUOTED YAML strings (the `derived`
+            # layer's approval line), where a quote or a backslash ends or re-escapes the
+            # string and a newline or a control character breaks the document — the render
+            # would commit a policy file that no longer parses, or parses to something else.
+            raise RenderError(
+                f"{where}.name refused: {tenant.name!r} carries {refused.group()!r} — a "
+                "name is substituted into double-quoted YAML strings, so a quote, a "
+                "backslash, a newline or a control character is not allowed in it"
+            )
+        for layer_name in tenant.layers:
+            if layer_name not in layers:
+                layers[layer_name] = _load_layer(
+                    layer_name, layers_root, base_tree=base_tree
+                )
         if not _SYMBOL_RE.fullmatch(tenant.symbol):
             raise RenderError(
                 f"{where}.symbol refused: {tenant.symbol!r} — a KRX stock code is six digits"
@@ -485,7 +569,7 @@ def render_tenant(spec: StockTenants, tenant: Tenant, out_root: Path) -> Path:
     if role.strategy_file != spec.base_strategy_file:
         (out / spec.base_strategy_file).unlink()
 
-    for layer_name in role.layers:
+    for layer_name in (*role.layers, *tenant.layers):
         layer = spec.layers[layer_name]
         for rel in layer.files:
             text = _expand(
@@ -539,6 +623,14 @@ def _verify_output(spec: StockTenants, tenant: Tenant, out: Path) -> None:
 
 def render_all(spec: StockTenants, out_root: Path) -> dict[str, Path]:
     """Render every declared tenant into ``out_root``; keys are tree directory names."""
+    # SAFETY: the base tree is READ file by file, so an output root ANYWHERE inside it (not
+    # only equal to it — `--out config/tos_runtime/cp3-setup-d-stock-005930/sub` too) would
+    # have `render_tenant` rmtree a directory the later reads need.
+    if out_root.resolve().is_relative_to(spec.base_tree.resolve()):
+        raise RenderError(
+            f"refusing to render into {out_root} — it is inside the base tree "
+            f"({spec.base_tree}), whose files every render reads"
+        )
     verify_base_occurrences(spec)
     return {
         tree_name(spec, tenant.symbol): render_tenant(spec, tenant, out_root)
