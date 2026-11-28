@@ -83,6 +83,8 @@ def test_override_day_window_and_regular_fallback(tmp_path: Path) -> None:
 
 SHIPPED_EXAM_DAY = date(2026, 11, 19)
 SHIPPED_REGULAR_DAY = date(2026, 11, 18)
+#: 2028학년도 수능 — 교육부 2025-06-01 발표 시행일. 2026-11-28 에 선반영했다.
+SHIPPED_EXAM_DAY_2027 = date(2027, 11, 18)
 
 
 def test_the_shipped_calendar_carries_the_exam_day_override() -> None:
@@ -91,16 +93,18 @@ def test_the_shipped_calendar_carries_the_exam_day_override() -> None:
         _REPO_ROOT / "config/tos_probes/cp3-live-producer.yaml", repo_root=_REPO_ROOT
     )
     assert sorted(str(k) for k in session.calendar["session_overrides"]) == [
-        SHIPPED_EXAM_DAY.isoformat()
+        SHIPPED_EXAM_DAY.isoformat(),
+        SHIPPED_EXAM_DAY_2027.isoformat(),
     ]
-    exam = session.window(SHIPPED_EXAM_DAY)
-    assert (exam.start.isoformat(), exam.end.isoformat(), exam.overridden) == (
-        "09:45:00",
-        "16:45:00",
-        True,
-    )
-    assert session.stop_at(SHIPPED_EXAM_DAY, after_close_min=5) == "16:50"
-    assert session.open_delay_s(SHIPPED_EXAM_DAY) == 3600
+    for exam_day in (SHIPPED_EXAM_DAY, SHIPPED_EXAM_DAY_2027):
+        exam = session.window(exam_day)
+        assert (exam.start.isoformat(), exam.end.isoformat(), exam.overridden) == (
+            "09:45:00",
+            "16:45:00",
+            True,
+        ), exam_day
+        assert session.stop_at(exam_day, after_close_min=5) == "16:50", exam_day
+        assert session.open_delay_s(exam_day) == 3600, exam_day
     regular = session.window(SHIPPED_REGULAR_DAY)
     assert (regular.start.isoformat(), regular.end.isoformat(), regular.overridden) == (
         "08:45:00",
@@ -121,6 +125,8 @@ def test_the_shipped_stock_calendar_carries_the_exam_day_override() -> None:
     assert session.stop_at(SHIPPED_EXAM_DAY, after_close_min=5) == "16:35"
     assert session.stop_at(SHIPPED_REGULAR_DAY, after_close_min=5) == "15:35"
     assert session.open_delay_s(SHIPPED_EXAM_DAY) == 3600
+    assert session.stop_at(SHIPPED_EXAM_DAY_2027, after_close_min=5) == "16:35"
+    assert session.open_delay_s(SHIPPED_EXAM_DAY_2027) == 3600
     windows = {
         w.phase: (w.start.isoformat(), w.end.isoformat())
         for w in session_day.windows_on(session.calendar, "krx-stock", SHIPPED_EXAM_DAY)

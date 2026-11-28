@@ -517,7 +517,11 @@ def test_real_tenant_calendars_carry_the_exam_day_override() -> None:
     for tree in ("cp3-setup-d-long", "cp3-setup-d-short", "cp3-setup-d-stock-005930"):
         path = _REPO_ROOT / "config" / "tos_runtime" / tree / "calendar.yaml"
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert sorted(str(k) for k in data["session_overrides"]) == ["2026-11-19"], tree
+        # 2027-11-18 = 2028학년도 수능(교육부 2025-06-01 발표 시행일), 2026-11-28 선반영
+        assert sorted(str(k) for k in data["session_overrides"]) == [
+            "2026-11-19",
+            "2027-11-18",
+        ], tree
 
     def _stop(producer_rel: str, day: str) -> str:
         session = session_day.load_producer_session(

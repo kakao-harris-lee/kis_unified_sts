@@ -2,7 +2,7 @@
 """Is KRX open on one date? — the KIS 개장일여부, cached once a day, the calendar as fallback.
 
 Issue #1143. The cron gate used to REFUSE to start when the tenant calendar
-listed no holiday in the date's year. The calendars carry 2026 only, so from
+listed no holiday in the date's year. The calendars carried 2026 only, so from
 2027-01-01 every tenant would have stopped until five YAML files were edited —
 calendar maintenance was a live risk. Operator 2026-11-20: 「캘린더의 거래일을
 미리 확인하고 관리할 이유가 있어? 그냥 정식적인 휴일 알려진 휴일 이외에 장이

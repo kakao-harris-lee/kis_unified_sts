@@ -131,6 +131,8 @@ def test_an_override_changes_the_digest(tmp_path, cfg) -> None:
 SHIPPED_EXAM_DAY = datetime.date(2026, 11, 19)
 SHIPPED_REGULAR_DAY = datetime.date(2026, 11, 18)
 SHIPPED_NOV_EXPIRY = datetime.date(2026, 11, 12)
+#: 2028학년도 수능 — 교육부 2025-06-01 발표 시행일, 2026-11-28 선반영.
+SHIPPED_EXAM_DAY_2027 = datetime.date(2027, 11, 18)
 
 _SHIPPED_TREES = (
     "paper",
@@ -146,12 +148,39 @@ def _shipped(tree: str):
 
 
 def test_shipped_tenant_calendars_carry_the_exam_day_override() -> None:
-    """The four shipped trees declare 2026-11-19 (#924) and nothing else."""
+    """The four shipped trees declare the two exam days (#924) and nothing else."""
     for tree in _SHIPPED_TREES:
         loaded = _shipped(tree)
         assert sorted(str(k) for k in loaded.session_overrides) == [
-            SHIPPED_EXAM_DAY.isoformat()
+            SHIPPED_EXAM_DAY.isoformat(),
+            SHIPPED_EXAM_DAY_2027.isoformat(),
         ], tree
+
+
+@pytest.mark.parametrize("tree", _SHIPPED_TREES)
+def test_the_2027_exam_day_moves_both_classes_the_same_way(tree: str) -> None:
+    """2027-11-18 (2028학년도 수능) carries the same +1h windows as 2026-11-19.
+
+    A holiday would make the day CLOSED; this entry must instead MOVE the
+    windows, so it is asserted window by window and not merely by its presence.
+    """
+    cfg = _shipped(tree)
+    assert SHIPPED_EXAM_DAY_2027 not in cfg.holidays
+    windows = {
+        cls: [
+            (w.phase, w.start.isoformat(), w.end.isoformat())
+            for w in cfg.windows_on(SHIPPED_EXAM_DAY_2027, cls)
+        ]
+        for cls in ("krx-stock", "krx-index-futures")
+    }
+    assert windows == {
+        "krx-stock": [
+            ("PRE_OPEN", "09:30:00", "09:40:00"),
+            ("CONTINUOUS", "10:00:00", "16:30:00"),
+            ("AFTER_HOURS", "16:40:00", "17:00:00"),
+        ],
+        "krx-index-futures": [("CONTINUOUS", "09:45:00", "16:45:00")],
+    }, tree
 
 
 @pytest.mark.parametrize("tree", _SHIPPED_TREES)
