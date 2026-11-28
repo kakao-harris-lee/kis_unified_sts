@@ -1,4 +1,9 @@
 # CP-3 첫 tenant 전략 콘텐츠 — Setup D VWAP 되돌림, LONG 배포.
+# 규칙 순서가 뜻이다 — 위에서 첫 번째로 맞는 것 하나가 결정이다
+# (`tos/src/tos/dsl/vocabulary.py::evaluate_policy`).
+#   R1 진입(FLAT 일 때만) · R5 손절 · R6 목표(둘 다 LONG 일 때만) · R2 VWAP 복귀 ·
+#   R3 EOD · R4 M2 프로브.
+# SAFETY: R1 이 첫 자리에 남는 이유는 `&account`·`&instrument` 앵커를 그 target 이 정의하기 때문이다 — 청산 규칙을 앞으로 옮기면 YAML 이 정의 전 별칭(`*account`)을 만나 전략 파일이 통째로 로드되지 않는다. 진입은 `side EQ "FLAT"` 가드가 있어 보유 중에는 발화하지 않으므로 청산보다 앞에 있어도 청산을 가리지 않는다.
 
 dsl_version: cp3-b1b-dsl-1
 config_binding_version: cp3-b1b-bind-1
@@ -6,6 +11,11 @@ config_binding_version: cp3-b1b-bind-1
 policy:
   rules:
     - all_of:
+        - left:
+            ref: [capsule, position, side]
+          op: EQ
+          right:
+            const: "FLAT"
         - left:
             ref: [capsule, resolved_values, entry_window]
           op: EQ
@@ -47,6 +57,55 @@ policy:
           rationale: >-
             R1-ENTRY-LONG: open a new long at the LONG-side VWAP extreme with
             every Setup D gate satisfied.
+    # SAFETY: 두 청산 가드는 `side NE "FLAT"` 가 아니라 `side EQ "LONG"` 이다 — 이 전략은 롱만 열지만 가드가 FLAT 만 배제하면 어떤 경로로든 SHORT 가 투영된 봉에서 이 규칙들이 SHORT/CLOSE 주문을 내어 숏을 **키운다**.
+    - all_of:
+        - left:
+            ref: [capsule, position, side]
+          op: EQ
+          right:
+            const: "LONG"
+        - left:
+            ref: [capsule, position, unrealized_bp]
+          op: LE
+          right:
+            ref: [config, stop_loss_bp]
+      decision:
+        kind: FLAT
+        rationale: >-
+          R5-EXIT-STOP-LOSS: the proven LONG position's unrealized move has
+          reached the declared stop — go flat before the thesis costs more.
+        target:
+          kind: FLAT
+          account: *account
+          instrument: *instrument
+          direction: SHORT
+          position_effect: CLOSE
+          rationale: >-
+            R5-EXIT-STOP-LOSS: close the long at its declared stop.
+    - all_of:
+        - left:
+            ref: [capsule, position, side]
+          op: EQ
+          right:
+            const: "LONG"
+        - left:
+            ref: [capsule, position, unrealized_bp]
+          op: GE
+          right:
+            ref: [config, take_profit_bp]
+      decision:
+        kind: FLAT
+        rationale: >-
+          R6-EXIT-TAKE-PROFIT: the proven LONG position's unrealized move has
+          reached the declared target — take it.
+        target:
+          kind: FLAT
+          account: *account
+          instrument: *instrument
+          direction: SHORT
+          position_effect: CLOSE
+          rationale: >-
+            R6-EXIT-TAKE-PROFIT: close the long at its declared target.
     - all_of:
         - left:
             ref: [capsule, resolved_values, vwap_reverted]
@@ -87,6 +146,11 @@ policy:
             R3-EXIT-EOD: close the long — the session's EOD close time has
             arrived.
     - all_of:
+        - left:
+            ref: [capsule, position, side]
+          op: EQ
+          right:
+            const: "FLAT"
         - left:
             ref: [capsule, resolved_values, entry_window]
           op: EQ

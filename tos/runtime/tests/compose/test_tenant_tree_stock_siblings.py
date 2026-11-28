@@ -8,16 +8,23 @@ from typing import Any
 import pytest
 import yaml
 from tos.canonical import EV_L1_PROVISIONAL_VERSION, get_scheme
+from tos.dsl import POSITION_NAMESPACE
 from tos.dsl.serialization import parse_strategy
 from tos.dsl.vocabulary import DecisionKind, evaluate_policy
 from tos.engine.admission import policy_work_steps, strategy_admissible
 from tos.engine.vocabulary import AdmissionVerdict, CommitmentStep, StageOutcome
+from tos_runtime.compose._marketfeed_wiring import load_position_context_config
 from tos_runtime.strategy.bindings import (
     STRATEGY_BINDINGS_FILE_NAME,
     load_strategy_bindings,
 )
 from tos_runtime.strategy.loader import load_strategies
-from tos_runtime.strategy.resolve import _resolve_bindings_or_refuse
+from tos_runtime.strategy.resolve import (
+    POSITION_DSL_FIELDS,
+    StrategyLoadError,
+    _refuse_unresolvable_position_refs,
+    _resolve_bindings_or_refuse,
+)
 from tos_runtime.venue import load_venue_constraint_policy
 
 from . import _fixtures as fx
@@ -49,6 +56,29 @@ _PRIMARY_SYMBOL = "005930"
 _EXPERIMENT_A = "000660"  # Setup D LONG with the M2 probe binding OFF
 _EXPERIMENT_B = "005380"  # RSI / Williams %R reversion — its own strategy file
 
+#: 실험 A's two declared position exits (P4 S4). The ids are read back off the shipped file
+#: by `test_experiment_a_rule_order_*`, so a renamed rule goes red rather than untested.
+_STOP_RULE_ID = "R5-EXIT-STOP-LOSS"
+_TARGET_RULE_ID = "R6-EXIT-TAKE-PROFIT"
+
+#: The DSL-visible shape of a proven-flat position, exactly as
+#: ``PositionContext.as_environment_mapping`` projects it: no entry field at all.
+_FLAT: dict[str, Any] = {"side": "FLAT", "held_qty": 0}
+
+
+def _held(unrealized_bp: int, *, side: str = "LONG") -> dict[str, Any]:
+    """One held bar's position namespace at ``unrealized_bp``, in the projected shape."""
+    return {
+        "side": side,
+        "held_qty": 1,
+        "entry_price": 10_000_000,
+        "entry_price_basis": "ORDER",
+        "unrealized": unrealized_bp * 1_000,
+        "unrealized_bp": unrealized_bp,
+        "bars_held": 3,
+    }
+
+
 #: What EVERY sibling differs in, because only the symbol moved.
 _DIFFERS: dict[str, frozenset[str] | None] = {
     "README.md": None,
@@ -70,11 +100,45 @@ _DIFFERS: dict[str, frozenset[str] | None] = {
 #: once as the config edit and once here.
 _DIFFERS_BY_SYMBOL: dict[str, dict[str, frozenset[str] | None]] = {
     _EXPERIMENT_A: {
-        # One line: the R4 probe rule stays in the (byte-identical) strategy file and can
-        # no longer fire. See `test_experiment_a_is_setup_d_with_the_probe_binding_off`.
+        # P4 S4 (`docs/plans/2026-11-27-tos-p4-position-fields-plan.md` §3): this tenant is
+        # the first to declare stop-loss / take-profit exits in YAML, so four of its files
+        # move off 005930's. Each difference below is checked key-path by key-path, and the
+        # rule content itself is pinned by `test_experiment_a_*` further down this file —
+        # these entries say WHICH files may differ, not that their content is unchecked.
+        #
+        # The R4 probe rule stays in the strategy file and still cannot fire
+        # (`test_experiment_a_is_setup_d_with_the_probe_binding_off`); it now also carries
+        # the same `side EQ "FLAT"` guard as R1 so the two entry rules cannot diverge.
         "strategy_bindings.yaml": frozenset(
-            {"strategies.setup_d_long.strategy.bindings.m2_probe_entry_enabled"}
+            {
+                "strategies.setup_d_long.strategy.bindings.m2_probe_entry_enabled",
+                "strategies.setup_d_long.strategy.bindings.stop_loss_bp",
+                "strategies.setup_d_long.strategy.bindings.take_profit_bp",
+            }
         ),
+        # The position namespace is opt-in per tree and OFF by default (plan §2 D5). Only
+        # this tree turns it on; a strategy that reads `capsule.position.*` while it is off
+        # is a boot refusal, which
+        # `test_experiment_a_declares_the_position_namespace_its_rules_read` proves here.
+        "marketfeed.yaml": frozenset({"position_context"}),
+        # Two new FLAT rules (R5 stop · R6 target) and the `side EQ "FLAT"` guard on both
+        # entry rules. R1 keeps rule index 0 because its target DEFINES the `&account` /
+        # `&instrument` anchors the new rules alias — a YAML alias before its anchor fails
+        # to load at all. Listing the rule indices here only says this file may differ from
+        # 005930's; the order, the rule ids and the boundary values are pinned separately by
+        # `test_experiment_a_rule_order_*` below, against the SHIPPED file.
+        "strategies/setup_d_long.strategy.yaml": frozenset(
+            {
+                "policy.rules.0.all_of",
+                "policy.rules.1",
+                "policy.rules.2",
+                "policy.rules.3",
+                "policy.rules.4",
+                "policy.rules.5",
+            }
+        ),
+        # Comment only — the static step count the budget is justified against (31 -> 51).
+        "engine.yaml": frozenset(),
     },
     _EXPERIMENT_B: {
         # A different strategy altogether, so the declaration, the field list its consumers
@@ -391,10 +455,17 @@ def _loaded_strategy_source(symbol: str, tmp_path: Path) -> tuple[Any, Any]:
     return loaded, bindings
 
 
-def _decide(strategy: Any, resolved: dict[str, Any], config: dict[str, Any]) -> Any:
-    return evaluate_policy(
-        strategy.policy, {"capsule": {"resolved_values": resolved}, "config": config}
-    )
+def _decide(
+    strategy: Any,
+    resolved: dict[str, Any],
+    config: dict[str, Any],
+    position: dict[str, Any] | None = None,
+) -> Any:
+    """Evaluate the policy the engine's own way. ``position=None`` = the namespace ABSENT."""
+    capsule: dict[str, Any] = {"resolved_values": resolved}
+    if position is not None:
+        capsule[POSITION_NAMESPACE] = position
+    return evaluate_policy(strategy.policy, {"capsule": capsule, "config": config})
 
 
 def test_experiment_a_is_setup_d_with_the_probe_binding_off(tmp_path: Path) -> None:
@@ -417,7 +488,7 @@ def test_experiment_a_is_setup_d_with_the_probe_binding_off(tmp_path: Path) -> N
         "vwap_reverted": False,
         "eod": False,
     }
-    assert _decide(strategy, probe_shaped, config).kind is DecisionKind.NO_ACTION
+    assert _decide(strategy, probe_shaped, config, _FLAT).kind is DecisionKind.NO_ACTION
     # ...while the real Setup D entry still fires.
     gates = {
         "entry_window": True,
@@ -426,9 +497,229 @@ def test_experiment_a_is_setup_d_with_the_probe_binding_off(tmp_path: Path) -> N
         "reversal_ok": True,
         "z_x1000": config["z_entry_max_x1000"] - 1,
     }
-    r1 = _decide(strategy, gates, config)
+    r1 = _decide(strategy, gates, config, _FLAT)
     assert r1.kind is DecisionKind.ACTION
     assert r1.rationale.startswith("R1-ENTRY-LONG:")
+
+
+# ---------------------------------------------------------------------------
+# 실험 A's declared stop-loss / take-profit (P4 S4)
+# ---------------------------------------------------------------------------
+
+
+def _experiment_a(tmp_path: Path) -> tuple[Any, dict[str, Any]]:
+    """The SHIPPED 000660 strategy + its SHIPPED bindings, through the production loader."""
+    loaded, bindings = _loaded_strategy_source(_EXPERIMENT_A, tmp_path)
+    (entry,) = loaded.strategies
+    return entry.strategy, dict(bindings.strategies["setup_d_long.strategy"].bindings)
+
+
+def _entry_gates(config: dict[str, Any]) -> dict[str, Any]:
+    """Every Setup D entry gate satisfied — so a NO_ACTION can only be the position guard."""
+    return {
+        "entry_window": True,
+        "hi_vol": True,
+        "stall_ok": True,
+        "reversal_ok": True,
+        "z_x1000": config["z_entry_max_x1000"] - 1,
+        "vwap_reverted": False,
+        "eod": False,
+    }
+
+
+def test_experiment_a_declares_the_position_namespace_its_rules_read() -> None:
+    """A `capsule.position.*` rule with the tree's namespace off is a boot refusal."""
+    tree = _tree(_EXPERIMENT_A)
+    declared = load_position_context_config(tree)
+    assert declared is not None and declared.enabled is True
+    # The bar period `bars_held` divides by is this tree's own 1-minute bar.
+    marketfeed = yaml.safe_load((tree / "marketfeed.yaml").read_text(encoding="utf-8"))
+    assert declared.bar_interval_ms == marketfeed["time_evaluate_closed_interval_ms"]
+
+    # 005930 and 005380 stay off, which is what keeps THEIR payload path byte-identical.
+    for symbol in (_PRIMARY_SYMBOL, _EXPERIMENT_B):
+        assert load_position_context_config(_tree(symbol)) is None, symbol
+
+
+def test_experiment_a_position_refs_resolve_only_with_the_namespace_on(
+    tmp_path: Path,
+) -> None:
+    """The shipped tree through the boot-time check, both ways round."""
+    loaded, _ = _loaded_strategy_source(_EXPERIMENT_A, tmp_path)
+    _refuse_unresolvable_position_refs(loaded, position_context_enabled=True)
+    with pytest.raises(StrategyLoadError, match="position_context.enabled"):
+        _refuse_unresolvable_position_refs(loaded, position_context_enabled=False)
+
+    read = {
+        tuple(compare["left"]["ref"])
+        for rule in yaml.safe_load(
+            (
+                _tree(_EXPERIMENT_A) / "strategies" / "setup_d_long.strategy.yaml"
+            ).read_text(encoding="utf-8")
+        )["policy"]["rules"]
+        for compare in rule["all_of"]
+        if compare["left"].get("ref", [None, None])[1] == POSITION_NAMESPACE
+    }
+    assert {ref[2] for ref in read} == {"side", "unrealized_bp"}
+    assert {ref[2] for ref in read} <= set(POSITION_DSL_FIELDS)
+
+
+def test_experiment_a_rule_order_is_entry_then_stop_then_target_then_the_old_exits(
+    tmp_path: Path,
+) -> None:
+    """Order IS semantics — first match wins, so this list is the contract."""
+    strategy, _ = _experiment_a(tmp_path)
+    assert [
+        rule.decision.rationale.split(":")[0] for rule in strategy.policy.rules
+    ] == [
+        "R1-ENTRY-LONG",
+        _STOP_RULE_ID,
+        _TARGET_RULE_ID,
+        "R2-EXIT-VWAP-REVERTED",
+        "R3-EXIT-EOD",
+        "R4-M2-PROBE-ENTRY-LONG",
+    ]
+    budget = yaml.safe_load(
+        (_tree(_EXPERIMENT_A) / "engine.yaml").read_text(encoding="utf-8")
+    )["dsl_evaluation_budget_steps"]
+    assert policy_work_steps(strategy.policy) == 51 <= budget
+    assert strategy_admissible(strategy).verdict is AdmissionVerdict.ADMISSIBLE
+
+
+def test_experiment_a_stop_fires_at_its_bound_and_not_one_bp_above(
+    tmp_path: Path,
+) -> None:
+    """The boundary, read from the YAML — `LE` includes the bound itself."""
+    strategy, config = _experiment_a(tmp_path)
+    bound = config["stop_loss_bp"]
+    assert isinstance(bound, int) and not isinstance(bound, bool) and bound < 0
+
+    quiet = {"entry_window": False, "vwap_reverted": False, "eod": False}
+    at = _decide(strategy, quiet, config, _held(bound))
+    assert at.kind is DecisionKind.FLAT
+    assert at.rationale.startswith(f"{_STOP_RULE_ID}:")
+    assert at.target is not None
+    assert (at.target.direction, at.target.position_effect) == ("SHORT", "CLOSE")
+
+    assert (
+        _decide(strategy, quiet, config, _held(bound + 1)).kind
+        is DecisionKind.NO_ACTION
+    )
+    assert _decide(strategy, quiet, config, _held(bound - 1)).rationale.startswith(
+        f"{_STOP_RULE_ID}:"
+    )
+
+
+def test_experiment_a_target_fires_at_its_bound_and_not_one_bp_below(
+    tmp_path: Path,
+) -> None:
+    strategy, config = _experiment_a(tmp_path)
+    bound = config["take_profit_bp"]
+    assert isinstance(bound, int) and not isinstance(bound, bool) and bound > 0
+
+    quiet = {"entry_window": False, "vwap_reverted": False, "eod": False}
+    at = _decide(strategy, quiet, config, _held(bound))
+    assert at.kind is DecisionKind.FLAT
+    assert at.rationale.startswith(f"{_TARGET_RULE_ID}:")
+    assert (
+        _decide(strategy, quiet, config, _held(bound - 1)).kind
+        is DecisionKind.NO_ACTION
+    )
+    assert _decide(strategy, quiet, config, _held(bound + 1)).rationale.startswith(
+        f"{_TARGET_RULE_ID}:"
+    )
+
+
+def test_experiment_a_neither_exit_fires_on_a_short_projection(
+    tmp_path: Path,
+) -> None:
+    """The guard is `side EQ "LONG"`, not `NE "FLAT"`.
+
+    Both exits carry ``direction: SHORT`` / ``position_effect: CLOSE``, so firing them on a
+    projected SHORT would SEND a short-opening order. A `NE "FLAT"` guard would pass such a
+    bar; this one must not, at either bound or past it.
+    """
+    strategy, config = _experiment_a(tmp_path)
+    quiet = {"entry_window": False, "vwap_reverted": False, "eod": False}
+    for bound in (config["stop_loss_bp"], config["take_profit_bp"]):
+        for bp in (bound, bound * 2):
+            short = _decide(strategy, quiet, config, _held(bp, side="SHORT"))
+            assert short.kind is DecisionKind.NO_ACTION, (bound, bp)
+            assert short.target is None
+            # ...and the SAME bp on a LONG is what the two rules are for.
+            assert _decide(strategy, quiet, config, _held(bp)).kind is DecisionKind.FLAT
+
+
+def test_experiment_a_stop_wins_over_the_vwap_exit_when_both_hold(
+    tmp_path: Path,
+) -> None:
+    """R5 sits ABOVE R2, so a reverted bar that is also at the stop is a stop."""
+    strategy, config = _experiment_a(tmp_path)
+    both = {"entry_window": False, "vwap_reverted": True, "eod": True}
+    decision = _decide(strategy, both, config, _held(config["stop_loss_bp"]))
+    assert decision.rationale.startswith(f"{_STOP_RULE_ID}:")
+    # ...and the old exits still win when the position is nowhere near either bound.
+    middle = _decide(strategy, both, config, _held(0))
+    assert middle.rationale.startswith("R2-EXIT-VWAP-REVERTED:")
+
+
+def test_experiment_a_neither_entry_rule_fires_while_a_position_is_held(
+    tmp_path: Path,
+) -> None:
+    """The `side EQ "FLAT"` guard on R1 AND on R4 — the two must not diverge."""
+    strategy, config = _experiment_a(tmp_path)
+    gates = _entry_gates(config)
+    assert _decide(strategy, gates, config, _FLAT).rationale.startswith(
+        "R1-ENTRY-LONG:"
+    )
+    assert _decide(strategy, gates, config, _held(0)).kind is DecisionKind.NO_ACTION
+
+    # R4 on its own input, with the probe binding forced ON: still guarded while held.
+    probe_on = dict(config, m2_probe_entry_enabled=True)
+    probe_shaped = {"entry_window": True, "vwap_reverted": False, "eod": False}
+    assert _decide(strategy, probe_shaped, probe_on, _FLAT).rationale.startswith(
+        "R4-M2-PROBE-ENTRY-LONG:"
+    )
+    assert (
+        _decide(strategy, probe_shaped, probe_on, _held(0)).kind
+        is DecisionKind.NO_ACTION
+    )
+
+
+def test_experiment_a_decides_nothing_when_the_position_namespace_is_absent(
+    tmp_path: Path,
+) -> None:
+    """Plan §2 D3: no namespace -> every position compare is False, NE included."""
+    strategy, config = _experiment_a(tmp_path)
+    quiet = {"entry_window": False, "vwap_reverted": False, "eod": False}
+    assert _decide(strategy, quiet, config, None).kind is DecisionKind.NO_ACTION
+    assert (
+        _decide(strategy, _entry_gates(config), config, None).kind
+        is DecisionKind.NO_ACTION
+    )
+    probe_on = dict(config, m2_probe_entry_enabled=True)
+    assert (
+        _decide(strategy, {"entry_window": True}, probe_on, None).kind
+        is DecisionKind.NO_ACTION
+    )
+    # The pre-S4 exits are unchanged: they read `resolved_values` only, so they still fire.
+    reverted = _decide(strategy, {"vwap_reverted": True}, config, None)
+    assert reverted.rationale.startswith("R2-EXIT-VWAP-REVERTED:")
+
+
+def test_experiment_a_is_the_only_tree_declaring_a_bp_bound() -> None:
+    """A bound with no namespace, or a namespace with no bound, is the drift to catch."""
+    for symbol in (_PRIMARY_SYMBOL, _EXPERIMENT_B):
+        document = yaml.safe_load(
+            (_tree(symbol) / STRATEGY_BINDINGS_FILE_NAME).read_text(encoding="utf-8")
+        )
+        for stem, item in (document.get("strategies") or {}).items():
+            stray = sorted(
+                key
+                for key in (item.get("bindings") or {})
+                if key in ("stop_loss_bp", "take_profit_bp")
+            )
+            assert stray == [], f"{symbol}: stem {stem!r} binds {stray}"
 
 
 def test_experiment_b_ships_one_rsi_wr_strategy_and_no_bindings(

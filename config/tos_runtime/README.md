@@ -51,7 +51,7 @@ operator decision 2026-11-19 §8-②):
 | tenant | role | what differs from 005930 beyond the symbol |
 | --- | --- | --- |
 | `cp3-setup-d-stock-005930` | canary — proves the order path is alive daily | — (R4 M2 probe stays ON) |
-| `cp3-setup-d-stock-000660` | experiment A — Setup D LONG | `strategy_bindings.yaml::m2_probe_entry_enabled: false` (one line; the R4 rule stays in the strategy file and simply cannot fire) |
+| `cp3-setup-d-stock-000660` | experiment A — Setup D LONG, with a declared stop-loss and take-profit | `strategy_bindings.yaml::m2_probe_entry_enabled: false` (the R4 rule stays in the strategy file and simply cannot fire); **plus P4 S4**: `marketfeed.yaml::position_context` on (the only tree that turns it on), two FLAT rules reading `capsule.position.unrealized_bp` (`R5-EXIT-STOP-LOSS` · `R6-EXIT-TAKE-PROFIT`), a `capsule.position.side EQ "FLAT"` guard on both entry rules, the `stop_loss_bp` / `take_profit_bp` bindings, and `engine.yaml`'s step-count comment (31 -> 51) |
 | `cp3-setup-d-stock-005380` | experiment B — RSI / Williams %R reversion | its own strategy file (`strategies/rsi_wr_reversion_long.strategy.yaml`, no `setup_d_long.strategy.yaml`), its own `fields.yaml` (13 published fields, not 15), the matching `critical_input_policy.yaml` field list, `strategies: {}` bindings, and three `RENDER.yaml` slot file names |
 
 So the three stock tenants now measure **three different decision digests** in

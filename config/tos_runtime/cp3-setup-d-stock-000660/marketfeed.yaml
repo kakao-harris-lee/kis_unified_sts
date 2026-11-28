@@ -29,3 +29,8 @@ time_evaluate_closed_interval_ms: 60000
 
 snapshot_age_bound: 20
 interval_width: 10
+
+# SAFETY: 이 블록을 끄면 이 트리 전략의 `capsule.position.*` 참조가 부팅에서 거부되고(`tos_runtime/strategy/resolve.py::_refuse_unresolvable_position_refs`), 그 거부마저 없으면 선언한 손절·목표가 매 봉 거짓으로 남아 영영 발화하지 않는다. `bar_interval_ms` 는 이 트리의 봉 주기(1분, `time_evaluate_closed_interval_ms` 와 같은 값)이고 `bars_held` 가 그것으로 나눈다.
+position_context:
+  enabled: true
+  bar_interval_ms: 60000
