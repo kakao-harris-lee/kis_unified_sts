@@ -107,6 +107,9 @@ tenants:
   #                   `capsule.position.side EQ "FLAT"` guard, and `stop_loss_bp` /
   #                   `take_profit_bp` join the bindings
   #                   (`docs/plans/2026-11-27-tos-p4-position-fields-plan.md` §3 · §11 #3).
+  #                   Each exit is guarded by `side EQ "LONG"`, NOT `NE "FLAT"`: both targets
+  #                   are `direction: SHORT` / `CLOSE`, so a SHORT projection under a
+  #                   `NE "FLAT"` guard would send a short-OPENING order.
   #                   Six rules, 51 static work steps (budget 64, unchanged).
   #   cp3-setup-d-stock-005380 — 실험 B, RSI / Williams %R 되돌림.
   #     generation 1: born 2026-11-20 under the Setup D contract above.
@@ -123,7 +126,7 @@ tenants:
   # evening before — `docs/runbooks/tos-paper-boot.md` §7.2-f-1 («결정 계약을 바꾼 날»).
   cp3-setup-d-stock-000660:
     generation: 3
-    decision_digest: "sha256:d0dc18c69b381abe264be978c158fd24dfa989cf94c2c4f8dff759587e3714de"
+    decision_digest: "sha256:29177150eeb4df82ced3034e8c43bea1014fae7e35082950cd3df6a5cb20ec10"
 
   cp3-setup-d-stock-005380:
     generation: 2

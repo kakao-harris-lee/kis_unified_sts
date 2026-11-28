@@ -32,8 +32,8 @@ payload·환경·서명이 그대로다), 손절과 목표를 **규칙 두 개�
 | # | 규칙 | 조건 | 결정 |
 | --- | --- | --- | --- |
 | 1 | `R1-ENTRY-LONG` | `position.side EQ "FLAT"` ∧ Setup D 다섯 게이트 | ACTION |
-| 2 | `R5-EXIT-STOP-LOSS` | `side NE "FLAT"` ∧ `unrealized_bp LE config.stop_loss_bp` | FLAT |
-| 3 | `R6-EXIT-TAKE-PROFIT` | `side NE "FLAT"` ∧ `unrealized_bp GE config.take_profit_bp` | FLAT |
+| 2 | `R5-EXIT-STOP-LOSS` | `side EQ "LONG"` ∧ `unrealized_bp LE config.stop_loss_bp` | FLAT |
+| 3 | `R6-EXIT-TAKE-PROFIT` | `side EQ "LONG"` ∧ `unrealized_bp GE config.take_profit_bp` | FLAT |
 | 4 | `R2-EXIT-VWAP-REVERTED` | `vwap_reverted` | FLAT |
 | 5 | `R3-EXIT-EOD` | `eod` | FLAT |
 | 6 | `R4-M2-PROBE-ENTRY-LONG` | `side EQ "FLAT"` ∧ 진입창 ∧ 프로브 바인딩 | ACTION (이 트리에서 꺼짐) |
@@ -43,8 +43,11 @@ payload·환경·서명이 그대로다), 손절과 목표를 **규칙 두 개�
   `side EQ "FLAT"` 가드가 있어 보유 중에는 발화하지 않으니 청산을 가리지 않는다.
 - **시간 청산은 없다**(운영자 결정 2026-11-28 §11 #3: `bars_held` 는 벽시계로 세므로
   주식을 다음 날로 넘기면 첫 봉에 ~1,000봉이 된다).
-- **이름공간이 없는 봉에서는 아무것도 발화하지 않는다.** 모르는 피연산자는 그 비교를
-  거짓으로 만들고(`tos/src/tos/dsl/vocabulary.py::eval_compare`) `NE` 도 예외가 아니다 —
+- **청산 가드는 `side EQ "LONG"` 이다** — `NE "FLAT"` 이 아니다. 이 전략은 롱만 열지만
+  `NE "FLAT"` 은 어떤 경로로든 SHORT 가 투영된 봉을 통과시키고, 그러면 두 규칙의
+  `direction: SHORT` · `position_effect: CLOSE` target 이 숏을 **키우는** 주문이 된다.
+- **이름공간이 없는 봉에서는 아무것도 발화하지 않는다.** 모르는 피연산자는 연산자와
+  무관하게 그 비교를 거짓으로 만든다(`tos/src/tos/dsl/vocabulary.py::eval_compare`) —
   손절·목표도, 가드가 붙은 두 진입도 발화하지 않는다(계획 §2 D3). R2·R3 는
   `resolved_values` 만 읽으므로 그대로다.
 - 두 숫자를 바꾸는 것은 `strategy_bindings.yaml` 두 줄 + generation 재도출이다.

@@ -630,6 +630,26 @@ def test_experiment_a_target_fires_at_its_bound_and_not_one_bp_below(
     )
 
 
+def test_experiment_a_neither_exit_fires_on_a_short_projection(
+    tmp_path: Path,
+) -> None:
+    """The guard is `side EQ "LONG"`, not `NE "FLAT"`.
+
+    Both exits carry ``direction: SHORT`` / ``position_effect: CLOSE``, so firing them on a
+    projected SHORT would SEND a short-opening order. A `NE "FLAT"` guard would pass such a
+    bar; this one must not, at either bound or past it.
+    """
+    strategy, config = _experiment_a(tmp_path)
+    quiet = {"entry_window": False, "vwap_reverted": False, "eod": False}
+    for bound in (config["stop_loss_bp"], config["take_profit_bp"]):
+        for bp in (bound, bound * 2):
+            short = _decide(strategy, quiet, config, _held(bp, side="SHORT"))
+            assert short.kind is DecisionKind.NO_ACTION, (bound, bp)
+            assert short.target is None
+            # ...and the SAME bp on a LONG is what the two rules are for.
+            assert _decide(strategy, quiet, config, _held(bp)).kind is DecisionKind.FLAT
+
+
 def test_experiment_a_stop_wins_over_the_vwap_exit_when_both_hold(
     tmp_path: Path,
 ) -> None:
