@@ -15,6 +15,8 @@ from ..inspect_session import inspect_session
 from ..position_sim import (
     DECLARED_UNIT_SOURCE,
     DEFAULT_UNIT_SOURCE,
+    GAP_EXIT_FIRST_VISIBLE_BAR,
+    GAP_REENTRY_NEXT_BAR,
     POSITION_MODE_SIMULATED,
     load_simulation_config,
 )
@@ -230,6 +232,63 @@ def test_the_rendered_report_says_the_position_carries_across_sessions(
     assert "세션 경계에서 초기화되지 않는다" in str(
         simulation["carries_across_sessions"]
     )
+
+
+def test_the_long_path_counts_no_decision_live_could_not_reproduce(
+    long_report: InspectReport,
+) -> None:
+    """Bar 3's exit is three bars after the entry and bar 5's entry two after the exit."""
+    assert long_report.position_live_gap == {
+        GAP_REENTRY_NEXT_BAR: 0,
+        GAP_EXIT_FIRST_VISIBLE_BAR: 0,
+    }
+    assert f"{GAP_REENTRY_NEXT_BAR} 0" in render_text(long_report)
+
+
+def test_a_next_bar_exit_and_the_re_entry_behind_it_are_both_counted(
+    tmp_path: Path,
+) -> None:
+    """Live carries no namespace while a send is unresolved, so these two it may not make."""
+    report = _inspect(
+        tmp_path,
+        (_ENTRY_PRICE, 99_500, 99_500, 99_500),
+        (True, False, True, False),
+    )
+    assert _decisions(report) == [
+        tree.ENTRY_RULE_ID,
+        tree.STOP_RULE_ID,
+        tree.ENTRY_RULE_ID,
+        tree.DEFAULT_RULE_ID,
+    ]
+    assert report.position_live_gap == {
+        GAP_REENTRY_NEXT_BAR: 1,
+        GAP_EXIT_FIRST_VISIBLE_BAR: 1,
+    }
+    text = render_text(report)
+    assert f"{GAP_EXIT_FIRST_VISIBLE_BAR} 1" in text
+    assert "전송이 미결인 봉에 포지션 이름공간이 없어" in text
+    document = json.loads(render_json(report))
+    assert document["position"]["live_gap"] == {
+        GAP_REENTRY_NEXT_BAR: 1,
+        GAP_EXIT_FIRST_VISIBLE_BAR: 1,
+    }
+
+
+def test_the_published_fill_model_does_not_claim_parity_with_live(
+    long_report: InspectReport,
+) -> None:
+    """The one sentence a consumer may print alone must carry live's absence gap."""
+    simulation = long_report.position_simulation
+    assert simulation is not None
+    fill_model = str(simulation["fill_model"])
+    assert "전송이 미결인 동안" in fill_model
+    assert "side EQ FLAT" in fill_model
+    assert GAP_EXIT_FIRST_VISIBLE_BAR in fill_model
+    note = str(simulation["entry_price_basis_note"])
+    assert "EXECUTION" in note and "ORDER" in note
+    header = render_text(long_report)
+    assert fill_model in header
+    assert note in header
 
 
 def test_an_action_while_already_held_changes_nothing(tmp_path: Path) -> None:

@@ -43,7 +43,10 @@ __all__ = [
     "DECLARED_UNIT_SOURCE",
     "DEFAULT_UNIT_SOURCE",
     "ENTRY_PRICE_BASIS",
+    "ENTRY_PRICE_BASIS_NOTE",
     "FILL_MODEL",
+    "GAP_EXIT_FIRST_VISIBLE_BAR",
+    "GAP_REENTRY_NEXT_BAR",
     "POSITION_MODE_RECORDED",
     "POSITION_MODE_SIMULATED",
     "SCHEME",
@@ -61,9 +64,25 @@ POSITION_MODE_RECORDED = "recorded"
 
 ENTRY_PRICE_BASIS = "ORDER"
 
+GAP_REENTRY_NEXT_BAR = "reentry_next_bar"
+
+GAP_EXIT_FIRST_VISIBLE_BAR = "exit_first_visible_bar"
+
 FILL_MODEL = (
     "체결 모델 하나: ACTION · FLAT 결정은 그 봉의 price_field_key 값에 전량 체결되고, "
-    "그 결과 포지션은 다음 봉부터 보인다(라이브도 그 봉의 결정 전에 포지션을 읽는다)."
+    "그 결과 포지션은 다음 봉부터 보인다(라이브도 그 봉의 결정 전에 포지션을 읽는다). "
+    "라이브에는 이 모델에 없는 공백이 있다 — 전송이 미결인 동안(진입을 보내고 체결 정산 "
+    "전, 청산을 보내고 정산 전) 그 봉은 포지션 이름공간을 아예 싣지 않아 side EQ FLAT "
+    "진입 가드까지 포함해 포지션을 읽는 규칙이 전부 거짓이고(계획 §2 D3), 체결되지 않는 "
+    "지정가는 라이브에서 포지션이 되지 않는다. 그래서 시뮬레이션이 보이는 «포지션이 처음 "
+    "보인 봉의 청산»과 «청산 다음 봉의 재진입»은 라이브가 미루거나 아예 내지 않을 "
+    f"결정이고, 그 수가 {GAP_EXIT_FIRST_VISIBLE_BAR} · {GAP_REENTRY_NEXT_BAR} 다."
+)
+
+ENTRY_PRICE_BASIS_NOTE = (
+    "entry_price_basis 는 시뮬레이션에서 언제나 ORDER(그 봉의 지정가)다 — 라이브는 "
+    "FULL_FILL 을 관측하면 EXECUTION(브로커 평균 체결가)으로 바꿔 쓰므로, 같은 봉에서도 "
+    "unrealized_bp 를 다른 진입가에서 재게 된다."
 )
 
 CARRIES_ACROSS_SESSIONS = (
@@ -108,6 +127,7 @@ class SimulationConfig:
             "held_qty": self.held_qty,
             "held_qty_source": self.held_qty_source,
             "entry_price_basis": ENTRY_PRICE_BASIS,
+            "entry_price_basis_note": ENTRY_PRICE_BASIS_NOTE,
             "fill_model": FILL_MODEL,
             "carries_across_sessions": CARRIES_ACROSS_SESSIONS,
         }
@@ -155,6 +175,7 @@ class _OpenFill:
     rule_id: str | None
     price: int
     as_of_ms: int
+    ordinal: int
 
 
 def _exact_positive_int(value: object) -> int | None:
@@ -236,11 +257,23 @@ class PositionSimulation:
         self._scheme = scheme
         self._open: _OpenFill | None = None
         self._round_trips: list[RoundTrip] = []
+        self._ordinal = 0
+        self._exit_ordinal: int | None = None
+        self._reentry_next_bar = 0
+        self._exit_first_visible_bar = 0
 
     @property
     def round_trips(self) -> tuple[RoundTrip, ...]:
         """Every round trip the simulated fills closed, oldest first."""
         return tuple(self._round_trips)
+
+    @property
+    def live_gap(self) -> dict[str, int]:
+        """The two decision counts live may not reproduce (:data:`FILL_MODEL`'s gap)."""
+        return {
+            GAP_REENTRY_NEXT_BAR: self._reentry_next_bar,
+            GAP_EXIT_FIRST_VISIBLE_BAR: self._exit_first_visible_bar,
+        }
 
     @property
     def open_fill(self) -> dict[str, object] | None:
@@ -321,21 +354,29 @@ class PositionSimulation:
         time_kst: str,
     ) -> None:
         """Fill this bar's decision at ``price`` — the result is visible from the NEXT bar."""
+        # SAFETY: the ordinal counts EVERY replayed bar, a priceless one included — the two live-gap counts below are bar DISTANCES, so skipping a bar here would print an exit two bars after its entry as one on the first bar the position was visible
+        self._ordinal += 1
         if price is None or decision_kind is None:
             return
         held = self._open
         if decision_kind == ACTION_KIND and held is None:
+            if self._exit_ordinal == self._ordinal - 1:
+                self._reentry_next_bar += 1
             self._open = _OpenFill(
                 raw_event_id=raw_event_id,
                 time_kst=time_kst,
                 rule_id=rule_id,
                 price=price,
                 as_of_ms=as_of_ms,
+                ordinal=self._ordinal,
             )
             return
         if decision_kind != FLAT_KIND or held is None:
             # SAFETY: ACTION while held and FLAT while flat are both no-ops — live halts the second entry at the capacity stage (AT_MOST_ONE_EXPOSURE_HELD) and sends no exit with nothing to close, so stacking here would invent a round trip and a position size the kernel would never have produced
             return
+        if held.ordinal == self._ordinal - 1:
+            self._exit_first_visible_bar += 1
+        self._exit_ordinal = self._ordinal
         projected, _absent = self._projected(held, price=price, as_of_ms=as_of_ms)
         self._open = None
         self._round_trips.append(

@@ -11,6 +11,7 @@ from tos.dsl import ScalarValue
 from tos.dsl.vocabulary import UNKNOWN
 
 from .inspect_evidence import BarEvidence
+from .position_sim import GAP_EXIT_FIRST_VISIBLE_BAR, GAP_REENTRY_NEXT_BAR
 
 __all__ = [
     "EVALUATION_ENGINE_VIEW",
@@ -183,13 +184,24 @@ class InspectReport:
     position_absence_counts: Mapping[str, int] | None = None
     round_trips: tuple[Mapping[str, object], ...] = ()
     position_open_fill: Mapping[str, object] | None = None
+    position_live_gap: Mapping[str, int] | None = None
+
+
+def _no_position_text(row: BarRow) -> str:
+    """Why this bar's rules read no position — a REFUSED stored context says so itself."""
+    evidence = row.evidence
+    refusal = None if evidence is None else evidence.position_context_refusal
+    if refusal is not None:
+        # SAFETY: a refused stored context gets its own cell, never `absent:-` — the engine DID carry a position on this bar and the record was rejected here, and an absence cell would read as "the engine had none" while hiding that a declared stop was compared against a rejected holding
+        return f"refused:{refusal.partition(':')[0]}"
+    return f"absent:{row.position_absent_reason or '-'}"
 
 
 def position_text(row: BarRow) -> str:
     """One bar's position cell — the values its rules read, or why there were none."""
     values = row.position
     if values is None:
-        return f"absent:{row.position_absent_reason or '-'}"
+        return _no_position_text(row)
     side = value_text(values.get("side"))
     if side == "FLAT":
         return "FLAT"
@@ -237,6 +249,7 @@ def _position_header_lines(report: InspectReport) -> list[str]:
         f" · held_qty {simulated.get('held_qty')} ({simulated.get('held_qty_source')})"
         f" · entry_price_basis {simulated.get('entry_price_basis')}",
         f"          {simulated.get('fill_model')}",
+        f"          {simulated.get('entry_price_basis_note')}",
         f"          {simulated.get('carries_across_sessions')}",
     ]
 
@@ -384,6 +397,20 @@ def _summary_lines(report: InspectReport) -> list[str]:
 
 _ROUND_TRIP_COLUMNS = ("entry", "rule", "exit", "rule", "bars", "unrealized", "bp")
 
+_LIVE_GAP_NOTE = (
+    "라이브는 전송이 미결인 봉에 포지션 이름공간이 없어 이 결정을 미루거나 내지 않는다"
+)
+
+
+def _live_gap_line(report: InspectReport) -> str:
+    """The absence gap as two numbers — the decisions live may not reproduce."""
+    gap = report.position_live_gap or {}
+    return (
+        f"  live gap: {GAP_REENTRY_NEXT_BAR} {gap.get(GAP_REENTRY_NEXT_BAR, 0)} · "
+        f"{GAP_EXIT_FIRST_VISIBLE_BAR} {gap.get(GAP_EXIT_FIRST_VISIBLE_BAR, 0)} — "
+        f"{_LIVE_GAP_NOTE}"
+    )
+
 
 def _round_trip_lines(report: InspectReport) -> list[str]:
     """The simulated round trips — the same fills the hypothetical PnL counts."""
@@ -395,6 +422,7 @@ def _round_trip_lines(report: InspectReport) -> list[str]:
     # SAFETY: a recorded session has no simulated fills at all, so it gets no round-trip block — printing "(none)" there would read as "this session traded nothing" rather than "nothing was simulated"
     if report.position_simulation is None:
         return lines
+    lines.append(_live_gap_line(report))
     if not report.round_trips and report.position_open_fill is None:
         lines.append("  simulated round trips: (none)")
         return lines
@@ -598,6 +626,11 @@ def render_json(report: InspectReport) -> str:
                 None
                 if report.position_open_fill is None
                 else dict(report.position_open_fill)
+            ),
+            "live_gap": (
+                None
+                if report.position_live_gap is None
+                else dict(report.position_live_gap)
             ),
         },
     }

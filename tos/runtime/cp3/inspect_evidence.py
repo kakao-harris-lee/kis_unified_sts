@@ -207,17 +207,19 @@ def _ticks_by_snapshot(
 
 def _projected_view(
     raw: Any,
-) -> tuple[Mapping[str, ScalarValue] | None, str | None]:
-    """``(the engine's {field_key: scalar}, refusal)`` from a stored value view."""
+) -> tuple[Mapping[str, ScalarValue] | None, int | None, str | None]:
+    """``({field_key: scalar}, the view's newest as_of, refusal)`` from a stored view."""
     if raw is None:
-        return None, None
+        return None, None, None
     if not isinstance(raw, dict):
-        return None, f"value_view is {type(raw).__name__}, not a JSON object"
+        return None, None, f"value_view is {type(raw).__name__}, not a JSON object"
     try:
         view = ContextValueView.model_validate(raw)
     except (ValidationError, ArtifactIntegrityError) as exc:
-        return None, f"value_view is not a readable ContextValueView: {exc}"
-    return view.as_environment_mapping(), None
+        return None, None, f"value_view is not a readable ContextValueView: {exc}"
+    # SAFETY: the newest as_of is folded by the SAME rule the position reader uses (`riskstate/position_context.py::_max_as_of`) — a different rule here would key this bar on a stamp no absence row carries
+    newest = max((value.as_of for value in view.values), default=None)
+    return view.as_environment_mapping(), newest, None
 
 
 def _projected_position(
@@ -227,26 +229,26 @@ def _projected_position(
     if raw is None:
         return None, None
     if not isinstance(raw, dict):
-        return None, f"position_context is {type(raw).__name__}, not a JSON object"
+        return None, f"NOT_AN_OBJECT: position_context is {type(raw).__name__}"
     try:
         # SAFETY: the stored row is re-validated, never trusted as read — the record recomputes its own digest and bp figure, so a tampered holding cannot be shown here as the thing a declared stop-loss was compared against
         context = PositionContext.model_validate(raw)
     except (ValidationError, ArtifactIntegrityError) as exc:
-        return None, f"position_context is not a readable PositionContext: {exc}"
+        return None, f"NOT_A_READABLE_CONTEXT: {exc}"
     return context.as_environment_mapping(), None
 
 
 def _absence_streaks(
     connection: sqlite3.Connection, *, path: Path
-) -> list[tuple[int, str, str | None]]:
-    """``(seq, reason, bound_refusal)`` for every recorded position-absence CHANGE."""
+) -> list[tuple[int, int, str, str | None]]:
+    """``(as_of_ms, seq, reason, bound_refusal)`` per position-absence CHANGE, in as_of order."""
     rows = _query(
         connection,
         path=path,
         sql="SELECT seq, payload_json FROM entries WHERE kind = ? ORDER BY seq",
         params=(POSITION_CONTEXT_ABSENT_KIND,),
     )
-    out: list[tuple[int, str, str | None]] = []
+    out: list[tuple[int, int, str, str | None]] = []
     for seq, payload_json in rows:
         try:
             envelope = json.loads(payload_json)
@@ -256,24 +258,25 @@ def _absence_streaks(
         if not isinstance(payload, dict):
             continue
         reason = payload.get("reason")
+        as_of = payload.get("as_of_ms")
         refusal = payload.get("bound_refusal")
-        if isinstance(reason, str):
+        if isinstance(reason, str) and isinstance(as_of, int):
             out.append(
-                (int(seq), reason, refusal if isinstance(refusal, str) else None)
+                (as_of, int(seq), reason, refusal if isinstance(refusal, str) else None)
             )
-    return out
+    return sorted(out)
 
 
 def _absence_in_force(
-    streaks: Sequence[tuple[int, str, str | None]], *, at_seq: int | None
+    streaks: Sequence[tuple[int, int, str, str | None]], *, at_as_of: int | None
 ) -> tuple[str | None, str | None]:
-    """The absence reason in force at ``at_seq`` — recorded on change, carried forward."""
-    if at_seq is None:
+    """The absence reason in force on the bar whose own newest ``as_of`` is ``at_as_of``."""
+    if at_as_of is None:
         return None, None
     reason: str | None = None
     refusal: str | None = None
-    for seq, recorded, bound_refusal in streaks:
-        if seq > at_seq:
+    for as_of, _seq, recorded, bound_refusal in streaks:
+        if as_of > at_as_of:
             break
         reason, refusal = recorded, bound_refusal
     if reason is None or reason == PositionContextReason.PRESENT.value:
@@ -453,12 +456,10 @@ def read_bar_evidence(
             for record in records
             if (tick.handling_started_seq or 0) < record[0] <= (tick.consumed_seq or 0)
         ]
-        view, view_refusal = _projected_view(tick.value_view_raw)
+        view, view_as_of, view_refusal = _projected_view(tick.value_view_raw)
         position, position_refusal = _projected_position(tick.position_context_raw)
-        # SAFETY: the absence row is appended BEFORE the tick is enqueued, so the reason in force for this bar is the last one at or before its handling seq — reading the tick's own evidence window instead would show every bar as "no reason recorded"
-        absent_reason, bound_refusal = _absence_in_force(
-            streaks, at_seq=tick.handling_started_seq
-        )
+        # SAFETY: the reason is attributed by the row's OWN as_of_ms against this bar's own newest as_of (exact row, else the latest row not after it, carried forward in as_of order), never by the handling seq — a tick queued while the driver was down is handled at recovery, long after later bars' rows, so a seq join would hand it another bar's reason or none at all
+        absent_reason, bound_refusal = _absence_in_force(streaks, at_as_of=view_as_of)
         out[raw_event_id] = BarEvidence(
             raw_event_id=raw_event_id,
             snapshot_id=snapshot_id,

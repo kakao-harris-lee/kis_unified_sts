@@ -515,6 +515,7 @@ def _build_report(
             else tuple(trip.as_json() for trip in simulation.round_trips)
         ),
         position_open_fill=None if simulation is None else simulation.open_fill,
+        position_live_gap=None if simulation is None else simulation.live_gap,
         session_name=session_name or journal_path.parent.name,
         instrument=instrument,
         strategy_path=content.strategy_path,

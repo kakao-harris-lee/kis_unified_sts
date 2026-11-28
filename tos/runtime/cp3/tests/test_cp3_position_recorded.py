@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
@@ -17,7 +17,7 @@ from tos_runtime.marketfeed.store import MARKETFEED_FILE_NAME, MARKETFEED_SCHEMA
 from tos_runtime.operations.backup_set import EVIDENCE_FILE_NAME, INBOX_FILE_NAME
 
 from ..inspect_evidence import DECISION_TICK_KIND, POSITION_CONTEXT_ABSENT_KIND
-from ..inspect_report import InspectReport, render_json, render_text
+from ..inspect_report import InspectReport, position_text, render_json, render_text
 from ..inspect_session import inspect_session
 from ..position_sim import POSITION_MODE_RECORDED, SCHEME
 from . import _position_tree as tree
@@ -35,6 +35,8 @@ _UNSETTLED = "QUANTITY_UNSETTLED"
 
 _PRESENT = "PRESENT"
 
+_STORE_READ_FAILED = "STORE_READ_FAILED"
+
 _BARS: tuple[tuple[bool, int, int], ...] = (
     (True, 11, 14),
     (False, 21, 24),
@@ -42,8 +44,6 @@ _BARS: tuple[tuple[bool, int, int], ...] = (
     (False, 41, 44),
     (False, 51, 54),
 )
-
-_ABSENCE_ROWS: tuple[tuple[int, str], ...] = ((30, _UNSETTLED), (50, _PRESENT))
 
 
 def _raw_event_id(index: int) -> str:
@@ -56,8 +56,15 @@ def _as_of(index: int) -> int:
     return _BASE_AS_OF_MS + index * _MINUTE_MS
 
 
-def _journal(root: Path) -> Path:
-    """The five-bar journal, in the producer's own five-key line shape."""
+# SAFETY: each row carries ITS OWN bar's as_of, exactly as the scheduler stamps it (the view's newest as_of) — stamping every row with one bar's as_of would leave the join rule this fixture exists to pin untested
+_ABSENCE_ROWS: tuple[tuple[int, str, int], ...] = (
+    (30, _UNSETTLED, _as_of(2)),
+    (50, _PRESENT, _as_of(4)),
+)
+
+
+def _journal(root: Path, bars: Sequence[tuple[bool, int, int]] = _BARS) -> Path:
+    """The journal for ``bars``, in the producer's own five-key line shape."""
     lines = [
         json.dumps(
             {
@@ -72,16 +79,15 @@ def _journal(root: Path) -> Path:
             },
             sort_keys=True,
         )
-        for index, (window, _started, _consumed) in enumerate(_BARS)
+        for index, (window, _started, _consumed) in enumerate(bars)
     ]
     path = root / "journal.jsonl"
     path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
     return path
 
 
-def _value_view(index: int) -> dict[str, Any]:
+def _value_view(index: int, window: bool) -> dict[str, Any]:
     """One tick's stored value view, in its dumped shape."""
-    window = _BARS[index][0]
     return {
         "snapshot_id": f"cis-{index}",
         "snapshot_canonical_digest": f"digest-{index}",
@@ -108,8 +114,20 @@ def _dumped(context: Any) -> dict[str, Any]:
     return payload
 
 
-def _stored_position(index: int) -> dict[str, Any] | None:
+def _tampered(payload: dict[str, Any]) -> dict[str, Any]:
+    """A stored context whose digest no longer binds its own content."""
+    return {**payload, "unrealized_bp": 0}
+
+
+def _stored_position(
+    index: int, *, positions: bool = True, tamper: int | None = None
+) -> dict[str, Any] | None:
     """The position the ENGINE recorded for bar ``index``, built by the kernel itself."""
+    if not positions:
+        return None
+    if index == tamper:
+        held = _stored_position(index)
+        return None if held is None else _tampered(held)
     if index in (0, 4):
         return _dumped(
             flat_position_context(
@@ -139,13 +157,15 @@ def _stored_position(index: int) -> dict[str, Any] | None:
     return None
 
 
-def _tick_payload(index: int) -> str:
+def _tick_payload(
+    index: int, *, window: bool, positions: bool, tamper: int | None
+) -> str:
     """One inbox ``DECISION_TICK`` payload: its capsule, view, and stored position."""
     tick: dict[str, Any] = {
         "capsule": {"critical_input_snapshot": {"snapshot_id": f"cis-{index}"}},
-        "value_view": _value_view(index),
+        "value_view": _value_view(index, window),
     }
-    position = _stored_position(index)
+    position = _stored_position(index, positions=positions, tamper=tamper)
     if position is not None:
         tick["position_context"] = position
     return json.dumps({"decision_tick": tick})
@@ -161,8 +181,15 @@ def _store(path: Path, version: int) -> Iterator[sqlite3.Connection]:
         connection.commit()
 
 
-def _write_stores(root: Path) -> Path:
-    """The three-store durable set the five recorded bars need."""
+def _write_stores(
+    root: Path,
+    *,
+    bars: Sequence[tuple[bool, int, int]] = _BARS,
+    absence: Sequence[tuple[int, str, int]] = _ABSENCE_ROWS,
+    positions: bool = True,
+    tamper: int | None = None,
+) -> Path:
+    """The three-store durable set the recorded bars need."""
     data_dir = root / "data"
     data_dir.mkdir()
     with _store(
@@ -177,7 +204,7 @@ def _write_stores(root: Path) -> Path:
             "INSERT INTO preimages VALUES (?, ?, ?)",
             [
                 (f"cis-{index}", _raw_event_id(index), "{}")
-                for index in range(len(_BARS))
+                for index in range(len(bars))
             ],
         )
     with _store(data_dir / INBOX_FILE_NAME, INBOX_SCHEMA_VERSION) as inbox:
@@ -193,11 +220,13 @@ def _write_stores(root: Path) -> Path:
                     index + 1,
                     f"event-{index}",
                     DECISION_TICK_KIND,
-                    _tick_payload(index),
+                    _tick_payload(
+                        index, window=window, positions=positions, tamper=tamper
+                    ),
                     consumed,
                     started,
                 )
-                for index, (_window, started, consumed) in enumerate(_BARS)
+                for index, (window, started, consumed) in enumerate(bars)
             ],
         )
     with _store(data_dir / EVIDENCE_FILE_NAME, EVIDENCE_SCHEMA_VERSION) as evidence:
@@ -206,21 +235,25 @@ def _write_stores(root: Path) -> Path:
             "payload_json TEXT NOT NULL)"
         )
         evidence.executemany(
-            "INSERT INTO entries VALUES (?, ?, ?)", list(_evidence_rows())
+            "INSERT INTO entries VALUES (?, ?, ?)",
+            list(_evidence_rows(bars, absence)),
         )
     return data_dir
 
 
-def _evidence_rows() -> Iterator[tuple[int, str, str]]:
+def _evidence_rows(
+    bars: Sequence[tuple[bool, int, int]],
+    absence: Sequence[tuple[int, str, int]],
+) -> Iterator[tuple[int, str, str]]:
     """Every evidence row: the per-tick window marks plus the absence-reason changes."""
-    for _window, started, consumed in _BARS:
+    for _window, started, consumed in bars:
         yield started, "EVENT_HANDLING_STARTED", _entry({})
         yield (
             consumed,
             "EVENT_CONSUMED",
             _entry({"halt_reason": None, "flow_fingerprint": {"halt_step": None}}),
         )
-    for seq, reason in _ABSENCE_ROWS:
+    for seq, reason, as_of_ms in absence:
         yield (
             seq,
             POSITION_CONTEXT_ABSENT_KIND,
@@ -229,7 +262,7 @@ def _evidence_rows() -> Iterator[tuple[int, str, str]]:
                     "instrument": tree.INSTRUMENT,
                     "reason": reason,
                     "bound_refusal": None,
-                    "as_of_ms": _BASE_AS_OF_MS,
+                    "as_of_ms": as_of_ms,
                 }
             ),
         )
@@ -321,3 +354,69 @@ def test_the_json_carries_the_stored_position_per_bar(recorded: InspectReport) -
     assert document["bars"][2]["position_absent_reason"] == _UNSETTLED
     assert document["bars"][1]["evidence"]["position_context"]["side"] == "LONG"
     assert document["summary"]["position_absent"] == {_UNSETTLED: 2}
+    assert document["position"]["live_gap"] is None
+
+
+# SAFETY: both handling windows (20-21, 22-23) sit AFTER both absence rows (seq 5 and 8) on purpose — that is the recovery-queued order this fixture reproduces, and renumbering them ascending would make the test pass under a seq-keyed join too
+_QUEUED_BARS: tuple[tuple[bool, int, int], ...] = ((False, 20, 21), (False, 22, 23))
+
+
+@pytest.mark.parametrize(
+    ("absence", "expected"),
+    [
+        (((5, _UNSETTLED, _as_of(0)), (8, _PRESENT, _as_of(1))), [_UNSETTLED, None]),
+        (
+            ((5, _UNSETTLED, _as_of(0)), (8, _STORE_READ_FAILED, _as_of(1))),
+            [_UNSETTLED, _STORE_READ_FAILED],
+        ),
+    ],
+    ids=("later-bar-present", "later-bar-absent-for-another-reason"),
+)
+def test_a_tick_handled_at_recovery_keeps_its_own_bars_reason(
+    tmp_path: Path,
+    absence: tuple[tuple[int, str, int], ...],
+    expected: list[str | None],
+) -> None:
+    """The reason is joined by the row's own as_of, not by the seq recovery handled it at."""
+    config_dir = tree.write_tree(tmp_path)
+    report = inspect_session(
+        journal_path=_journal(tmp_path, _QUEUED_BARS),
+        strategy_path=config_dir / "strategies" / tree.STRATEGY_FILE_NAME,
+        bindings_path=config_dir / "strategy_bindings.yaml",
+        data_dir=_write_stores(
+            tmp_path, bars=_QUEUED_BARS, absence=absence, positions=False
+        ),
+        session_name="s3-queued-until-recovery",
+    )
+    assert [row.position_absent_reason for row in report.bars] == expected
+    assert [row.position for row in report.bars] == [None, None]
+
+
+@pytest.fixture
+def tampered(tmp_path: Path) -> InspectReport:
+    """The same five bars, but bar 1's stored context no longer binds its own digest."""
+    config_dir = tree.write_tree(tmp_path)
+    return inspect_session(
+        journal_path=_journal(tmp_path),
+        strategy_path=config_dir / "strategies" / tree.STRATEGY_FILE_NAME,
+        bindings_path=config_dir / "strategy_bindings.yaml",
+        data_dir=_write_stores(tmp_path, tamper=1),
+        session_name="s3-tampered",
+    )
+
+
+def test_a_refused_stored_context_says_so_instead_of_reading_as_absent(
+    tampered: InspectReport,
+) -> None:
+    """``absent:-`` would read as «the engine had no position» on a REJECTED record."""
+    row = tampered.bars[1]
+    assert row.position is None
+    assert row.position_absent_reason is None
+    assert row.evidence is not None
+    assert row.evidence.position_context_refusal is not None
+    assert position_text(row) == "refused:NOT_A_READABLE_CONTEXT"
+    assert "refused:NOT_A_READABLE_CONTEXT" in render_text(tampered)
+    document = json.loads(render_json(tampered))
+    refusal = document["bars"][1]["evidence"]["position_context_refusal"]
+    assert refusal.startswith("NOT_A_READABLE_CONTEXT:")
+    assert row.decision_rule_id == tree.DEFAULT_RULE_ID
