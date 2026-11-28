@@ -155,6 +155,11 @@ def _fill_bar(values: Mapping[str, Any], prefix: str) -> dict[str, Any]:
     }
 
 
+def _held_qty(raw: Any) -> int:
+    """A simulated fill's quantity. A fill that does not say holds one — never zero."""
+    return raw if type(raw) is int and raw > 0 else 1
+
+
 def _fill_price(raw: Any, contract: Contract) -> Decimal | None:
     """A simulated fill's integer price in index points, or ``None`` when unreadable."""
     if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
@@ -192,7 +197,11 @@ def _simulated_pairs(
             continue
         trades.append(
             _trade(
-                {"bar": _fill_bar(trip, "entry"), "price": entry_price},
+                {
+                    "bar": _fill_bar(trip, "entry"),
+                    "price": entry_price,
+                    "held_qty": _held_qty(trip.get("held_qty")),
+                },
                 _fill_bar(trip, "exit"),
                 exit_price,
                 direction,
@@ -205,7 +214,11 @@ def _simulated_pairs(
     open_price = _fill_price(raw_open.get("entry_price"), contract)
     if open_price is None:
         return trades, None
-    return trades, {"bar": _fill_bar(raw_open, "entry"), "price": open_price}
+    return trades, {
+        "bar": _fill_bar(raw_open, "entry"),
+        "price": open_price,
+        "held_qty": _held_qty(raw_open.get("held_qty")),
+    }
 
 
 def _not_an_engine_decision(bar: Mapping[str, Any]) -> str | None:
@@ -422,7 +435,11 @@ def _open_position(
         "as_of_time_kst": as_of_bar.get("time_kst"),
         "as_of_price_points": _num(as_of_price),
         "points": _num(points),
-        "unrealized_pnl_krw": _num(points * Decimal(contract.multiplier_krw_per_point)),
+        "unrealized_pnl_krw": _num(
+            points
+            * Decimal(contract.multiplier_krw_per_point)
+            * Decimal(_held_qty(entry.get("held_qty")))
+        ),
         "basis": OPEN_MARK_BASIS,
     }
 
@@ -436,7 +453,13 @@ def _trade(
     *,
     forced: bool = False,
 ) -> dict[str, Any]:
-    """가상 거래 한 건."""
+    """가상 거래 한 건.
+
+    ``points`` 는 한 단위의 가격차고, 원화는 거기에 **보유 수량** 을 곱한다. 결정
+    짝짓기 경로는 :data:`ASSUMPTIONS` 의 ``ONE_CONTRACT`` 대로 수량이 1 이고,
+    시뮬레이션 체결 경로는 그 왕복이 실제로 들고 있던 ``held_qty`` 를 쓴다 — 같은
+    문서의 ``position.round_trips`` 가 그 수량을 함께 싣는다.
+    """
     entry_bar = entry["bar"]
     entry_price: Decimal = entry["price"]
     points = _points(entry_price, exit_price, direction)
@@ -448,8 +471,11 @@ def _trade(
         "exit_rule_id": None if forced else exit_bar.get("decision_rule_id"),
         "exit_price_points": _num(exit_price),
         "points": _num(points),
+        # SAFETY: 보유 수량을 곱한다 — 10주 왕복을 1주 손익으로 적으면 화면의 가상 손익이 실제 규모의 1/10 로 보이고, 다음 단계가 그 수에서 손절·목표 임계를 고른다
         "hypothetical_pnl_krw": _num(
-            points * Decimal(contract.multiplier_krw_per_point)
+            points
+            * Decimal(contract.multiplier_krw_per_point)
+            * Decimal(_held_qty(entry.get("held_qty")))
         ),
         "forced_close": forced,
         "forced_close_reason": FORCED_CLOSE_REASON if forced else None,
