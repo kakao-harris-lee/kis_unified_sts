@@ -30,11 +30,18 @@ OFF_SYMBOL = "005930"
 STOP_RULE_ID = "R5-EXIT-STOP-LOSS"
 TARGET_RULE_ID = "R6-EXIT-TAKE-PROFIT"
 
-#: 합성 봉은 한 봉에 ±50(≈5bp)씩 움직이고 11 봉마다 방향이 바뀐다 — 출하 폭(수십 bp)은
+#: 기본 합성 봉은 한 봉에 ±50(≈5bp)씩 움직이고 11 봉마다 방향이 바뀐다 — 출하 폭(수십 bp)은
 #: 이 프레임에서 닿지 않는다. 손절이 **실제로 발화하는** 구간을 만들려고 사본에서만 이
 #: 폭으로 좁히고, 목표는 발화하지 않을 만큼 멀리 둔다(손절을 가리지 않게).
 TIGHT_STOP_LOSS_BP = -1
 UNREACHABLE_TAKE_PROFIT_BP = 100_000
+
+#: 출하 폭(`stop_loss_bp` -100 · `take_profit_bp` +150)에 **둘 다** 닿는 비대칭 삼각파.
+#: 오르는 다리보다 내리는 다리가 길어서 목표로 끝나는 왕복과 손절로 끝나는 왕복이 함께
+#: 생긴다 — 대칭파에서는 진입이 늘 저점 근처라 `unrealized_bp` 가 출하 손절까지 내려가지
+#: 않고, 출하 값을 그대로 쓰는 시험이 **한 봉도 검사하지 않는 빈 루프**가 된다.
+REACHING_UP = 200.0
+REACHING_DOWN = 300.0
 
 #: 트리가 선언한 체결가 필드의 배수(``fields.yaml::publish`` 의 ``close_x100``).
 PRICE_SCALE = 100
@@ -57,20 +64,23 @@ def shipped_bindings() -> dict[str, Any]:
     return dict(document["strategies"]["setup_d_long.strategy"]["bindings"])
 
 
-def _frame() -> pd.DataFrame:
-    """합성 주식 분봉 두 세션 — 삼각파라 세션 VWAP 왕복이 생기고 값이 결정론적이다."""
+def _frame(*, up: float = 50.0, down: float = 50.0) -> pd.DataFrame:
+    """합성 주식 분봉 두 세션 — 삼각파라 세션 VWAP 왕복이 생기고 값이 결정론적이다.
+
+    ``up`` 과 ``down`` 이 다르면 비대칭 삼각파다(:data:`REACHING_DOWN` 참조).
+    """
     rows: list[dict[str, Any]] = []
     price = 100_000.0
     for day in SESSIONS:
         opening = datetime(day.year, day.month, day.day, 9, 0)
         for minute in range(BARS_PER_SESSION):
-            price += 50 if (minute // 11) % 2 == 0 else -50
+            price += up if (minute // 11) % 2 == 0 else -down
             rows.append(
                 {
                     "timestamp": opening + timedelta(minutes=minute),
                     "open": price,
-                    "high": price + 50,
-                    "low": price - 50,
+                    "high": price + up,
+                    "low": price - down,
                     "close": price,
                     "volume": 100 + minute,
                 }
@@ -119,9 +129,12 @@ def enabled(tmp_path_factory: pytest.TempPathFactory) -> rp.ReplayResult:
 
 @pytest.fixture(scope="module")
 def shipped() -> rp.ReplayResult:
-    """임계값까지 **출하 그대로** 돌린 결과 — 리플레이가 읽는 것이 그 값임을 본다."""
+    """임계값까지 **출하 그대로** 돌린 결과 — 두 폭에 닿는 비대칭 프레임으로 돈다."""
     return rp.replay(
-        SHIPPED_TREE.name, symbol=SYMBOL, bars=_frame(), min_bars_per_day=0
+        SHIPPED_TREE.name,
+        symbol=SYMBOL,
+        bars=_frame(up=REACHING_UP, down=REACHING_DOWN),
+        min_bars_per_day=0,
     )
 
 
@@ -193,18 +206,24 @@ def test_the_guarded_entry_never_fires_on_a_bar_that_already_holds(
 def test_the_shipped_bounds_are_what_the_shipped_tree_replays_with(
     shipped: rp.ReplayResult,
 ) -> None:
-    """임계값을 좁히지 않은 출하 트리도 포지션을 싣고, 발화한 청산은 출하 폭을 지킨다."""
+    """임계값을 좁히지 않은 출하 트리에서 두 청산이 **발화하고**, 그 봉이 출하 폭을 지킨다."""
     bounds = shipped_bindings()
     assert shipped.position_mode == rp.SIMULATED_MODE
-    for bar in shipped.bars:
-        rule_id = bar.get("decision_rule_id")
-        if rule_id not in (STOP_RULE_ID, TARGET_RULE_ID):
-            continue
-        unrealized_bp = bar["position"]["unrealized_bp"]
-        if rule_id == STOP_RULE_ID:
-            assert unrealized_bp <= bounds["stop_loss_bp"], bar["time_kst"]
-        else:
-            assert unrealized_bp >= bounds["take_profit_bp"], bar["time_kst"]
+
+    def _fired(rule_id: str) -> list[dict[str, Any]]:
+        return [b for b in shipped.bars if b.get("decision_rule_id") == rule_id]
+
+    stops, targets = _fired(STOP_RULE_ID), _fired(TARGET_RULE_ID)
+    # 두 폭에 닿지 않는 프레임이면 아래 두 루프가 비어 아무것도 시험하지 않는다.
+    assert stops and targets, (len(stops), len(targets))
+    for bar in stops:
+        position = bar["position"]
+        assert position["side"] == "LONG", bar["time_kst"]
+        assert position["unrealized_bp"] <= bounds["stop_loss_bp"], bar["time_kst"]
+    for bar in targets:
+        position = bar["position"]
+        assert position["side"] == "LONG", bar["time_kst"]
+        assert position["unrealized_bp"] >= bounds["take_profit_bp"], bar["time_kst"]
 
 
 def test_the_hypothetical_pnl_counts_exactly_the_simulated_fills(
