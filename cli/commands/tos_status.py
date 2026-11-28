@@ -18,6 +18,10 @@
   변경이 결정을 어떻게 바꾸는지」를 보는 자리다. CI 가 대조하는 고정본은 **합성**
   분봉이다(``tools/tos_cp3/synthetic_bars.py``) — 저장소가 공개라 시세 데이터를
   커밋하지 않는다.
+* ``ingest-bars`` → ``tools/tos_cp3/ingest_session_bars.py``. tenant 세션이 이미
+  쥔 분봉(``producer/market``)을 호스트의 과거 저장소로 모아, ``replay
+  --data-root`` 가 읽을 수 있는 날을 하루씩 늘린다. 기본은 dry-run 이고 쓰려면
+  ``--write`` 가 필요하다 — 더 긴 하루를 더 짧은 하루로 덮지 않는다.
 * ``perf`` → ``tools/tos_cp3/perf.py`` (활용 계획
   ``docs/plans/2026-11-19-tos-usage-plan.md`` §5 «`sts tos perf` 최소판»).
   tenant 잎 evidence 만 읽어 종목·날짜별 체결 수 · 손익 · 승 · 보유 수량을 센다.
@@ -51,6 +55,7 @@ def tos_cmd() -> None:
         sts tos status --json
         sts tos inspect stock-r1-20261110 --from 09:00 --to 10:00
         sts tos replay --tree cp3-setup-d-stock-005380 --from 2026-09-01 --to 2026-10-08
+        sts tos ingest-bars --write
         sts tos perf
         sts tos export-symbols
         sts tos export-status
@@ -274,6 +279,72 @@ def tos_replay(
     if as_json:
         argv.append("--json")
     sys.exit(replay.main(argv))
+
+
+@tos_cmd.command("ingest-bars")
+@click.option(
+    "--sessions-root",
+    default=None,
+    help="CP-3 세션 루트 (기본: config/tos_status_board.yaml 의 state_dir/cp3-sessions)",
+)
+@click.option(
+    "--data-root",
+    default=None,
+    help="분봉 Parquet 저장소 (기본: config/storage.yaml 의 market_data.parquet.root)",
+)
+@click.option("--since", default=None, help="이 거래일부터 YYYY-MM-DD (포함)")
+@click.option("--until", default=None, help="이 거래일까지 YYYY-MM-DD (포함)")
+@click.option("--write", "do_write", is_flag=True, help="계획의 write 줄을 실제로 쓴다")
+@click.option(
+    "--init", is_flag=True, help="--data-root 가 아직 저장소가 아니어도 허용한다"
+)
+@click.option("--json", "as_json", is_flag=True, help="JSON 으로 출력")
+def tos_ingest_bars(
+    sessions_root: str | None,
+    data_root: str | None,
+    since: str | None,
+    until: str | None,
+    do_write: bool,
+    init: bool,
+    as_json: bool,
+) -> None:
+    """세션이 쥔 분봉을 과거 저장소로 모은다 — 기본은 dry-run.
+
+    tenant 세션마다 ``producer/market`` 에 과거 저장소와 같은 모양의 Parquet
+    트리가 있다(그날의 봉 + 앞선 시드 날들). 같은 코드·날의 사본이 여러 세션에
+    있으므로 봉이 가장 많은 것, 같으면 가장 나중 세션의 것을 고른다 — 당일 사본은
+    15:19 봉에서 끝나고 종가 단일가 봉은 다음 날 세션의 시드 사본에만 있다.
+
+    저장소가 이미 쥔 하루보다 봉이 **많을 때만** 쓴다. 같으면 ``same``, 적으면
+    ``kept_existing`` 이고, 같은 분이 두 번 있으면서 값이 어긋나는 사본은 그 날을
+    통째로 거부한다(종료코드 2). 세션에 없는 코드·날은 건드리지 않는다.
+
+    \b
+    Examples:
+        sts tos ingest-bars
+        sts tos ingest-bars --write
+        sts tos ingest-bars --since 2026-11-01 --json
+    """
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from tools.tos_cp3 import ingest_session_bars
+
+    argv: list[str] = []
+    for flag, value in (
+        ("--sessions-root", sessions_root),
+        ("--data-root", data_root),
+        ("--since", since),
+        ("--until", until),
+    ):
+        if value is not None:
+            argv += [flag, str(value)]
+    if do_write:
+        argv.append("--write")
+    if init:
+        argv.append("--init")
+    if as_json:
+        argv.append("--json")
+    sys.exit(ingest_session_bars.main(argv))
 
 
 @tos_cmd.command("perf")
