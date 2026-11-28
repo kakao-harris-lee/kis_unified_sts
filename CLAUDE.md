@@ -264,14 +264,22 @@ mypy shared/ --ignore-missing-imports --no-error-summary
 docker compose up -d              # dashboard + strategy-builder-ui + caddy + redis + prometheus
 sts tos status                    # the one-page operator status board
 sts tos inspect <session>         # per-bar: fields, per-compare pass/fail, decision, halt, and
-                                  # the position the engine itself read (never a simulation)
+                                  # the position — the engine's own recorded value when evidence
+                                  # is read, simulated and labelled `position simulated` without
+                                  # it (`--no-evidence`)
 sts tos replay --tree <tree> --from D --to D --data-root data/market
                                   # that tenant's per-bar decisions over past minute bars
                                   # (signals only, no order path; plus a SIMULATED position for a
                                   # tree that sets marketfeed.yaml::position_context.enabled —
                                   # one fill model: an ACTION/FLAT decision fills in full at that
                                   # bar's price_field_key value and is visible from the next bar,
-                                  # and the position carries across sessions). `--golden check`
+                                  # and the position carries across sessions). That is NOT parity
+                                  # with live: live carries no position namespace while a send is
+                                  # unresolved (and an unfilled LIMIT never becomes one), so every
+                                  # position rule is false there — including `side EQ FLAT` entry
+                                  # guards. The output counts the two decisions live may not
+                                  # reproduce (`exit_first_visible_bar`, `reentry_next_bar`).
+                                  # `--golden check`
                                   # replays the five shipped trees (all with the feature off) on
                                   # the committed SYNTHETIC fixtures and
                                   # compares the decisions; real bars live only on the host
