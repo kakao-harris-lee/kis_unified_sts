@@ -90,6 +90,7 @@ class SizingBound(FrozenModel):
 
     risk_budget: CanonicalDecimal | None = None
     per_unit_risk: CanonicalDecimal | None = None
+    per_unit_risk_field_key: str | None = None
     lot_size: CanonicalDecimal | None = None
     lot_rounding: LotRoundingPolicy | None = None
     min_quantity: CanonicalDecimal | None = None
