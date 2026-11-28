@@ -787,6 +787,7 @@ def test_load_order_construction_policy_construction_happy_path(tmp_path: Path) 
     assert rules.sizing_bound.lot_rounding is LotRoundingPolicy.EXACT_MULTIPLE_REQUIRED
     assert rules.sizing_bound.risk_budget == Decimal(100)
     assert rules.sizing_bound.per_unit_risk == Decimal(10)
+    assert rules.sizing_bound.per_unit_risk_field_key is None
     assert rules.sizing_bound.max_notional is None
     assert rules.sizing_bound.quantity_unit is None
     assert rules.sizing_bound.admitted_quantity_bases == frozenset({"RISK"})
@@ -882,6 +883,69 @@ def test_load_order_construction_policy_construction_max_notional_int_accepted(
     path = write_fixture_ocp(tmp_path, text)
     loaded = load_order_construction_policy(path, scheme=SCHEME)
     assert loaded.construction_rules.sizing_bound.max_notional == Decimal(5000)
+
+
+_RISK_UNIT_FIELD_LINE = 'per_unit_risk_field_key: "risk_unit_x100"'
+
+
+def _ocp_with_risk_unit_field(*lines: str) -> str:
+    """The fixture OCP with its fixed risk unit REPLACED by ``lines`` (P4 §2 D6)."""
+    source = ocp_yaml()
+    match = re.search(r"^([ \t]*)per_unit_risk: 10$", source, flags=re.MULTILINE)
+    assert match is not None, "the fixture OCP no longer declares a fixed per_unit_risk"
+    indent = match.group(1)
+    block = "\n".join(f"{indent}{line}" for line in lines)
+    return source[: match.start()] + block + source[match.end() :]
+
+
+def test_load_order_construction_policy_sizing_risk_unit_field_key_accepted(
+    tmp_path: Path,
+) -> None:
+    """(P4 §2 D6) A tree may name the admitted field its risk unit is read from."""
+    path = write_fixture_ocp(tmp_path, _ocp_with_risk_unit_field(_RISK_UNIT_FIELD_LINE))
+    bound = load_order_construction_policy(
+        path, scheme=SCHEME
+    ).construction_rules.sizing_bound
+    assert bound.per_unit_risk is None
+    assert bound.per_unit_risk_field_key == "risk_unit_x100"
+    assert bound.risk_budget == Decimal(100)
+
+
+def test_load_order_construction_policy_sizing_both_risk_units_refused(
+    tmp_path: Path,
+) -> None:
+    """Exactly one risk unit — preferring either of two would widen the other."""
+    text = _ocp_with_risk_unit_field("per_unit_risk: 10", _RISK_UNIT_FIELD_LINE)
+    path = write_fixture_ocp(tmp_path, text)
+    with pytest.raises(VenuePolicyConfigError, match="per_unit_risk_field_key"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['""', '"   "', '"TBD"', "7", "[]"],
+    ids=["blank", "spaces", "tbd", "int", "list"],
+)
+def test_load_order_construction_policy_sizing_risk_unit_field_key_shape_refused(
+    tmp_path: Path, value: str
+) -> None:
+    """A field key is a non-empty, operator-filled string or it is absent — never a guess."""
+    path = write_fixture_ocp(
+        tmp_path, _ocp_with_risk_unit_field(f"per_unit_risk_field_key: {value}")
+    )
+    with pytest.raises(VenuePolicyConfigError, match="per_unit_risk"):
+        load_order_construction_policy(path, scheme=SCHEME)
+
+
+def test_load_order_construction_policy_sizing_null_risk_unit_field_key_is_absent(
+    tmp_path: Path,
+) -> None:
+    """An explicit ``null`` is the same as absent — and then the fixed unit is required."""
+    path = write_fixture_ocp(
+        tmp_path, _ocp_with_risk_unit_field("per_unit_risk_field_key: null")
+    )
+    with pytest.raises(VenuePolicyConfigError, match="per_unit_risk"):
+        load_order_construction_policy(path, scheme=SCHEME)
 
 
 def test_load_order_construction_policy_construction_lot_rounding_unknown_refused(
